@@ -565,6 +565,7 @@ from typing import Optional, List, Tuple
 # nc-Importblock weiter unten. Beide hängen nur an stdlib (kein Bot-Import).
 from nc import envnum as _nc_envnum          # env/Zahl-Parser (gebündelt)
 from nc import clientip as _nc_clientip     # v4.2-W149: echte Client-IP, lokal vs. Proxy
+from nc import herkunft as _nc_herkunft     # v4.2-W178: schreibende Anfragen nur von der eigenen Seite
 from nc import geschuetzt as _nc_geschuetzt  # v4.2-W154: live, aber verschlossen (Abo/18+)
 from nc import aufnahmechat as _nc_aufnahmechat  # v4.2-W158: Chat in die Aufnahme
 from nc import chatnachtrag as _nc_chatnachtrag  # v4.2-W163: Chat aus dem Stopp nachtragen
@@ -627,13 +628,16 @@ from nc import kennzahlen as _nc_kz  # v4.2-W122: Leistungs-Schnappschuss fuer /
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import discordziele as _nc_discordziele  # v4.2-W168: ein Clip-Kanal
+from nc import discordaufnahme as _nc_dcaufnahme  # v4.2-W175: ganze Aufnahme nach Discord
+from nc import uploadschlange as _nc_uschlange  # v4.2-W175: Warteschlange wiederholt Fehlschlaege
 from nc import linkvideo as _nc_linkvideo  # v4.2-W169: Link gepostet -> Video als Antwort
-from nc import topicumzug as _nc_topicumzug  # v4.2-W168: @name-Themen -> ein Upload-Thema
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat neu darf
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
 from nc import avatarloop as _nc_avloop  # v4.2-W62: welche Avatar-Schleife jetzt
 from nc import livefolge as _nc_live  # v4.2-W20: was aus einem Live-Signal folgt
+from nc import livemeldung as _nc_livemeldung   # v4.2-W176: globale Aktionen einmal je Nutzer
+from nc import dbwartung as _nc_dbwartung       # v4.2-W176: VACUUM nach Faelligkeit
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
@@ -685,7 +689,6 @@ from nc.routes import wartung as _nc_routes_wartung            # v4.1-W24: Wartu
 from nc.routes import abwehr as _nc_routes_abwehr              # v4.1-W25: Abwehr
 from nc.routes import auskunft as _nc_routes_auskunft          # v4.1-W26: Auskunft
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
-from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
 # Aggregat-Route /api/dashboard-bundle) — sie sind dort gewoehnliche
 # Funktionen, keine Endpunkte. Deshalb importiert statt kopiert.
@@ -714,7 +717,7 @@ from nc import einstellungen as _nc_einst
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import (
-    BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError,
+    BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError,
 )
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, CallbackQueryHandler,
@@ -790,6 +793,8 @@ import nc.videoteil as _nc_videoteil  # noqa: E402
 # Sprachmodell — und sind deshalb ohne laufenden Stream nachpruefbar.
 import nc.restreamgesundheit as _nc_rgesund  # noqa: E402
 import nc.modki as _nc_modki  # noqa: E402
+# v4.2-W177: Brain-Wissen (Fakten + letzte Sendung) in AZRAELs Antworten.
+import nc.azraelkontext as _nc_azraelkontext  # noqa: E402
 
 FFMPEG_THREADS_LIVE   = _env_int("FFMPEG_THREADS_LIVE", 3)    # Restream-Transcode: muss fluessig bleiben
 FFMPEG_THREADS_RELAY  = _env_int("FFMPEG_THREADS_RELAY", 2)   # Relay: leichter als der Transcode
@@ -859,7 +864,7 @@ from nc import streamsel as _nc_ss          # v4.0-W29: TikTok-Stream-Auswahl (R
 from nc.cookies import (  # noqa: F401
     _cookies_input_to_netscape, _cookie_alarm_level)
 from nc.textmore import (  # noqa: F401
-    split_for_telegram, _compact_text, _parse_iso, _ov_wrap)
+    split_for_telegram, _compact_text, _parse_iso, _ov_wrap, pre_nachrichten)
 # _video_caption ist mit split_and_send_video nach telegramversand.py gewandert
 # (v4.2-W19) — es hatte hier nur diesen einen Nutzer.
 from nc.scoring import build_report  # noqa: F401
@@ -884,7 +889,6 @@ import nc.claude as _nc_claude  # v4.0-W64: Anthropic-Claude-Provider (primär, 
 import nc.usage as _nc_usage    # v4.0-W92: LLM-Token-/Kostenzähler
 import nc.crypto as _nc_crypto  # v4.0-W94: Krypto-Spendenadressen + BTC-Live-Empfang
 import nc.qrsvg as _nc_qrsvg    # v4.0-W95: QR-Codes (Inline-SVG)
-import urllib.parse as _urllib_parse
 
 # v4.0-W92/W93: chat_sync zentral mit Token-Zählung umhüllen — ALLE Claude-Calls
 # (mehrere Aufrufstellen) verbuchen so ihre Tokens/Kosten, ohne jede Stelle zu
@@ -1061,7 +1065,10 @@ from nc import sendrate as _nc_sendrate    # v4.0-W23: YT-Sende-Bremse (Anti-Flo
 from nc import cohost as _nc_cohost        # v4.0-W24: proaktiver Live-Co-Host
 from nc import restream_util as _nc_rutil  # v4.0-W25: reine Restream-Helfer (extrahiert)
 from nc import overlaybrowser as _nc_ovbrowser
-from nc import kickzentrifugo as _nc_kickzentrifugo  # v4.2-W171: Kick-Chat ueber Centrifugo  # v4.2-W170: ein Chromium je Restream statt je Bild
+from nc import kickzentrifugo as _nc_kickzentrifugo  # v4.2-W171: Kick-Chat ueber Centrifugo
+from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden, eine Quelle fuer alle
+from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Spendenziel fuer alle Anzeigen
+from nc import encodeschlange as _nc_encode     # v4.2-W174: Hintergrund-Kodierungen nacheinander  # v4.2-W170: ein Chromium je Restream statt je Bild
 from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)
 from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)
 from nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)
@@ -1429,20 +1436,27 @@ def _upload_queue_save(items: list):
         json.dump(items, f, ensure_ascii=False)
     os.replace(tmp, _upload_queue_path())        # atomar
 
-def _upload_queue_add(chat_id, filepath, username, started_at, ended_at):
-    """Legt eine fertige Aufnahme zum späteren Upload in die Queue (thread-safe)."""
+def _upload_queue_add(chat_id, filepath, username, started_at, ended_at,
+                      ziel=None, grund=None):
+    """Legt eine fertige Aufnahme zum späteren Upload in die Queue (thread-safe).
+       v4.2-W175: `ziel="discord"` reiht den Discord-Versand der ganzen
+       Aufnahme ein (chat_id None); `grund` ersetzt den Fenster-Text, wenn der
+       Eintrag aus einem anderen Grund entsteht (Neustart mitten im Upload)."""
     entry = {
         "chat_id": chat_id, "file": filepath, "username": username,
         "started_at": started_at.isoformat() if started_at else None,
         "ended_at": ended_at.isoformat() if ended_at else None,
         "queued_at": datetime.now(timezone.utc).isoformat(),
     }
+    if ziel:
+        entry["ziel"] = ziel
     with _UPLOAD_QUEUE_LOCK:
         items = _upload_queue_load()
         items.append(entry)
         _upload_queue_save(items)
-    log.info(f"Upload aufgeschoben (außerhalb Fenster {UPLOAD_WINDOW_START:02d}–"
-             f"{UPLOAD_WINDOW_END:02d} Uhr): @{username} → chat {chat_id}")
+    log.info("Upload aufgeschoben (%s): @%s → %s", grund or (
+        f"außerhalb Fenster {UPLOAD_WINDOW_START:02d}–{UPLOAD_WINDOW_END:02d} Uhr"),
+        username, "Discord" if ziel == "discord" else f"chat {chat_id}")
 
 def _telegram_ziele(roh, username=""):
     """Fan-out-Ziele einer Aufnahme — nur Telegram-Chats.
@@ -1454,13 +1468,23 @@ def _telegram_ziele(roh, username=""):
     ein fehlendes Telegram-Video fuer einen Fehler haelt."""
     aus, discord = _nc_tgfehler.nur_telegram(roh)
     if discord:
-        laut, weg = _nc_meldetakt.melden("tg-nur-discord", "discord", _time_mod.monotonic(),
-                                         abstand_s=6 * 3600)
+        # v4.2-W175: Schluessel je Nutzer. Mit dem festen Grund "discord"
+        # sagte die Zeile nur den ERSTEN Nutzer an und schwieg dann sechs
+        # Stunden ueber alle anderen — wer nachsah, warum @ben fehlt, fand
+        # nur @anna im Log.
+        laut, weg = _nc_meldetakt.melden("tg-nur-discord", (username or "?").lower(),
+                                         _time_mod.monotonic(), abstand_s=6 * 3600)
         if laut:
+            # Seit W175 stimmt der Satz: die ganze Aufnahme geht in den
+            # Clip-Kanal (_aufnahme_nach_discord) — es sei denn, der Schalter
+            # ist aus, und dann muss die Zeile das sagen.
             log.info("Upload @%s: Ziel %s ist eine Discord-Guild (Tracking per /track) — "
-                     "geht nur nach Discord, nicht nach Telegram. Fuer Telegram das "
-                     "Tracking in der Gruppe anlegen.%s", username or "?",
-                     ", ".join(map(str, discord)), _nc_meldetakt.zusatz(weg))
+                     "%s Fuer Telegram das Tracking in der Gruppe anlegen.%s", username or "?",
+                     ", ".join(map(str, discord)),
+                     "geht nur nach Discord (#%s), nicht nach Telegram." % _nc_discordziele.clip_kanal()
+                     if _nc_dcaufnahme.an() else
+                     "geht NIRGENDWOHIN: %s=0 schaltet den Discord-Versand der Aufnahme ab."
+                     % _nc_dcaufnahme.SCHALTER, _nc_meldetakt.zusatz(weg))
     return aus
 
 
@@ -1514,10 +1538,15 @@ def _dashboard_trackings_umziehen():
 def _upload_queue_remove(entry):
     with _UPLOAD_QUEUE_LOCK:
         items = _upload_queue_load()
-        items = [e for e in items if not (
-            e.get("file") == entry.get("file")
-            and e.get("chat_id") == entry.get("chat_id")
-            and e.get("queued_at") == entry.get("queued_at"))]
+        items = [e for e in items if not _nc_uschlange.gleicher(e, entry)]
+        _upload_queue_save(items)
+
+
+def _upload_queue_update(entry, neu):
+    """v4.2-W175: einen Eintrag nach einem Fehlschlag fortschreiben (Zaehler,
+    naechster Versuch) — an seiner Stelle, damit die Reihenfolge bleibt."""
+    with _UPLOAD_QUEUE_LOCK:
+        items = [neu if _nc_uschlange.gleicher(e, entry) else e for e in _upload_queue_load()]
         _upload_queue_save(items)
 
 def _upload_queue_count() -> int:
@@ -1526,49 +1555,90 @@ def _upload_queue_count() -> int:
 
 async def _upload_window_loop(bot_app):
     """Lädt aufgeschobene Aufnahmen hoch, sobald das Upload-Fenster offen ist.
-       Läuft nur wenn ein Fenster konfiguriert ist (START != END)."""
-    if UPLOAD_WINDOW_START == UPLOAD_WINDOW_END:
-        return
-    log.info(f"Upload-Fenster-Loop aktiv: Uploads {UPLOAD_WINDOW_START:02d}:00–"
-             f"{UPLOAD_WINDOW_END:02d}:00 Uhr, sonst aufgeschoben.")
+
+       v4.2-W175: läuft IMMER, nicht nur mit konfiguriertem Fenster. Bis hier
+       startete die Schleife nur bei UPLOAD_WINDOW_START != _END — wer das
+       Fenster wieder abschaltete, liess jeden Eintrag in pending_uploads.json
+       fuer immer liegen. Seit W175 legt auch ein Neustart mitten im Upload
+       Eintraege an, mit und ohne Fenster. Ohne Fenster ist _is_upload_window
+       immer wahr; eine leere Schlange kostet einen Dateizugriff je Minute."""
+    if UPLOAD_WINDOW_START != UPLOAD_WINDOW_END:
+        log.info(f"Upload-Fenster-Loop aktiv: Uploads {UPLOAD_WINDOW_START:02d}:00–"
+                 f"{UPLOAD_WINDOW_END:02d}:00 Uhr, sonst aufgeschoben.")
     await asyncio.sleep(20)                     # nach Boot kurz atmen lassen
     while True:
         try:
             if _is_upload_window(datetime.now()):
-                with _UPLOAD_QUEUE_LOCK:
-                    items = _upload_queue_load()
-                if items:
-                    log.info(f"Upload-Fenster offen — {len(items)} aufgeschobene "
-                             f"Upload(s) werden jetzt gesendet.")
-                for entry in items:
-                    if not _is_upload_window(datetime.now()):
-                        break                   # Fenster zu → Rest beim nächsten Lauf
-                    fpath = entry.get("file")
-                    # v4.2-W168: ein Discord-Ziel (Guild) ist kein Telegram-Ziel
-                    # mehr — der Eintrag wird verworfen statt umgeleitet.
-                    _tg = _telegram_ziele([entry.get("chat_id")], entry.get("username"))
-                    chat_id = _tg[0] if _tg else None
-                    username = entry.get("username") or "?"
-                    if not chat_id or not fpath or not os.path.exists(fpath):
-                        _upload_queue_remove(entry)   # Datei weg → Eintrag verwerfen
-                        continue
-                    try:
-                        await split_and_send_video(
-                            chat_id, fpath, bot_app, username,
-                            started_at=_parse_iso(entry.get("started_at")),
-                            ended_at=_parse_iso(entry.get("ended_at")))
-                        _upload_queue_remove(entry)
-                        await asyncio.sleep(3)        # sanft zu Telegram
-                    except Exception as e:
-                        log.warning(f"Aufgeschobener Upload @{username} chat={chat_id} "
-                                    f"fehlgeschlagen: {e}")
-                        # NICHT entfernen → nächster Durchlauf versucht erneut
+                await _upload_queue_abarbeiten(bot_app)
         except Exception as e:
             # log.warning erscheint in einem ERROR-Log NIE. Dieser Dauerlaeufer
             # haelt die aufgeschobenen Uploads — faellt er aus, bleiben die
             # Aufnahmen fuer immer in der Warteschlange liegen.
             _loop_fehler("_upload_window_loop", e)
         await asyncio.sleep(60)
+
+
+async def _upload_queue_abarbeiten(bot_app):
+    """Ein Durchgang ueber die faelligen Eintraege (siehe nc/uploadschlange)."""
+    with _UPLOAD_QUEUE_LOCK:
+        items = _upload_queue_load()
+    faellig = [e for e in items if _nc_uschlange.faellig(e, _time_mod.time())]
+    if faellig:
+        log.info(f"Upload-Warteschlange: {len(faellig)} aufgeschobene "
+                 f"Upload(s) werden jetzt gesendet.")
+    for entry in faellig:
+        if not _is_upload_window(datetime.now()):
+            break                   # Fenster zu → Rest beim nächsten Lauf
+        fpath = entry.get("file")
+        username = entry.get("username") or "?"
+        ergebnis = {}
+        if entry.get("ziel") == "discord":
+            chat_id = "discord"
+        else:
+            # v4.2-W168: ein Discord-Ziel (Guild) ist kein Telegram-Ziel
+            # mehr — der Eintrag wird verworfen statt umgeleitet.
+            _tg = _telegram_ziele([entry.get("chat_id")], entry.get("username"))
+            chat_id = _tg[0] if _tg else None
+        if not chat_id or not fpath or not os.path.exists(fpath):
+            _upload_queue_remove(entry)
+            if fpath and not os.path.exists(fpath):
+                log.error("Upload-Warteschlange @%s: %s liegt nicht mehr auf der Platte "
+                          "(Retention?) — Eintrag verworfen, der Upload entfaellt.",
+                          username, fpath)
+            continue
+        beginn, ende = _parse_iso(entry.get("started_at")), _parse_iso(entry.get("ended_at"))
+        if chat_id == "discord":
+            await _aufnahme_nach_discord(username, fpath, beginn, ergebnis=ergebnis)
+        else:
+            await split_and_send_video(chat_id, fpath, bot_app, username, started_at=beginn,
+                                       ended_at=ende, ergebnis=ergebnis)
+        _upload_queue_nachher(entry, ergebnis, username, chat_id)
+        await asyncio.sleep(3)        # sanft zu Telegram
+
+
+def _upload_queue_nachher(entry, ergebnis, username, chat_id):
+    """v4.2-W175: entfernen NUR bei Erfolg. split_and_send_video wirft nie —
+    der bisherige `except`-Zweig („NICHT entfernen") lief deshalb nie, und
+    jeder gescheiterte Upload verschwand nach dem ersten Versuch still."""
+    if ergebnis.get("aus"):
+        _upload_queue_remove(entry)
+        log.info("Upload-Warteschlange @%s: Discord-Versand ist abgeschaltet (%s) — "
+                 "Eintrag verworfen.", username, ergebnis.get("grund") or "?")
+        return
+    lage, neu = _nc_uschlange.nach_versuch(entry, ergebnis, _time_mod.time())
+    if lage == "fertig":
+        _upload_queue_remove(entry)
+    elif lage == "wieder":
+        _upload_queue_update(entry, neu)
+        log.error("Aufgeschobener Upload @%s → %s gescheitert (Versuch %d von %d: %s) — "
+                  "naechster Versuch in %.0f min.", username, chat_id, neu["versuche"],
+                  _nc_uschlange.MAX_VERSUCHE, neu["letzter_fehler"],
+                  _nc_uschlange.pause_s(neu["versuche"]) / 60)
+    else:
+        _upload_queue_remove(entry)
+        log.error("Aufgeschobener Upload @%s → %s nach %d Versuchen AUFGEGEBEN (%s). "
+                  "Die Aufnahme bleibt auf dem Server: %s", username, chat_id,
+                  neu["versuche"], neu["letzter_fehler"], entry.get("file"))
 
 DB_PATH        = "tiktok_bot.db"
 
@@ -2673,14 +2743,28 @@ def _brain_hint_delay(tracking_id: int, delay: float) -> float:
             _bdb = os.getenv("BRAIN_DB", "brain.db")
             _con = sqlite3.connect(_bdb, timeout=2)
             try:
-                c["by_user"] = dict(_con.execute(
-                    "SELECT username, interval_s FROM sched_hints"))
+                # v4.2-W177: nur FRISCHE Hinweise (brain/scheduler.py) — ein
+                # stehender Bridge-Tick liess sonst die Empfehlung einer
+                # laengst vergangenen Stunde weiter wirken.
+                from brain.scheduler import frische_intervalle
+                c["by_user"] = frische_intervalle(_con.execute(
+                    "SELECT username, interval_s, ts FROM sched_hints"),
+                    _time_mod.time())
             finally:
                 _con.close()
             with db_conn() as _bc:
                 c["id2user"] = dict(_bc.execute(
                     "SELECT id, username FROM trackings"))
-        except Exception:
+        except Exception as e:
+            # v4.2-W177: war still — wer BRAIN_HINTS_POLL=1 setzt und nichts
+            # merkt, soll den Grund lesen koennen. Fail-open bleibt.
+            c["by_user"] = {}
+            laut, weg = _nc_meldetakt.melden("brain-hints", type(e).__name__,
+                                             _time_mod.monotonic())
+            if laut:
+                log.warning("Brain-Scheduler-Hinweise nicht lesbar (%s: %s) — "
+                            "Polling laeuft ohne Feinsteuerung weiter.%s",
+                            type(e).__name__, e, _nc_meldetakt.zusatz(weg))
             return delay
     user = c["id2user"].get(tracking_id)
     hint = c["by_user"].get(user)
@@ -3248,6 +3332,9 @@ def _ohne_url_melden(username, grund, text, *args):
     NUTZER waere hier falsch: bei 40 Trackings in derselben Lage drosselt er
     nichts (CLAUDE.md, W81).
     """
+    # v4.2-W176: merken, WER in dieser Lage steckt — geleert wird die Drossel
+    # erst, wenn genau diese Nutzer wieder eine Adresse haben (W157-Muster).
+    _nc_meldetakt.gestoert("live-ohne-url", username)
     laut, unterdrueckt = _nc_meldetakt.melden(
         "live-ohne-url", grund, _time_mod.monotonic())
     if laut:
@@ -3289,11 +3376,10 @@ async def _url_nachschlag(username, session, status, info):
     # auch HTML leer ausging. Ausgerechnet dieser Weg kommt durch, wo die
     # Datacenter-IP 403 bekommt — er signiert selbst.
     if not _nc_live.braucht_url_nachschlag(status, info):
-        # v4.2-W103: die Adresse war von Anfang an da — die Lage ist
-        # vorbei. Ohne das Zuruecksetzen bliebe eine WIEDERKEHRENDE
-        # Stoerung bis zu 15 Minuten unsichtbar, weil die Ruhezeit noch
-        # von der vorigen laeuft (Lehre aus W81).
-        _nc_meldetakt.zuruecksetzen("live-ohne-url")
+        # v4.2-W103: Lage vorbei — ohne Zuruecksetzen bliebe eine wiederkehrende
+        # Stoerung bis 15 min unsichtbar (W81). v4.2-W176: erfolg() statt zuruecksetzen()
+        # — hierher kommt JEDER Nutzer offline (60 statt 2 Zeilen/30 min, W157).
+        _nc_meldetakt.erfolg("live-ohne-url", username)
         if status == "live":
             _nc_quellstat.zaehlen("api")        # v4.2-W141
     else:
@@ -3469,7 +3555,9 @@ async def _live_status_aufloesen(username: str, session, force_fresh: bool) -> t
             penalty = _RATE_LIMIT_PENALTY.get(username, 0)
             penalty = min(120, penalty * 2 if penalty else 15)   # max 2min, Start 15s
             _RATE_LIMIT_PENALTY[username] = penalty
-            _RATE_LIMIT_BACKOFF[username] = now + penalty
+            # v4.2-W176: Uhr beim SCHREIBEN — `now` stammt von vor Semaphore und
+            # Aufloesung; eine 15-s-Strafe war beim Setzen sonst schon abgelaufen.
+            _RATE_LIMIT_BACKOFF[username] = _time_mod.monotonic() + penalty
             status = "unknown"   # intern als unknown behandeln
             if penalty >= 60:
                 log.info(f"@{username}: 429 Backoff +{penalty}s (rate-limited von TikTok)")
@@ -3881,9 +3969,13 @@ async def llm_chat(messages: List[dict],
                                         await asyncio.to_thread(_nc_kiwahl.lokal_stand, True))):
         try:
             from brain import get_brain
+            # v4.2-W177: nur die lokale Stufe — der Cloud-Rueckfall steht
+            # unten. Ohne backends= fuhr brain.llm.chat selbst noch freeai,
+            # und bei ok=False fragte diese Funktion freeai ein zweites Mal.
             _res = await asyncio.to_thread(
                 get_brain().llm.chat, messages,
-                timeout if (timeout and timeout > 0) else 3600)
+                timeout if (timeout and timeout > 0) else 3600,
+                None, ["llamacpp"])
             if _res.get("ok"):
                 return (_res["text"], None)
             log.debug("Brain-LLM ohne Antwort (%s) — freeai-Fallback",
@@ -3931,7 +4023,8 @@ def llm_chat_sync(messages, model=None, timeout=None):
         try:
             from brain import get_brain
             _res = get_brain().llm.chat(
-                messages, timeout if (timeout and timeout > 0) else 3600)
+                messages, timeout if (timeout and timeout > 0) else 3600,
+                backends=["llamacpp"])     # v4.2-W177: Cloud folgt unten
             if _res.get("ok"):
                 # v4.0-W93: Brain-LLM (llama.cpp) liefert keine Tokens → schätzen.
                 try:
@@ -4044,8 +4137,13 @@ async def ai_chat(messages, model=None, timeout=None):
                                         await asyncio.to_thread(_nc_kiwahl.lokal_stand, True))):
         try:
             from brain import get_brain
+            # v4.2-W177: backends=["llamacpp"] — vorher fuhr chat() nach
+            # llamacpp noch freeai (bis 2x timeout), wait_for brach nach
+            # timeout+10 ab, und der Thread hielt den Inferenz-Slot weiter,
+            # waehrend unten freeai ein zweites Mal gefragt wurde.
             _res = await asyncio.wait_for(
-                asyncio.to_thread(get_brain().llm.chat, messages, timeout),
+                asyncio.to_thread(get_brain().llm.chat, messages, timeout,
+                                  None, ["llamacpp"]),
                 timeout=timeout + 10)
             if _res.get("ok"):
                 return (_res["text"], None)
@@ -4542,6 +4640,9 @@ def get_tracking_state(tracking_id: int):
 # der Reaper räumt Locks die länger als _RECORDING_SPAWN_TIMEOUT pid-NULL sind auf.
 # B4: import time as _time_mod wurde an den Anfang verschoben.
 _RECORDING_SPAWN_AT = {}            # tracking_id -> monotonic timestamp
+# v4.2-W176: try_acquire_recording_lock laeuft in Worker-Threads; Lesen,
+# Setzen und Zuruecklegen des Markers muessen zusammen geschehen.
+_RECORDING_SPAWN_LOCK = threading.Lock()
 
 # F50: Auto-Retry nach Early-Disconnect. ffmpeg dies < 30s mit non-zero rc =
 # TikTok-CDN-Kick. Statt auf den nächsten regulären Live-Check (30-60s) zu
@@ -4619,6 +4720,34 @@ def try_acquire_recording_lock(tracking_id: int, username: str = None) -> bool:
        Race: Worker hat get_all_active_trackings() abgerufen BEVOR der User
        paused hat, würde dann trotzdem noch versuchen aufzunehmen.
        COALESCE schützt vor alten DB-Rows wo paused-Spalte NULL ist."""
+    # v4.2-W176: der Spawn-Marker steht VOR dem UPDATE. Gesetzt wurde er erst
+    # nach dem Commit — dazwischen sah reaper_loop (im Thread, jede Minute)
+    # recording=1, pid NULL und KEINEN Marker, hielt das fuer einen Rest aus
+    # einem frueheren Lauf und gab den Lock frei. Der naechste Poll startete
+    # dann eine zweite Aufnahme desselben Streams. Bei Misserfolg wird der
+    # vorige Stand zurueckgelegt — aber nur, wenn noch UNSER Marker dort
+    # steht: ein anderer Worker kann denselben Eintrag inzwischen gewonnen
+    # haben, und dessen Marker zu loeschen oeffnete dieselbe Luecke.
+    with _RECORDING_SPAWN_LOCK:
+        _vorher = _RECORDING_SPAWN_AT.get(tracking_id)
+        _mein = _time_mod.monotonic()
+        _RECORDING_SPAWN_AT[tracking_id] = _mein
+    got_lock = False
+    try:
+        got_lock = _lock_update(tracking_id, username)
+    finally:
+        if not got_lock:
+            with _RECORDING_SPAWN_LOCK:
+                if _RECORDING_SPAWN_AT.get(tracking_id) is _mein:
+                    if _vorher is None:
+                        _RECORDING_SPAWN_AT.pop(tracking_id, None)
+                    else:
+                        _RECORDING_SPAWN_AT[tracking_id] = _vorher
+    return got_lock
+
+
+def _lock_update(tracking_id: int, username: str = None) -> bool:
+    """Das eine atomare UPDATE hinter try_acquire_recording_lock."""
     with db_conn() as conn:
         if username:
             # Single atomic statement: claim nur wenn weder dieses noch ein
@@ -4640,19 +4769,33 @@ def try_acquire_recording_lock(tracking_id: int, username: str = None) -> bool:
                 "WHERE id=? AND recording=0 AND COALESCE(paused, 0) = 0",
                 (tracking_id,))
         conn.commit()
-        got_lock = cur.rowcount == 1
-    if got_lock:
-        # F40: Markieren wann der Lock geholt wurde — Reaper räumt stuck-locks auf
-        _RECORDING_SPAWN_AT[tracking_id] = _time_mod.monotonic()
-    return got_lock
+        return cur.rowcount == 1
 
-def set_recording_file(tracking_id: int, output_file: str, pid: int):
+
+class _AufnahmeLockVerloren(RuntimeError):
+    """v4.2-W176: set_recording_file fand recording=1 nicht mehr vor."""
+
+
+def set_recording_file(tracking_id: int, output_file: str, pid: int) -> bool:
+    """Schliesst das Spawn-Fenster. -> False, wenn der Lock inzwischen weg ist.
+
+    v4.2-W176: `WHERE recording=1`. Vorher schrieb das UPDATE pid und Datei
+    auch auf einen Eintrag, dessen Lock der Reaper schon freigegeben hatte —
+    die Aufnahme lief dann ohne Lock, und ein zweiter Worker durfte daneben
+    eine zweite starten. Der Aufrufer bricht bei False ab."""
     with db_conn() as conn:
-        conn.execute("UPDATE trackings SET output_file=?, pid=? WHERE id=?",
-                     (output_file, pid, tracking_id))
+        cur = conn.execute("UPDATE trackings SET output_file=?, pid=? "
+                           "WHERE id=? AND recording=1",
+                           (output_file, pid, tracking_id))
         conn.commit()
+        ok = cur.rowcount == 1
     # F40: Spawn-Fenster geschlossen — aus der Map nehmen
     _RECORDING_SPAWN_AT.pop(tracking_id, None)
+    if not ok:
+        log.error("Aufnahme-Lock fuer tracking#%s verloren, bevor der Prozess "
+                  "eingetragen war — die Aufnahme wird abgebrochen, statt ohne "
+                  "Lock neben einer zweiten zu laufen.", tracking_id)
+    return ok
 
 def clear_recording(tracking_id: int):
     with db_conn() as conn:
@@ -5332,6 +5475,10 @@ def _is_authorized(update: Update) -> bool:
         return True
     if ALLOWED_CHAT_IDS and cid in ALLOWED_CHAT_IDS:
         return True
+    # v4.2-W175: nach einer Umwandlung in eine Supergruppe traegt die eigene
+    # Gruppe eine neue ID — ohne das hier fiele jeder Befehl daraus still weg.
+    if ALLOWED_CHAT_IDS and _nc_tgfehler.migriert_erlaubt(cid, ALLOWED_CHAT_IDS, _TG_MIGRIERT):
+        return True
     return False
 
 def _can_stop_tracking(update: Update, chat_id: int, username: str) -> tuple:
@@ -5682,7 +5829,7 @@ async def tracklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # F65: Pause-Icon hat Vorrang über Live (User hat manuell gestoppt)
         icon = {"pause": "⏸", "unbekannt": "❔", "ausstehend": "⏳"}.get(
             pr["zustand"], "🔴" if t["last_live"] else "⚫")
-        handle = ("@" + t["username"]).ljust(handle_w + 1)
+        handle = safe(("@" + t["username"]).ljust(handle_w + 1))
         flags = []
         if pr["zustand"] in ("live", "rec") and t["last_live"]: flags.append("LIVE")
         if t["recording"]: flags.append("•REC")
@@ -5699,24 +5846,24 @@ async def tracklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if note:
             if len(note) > 30:
                 note = note[:27] + "..."
-            flags.append(f"// {note}")
+            # v4.2-W175: die Notiz ist Freitext (/note, Deck). Ein „<" darin
+            # liess Telegram die ganze Antwort mit BadRequest „can't parse
+            # entities" ablehnen — /tracklist antwortete dann gar nicht.
+            flags.append(f"// {safe(note)}")
         rows.append(f"{icon} {handle}  {' '.join(flags)}")
 
-    body = "\n".join(rows)
     status_extra = f", {paused_n} paused" if paused_n else ""
     if unbekannt_n:
         status_extra += f", {unbekannt_n} ?"
     if ueber_n:
         status_extra += f", {ueber_n} ⏱"
-    text = (
-        f"📋 <b>TRACKINGS · {len(trackings)} aktiv "
-        f"({live_n} live, {rec_n} rec{status_extra})</b>\n"
-        f"\n"
-        f"<pre>{body}</pre>\n"
-        f"\n"
-        f"<code>Aktualisiert: {utc_clock()} UTC</code>"
-    )
-    await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
+    kopf = (f"📋 <b>TRACKINGS · {len(trackings)} aktiv "
+            f"({live_n} live, {rec_n} rec{status_extra})</b>\n")
+    fuss = f"\n<code>Aktualisiert: {utc_clock()} UTC</code>"
+    # v4.2-W175: geteilt — ab rund 80 Trackings war die eine Nachricht ueber
+    # 4096 Zeichen lang (nc.textmore.pre_nachrichten).
+    for text in pre_nachrichten(kopf, rows, fuss):
+        await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
 
 async def diag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """F11: Selbst-Diagnose direkt aus Telegram. Zeigt was im Stack
@@ -6355,7 +6502,8 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # output = f"{prefix}_%03d.mp4").
     cleaned_orphan_parts = 0
     try:
-        for f in glob.glob(os.path.join(RECORDINGS_DIR, "*_part_*.mp4")):
+        for f in (g for m in ("*_part_*.mp4", "*_dcpart_*.mp4")  # W175: + Discord-Teile
+                  for g in glob.glob(os.path.join(RECORDINGS_DIR, m))):
             try:
                 # Defensiv: nur löschen wenn > 1h alt damit wir keine
                 # gerade-laufende Split-Operation killen.
@@ -6843,13 +6991,24 @@ async def _db_vacuum_loop():
     """V37: wöchentliches VACUUM+ANALYZE — ERGÄNZT die F82-Loop (die macht
        alle 6h wal_checkpoint+optimize, aber bewusst kein VACUUM). VACUUM
        kompaktiert die Datei nach Monaten von Inserts/Deletes wirklich.
-       Nur SQLite; MariaDB-Backend ist ein No-op."""
+       Nur SQLite; MariaDB-Backend ist ein No-op.
+
+       v4.2-W176: nach Faelligkeit, nicht nach Laufzeit — vorher schlief die
+       Schleife vor dem ersten Lauf sieben Tage, und jeder Neustart setzte
+       das zurueck (nc/dbwartung.py)."""
     if DB_BACKEND == "mariadb":
         return
+    stand = _nc_dbwartung.stand_datei(DB_PATH)
+    await asyncio.sleep(600)    # nicht ins Startgedraenge
     while True:
         try:
-            await asyncio.sleep(7 * 24 * 3600)
+            rest = _nc_dbwartung.faellig_in(_nc_dbwartung.letzter_lauf(stand),
+                                            _time_mod.time())
+            if rest > 0:
+                await asyncio.sleep(min(rest, 6 * 3600))
+                continue
             def _run():
+                ok = True
                 with db_conn() as conn:
                     # Nicht still: schlaegt das woechentlich fehl, waechst die
                     # Datenbank unbegrenzt weiter und der Planer arbeitet mit
@@ -6861,13 +7020,21 @@ async def _db_vacuum_loop():
                     try:
                         conn.execute("VACUUM")
                     except Exception as e:
+                        ok = False
                         _loop_fehler("_db_vacuum_loop/VACUUM", e)
-            await asyncio.to_thread(_run)
-            log.info("DB-Wartung: ANALYZE+VACUUM durchgelaufen.")
+                return ok
+            if await asyncio.to_thread(_run):
+                _nc_dbwartung.merken(stand, _time_mod.time())
+                log.info("DB-Wartung: ANALYZE+VACUUM durchgelaufen.")
+            else:
+                # Erst nach einem gelungenen VACUUM gilt die Woche als
+                # erledigt; bis dahin alle 6 h ein neuer Versuch.
+                await asyncio.sleep(6 * 3600)
         except asyncio.CancelledError:
             return
         except Exception as e:
-            log.warning("DB-Wartung: %s", e)
+            _loop_fehler("_db_vacuum_loop", e)
+            await asyncio.sleep(3600)
 
 
 async def _daily_summary_loop(bot_app):
@@ -6884,7 +7051,9 @@ async def _daily_summary_loop(bot_app):
             log.info(f"Daily-Summary nächster Run: {target} (in {wait_secs/3600:.1f}h)")
             await asyncio.sleep(wait_secs)
             try:
-                text = _build_daily_summary()
+                # v4.2-W176: neben dem Loop — die Zusammenfassung liest
+                # mehrere Tabellen und hielt sonst den ganzen Bot an.
+                text = await asyncio.to_thread(_build_daily_summary)
                 await bot_app.bot.send_message(
                     chat_id=DAILY_SUMMARY_CHAT_ID,
                     text=text, parse_mode=ParseMode.HTML)
@@ -6910,7 +7079,11 @@ async def _disk_alarm_loop(bot_app):
     while True:
         try:
             try:
-                storage = get_storage_stats()
+                # v4.2-W176: neben dem Loop — get_storage_stats laeuft ueber
+                # den ganzen Aufnahmeordner und fragt die Datenbank; auf einer
+                # vollen, langsamen Platte (genau der Fall dieses Alarms)
+                # hielt es den Bot an.
+                storage = await asyncio.to_thread(get_storage_stats)
                 disk = storage.get("disk") or {}
                 total = disk.get("total_bytes")
                 used = disk.get("used_bytes")
@@ -8272,12 +8445,31 @@ async def _safe_send(bot, chat_id: int, text: str, lang: str = None, **kwargs) -
        v4.1-W6: hier laeuft ALLES zusammen, was der Bot nach Telegram schickt —
        deshalb steht die Uebersetzung genau hier und nicht an 90 Aufrufstellen.
        Was nicht im Katalog steht, bleibt deutsch (nc.i18n.t reicht durch)."""
+    # v4.2-W175: eine bekannte Umwandlung gleich beruecksichtigen — sonst
+    # laeuft JEDE Zeile an TELEGRAM_CHAT_ID erst in ChatMigrated.
+    chat_id = _TG_MIGRIERT.get(chat_id, chat_id)
     if _is_dead(chat_id):
         return False
     text = _nc_i18n.t(text, lang)
     try:
         await bot.send_message(chat_id, _nc_i18n.t(text), **kwargs)
         return True
+    except ChatMigrated as e:
+        # v4.2-W175: stand bisher im allgemeinen TelegramError-Zweig auf
+        # warning — die Gruppe war zur Supergruppe geworden, und jede Meldung
+        # ging still ins Leere. Umschreiben, einmal neu senden, laut melden.
+        neu = getattr(e, "new_chat_id", None)
+        if not neu:
+            log.error("ChatMigrated ohne neue Chat-ID | chat=%s | err=%s", chat_id, e)
+            return False
+        await asyncio.to_thread(_chat_migriert, chat_id, neu)
+        kwargs.pop("message_thread_id", None)       # Themen gehoeren zur alten Gruppe
+        try:
+            await bot.send_message(neu, _nc_i18n.t(text), **kwargs)
+            return True
+        except Exception as e2:
+            log.error("Send nach Umwandlung %s → %s fehlgeschlagen: %s", chat_id, neu, e2)
+            return False
     except RetryAfter as e:
         wait = float(getattr(e, "retry_after", 5)) + 1
         log.warning(f"Telegram rate-limit, warte {wait:.0f}s | chat={chat_id}")
@@ -8315,13 +8507,27 @@ async def _safe_send(bot, chat_id: int, text: str, lang: str = None, **kwargs) -
         return False
 
 
-async def live_check_worker(bot_app):
+async def live_check_worker(bot_app, nr=0):
+    """Arbeitet die Pruefschlange ab.
+
+    v4.2-W176: mit Lebenszeichen je Worker. Ein Worker, der in einem Tracking
+    haengen bleibt, fiel bisher niemandem auf — die anderen arbeiteten weiter,
+    nur langsamer, und die Schlange lief voll. Gewartet wird in Scheiben von
+    60 s, damit eine leere Schlange (keine Trackings) kein Stillstand ist;
+    ein einzelnes Tracking ueber WATCHDOG_STALL_S (420 s) ist dagegen einer.
+    Fehler gehen durch _loop_fehler: mit Traceback und gedrosselt — vorher
+    stand hier ein ungedrosseltes log.error ohne Traceback."""
+    name = f"live-worker-{nr}"
     while True:
-        tracking = await live_check_queue.get()
+        _hb(name)
+        try:
+            tracking = await asyncio.wait_for(live_check_queue.get(), timeout=60)
+        except asyncio.TimeoutError:
+            continue
         try:
             await _handle_single_tracking(tracking, bot_app)
         except Exception as e:
-            log.error(f"Worker-Fehler: {e}")
+            _loop_fehler("live_check_worker", e)
         finally:
             live_check_queue.task_done()
 
@@ -8338,7 +8544,11 @@ async def _handle_single_tracking(t, bot_app):
     # gepausen wurde, würde es sonst trotzdem die Live-Check + Notification
     # auslösen. try_acquire_recording_lock (B10) blockt zwar dann die Aufnahme,
     # aber die Notification ist schon raus.
-    fresh_live, fresh_rec, fresh_paused = get_tracking_state(tid)
+    # v4.2-W176: alle Datenbankaufrufe dieses Pfads NEBEN dem Loop. Er laeuft
+    # je Tracking alle 30-60 s; synchron hielt jeder `db_conn().__exit__` unter
+    # Plattenlast den ganzen Bot an (dieselbe Lage wie W26/W118). Die
+    # Reihenfolge bleibt, weil jeder Aufruf hier awaited wird.
+    fresh_live, fresh_rec, fresh_paused = await asyncio.to_thread(get_tracking_state, tid)
     if fresh_live is None:
         log.debug(f"Tracking #{tid} (@{username}) wurde während Queue gelöscht – skip.")
         return
@@ -8429,21 +8639,28 @@ async def _handle_single_tracking(t, bot_app):
 
     # F27: Atomare Transition-Claims.
     if is_live and not old_last_live:
-        if claim_live_transition(tid, going_live=True):
-            _LIVE_SESSION_START[username] = _time_mod.time()   # F84: Session-Start für Offline-Bilanz
+        if await asyncio.to_thread(claim_live_transition, tid, going_live=True):
+            # v4.2-W176: derselbe Nutzer aus zwei Chats sind zwei Trackings —
+            # Discord-Embed, Live-Thread und Sitzungsstart gehoeren aber dem
+            # NUTZER und laufen nur beim ersten (nc/livemeldung.py). Kein
+            # await zwischen dem Pruefen dort und dem Setzen.
+            _erst = _nc_livemeldung.live_an(username)
+            if _erst:
+                _LIVE_SESSION_START[username] = _time_mod.time()   # F84: Session-Start für Offline-Bilanz
             _is_abo = bool(ABO_STREAM_MODE and _ABO_LIVE.get(_abo_key(username)))   # B159
             # F95: Direkt-Stream-URL (HLS bevorzugt) — wie in Telegram (B61) jetzt
             # auch fürs Discord-Embed (VLC: Medien → Netzwerkstream öffnen).
             stream_url = None
             if detected_info and ENABLE_LIVE_STREAM_LINK:
                 stream_url = detected_info.get("hls_url") or detected_info.get("flv_url")
-            _spawn(_discord_post_user(username,
-                   ((f"🔑 **@{username}** — ABO-LIVE (Sub-only)! Restream gesperrt.\n"
-                     if _is_abo else f"🔴 **@{username}** ist LIVE — Aufnahme läuft!\n")
-                    + f"https://www.tiktok.com/@{username}/live"),
-                   ping_notify=True, kind=("abo" if _is_abo else "live"),
-                   stream_url=stream_url), name="disc-live")
-            _spawn(_discord_live_thread(username, opening=True), name="disc-thread")
+            if _erst:
+                _spawn(_discord_post_user(username,
+                       ((f"🔑 **@{username}** — ABO-LIVE (Sub-only)! Restream gesperrt.\n"
+                         if _is_abo else f"🔴 **@{username}** ist LIVE — Aufnahme läuft!\n")
+                        + f"https://www.tiktok.com/@{username}/live"),
+                       ping_notify=True, kind=("abo" if _is_abo else "live"),
+                       stream_url=stream_url), name="disc-live")
+                _spawn(_discord_live_thread(username, opening=True), name="disc-thread")
             # F63: Quiet Hours — Live-Notification während konfigurierter
             # Stunden unterdrücken. Aufnahme läuft trotzdem (unten), aber kein
             # "@user is LIVE!"-Posting. Spart Nacht-Notifications.
@@ -8498,7 +8715,7 @@ async def _handle_single_tracking(t, bot_app):
         else:
             log.debug(f"@{username} LIVE-Transition schon von anderem Worker behandelt – kein Notif.")
     elif not is_live and old_last_live:
-        if claim_live_transition(tid, going_live=False):
+        if await asyncio.to_thread(claim_live_transition, tid, going_live=False):
             # v4.0-W55: Offline = Session-Ende → Fehler-Backoff/Streak zurücksetzen,
             # damit eine neue Live-Session einen sauberen Aufnahmeversuch bekommt.
             # v4.2-W18: siehe nc/aufnahmefolge.sitzung_zuende — bewusst OHNE
@@ -8507,16 +8724,19 @@ async def _handle_single_tracking(t, bot_app):
             _tot_stand = _nc_folge.sitzung_zuende(
                 _REC_403_STREAK, _REC_BACKOFF_UNTIL, _REC_BACKOFF_LOGGED,
                 _STREAM_DEAD_STREAK, _STREAM_DEAD_BACKOFF_UNTIL, username, tid)
-            # F84: Session-Bilanz (Dauer/Aufnahmen/Größe) fürs Offline-Embed
-            _sess_start = _LIVE_SESSION_START.pop(username, None)
-            _ACTIVE_TIER.pop(username, None)   # v37 W3: Tier-Sichtbarkeit aufräumen
-            _nc_geschuetzt.zuruecksetzen(username, laut=False)   # v4.2-W161: neues Live, neuer Raum
-            _sess = await asyncio.to_thread(_collect_session_stats, username, _sess_start)
-            _spawn(_discord_post_user(username, f"⏹ **@{username}** ist offline — Stream beendet.",
-                                      kind="offline", stats=_sess), name="disc-off")
-            _spawn(_oracle_memorize(username), name="oracle-mem")   # F86: Gedächtnis destillieren
-            _spawn(_director_finalize(username), name="director-final")  # F87: Momente betiteln
-            _spawn(_discord_live_thread(username, opening=False), name="disc-thread-off")
+            # F84: Session-Bilanz (Dauer/Aufnahmen/Größe) fürs Offline-Embed.
+            # v4.2-W176: einmal je NUTZER — der zweite Chat bekam sonst ein
+            # zweites Embed mit leerer Bilanz (der Start war schon weg).
+            if _nc_livemeldung.live_aus(username):
+                _sess_start = _LIVE_SESSION_START.pop(username, None)
+                _ACTIVE_TIER.pop(username, None)   # v37 W3: Tier-Sichtbarkeit aufräumen
+                _nc_geschuetzt.zuruecksetzen(username, laut=False)   # v4.2-W161: neues Live, neuer Raum
+                _sess = await asyncio.to_thread(_collect_session_stats, username, _sess_start)
+                _spawn(_discord_post_user(username, f"⏹ **@{username}** ist offline — Stream beendet.",
+                                          kind="offline", stats=_sess), name="disc-off")
+                _spawn(_oracle_memorize(username), name="oracle-mem")   # F86: Gedächtnis destillieren
+                _spawn(_director_finalize(username), name="director-final")  # F87: Momente betiteln
+                _spawn(_discord_live_thread(username, opening=False), name="disc-thread-off")
             # B45: Echter Stream-Tod (TikTok meldet offline) → Stream-Dead-
             # Tracking resetten. Sonst würde der nächste Live-Start sofort wieder
             # mit aktivem Backoff blockiert sein.
@@ -8617,12 +8837,13 @@ async def _handle_single_tracking(t, bot_app):
         # gerade gescheitert ist, fällt's wieder auf auto zurück.
         scraper = bot_app.bot_data.get("scraper")
         session = scraper.session if scraper else None
-        preferred = decide_preferred_recorder(tid)
+        preferred = await asyncio.to_thread(decide_preferred_recorder, tid)
         if preferred:
             log.info(f"@{username}: letzter Versuch fehlgeschlagen → "
                      f"forciere preferred={preferred}")
+        _max_dauer = await asyncio.to_thread(_tracking_max_duration, tid)
         cmd, recorder_name = await build_recording_cmd(
-            username, output_file, (_tracking_max_duration(tid) or MAX_RECORD_SECS),
+            username, output_file, (_max_dauer or MAX_RECORD_SECS),
             session=session, preferred=preferred,
             prefetched_info=detected_info)   # F35: HLS-URL aus Detection
         if recorder_name:
@@ -8647,10 +8868,12 @@ async def _handle_single_tracking(t, bot_app):
             failed_recorder_label = preferred or "auto"
             if failed_recorder_label == "native_api":
                 failed_recorder_label = "native+api"
-            attempt_id = start_recording_attempt(tid, username, failed_recorder_label)
-            finish_recording_attempt(attempt_id, outcome="resolve_failed",
-                                     error=f"alle Kandidaten gescheitert (preferred={preferred})")
-            clear_recording(tid)
+            attempt_id = await asyncio.to_thread(
+                start_recording_attempt, tid, username, failed_recorder_label)
+            await asyncio.to_thread(
+                finish_recording_attempt, attempt_id, outcome="resolve_failed",
+                error=f"alle Kandidaten gescheitert (preferred={preferred})")
+            await asyncio.to_thread(clear_recording, tid)
             _nc_gegendruck.freigeben()
             return
 
@@ -8658,7 +8881,7 @@ async def _handle_single_tracking(t, bot_app):
                  f"{' '.join(redact_cmd_for_log(cmd))}")
         # F19: Attempt-Eintrag öffnen — wird in handle_recording_finished
         # mit Outcome/RC/Filesize/Stderr abgeschlossen
-        attempt_id = start_recording_attempt(tid, username, recorder_name)
+        attempt_id = await asyncio.to_thread(start_recording_attempt, tid, username, recorder_name)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -8666,8 +8889,9 @@ async def _handle_single_tracking(t, bot_app):
                 stderr=asyncio.subprocess.PIPE)                    # C12
         except Exception as e:
             log.error(f"{recorder_name} Start fehlgeschlagen: {e}")
-            finish_recording_attempt(attempt_id, outcome="start_failed", error=str(e))
-            clear_recording(tid)
+            await asyncio.to_thread(finish_recording_attempt, attempt_id,
+                                    outcome="start_failed", error=str(e))
+            await asyncio.to_thread(clear_recording, tid)
             _nc_gegendruck.freigeben()
             return
 
@@ -8678,7 +8902,8 @@ async def _handle_single_tracking(t, bot_app):
         try:
             active_processes.append(proc)
             _nc_gegendruck.freigeben()      # v4.2-W121b: Reservierung -> Prozess
-            set_recording_file(tid, output_file, proc.pid)
+            if not await asyncio.to_thread(set_recording_file, tid, output_file, proc.pid):
+                raise _AufnahmeLockVerloren(tid)    # v4.2-W176
             _aufnahme_chat_beginnen(username, output_file, proc)   # v4.2-W158
             # F27 + B7-Fix: last_live wurde schon via claim_live_transition gesetzt,
             # recording=1 wurde von try_acquire_recording_lock gesetzt. Der vorherige
@@ -8714,8 +8939,13 @@ async def _handle_single_tracking(t, bot_app):
             await _reap_proc(proc)   # v4.0-W75: kill+wait statt nur kill() → kein Zombie
             try: active_processes.remove(proc)
             except ValueError: pass
-            finish_recording_attempt(attempt_id, outcome="post_spawn_fail", error=str(e))
-            clear_recording(tid)
+            await asyncio.to_thread(finish_recording_attempt, attempt_id,
+                                    outcome="post_spawn_fail", error=str(e))
+            # v4.2-W176: ein verlorener Lock gehoert nicht mehr uns — ihn
+            # freizugeben hiesse, die Aufnahme freizugeben, die ihn inzwischen
+            # haelt.
+            if not isinstance(e, _AufnahmeLockVerloren):
+                await asyncio.to_thread(clear_recording, tid)
             return
     else:
         # F27: Wenn keine Transition stattfand (is_live unverändert) — nichts
@@ -8860,6 +9090,82 @@ def _pruefstand_melden(trackings):
                      _nc_meldetakt.zusatz(unterdr))
 
 
+def _pruef_runde(trackings, now, _pflege_runde):
+    """Eine Runde der Pruefschleife ohne await: faellige Trackings einreihen,
+    Karten pflegen, Pruefstand melden.
+
+    v4.2-W176: eigene Funktion, damit check_all_trackings sie als GANZES
+    absichern kann. Vorher war nur die Datenbankabfrage gekapselt (B83); eine
+    Ausnahme in irgendeinem Nebenschritt — Aufraeumen, _speicher_pflegen,
+    _pruefstand_melden — beendete die Schleife still, und ab da erkannte der
+    Bot keinen Live-Start mehr, ohne dass etwas im Fehlerlog stand."""
+    queued = 0
+    for t in trackings:
+        tid = t["id"]
+        next_at = _NEXT_CHECK_AT.get(tid, 0)
+        if now < next_at:
+            continue
+        # Fällig — queuen
+        try:
+            live_check_queue.put_nowait(t)
+            queued += 1
+            # In-Flight-Guard: NICHT erneut queuen solange der Worker dran
+            # ist (echter next_check kommt nach _handle via _schedule_next_check).
+            _NEXT_CHECK_AT[tid] = now + _INFLIGHT_GUARD_SECS
+        except asyncio.QueueFull:
+            # Worker zu langsam — ältesten Eintrag verwerfen, neuen rein.
+            # v4.2-W118: nicht mehr still. Der verworfene Nutzer wird
+            # erst nach dem In-Flight-Riegel wieder geprueft — ein
+            # Live-Start kommt dann Minuten zu spaet an.
+            try:
+                _weg = live_check_queue.get_nowait()
+                live_check_queue.task_done()
+                _pruefung_verworfen(_weg["username"])
+            except Exception: pass
+            try:
+                live_check_queue.put_nowait(t)
+                queued += 1
+            except Exception:
+                log.warning("Queue voll – Tracking übersprungen.")
+    if queued > 0:
+        log.debug(f"check-loop: {queued}/{len(trackings)} trackings queued")
+    # v4.2-W121: einmalig — ab hier erkennt der Bot Live-Starts wieder.
+    _bereit = _nc_lage.bereit()
+    if _bereit is not None:
+        log.info("Betriebsbereit nach %.1f s — erste Pruefrunde eingereiht "
+                 "(%d Trackings).", _bereit, len(trackings))
+
+    # F35: Cleanup verschwundener Trackings aus next-check-Map
+    # F41-Fix F2: rate-limit-Maps gleich mit aufräumen. Diese sind
+    # username-keyed (nicht tid-keyed), also brauchen wir ein Set von
+    # aktuellen Usernames. Bei vielen add/remove-Zyklen sammeln sich
+    # sonst stale Einträge bis zum Restart.
+    # F46-Bug-Fix B30: list(dict) statt direkter Iteration. Flask-Threads
+    # (z.B. /api/trackings/<id>/recheck) schreiben concurrent in
+    # _NEXT_CHECK_AT — eine reine Comprehension `[k for k in _NEXT_CHECK_AT ...]`
+    # könnte einen RuntimeError 'dictionary changed size during iteration'
+    # werfen wenn parallel ein Key dazukommt. list() ist ein atomarer
+    # Snapshot unter GIL → race-frei.
+    if len(_NEXT_CHECK_AT) > len(trackings) * 2:
+        valid_tids = {t["id"] for t in trackings}
+        stale_keys = [k for k in list(_NEXT_CHECK_AT) if k not in valid_tids]
+        for k in stale_keys:
+            _NEXT_CHECK_AT.pop(k, None)
+            _LAST_CHECK_RESULT.pop(k, None)
+            _nc_prueflage.vergessen(k)
+        # Rate-limit-Maps sind per-username — schon mit list() geschützt
+        valid_users = {t["username"] for t in trackings}
+        for m in (_RATE_LIMIT_BACKOFF, _RATE_LIMIT_PENALTY, _LIVE_STATUS_CACHE, _ABO_LIVE):
+            stale = [u for u in list(m.keys()) if u not in valid_users]
+            for u in stale: m.pop(u, None)
+    # v4.2-W120: unbedingt, alle 10 Minuten — der Riegel oben greift nur
+    # nach vielen Untracks, nie fuer /check- oder Restream-Namen.
+    if _pflege_runde % 120 == 0:
+        _speicher_pflegen()
+    if _pflege_runde % 60 == 0:        # v4.2-W142: alle 5 Minuten
+        _pruefstand_melden(trackings)
+
+
 async def check_all_trackings(bot_app):
     """F35: Adaptive Polling-Loop. Statt alle Trackings im starren CHECK_INTERVAL
        zu prüfen, hat jedes Tracking ein individuelles next_check_at:
@@ -8870,7 +9176,7 @@ async def check_all_trackings(bot_app):
        Loop-Tick ist 5s — granular genug für die Live-Intervalle.
        Beim Start aller Trackings sofort einmal in die Queue."""
     for i in range(WORKER_COUNT):
-        _spawn(live_check_worker(bot_app), name=f"worker-{i}")
+        _spawn(live_check_worker(bot_app, i), name=f"worker-{i}")
     _spawn(reaper_loop(), name="reaper")
     # Live-Reaction-Engine (Whisper-Sprach-Quelle) — nur wenn aktiviert.
     if LIVE_REACT_ENABLED:
@@ -8881,10 +9187,13 @@ async def check_all_trackings(bot_app):
         log.info(f"Storage Auto-Cleanup aktiv: Recordings älter als "
                  f"{RECORDINGS_RETAIN_DAYS} Tage werden täglich gelöscht.")
     # F55: Daily-Summary-Loop. Nur aktiv wenn Ziel-Chat konfiguriert.
+    # v4.2-W176: Zuschauer-Stichprobe und DB-Wartung brauchen keinen Chat und
+    # starten deshalb unbedingt. Sie hingen am Daily-Summary-Chat — ohne den
+    # blieb die Zuschauerkurve leer und das VACUUM lief nie.
+    _spawn(_viewer_sample_loop(), name="viewer-sampler")           # V37
+    _spawn(_db_vacuum_loop(), name="db-vacuum")                    # V37 (F82 bleibt separat)
     if DAILY_SUMMARY_CHAT_ID:
         _spawn(_daily_summary_loop(bot_app), name="daily-summary")
-        _spawn(_viewer_sample_loop(), name="viewer-sampler")       # V37
-        _spawn(_db_vacuum_loop(), name="db-vacuum")                # V37 (F82 bleibt separat)
         log.info(f"Daily-Summary aktiv: täglich {DAILY_SUMMARY_HOUR:02d}:00 "
                  f"in Chat {DAILY_SUMMARY_CHAT_ID}.")
     # F61: Disk-Alarm-Loop. Nutzt DISK_ALARM_CHAT_ID oder DAILY_SUMMARY_CHAT_ID.
@@ -8926,15 +9235,19 @@ async def check_all_trackings(bot_app):
     else:
         log.info(f"📡 Restream deaktiviert: {_rs_why}. Alle anderen Module laufen normal.")
     # Upload-Zeitfenster: aufgeschobene Uploads senden sobald das Fenster offen ist.
-    # Nur aktiv wenn ein Fenster konfiguriert ist (UPLOAD_WINDOW_START != _END).
+    # v4.2-W175: die Schleife laeuft immer — die Warteschlange fuellt auch ein
+    # Neustart mitten im Upload, und ein abgeschaltetes Fenster liess sie liegen.
+    _spawn(_upload_window_loop(bot_app), name="upload-window")
     if UPLOAD_WINDOW_START != UPLOAD_WINDOW_END:
-        _spawn(_upload_window_loop(bot_app), name="upload-window")
         _pend = _upload_queue_count()
         log.info(f"⏫ Upload-Fenster aktiv: {UPLOAD_WINDOW_START:02d}:00–"
                  f"{UPLOAD_WINDOW_END:02d}:00 Uhr (Uploads außerhalb werden aufgeschoben"
                  + (f", {_pend} in Warteschlange" if _pend else "") + ").")
-    # v4.2-W168: alte @name-Themen ins Upload-Thema, Dashboard-Trackings nach Telegram.
-    _spawn(_tg_topic_umzug(bot_app), name="tg-topic-umzug")
+    # v4.2-W168: Dashboard-Trackings nach Telegram. Der Topic-Umzug, der hier
+    # ebenfalls startete, ist seit v4.2-W175 entfernt: er zog @name-Themen ins
+    # gemeinsame Upload-Thema und LOESCHTE sie danach — seit der Betreiber die
+    # Themen je Nutzer zurueckwollte, haette er jedes neu angelegte @name-Thema
+    # samt Videos beim naechsten Start wieder geloescht.
     try:
         await asyncio.to_thread(_dashboard_trackings_umziehen)
     except Exception as e:
@@ -8959,73 +9272,16 @@ async def check_all_trackings(bot_app):
             log.error("check-loop: Trackings-Abruf fehlgeschlagen (%s) — retry in 5s", _e)
             await asyncio.sleep(5)
             continue
-        queued = 0
-        for t in trackings:
-            tid = t["id"]
-            next_at = _NEXT_CHECK_AT.get(tid, 0)
-            if now < next_at:
-                continue
-            # Fällig — queuen
-            try:
-                live_check_queue.put_nowait(t)
-                queued += 1
-                # In-Flight-Guard: NICHT erneut queuen solange der Worker dran
-                # ist (echter next_check kommt nach _handle via _schedule_next_check).
-                _NEXT_CHECK_AT[tid] = now + _INFLIGHT_GUARD_SECS
-            except asyncio.QueueFull:
-                # Worker zu langsam — ältesten Eintrag verwerfen, neuen rein.
-                # v4.2-W118: nicht mehr still. Der verworfene Nutzer wird
-                # erst nach dem In-Flight-Riegel wieder geprueft — ein
-                # Live-Start kommt dann Minuten zu spaet an.
-                try:
-                    _weg = live_check_queue.get_nowait()
-                    live_check_queue.task_done()
-                    _pruefung_verworfen(_weg["username"])
-                except Exception: pass
-                try:
-                    live_check_queue.put_nowait(t)
-                    queued += 1
-                except Exception:
-                    log.warning("Queue voll – Tracking übersprungen.")
-        if queued > 0:
-            log.debug(f"check-loop: {queued}/{len(trackings)} trackings queued")
-        # v4.2-W121: einmalig — ab hier erkennt der Bot Live-Starts wieder.
-        _bereit = _nc_lage.bereit()
-        if _bereit is not None:
-            log.info("Betriebsbereit nach %.1f s — erste Pruefrunde eingereiht "
-                     "(%d Trackings).", _bereit, len(trackings))
-
-        # F35: Cleanup verschwundener Trackings aus next-check-Map
-        # F41-Fix F2: rate-limit-Maps gleich mit aufräumen. Diese sind
-        # username-keyed (nicht tid-keyed), also brauchen wir ein Set von
-        # aktuellen Usernames. Bei vielen add/remove-Zyklen sammeln sich
-        # sonst stale Einträge bis zum Restart.
-        # F46-Bug-Fix B30: list(dict) statt direkter Iteration. Flask-Threads
-        # (z.B. /api/trackings/<id>/recheck) schreiben concurrent in
-        # _NEXT_CHECK_AT — eine reine Comprehension `[k for k in _NEXT_CHECK_AT ...]`
-        # könnte einen RuntimeError 'dictionary changed size during iteration'
-        # werfen wenn parallel ein Key dazukommt. list() ist ein atomarer
-        # Snapshot unter GIL → race-frei.
-        if len(_NEXT_CHECK_AT) > len(trackings) * 2:
-            valid_tids = {t["id"] for t in trackings}
-            stale_keys = [k for k in list(_NEXT_CHECK_AT) if k not in valid_tids]
-            for k in stale_keys:
-                _NEXT_CHECK_AT.pop(k, None)
-                _LAST_CHECK_RESULT.pop(k, None)
-                _nc_prueflage.vergessen(k)
-            # Rate-limit-Maps sind per-username — schon mit list() geschützt
-            valid_users = {t["username"] for t in trackings}
-            for m in (_RATE_LIMIT_BACKOFF, _RATE_LIMIT_PENALTY, _LIVE_STATUS_CACHE, _ABO_LIVE):
-                stale = [u for u in list(m.keys()) if u not in valid_users]
-                for u in stale: m.pop(u, None)
-        # v4.2-W120: unbedingt, alle 10 Minuten — der Riegel oben greift nur
-        # nach vielen Untracks, nie fuer /check- oder Restream-Namen.
         _pflege_runde += 1
-        if _pflege_runde % 120 == 0:
-            _speicher_pflegen()
-        if _pflege_runde % 60 == 0:        # v4.2-W142: alle 5 Minuten
-            _pruefstand_melden(trackings)
-
+        try:
+            _pruef_runde(trackings, now, _pflege_runde)
+            # v4.2-W176: Lebenszeichen erst nach einer GELUNGENEN Runde — eine
+            # Schleife, die jede Runde scheitert, ist fuer den Waechter so tot
+            # wie eine, die steht. Der Zeitstempel geht nach /healthz.
+            _hb("check-loop")
+            _nc_prueflage.runde_gelaufen()
+        except Exception as e:
+            _loop_fehler("check_all_trackings", e)
         await asyncio.sleep(LOOP_TICK)
 
 
@@ -9042,6 +9298,7 @@ _TG_TOPICS = {}                      # "chat_id:username" -> message_thread_id
 _TG_TOPICS_LOCK = threading.Lock()
 _TG_FORUM_CACHE = {}                 # chat_id -> (is_forum: bool, checked_at_monotonic)
 _TG_FORUM_TTL = 3600                 # 1h: gelegentlich neu prüfen (Forum nachträglich aktiviert?)
+_TG_FORUM_FEHLER_TTL = 60            # v4.2-W175: ein Fehler beim Nachsehen gilt nur kurz
 
 def _tg_topics_path() -> str:
     return os.path.join(RECORDINGS_DIR, "tg_topics.json")
@@ -9070,11 +9327,9 @@ def _tg_topics_save():
 
 def _topic_forget(chat_id, username):
     """Mapping verwerfen (z.B. Topic wurde gelöscht) → wird neu erstellt.
-       v4.2-W168: ein Nutzername meint das Upload-Thema — dieselbe Abbildung
-       wie in _ensure_topic, sonst verwirft der Versand den alten @name-
-       Schluessel und schickt weiter in ein geloeschtes Upload-Thema."""
-    if username and not str(username).startswith("#"):
-        username = _TG_UPLOAD_TOPIC_KEY
+       v4.2-W175: derselbe Schluessel wie in _ensure_topic (je Nutzer) —
+       verwirft der Versand einen anderen als den, in den er sendet, geht
+       jeder weitere Upload in das geloeschte Thema."""
     with _TG_TOPICS_LOCK:
         if _TG_TOPICS.pop(_topic_key(chat_id, username), None) is not None:
             _tg_topics_save()
@@ -9086,24 +9341,29 @@ async def _chat_is_forum(chat_id, bot) -> bool:
         return c[0]
     try:
         chat = await bot.get_chat(chat_id)
-        is_forum = bool(getattr(chat, "is_forum", False))
-    except Exception:
-        is_forum = False
+    except Exception as e:
+        # v4.2-W175: bis hier wurde ein Fehler beim Nachsehen (Timeout, 429)
+        # als „kein Forum" eine Stunde lang gemerkt — still. Jeder Upload in
+        # dieser Stunde landete im Hauptchat statt im @name-Thema, und nichts
+        # sagte warum. Jetzt gilt die Antwort nur _TG_FORUM_FEHLER_TTL
+        # Sekunden, und der Grund steht gedrosselt im Log.
+        _TG_FORUM_CACHE[chat_id] = (False, now - _TG_FORUM_TTL + _TG_FORUM_FEHLER_TTL)
+        laut, weg = _nc_meldetakt.melden("tg-forum-pruefung", type(e).__name__, now)
+        if laut:
+            log.error("Telegram: Forum-Pruefung fuer chat %s fehlgeschlagen (%s) — Uploads "
+                      "gehen vorerst ohne Thema in den Chat; neuer Versuch in %d s.%s",
+                      chat_id, e, _TG_FORUM_FEHLER_TTL, _nc_meldetakt.zusatz(weg))
+        return False
+    is_forum = bool(getattr(chat, "is_forum", False))
     _TG_FORUM_CACHE[chat_id] = (is_forum, now)
     return is_forum
 
-# v4.2-W168: EIN Upload-Thema je Gruppe statt eines je Nutzer. Entschieden
-# vom Betreiber am 07.11. („erstellt der Bot mehrere Topics … das sollte
-# unterbunden werden"). Jede getrackte Person bekam ein eigenes @name-Thema —
-# bei 40 Trackings 40 Themen, und die Gruppe war nur noch Seitenleiste. Der
-# Schluessel traegt ein '#' wie das Melde-Thema: kein Handle kollidiert damit.
-_TG_UPLOAD_TOPIC_KEY = "#uploads"
+# v4.2-W175: wieder EIN Forum-Thema je getrackter Person („@name“). W168 hatte
+# alle Uploads einer Gruppe in ein gemeinsames Thema („🎬 Aufnahmen“, Schluessel
+# '#uploads') gelegt; der Betreiber wollte am 11.11. die Sortierung je Nutzer
+# zurueck. Das gemeinsame Thema bleibt in Telegram und in tg_topics.json stehen
+# (seine Videos gehen nicht verloren), bekommt aber keine neuen Uploads mehr.
 _TG_TOPIC_ANLEGEN = {}               # Schluessel -> asyncio.Lock (Review #210)
-
-
-def _upload_topic_name() -> str:
-    """Titel des Upload-Themas — als Funktion gelesen (.env kommt spaeter)."""
-    return (os.getenv("TELEGRAM_UPLOAD_TOPIC_NAME", "") or "").strip() or "🎬 Aufnahmen"
 
 
 async def _ensure_topic(chat_id, username, bot, name=None):
@@ -9111,21 +9371,20 @@ async def _ensure_topic(chat_id, username, bot, name=None):
        (kein Forum / keine Rechte / Fehler → Aufrufer sendet normal).
        'name' übersteuert den Topic-Titel — dafür gibt es das Melde-Thema
        (siehe _ensure_notify_topic), das keinem Nutzer gehört.
-       v4.2-W168: ein Nutzername ohne 'name' (der Upload-Fall) landet im
-       EINEN Upload-Thema der Gruppe, nicht mehr in einem @name-Thema."""
+       v4.2-W175: ein Nutzername ohne 'name' (der Upload-Fall) bekommt sein
+       eigenes Thema „@name“ — wie vor W168."""
     if not TELEGRAM_USE_TOPICS or not username:
         return None
-    if name is None and not str(username).startswith("#"):
-        username, name = _TG_UPLOAD_TOPIC_KEY, _upload_topic_name()
     key = _topic_key(chat_id, username)
     tid = _TG_TOPICS.get(key)
     if tid:
         return tid
     if not await _chat_is_forum(chat_id, bot):
         return None                  # normale Gruppe/Channel/DM → keine Topics
-    # Review #210: seit W168 teilen sich ALLE Uploads einer Gruppe einen
-    # Schluessel. Zwei gleichzeitige Uploads sahen beide „kein Thema" und
-    # legten zwei an — eines blieb verwaist. Nachsehen und Anlegen sind jetzt
+    # Review #210: zwei gleichzeitige Uploads mit demselben Schluessel (seit
+    # W175 derselbe Nutzer in zwei Fan-out-Laeufen, z. B. Warteschlange und
+    # frische Aufnahme) sahen beide „kein Thema" und legten zwei an — eines
+    # blieb verwaist. Nachsehen und Anlegen sind jetzt
     # EIN Schritt je Schluessel (modulglobal, nicht am Objekt: W-Regel).
     async with _TG_TOPIC_ANLEGEN.setdefault(key, asyncio.Lock()):
         return _TG_TOPICS.get(key) or await _topic_anlegen(chat_id, username, bot, name, key)
@@ -9148,92 +9407,6 @@ async def _topic_anlegen(chat_id, username, bot, name, key):
         log.debug(f"Topic-Erstellung übersprungen ({name or '@' + str(username)}, "
                   f"chat {chat_id}): {e}")
         return None
-
-
-async def _tg_topic_umzug(bot_app):
-    """v4.2-W168: die alten @name-Themen in das Upload-Thema umziehen.
-
-    Je Thema: jede noch vorhandene Aufnahme dieses Nutzers neu hochladen (sie
-    landet ueber _ensure_topic im Upload-Thema), und NUR wenn alle angekommen
-    sind, das alte Thema loeschen. Loeschen loescht in Telegram die Videos
-    darin — ohne diese Reihenfolge waeren sie weg. Laeuft einmal je Start;
-    was scheitert, wiederholt der naechste Start ohne Doppel (nc/topicumzug)."""
-    await asyncio.sleep(90)                 # Start-Burst und Polling zuerst
-    if not TELEGRAM_USE_TOPICS:
-        return
-    pfad = os.path.join(RECORDINGS_DIR, "tg_topic_umzug.json")
-    try:
-        zustand = await asyncio.to_thread(_nc_topicumzug.lade, pfad)
-    except (OSError, ValueError) as e:
-        log.error("Topic-Umzug: Fortschritt %s unlesbar (%s) — Umzug ausgesetzt, damit "
-                  "nichts doppelt hochgeladen wird. Datei pruefen oder loeschen.", pfad, e)
-        return
-    with _TG_TOPICS_LOCK:
-        themen = _nc_topicumzug.alte_themen(dict(_TG_TOPICS))
-    if themen:
-        log.info("Topic-Umzug: %d alte @name-Themen werden ins Upload-Thema „%s“ umgezogen.",
-                 len(themen), _upload_topic_name())
-    for chat_id, nutzer, tid in themen:
-        try:
-            await _tg_topic_umziehen(bot_app, chat_id, nutzer, tid, zustand, pfad)
-        except Exception as e:
-            _loop_fehler("tg-topic-umzug", e)
-
-
-async def _tg_topic_umziehen(bot_app, chat_id, nutzer, tid, zustand, pfad):
-    """Ein altes Thema: nachziehen, dann loeschen (siehe _tg_topic_umzug)."""
-    bot = bot_app.bot
-    while _should_defer_upload():           # das Upload-Fenster gilt auch hier
-        await asyncio.sleep(300)
-    rows = await db_async(lambda c: c.execute(
-        "SELECT filepath FROM recordings WHERE username=? ORDER BY id", (nutzer,)).fetchall())
-    alle = [r["filepath"] for r in rows if r["filepath"]]
-    da = await asyncio.to_thread(lambda: [f for f in alle if os.path.isfile(f)])
-    if len(da) < len(alle):
-        log.info("Topic-Umzug @%s: %d von %d Aufnahmen liegen nicht mehr auf der Platte "
-                 "und koennen nicht nachgezogen werden.", nutzer, len(alle) - len(da), len(alle))
-    for datei in _nc_topicumzug.offen(da, zustand, chat_id, nutzer):
-        ergebnis = {}
-        await split_and_send_video(chat_id, datei, bot_app, nutzer, ergebnis=ergebnis)
-        if not _nc_topicumzug.angekommen(ergebnis):
-            log.error("Topic-Umzug @%s: %s kam nicht an (%s) — das alte Thema bleibt "
-                      "stehen, der naechste Start versucht es erneut.", nutzer,
-                      os.path.basename(datei), ergebnis or "nichts gesendet")
-            return
-        _nc_topicumzug.gesendet(zustand, chat_id, nutzer, datei)
-        await asyncio.to_thread(_nc_topicumzug.speichere, pfad, zustand)
-        await asyncio.sleep(5)              # sanft zu Telegram
-    # Review #210: was die Retention schon geloescht hat, kann nicht
-    # nachgezogen werden — im alten Thema liegt dann die EINZIGE Kopie.
-    # Erkennbar ist das an Zeilen ohne Datei und an einem Nutzer ganz ohne
-    # Zeilen (Retention loescht Datei und Zeile). Dann wird das Thema nur
-    # GESCHLOSSEN: die Videos bleiben, neue Uploads gehen ins Upload-Thema.
-    # Eine Zeile, die samt Datei weg ist, waehrend andere noch da sind, sieht
-    # niemand — das bleibt die Grenze dieses Umzugs.
-    behalten = not alle or len(da) < len(alle)
-    try:
-        if behalten:
-            await bot.close_forum_topic(chat_id=chat_id, message_thread_id=tid)
-        else:
-            await bot.delete_forum_topic(chat_id=chat_id, message_thread_id=tid)
-    except Exception as e:
-        # Schon von Hand geloescht ist das Ziel, kein Fehler. Nur genau das —
-        # „chat not found" heisst etwas anderes.
-        _m = str(e).lower()
-        if "thread not found" not in _m and "topic_id_invalid" not in _m:
-            log.error("Topic-Umzug @%s: altes Thema %s in chat %s nicht loesch-/schliessbar: %s — "
-                      "dem Bot das Recht „Themen verwalten“ geben; der naechste Start "
-                      "versucht es erneut (ohne neu hochzuladen).", nutzer, tid, chat_id, e)
-            return
-    with _TG_TOPICS_LOCK:
-        _TG_TOPICS.pop(_topic_key(chat_id, nutzer), None)
-        _tg_topics_save()
-    _nc_topicumzug.erledigt(zustand, chat_id, nutzer)
-    await asyncio.to_thread(_nc_topicumzug.speichere, pfad, zustand)
-    log.info("Topic-Umzug @%s: %d Aufnahme(n) nachgezogen, altes Thema in chat %s %s.",
-             nutzer, len(da), chat_id,
-             "nur geschlossen (darin liegen Videos ohne Datei auf der Platte)" if behalten
-             else "geloescht")
 
 
 # ── Melde-Thema: Live/Offline gehört NIE in den Hauptchannel ────────────
@@ -9298,6 +9471,97 @@ async def _send_live_notice(bot, chat_id: int, text: str, **kwargs) -> bool:
 _tg_topics_load_into_mem()           # gespeicherte Topic-Zuordnungen laden
 
 
+# ── v4.2-W175: einfache Gruppe → Supergruppe (ChatMigrated) ─────────────
+# Plan und Begruendung in nc/telegramfehler.migration_plan. Die Abbildung
+# alt → neu wird gemerkt (Datei neben tg_topics.json): ALLOWED_CHAT_IDS und
+# TELEGRAM_CHAT_ID stehen in der .env, und bis der Betreiber sie anpasst,
+# muessen beide nach einem Neustart weiter auf die neue Gruppe zeigen.
+_TG_MIGRIERT = {}                    # alte Chat-ID -> neue Chat-ID
+
+
+def _tg_migriert_pfad() -> str:
+    return os.path.join(RECORDINGS_DIR, "tg_migriert.json")
+
+
+def _tg_migriert_laden():
+    try:
+        with open(_tg_migriert_pfad(), encoding="utf-8") as f:
+            daten = json.load(f)
+        _TG_MIGRIERT.update({int(k): int(v) for k, v in daten.items()})
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, TypeError, AttributeError) as e:
+        log.error("Telegram: %s unlesbar (%s) — bekannte Umwandlungen in Supergruppen "
+                  "gelten erst wieder nach der naechsten ChatMigrated-Antwort.",
+                  _tg_migriert_pfad(), e)
+
+
+def _chat_migriert(alt, neu) -> int:
+    """Trackings von `alt` auf `neu` umschreiben, Abbildung merken, laut melden.
+    -> Zahl der umgeschriebenen Trackings. Sync — Aufrufer im Loop per to_thread."""
+    if not neu or alt == neu:
+        log.error("Telegram: Umwandlung %s → %s ohne brauchbare neue Chat-ID — nichts "
+                  "umgeschrieben.", alt, neu)
+        return 0
+    _TG_MIGRIERT[alt] = neu
+    try:
+        tmp = _tg_migriert_pfad() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({str(k): v for k, v in _TG_MIGRIERT.items()}, f)
+        os.replace(tmp, _tg_migriert_pfad())
+    except OSError as e:
+        log.error("Telegram: Umwandlung %s → %s nicht gespeichert (%s) — nach einem "
+                  "Neustart gilt wieder die alte ID.", alt, neu, e)
+    with db_conn() as conn:
+        zeilen = [(r["id"], r["username"], r["group_id"]) for r in conn.execute(
+            "SELECT id, username, group_id FROM trackings WHERE group_id IN (?, ?)",
+            (alt, neu)).fetchall()]
+        umziehen, doppelt = _nc_tgfehler.migration_plan(zeilen, alt, neu)
+        for tid in umziehen:
+            conn.execute("UPDATE trackings SET group_id=? WHERE id=?", (neu, tid))
+        for tid in doppelt:
+            conn.execute("DELETE FROM tracking_tags WHERE tracking_id=?", (tid,))
+            conn.execute("DELETE FROM trackings WHERE id=?", (tid,))
+    _TG_FORUM_CACHE.pop(alt, None)
+    laut, weg = _nc_meldetakt.melden("tg-migration", str(alt), _time_mod.monotonic())
+    if laut:
+        log.error("Telegram: Gruppe %s ist jetzt die Supergruppe %s (neue Chat-ID) — %d "
+                  "Tracking(s) umgeschrieben, %d Dublette(n) entfernt. In der .env "
+                  "ALLOWED_CHAT_IDS%s von %s auf %s aendern; bis dahin gilt die neue ID "
+                  "als freigeschaltet.%s", alt, neu, len(umziehen), len(doppelt),
+                  " und TELEGRAM_CHAT_ID" if str(alt) == os.getenv("TELEGRAM_CHAT_ID", "").strip()
+                  else "", alt, neu, _nc_meldetakt.zusatz(weg))
+    return len(umziehen)
+
+
+async def _chat_migriert_async(alt, neu) -> int:
+    return await asyncio.to_thread(_chat_migriert, alt, neu)
+
+
+async def on_chat_migration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Telegram meldet die Umwandlung als Dienstnachricht — in der alten
+    Gruppe mit `migrate_to_chat_id`, in der neuen mit `migrate_from_chat_id`.
+    Dieselbe Umschreibung wie bei ChatMigrated, nur ohne auf den naechsten
+    gescheiterten Versand zu warten."""
+    msg = update.effective_message
+    if msg is None:
+        return
+    if getattr(msg, "migrate_to_chat_id", None):
+        alt, neu = msg.chat_id, msg.migrate_to_chat_id
+    elif getattr(msg, "migrate_from_chat_id", None):
+        alt, neu = msg.migrate_from_chat_id, msg.chat_id
+    else:
+        return
+    try:
+        await asyncio.to_thread(_chat_migriert, alt, neu)
+    except Exception as e:
+        log.error("Telegram: Umwandlung %s → %s nicht nachgezogen: %s — Trackings "
+                  "dieser Gruppe von Hand pruefen.", alt, neu, e, exc_info=True)
+
+
+_tg_migriert_laden()
+
+
 async def split_and_send_video(*a, **kw):
     # v4.2-W19: verbatim nach telegramversand.py extrahiert (bitgenau geprueft).
     # Bot-seitig und nicht unter nc/, weil die Datei telegram.error-Ausnahmen
@@ -9305,7 +9569,8 @@ async def split_and_send_video(*a, **kw):
     # Der Import steht ABSICHTLICH hier drin: telegramversand haengt an
     # telegram, und das soll erst geladen werden, wenn wirklich versendet wird.
     import telegramversand as _tv
-    _tv.konfiguriere(ensure_topic=_ensure_topic, is_dead=_is_dead,
+    _tv.konfiguriere(chat_migriert=_chat_migriert_async,
+                     ensure_topic=_ensure_topic, is_dead=_is_dead,
                      mark_dead=_mark_dead, safe_send=_safe_send,
                      topic_forget=_topic_forget)
     return await _tv.split_and_send_video(*a, **kw)
@@ -9564,6 +9829,63 @@ async def _rec_auto_abschalten(data_dead, tid, username, bot_app, chat_id):
             log.error(f"B54 auto-disable DB write failed: {e}")
 
 
+async def _aufnahme_verteilen(bot_app, offen, output_file, username, started_at,
+                              ended_at, defer):
+    """Upload an alle Fan-Out-Ziele: Telegram-Chats und "discord".
+
+    `offen` gehoert dem Aufrufer: ein Ziel verlaesst die Liste erst, wenn es
+    erledigt (oder eingereiht) ist. Wird der Task dazwischen abgebrochen
+    (Neustart), steht in `offen` genau, was noch fehlt — v4.2-W175.
+    Sequenziell mit 3 s Pause zwischen Chats, damit Telegram nicht ueber
+    mehrere Uploads gleichzeitig stolpert. Ausserhalb des Upload-Fensters →
+    persistente Queue, der _upload_window_loop sendet, wenn es offen ist."""
+    erster = True
+    while offen:
+        ziel = offen[0]
+        dc = ziel == "discord"
+        if defer:
+            # v4.2-W133: Datei-Schreiben neben dem Loop (stand dort).
+            await asyncio.to_thread(_upload_queue_add, None if dc else ziel, output_file,
+                                    username, started_at, ended_at,
+                                    ziel="discord" if dc else None)
+        elif dc:
+            await _aufnahme_nach_discord(username, output_file, started_at)
+        else:
+            if not erster:
+                await asyncio.sleep(3)
+            await split_and_send_video(ziel, output_file, bot_app, username,
+                                       started_at=started_at, ended_at=ended_at)
+        erster = False
+        offen.pop(0)
+
+
+async def _upload_rest_sichern(nachlauf, output_file, username, started_at):
+    """v4.2-W175: beim Stopp die noch offenen Upload-Ziele einreihen.
+
+    Der Abbruch kam NACH dem Eintragen, mitten im Upload
+    (_aufnahmen_abschliessen bricht jeden finish-Task ab); ffmpeg ist dann
+    laengst fertig. Bis hier lief trotzdem der Stopp-Pfad und trug die Datei
+    ein zweites Mal ein — doppelte Zeile im Deck, und der Upload an die
+    restlichen Chats war verloren. Das laufende Ziel zaehlt mit: ob sein Upload durchkam, weiss niemand —
+    lieber ein Video doppelt im Chat als keins."""
+    offen = list(nachlauf.get("offen") or ())
+    for ziel in offen:
+        dc = ziel == "discord"
+        try:
+            await asyncio.to_thread(
+                _upload_queue_add, None if dc else ziel, output_file, username, started_at,
+                nachlauf.get("ende"), ziel="discord" if dc else None,
+                grund="Neustart mitten im Upload")
+        except Exception as e:
+            log.error("Upload @%s → %s beim Stopp NICHT eingereiht (%s) — die Aufnahme "
+                      "liegt auf dem Server, der Upload muss von Hand nachgeholt werden: %s",
+                      username, ziel, e, output_file)
+    if offen:
+        log.warning("Herunterfahren mitten im Upload @%s: %d Ziel(e) in die "
+                    "Upload-Warteschlange gelegt, sie gehen nach dem Neustart raus.",
+                    username, len(offen))
+
+
 async def _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
                                        started_at, attempt_id):
     """v4.2-W121: eine beim Stopp abgebrochene Aufnahme abschliessen.
@@ -9764,6 +10086,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
 
     watchdog_task = asyncio.create_task(_stall_watchdog())
     refresh_task = asyncio.create_task(_url_refresh_watchdog())   # B58
+    nachlauf = {"eingetragen": False, "offen": [], "ende": None}   # W175, s. _upload_rest_sichern
     try:
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -9897,6 +10220,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                           duration_secs=int(duration),
                           tracking_id=tid,
                           started_at=started_at, ended_at=ended_at)
+            nachlauf.update(eingetragen=True, ende=ended_at)
 
             # F37: Multi-Chat-Fan-Out. Wenn mehrere Chats denselben User tracken,
             # sollen ALLE die OFFLINE-Notif + Upload bekommen, nicht nur der Chat
@@ -9958,19 +10282,11 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                     except Exception as e:
                         log.warning(f"OFFLINE-Notif chat={fchat} @{username}: {e}")
 
-            # Upload an alle Fan-Out Chats (sequenziell mit 3s Pause zwischen Chats
-            # damit Telegram nicht über mehrere Uploads gleichzeitig stolpert).
-            # Außerhalb des Upload-Fensters → in die persistente Queue legen,
-            # der _upload_window_loop sendet sie wenn das Fenster offen ist.
-            for idx, fchat in enumerate(target_chats):
-                if _defer:
-                    # v4.2-W133: Datei-Schreiben neben dem Loop (stand dort).
-                    await asyncio.to_thread(_upload_queue_add, fchat, output_file,
-                                            username, started_at, ended_at)
-                    continue
-                if idx > 0: await asyncio.sleep(3)
-                await split_and_send_video(fchat, output_file, bot_app, username,
-                                           started_at=started_at, ended_at=ended_at)
+            # Upload an alle Fan-Out Chats und (W175) nach Discord.
+            nachlauf["offen"] = list(target_chats) + (
+                ["discord"] if _nc_dcaufnahme.an() else [])
+            await _aufnahme_verteilen(bot_app, nachlauf["offen"], output_file, username,
+                                      started_at, ended_at, _defer)
         else:
             # Kein File oder leer
             if file_exists:
@@ -10068,6 +10384,11 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         # F25: Bei Shutdown (SIGTERM) wird der Task gecancelt. Der Subprocess
         # läuft sonst orphan weiter — proc.kill() vor propagieren.
         cancelled = True
+        # v4.2-W175: Abbruch NACH dem Eintragen (mitten im Upload) — nicht
+        # zweimal eintragen, Rest einreihen (Begruendung: _upload_rest_sichern).
+        if nachlauf["eingetragen"]:
+            await _upload_rest_sichern(nachlauf, output_file, username, started_at)
+            raise
         # v4.2-W121: SIGTERM statt SIGKILL, und die Datei wird EINGETRAGEN.
         # Vorher blieb sie ohne Datenbankzeile liegen — eine "Waise", die
         # /api/rec/orphans/clean zum Loeschen anbietet. Jedes Update (also
@@ -10490,6 +10811,27 @@ def _auth_cookie(resp):
     return resp
 
 
+@dashboard_app.before_request
+def _herkunft_guard():
+    """v4.2-W178: schreibende Anfragen fremder Seiten abweisen (CSRF).
+
+    _auth_guard laesst den SSH-Tunnel ohne Token durch — und damit auch das
+    versteckte Formular jeder anderen Seite im selben Browser, die an
+    localhost:3000 schickt. Die Regel und ihre Begruendung: nc/herkunft.py."""
+    grund = _nc_herkunft.entscheiden(request.method, request.path, request.headers,
+                                     request.remote_addr, TRUSTED_PROXIES)
+    if grund is _nc_herkunft.ERLAUBT:
+        return _nc_herkunft.ERLAUBT          # None: Flask macht weiter
+    laut, weg = _nc_meldetakt.melden("deck-herkunft", "fremd", _time_mod.monotonic())
+    if laut:
+        log.error("Deck: %s %s von fremder Seite abgewiesen (%s) — kam das nicht aus "
+                  "dem Deck selbst, hat eine andere Seite im Browser versucht, hier zu "
+                  "schreiben.%s", request.method, request.path, grund,
+                  _nc_meldetakt.zusatz(weg))
+    _txt = _nc_i18n.t(_nc_herkunft.ABGEWIESEN)
+    return jsonify(ok=False, error=_txt, grund=grund), 403
+
+
 # v37 Sicherheit: HTTP-Rate-Limiting gegen Flutung teurer Routen.
 # Localhost (dein SSH-Tunnel/Operator-Zugriff) ist bewusst ausgenommen — der
 # Operator wird nie ausgesperrt; nur externe IPs werden begrenzt.
@@ -10824,13 +11166,13 @@ def _brain_growth_snapshot():
         triples = int(ks.get("triples", 0))
         vectors = int(ss.get("vectors", 0))
         users = int(ss.get("users", 0))
-        sessions = 0
+        # v4.2-W177: aus brain.db (stream_sessions) statt chat_log.session_id
+        # — die Tabelle gibt es nicht, der Wert stand still auf 0.
         try:
-            with db_conn() as conn:
-                r = conn.execute("SELECT COUNT(DISTINCT session_id) AS c FROM chat_log").fetchone()
-                sessions = int(r["c"]) if r and r["c"] else 0
-        except Exception:
-            pass
+            sessions = b.memory.session_count()
+        except Exception as e:
+            log.warning("brain growth snapshot: Sessions nicht zaehlbar: %s", e)
+            sessions = 0
         with db_conn() as conn:
             conn.execute(
                 "INSERT INTO brain_growth (ts, triples, vectors, users, sessions) "
@@ -11702,29 +12044,31 @@ def _public_stats() -> dict:
     # betreiber-gepflegt (DONATION_CURRENT_EUR): PayPal bietet keine öffentliche
     # Live-Summe ohne API/IPN. Ziel + Adresse sind per env übersteuerbar.
     try:
-        goal = _nc_envnum.env_float("DONATION_GOAL_EUR", 500.0)
-        # v4.0-W102: current = env-Basis + im Dashboard manuell erfasste Spenden.
-        cur = _nc_envnum.env_float("DONATION_CURRENT_EUR", 0.0)
-        try:
-            cur += _manual_donations_total()
-        except Exception:
-            pass
-        _pp = os.getenv("DONATION_PAYPAL", "paypal@voice4you.org").strip()
-        _pp_url = ("https://www.paypal.com/donate/?business="
-                   + _urllib_parse.quote(_pp)
-                   + "&currency_code=EUR&item_name="
-                   + _urllib_parse.quote("Azrael Sentinel - Betrieb")) if _pp else ""
+        # v4.2-W173: Ziel und Stand aus nc/spendenziel.py — dieselben Zahlen wie
+        # Overlay, Sendebild und /spenden. Bis W172 zaehlte die Website nur
+        # manuell erfasste Spenden, seit Installation; eine Kick-Spende kam
+        # hier nie an.
+        with db_conn() as _conn:
+            _ziel = _nc_spendenziel.stand(_conn)
+        # v4.2-W172: eine Quelle fuer Website, Deck und /spenden.
+        _pp = _nc_spendeninfo.paypal()
+        _pp_url = _nc_spendeninfo.paypal_url(_pp)
         stats["donation"] = {
-            "goal_eur": round(goal, 2),
-            "current_eur": round(cur, 2),
-            "pct": round(max(0.0, min(100.0, (cur / goal * 100.0) if goal > 0 else 0.0)), 1),
+            "goal_eur": _ziel["ziel_eur"],
+            "current_eur": _ziel["aktuell_eur"],
+            "pct": _ziel["prozent"],
             "paypal": _pp,
             "paypal_url": _pp_url,
             "paypal_qr": _nc_qrsvg.qr_svg(_pp_url) if _pp_url else "",
-            "period": os.getenv("DONATION_PERIOD", "monatlich").strip(),
+            "period": _ziel["zeitraum"],
+            "label": _ziel["label"],
+            "purpose": _ziel["zweck"],
             "currency": "EUR",
         }
-    except Exception:
+    except Exception as e:
+        # War ein stiller Auffang: der Block verschwand von der Website, und
+        # „nichts konfiguriert" sah aus wie „Datenbank weg" (W99).
+        _loop_fehler("spendenziel-website", e)
         stats["donation"] = {}
 
     # v4.0-W94: Krypto-Spenden — Adressen aus env, BTC-Empfang best-effort live.
@@ -13016,13 +13360,9 @@ def api_quiet_hours():
 
 
 # v4.0-W116: _parse_eur/_manual_donations_rows/_manual_donations_total liegen
-# jetzt in nc/donationsdb.py. Die Delegation bleibt nur fuer _manual_donations_total
-# — die Statistik-Route braucht den Namen weiterhin; die beiden anderen hatten im
-# Bot ausser den /api/donations-Routen keinen Leser mehr und wuerden hier tot
-# liegenbleiben (genau der Zerfall, den docs/MODULARISIERUNG.md 3.1 verhindert).
-def _manual_donations_total():
-    """Summe aller manuell erfassten Spenden in EUR (backend-agnostisch)."""
-    return _nc_donationsdb.manual_total()
+# in nc/donationsdb.py. v4.2-W173: auch die letzte Delegation ist weg — die
+# Website rechnet ihr Spendenziel seither ueber nc/spendenziel.py, und eine
+# getrennt addierte manuelle Summe zaehlte dort jede Deck-Spende doppelt.
 
 
 
@@ -13576,6 +13916,26 @@ _RS_STATUS_EXEC = _cf_thread.ThreadPoolExecutor(max_workers=1,
                                                 thread_name_prefix="rs-status")
 
 
+def _restream_soll_schreiben(rid, on, zeit):
+    """v4.2-W179: Soll-Zustand eines Restreams (B123) — laeuft im Status-
+    Schreiber. Laut statt log.debug: ein nicht gespeichertes desired=0 laesst
+    den Restream nach dem naechsten Neustart wieder aufstehen."""
+    try:
+        with db_conn() as conn:
+            conn.execute(
+                "UPDATE restreams SET desired=?, desired_since=? WHERE id=?",
+                (1 if on else 0, zeit if on else None, rid))
+            conn.commit()
+    except Exception as e:
+        laut, weg = _nc_meldetakt.melden("restream-soll", type(e).__name__,
+                                         _time_mod.monotonic())
+        if laut:
+            log.error("Restream #%s: Soll-Zustand %s nicht gespeichert (%s: %s) — "
+                      "der Wiederanlauf nach einem Neustart folgt dem alten.%s",
+                      rid, "an" if on else "aus", type(e).__name__, e,
+                      _nc_meldetakt.zusatz(weg))
+
+
 def _restream_status_schreiben(rid, status, pid, err, zeit):
     """Schreibt einen Statuswechsel. Ein Fehler ist laut, nicht `pass`: das
     Deck liest den Status aus dieser Tabelle, und ein stilles Scheitern liess
@@ -13633,6 +13993,21 @@ def _ov_atomic_write(path, text):
 # Ohne ihn stapeln sich bei langsamer Platte die Schreib-Threads: der Takt
 # kommt jede Sekunde, ein Schreibvorgang dauerte im Störfall über 60.
 _OVERLAY_SCHREIBT = {"an": False}
+
+
+def _overlay_takt():
+    """v4.2-W179: den Sekundentakt des Overlays FEUERN, nicht abwarten.
+
+    Bis hierher stand im -progress-Leser `await _write_restream_overlay_async()`.
+    Das hielt den Loop frei (W26), aber nicht den Leser: unter Plattenlast
+    dauerte ein Schreibvorgang bis 68 s, und so lange las niemand die
+    Fortschrittsmarken. _stall_watch sah dann keinen Zuwachs und erklaerte den
+    GESUNDEN tee-Sender nach RESTREAM_STALL_TIMEOUT_S (75 s) fuer haengend —
+    und erntete ihn. Gemeldet als „alle drei Ziele brechen gleichzeitig weg":
+    es war ein Prozess, also fielen alle Ziele zusammen. Die Sperre
+    _OVERLAY_SCHREIBT haelt einen Stau weiterhin auf genau einen Thread."""
+    if not _OVERLAY_SCHREIBT["an"]:     # schreibt schon einer: diesen Takt auslassen
+        _spawn(_write_restream_overlay_async(), name="overlay-takt")
 
 
 async def _write_restream_overlay_async(reaction_fresh_secs=None):
@@ -13734,20 +14109,15 @@ def _write_restream_overlay(reaction_fresh_secs=None):
     if (_time_mod.monotonic() - c.get("ts", 0.0)) > 5.0:
         goal_line = follow_line = ""
         try:
-            tgt = _OVERLAY.get("goal_target") or 0
             fr = None
             _fc = 0
             with db_conn() as conn:
-                if tgt and float(tgt) > 0:
-                    cur = 0.0
-                    _sess = _OVERLAY_SESSION.get("start")
-                    # B120: Spendenziel zaehlt nur Einnahmen eigener Kanaele.
-                    _dq = ("SELECT amount FROM overlay_events WHERE kind='donation'"
-                           " AND platform IN" + _nc_revenue.sql_in()
-                           + (" AND ts >= ?" if _sess else ""))
-                    for r in conn.execute(_dq, ((_sess,) if _sess else ())):
-                        try: cur += float(str(r["amount"]).replace(",", ".").replace("\u20ac", "").strip())
-                        except (TypeError, ValueError): pass
+                # v4.2-W173: dasselbe Ziel wie Website und /spenden
+                # (nc/spendenziel.py) — bis hier zaehlte das Sendebild nur
+                # ab Stream-Start und gegen ein eigenes Ziel.
+                _z = _nc_spendenziel.stand(conn)
+                if _z["ziel_eur"] > 0:
+                    cur, tgt = _z["aktuell_eur"], _z["ziel_eur"]
                     goal_line = f"[{_ov_bar(cur, tgt, 10)}]  {cur:.0f}/{float(tgt):.0f}"
                 fr = conn.execute("SELECT name FROM overlay_events WHERE kind='follow' "
                                   "ORDER BY id DESC LIMIT 1").fetchone()
@@ -14059,6 +14429,9 @@ def _restream_html_overlay_start(rid, source_url=None):
        Design gegen den gefährlichsten Fehlerfall (stallender Overlay-Input
        stallt den GANZEN ffmpeg): der Writer pusht mit FESTEM Takt und
        wiederholt notfalls das letzte Bild — ffmpeg hungert nie."""
+    # v4.2-W179: Reste eines frueheren Laufs zuerst beenden — sonst je
+    # Reconnect ein weiterer Schuss-Task und ein weiterer Dauer-Chromium.
+    _restream_html_overlay_stop(rid)
     if RESTREAM_OVERLAY_MODE != "html":
         return None
     binpath = _find_chromium()
@@ -14178,14 +14551,36 @@ def _restream_html_overlay_start(rid, source_url=None):
     return fifo
 
 
+def _fifo_schreiber_wecken(fifo):
+    """v4.2-W179: einen Schreiber wecken, der in open(fifo, "wb") haengt.
+
+    Ein Feeder-Thread oeffnet seine FIFO blockierend und wartet dort auf den
+    Leser (ffmpeg). Startet ffmpeg nie oder ist er schon weg, steht der Thread
+    fuer immer — das Stop-Ereignis sieht er erst NACH dem open. Gemessen beim
+    Avatar-Feeder: jeder Fehlstart liess einen Thread liegen. Eine
+    nicht-blockierende Leseoeffnung laesst sein open zurueckkehren; danach
+    sieht er das gesetzte Ereignis und endet. Dasselbe Mittel wie
+    _restream_tts_stop seit jeher."""
+    if not fifo:
+        return
+    try:
+        fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        os.close(fd)
+    except OSError:
+        pass   # Aufraeumen: FIFO schon weg, dann wartet auch niemand darauf
+
+
 def _restream_html_overlay_stop(rid):
+    """v4.2-W179: laeuft auch in einem Worker-Thread (Browser-Ende bis 5 s) —
+    deshalb wird der Schuss-Task per call_soon_threadsafe beendet."""
     st = _HTMLOV.pop(rid, None)
     if not st:
         return
     st["stop"].set()
+    _fifo_schreiber_wecken(st.get("fifo"))
     t = st.get("task")
     if t and not t.done():
-        t.cancel()
+        t.get_loop().call_soon_threadsafe(t.cancel)
     if st.get("browser") is not None:
         # Ohne das liefe der Chromium nach jedem Restream weiter — ein
         # Kern-Bruchteil je beendetem Restream, bis zum Neustart des Bots.
@@ -14332,6 +14727,9 @@ def _restream_avatar_feeder_start(rid):
        deshalb fest und schreibt in jeder Periode ein Bild — notfalls dasselbe
        nochmal. open() blockt, bis ffmpeg liest, darum ein eigener Thread.
     """
+    # v4.2-W179: ein Start ueberschrieb _AVATARFEED[rid], ohne den alten
+    # Feeder zu beenden — der lief weiter, je Reconnect einer mehr.
+    _restream_avatar_feeder_stop(rid)
     ruhe = _avatar_frames_laden(RESTREAM_AVATAR_LOOP, RESTREAM_AVATAR_ALPHA)
     if not ruhe:
         return None
@@ -14450,6 +14848,7 @@ def _restream_avatar_feeder_stop(rid):
     if not st:
         return
     st["stop"].set()
+    _fifo_schreiber_wecken(st.get("fifo"))    # v4.2-W179: haengt sonst in open()
     try:
         if os.path.exists(st["fifo"]):
             os.unlink(st["fifo"])
@@ -14680,6 +15079,13 @@ class RestreamManager:
         # Ueberlebt den Reconnect (self._procs[rid] wird dabei neu angelegt),
         # damit im Panel sichtbar bleibt, dass hier etwas grundsaetzlich klemmt.
         self._stallkills = {}
+        # v4.2-W179: der Monitor gehoert NICHT in den _procs-Eintrag allein.
+        # Im Reconnect-Backoff hat _monitor den Eintrag schon entfernt und
+        # schlaeft; stop() fand dann nichts, und der Monitor startete danach
+        # trotzdem neu — mit desired=1, also auch ueber jeden Neustart hinweg.
+        self._monitors = {}         # rid -> Monitor-Task, solange er laeuft
+        self._sitzung = {}          # rid -> Zaehler, den jedes stop() erhoeht
+        self._im_wiederanlauf = set()   # rids, deren Monitor gerade start() ruft
 
     def _set_status(self, rid, status, pid=None, err=None):
         # V37-P5 (BH3-Fix): Registry-Pflege. Der Laufstatus heißt im Manager
@@ -14724,16 +15130,19 @@ class RestreamManager:
             fut.result(timeout=30)       # kein Loop in diesem Thread: warten
 
     def _set_desired(self, rid, on: bool):
-        """B123: Soll-Zustand persistieren — ueberlebt Absturz und Neustart."""
+        """B123: Soll-Zustand persistieren — ueberlebt Absturz und Neustart.
+
+        v4.2-W179: ueber den Status-Schreiber (_RS_STATUS_EXEC), nicht im Loop.
+        Ein Commit unter MariaDB ist ein Netz-Rundlauf (W157), und start()/
+        stop() riefen das mitten im Loop. Derselbe Ein-Thread-Schreiber haelt
+        zugleich die Reihenfolge zu den Statuswechseln — _soll_lesen liest
+        dort und sieht damit jedes vorher abgesetzte stop()."""
+        fut = _RS_STATUS_EXEC.submit(_restream_soll_schreiben, rid, on,
+                                     datetime.now(timezone.utc).isoformat())
         try:
-            with db_conn() as conn:
-                conn.execute(
-                    "UPDATE restreams SET desired=?, desired_since=? WHERE id=?",
-                    (1 if on else 0,
-                     datetime.now(timezone.utc).isoformat() if on else None, rid))
-                conn.commit()
-        except Exception as e:
-            log.debug("Soll-Zustand #%s nicht speicherbar: %s", rid, e)
+            asyncio.get_running_loop()
+        except RuntimeError:
+            fut.result(timeout=30)       # kein Loop in diesem Thread: warten
         if not on:
             _RESTREAM_GUARD.forget(rid)
             # v4.2-W43: Die Drossel gehoert zur Sende-Sitzung, nicht zum
@@ -15036,8 +15445,9 @@ class RestreamManager:
                         # Datei drei Mal pro Sekunde neu zu erzeugen.
                         if RESTREAM_OVERLAY and pname is None:
                             # ~1×/Sek. NEBEN dem Loop: synchron hat dieser
-                            # Aufruf den Bot bis zu 68s eingefroren (W26).
-                            await _write_restream_overlay_async()
+                            # Aufruf den Bot bis zu 68s eingefroren (W26);
+                            # abgewartet hielt er den Leser an (W179).
+                            _overlay_takt()
         except asyncio.CancelledError:
             # Der Normalfall beim Prozessende: _monitor cancelt beide Leser,
             # nachdem ffmpeg gewartet wurde. Das ist KEINE Blindheit — hier
@@ -15490,6 +15900,11 @@ class RestreamManager:
             _av_feed = await asyncio.to_thread(_restream_avatar_feeder_start,
                                                rid)
         _independent = (RESTREAM_MULTI_MODE == "independent" and _multi)
+        # v4.2-W179: VOR dem try. Stand `_kw = {}` erst hinter Kommandobau und
+        # Overlay-Schreiben, endete jeder Fehler dort im except mit
+        # UnboundLocalError (`if _kw:`) — der Status blieb auf „starting", und
+        # der Monitor, der start() rief, starb mit.
+        _kw, _br_fds = {}, None
         try:
             if _independent:
                 # V37-INDEP / W77: Hauptprozess = ERSTE konfigurierte Plattform
@@ -15511,8 +15926,10 @@ class RestreamManager:
                                           tonlos=rid in self._tonlos,
                                           bruecke=_bruecke_an)
             if RESTREAM_OVERLAY:
-                _write_restream_overlay()      # Textdateien anlegen, BEVOR drawtext sie öffnet
-            _kw = {}
+                # Textdateien anlegen, BEVOR drawtext sie öffnet — abgewartet,
+                # aber im Thread (W179): os.replace stand unter Plattenlast bis
+                # 68 s, und hier hielt das den Loop (W26) beim Sendestart an.
+                await asyncio.to_thread(_write_restream_overlay)
             if _bruecke_an:
                 # Leseende als stdin des Senders, Schreibende fuer die Bruecke.
                 # Eine os.pipe statt stdin=PIPE: die Bruecke schreibt aus
@@ -15525,13 +15942,14 @@ class RestreamManager:
             if _bruecke_an:
                 os.close(_br_fds[0])
         except Exception as e:
-            if _kw:
-                for _fd in _br_fds:
-                    try:
-                        os.close(_fd)
-                    except OSError:
-                        pass           # das Leseende ist nach dem Spawn schon zu
-            _restream_tts_stop(rid)            # B73: Feeder/FIFO bei Fehlstart nicht leaken
+            for _fd in (_br_fds or ()):
+                try:
+                    os.close(_fd)
+                except OSError:
+                    pass           # das Leseende ist nach dem Spawn schon zu
+            # B73 / W179: alle drei Feeder, nicht nur die Stimme — Overlay-
+            # Schuss, Dauer-Chromium und Avatar-Thread blieben sonst liegen.
+            await self._nebenlaeufer_abraeumen(rid)
             self._set_status(rid, "error", err=f"ffmpeg-Start: {e}")
             return {"ok": False, "error": str(e)}
         # B141: echte Kick-URL + tee-Ziel-Reihenfolge dieses Prozesses festhalten.
@@ -15546,6 +15964,7 @@ class RestreamManager:
                             "attempts": _attempts, "transcode": transcode,
                             "kick_url": _kick_url, "base_url": _base_url,
                             "tee_targets": _tee_targets,
+                            "src_watch": _src_watch,     # v4.2-W179: ueber Reconnects
                             "health": {"bitrate": None, "fps": None, "frame": 0, "drop": 0,
                                        "speed": None, "out_time": "00:00:00", "size_mb": 0}}
         _nc_rutil.freigeben(self, rid)   # ab hier greift `rid in self._procs`
@@ -15618,7 +16037,7 @@ class RestreamManager:
                 _spawn(_discord_notify(_msg), name="comm-liveping")
             except Exception as _e:
                 log.debug("community live-ping: %s", _e)
-        self._procs[rid]["monitor"] = asyncio.create_task(self._monitor(rid))
+        self._monitor_eintragen(rid)
         # v4.0-W113: Stillstands-Waechter. _monitor haengt an proc.wait() und
         # sieht deshalb nur den TOTEN ffmpeg — nicht den, der lebt und nichts
         # mehr sendet. Genau der war bisher unsichtbar.
@@ -15865,10 +16284,16 @@ class RestreamManager:
            Hauptprozess: fällt dieser Relay aus, läuft Kick (und die anderen
            Zusatz-Relays) ungestört weiter. Ein simpler Reconnect-Loop hält
            ihn am Leben, solange der rid aktiv ist."""
+        # v4.2-W179: an DIESEN Eintrag gebunden, nicht an die rid. Nach einem
+        # Reconnect steht unter derselben rid ein neuer Eintrag mit eigenen
+        # Relays; `rid in self._procs` hielt den alten Relay dann am Leben —
+        # zwei Publisher auf einem Key, die sich gegenseitig rauswerfen.
+        mein = self._procs.get(rid)
+
         async def _relay_loop():
             attempt = 0
             cur_url = source_url
-            while rid in self._procs:
+            while mein is not None and self._procs.get(rid) is mein:
                 try:
                     _started = _time_mod.monotonic()
                     cmd = _build_restream_cmd(cur_url, "", "", transcode,
@@ -15886,7 +16311,7 @@ class RestreamManager:
                     p = await asyncio.create_subprocess_exec(
                         *cmd, stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
-                    slot = self._procs.get(rid, {}).get("indep", {})
+                    slot = mein.setdefault("indep", {})
                     _eintrag = {"proc": p, "started": _time_mod.monotonic(),
                                 "health": {"bitrate": None, "fps": None,
                                            "frame": 0, "drop": 0, "speed": None,
@@ -15919,8 +16344,8 @@ class RestreamManager:
                     if rc and _tail:
                         log.error("Restream #%d [%s]: Relay rc=%s — stderr: %s",
                                   rid, pname, rc, _tail)
-                    if rid not in self._procs:
-                        break            # sauber gestoppt
+                    if self._procs.get(rid) is not mein:
+                        break            # sauber gestoppt oder neu aufgebaut
                     # v4.0-W87: lief der Relay eine Weile, war er gesund — der Tod
                     # ist ein FRISCHES Ereignis, also volles Reconnect-Budget zurück.
                     # v4.0-W115: derselbe Vertrag, jetzt aus dem Regelsatz und mit
@@ -15976,7 +16401,7 @@ class RestreamManager:
                     await asyncio.sleep(5)
             # Beim Verlassen: eigenen Prozess best-effort beenden UND reapen
             # (v4.0-W75: vorher nur terminate() → Zombie je aufgegebenem Relay).
-            slot = self._procs.get(rid, {}).get("indep", {})
+            slot = (mein or {}).get("indep", {})
             _e = slot.pop(pname, None)
             if _e and _e.get("proc"):
                 await _reap_proc(_e["proc"])
@@ -16021,7 +16446,7 @@ class RestreamManager:
                                              RESTREAM_CANVAS_H, stufe),
                     grund.rstrip("."))   # der Grund endet selbst auf Punkt
 
-    async def _ton_folge(self, rid, ran, tail, attempts):
+    async def _ton_folge(self, rid, ran, tail, attempts, sitz=None):
         """v4.2-W106: Ende des Prozesses auf eine tonlose Quelle pruefen. -> bool
 
         ffmpeg stirbt am Ton-Map in unter einer Sekunde, und JEDER weitere
@@ -16044,7 +16469,7 @@ class RestreamManager:
                         "teils ab). Gilt bis zum naechsten Neuaufbau.", rid)
             self._set_status(rid, "starting", err="Quelle ohne Ton → Stille-Spur")
             await asyncio.sleep(1)
-            await self.start(rid, _attempts=attempts)
+            await self._wiederanlauf(rid, sitz, _attempts=attempts)
             return True
         self._tonlos.discard(rid)
         return False
@@ -16053,6 +16478,9 @@ class RestreamManager:
         info = self._procs.get(rid)
         if not info:
             return
+        # v4.2-W179: Sitzung und Quellen-Waechter beim Anlauf festhalten —
+        # jeder Wiederanlauf unten prueft, ob stop() inzwischen kam.
+        sitz = (self._sitzung.get(rid, 0), bool(info.get("src_watch")))
         proc = info["proc"]
         sink = []
         prog_task = asyncio.create_task(self._read_progress(rid, proc))
@@ -16067,46 +16495,7 @@ class RestreamManager:
         tail = "".join(sink)[-800:]
         ran = _time_mod.monotonic() - info["started"]
         transcode_used = info.get("transcode")
-        # V37-DIAG2: bei Multi-Target erkennen, WELCHES Ziel den Abbruch
-        # verursacht hat. rtmps-Handshake-Fehler (Kick/IVS) sehen anders aus
-        # als rtmp-Fehler (Twitch). Das beendet das Raten bei "nur ein Ziel".
-        _tl = tail.lower()
-        # B138: Diagnose NICHT mehr an _multistream_targets() haengen — bei
-        # genau einem Ziel (nur Kick) lief der Abbruch bisher kommentarlos
-        # durch. Und log.error statt log.warning: 'Input/output error' auf
-        # rtmps://…live-video.net ist die Meldung, die der Betreiber im
-        # error.log sucht; auf warning erschien sie dort nie.
-        if ("tls" in _tl or "ssl" in _tl or "handshake" in _tl
-                or "end of file" in _tl or "input/output error" in _tl
-                or "i/o error" in _tl):
-            # v4.1-W10: WELCHES Ziel steht wirklich im Auszug? Bis hierher
-            # nannte diese Zeile kategorisch Kick — auch wenn im stderr
-            # ausschliesslich der Twitch-Slave stand. Der Betreiber prueft
-            # danach Kick-Key, Kick-App und IP-Block bei Kick, waehrend Twitch
-            # das Problem ist. Eine Diagnose, die auf die falsche Plattform
-            # zeigt, ist schlimmer als gar keine. Verglichen wird auf den
-            # INGEST-HOST, nie auf den Plattformnamen: Kick und Twitch liegen
-            # beide auf live-video.net, und 'twitch' kommt in Twitchs eigener
-            # URL nicht vor.
-            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
-            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
-            _wen = ", ".join(_betroffen) if _betroffen else "unbekannt (kein Ziel-Host im Auszug)"
-            log.error("Restream #%d: Ingest nimmt die Verbindung nicht an — "
-                      "betroffen: %s. Reihenfolge: 1) welcher Key laeuft "
-                      "wirklich — Startzeile '%s-Ziel:' im Log, DB schlaegt "
-                      ".env; 2) laeuft derselbe Key schon woanders; "
-                      "3) IP-Block. stderr: %s",
-                      rid, _wen,
-                      (_betroffen[0].capitalize() if _betroffen else "Kick"),
-                      tail[-300:])
-        elif "rtmp" in _tl and ("refused" in _tl or "unable" in _tl
-                                or "failed" in _tl):
-            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
-            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
-            log.error("Restream #%d: rtmp-Ziel-Fehler — betroffen: %s. "
-                      "stderr: %s", rid,
-                      (", ".join(_betroffen) if _betroffen else "unbekannt"),
-                      tail[-300:])
+        self._abbruch_diagnose(rid, info, tail)
         _attempts_raw = info.get("attempts", 0)
         # v4.0-W113: hat dieser Lauf ueberhaupt gesendet? Der Stillstands-
         # Waechter beendet einen Prozess, der zwar LANG lief, aber kein Bild
@@ -16132,7 +16521,10 @@ class RestreamManager:
         if _sw3 and not _sw3.done():
             _sw3.cancel()
         self._procs.pop(rid, None)
-        _restream_tts_stop(rid)                # Feeder/FIFO dieses Procs beenden
+        # v4.2-W179: alle Feeder und die unabhaengigen Relays dieses Laufs —
+        # bisher nur die Stimme; Overlay-Schuss, Chromium, Avatar-Thread und
+        # Relays liefen weiter, und der Neuaufbau legte je einen dazu.
+        await self._nebenlaeufer_abraeumen(rid, info)
         try:
             # v4.2-W117: neben dem Loop — dieser Pfad laeuft bei JEDEM
             # Prozessende, also genau dann, wenn die Platte unter Last steht.
@@ -16148,7 +16540,7 @@ class RestreamManager:
             self._set_status(rid, "stopped", pid=None, err="Quelle beendet (EOF)")
             return
         # v4.2-W106: tonlose Quelle → mit Stille neu (Begruendung dort).
-        if await self._ton_folge(rid, ran, tail, attempts):
+        if await self._ton_folge(rid, ran, tail, attempts, sitz):
             return
         # copy→transcode-Fallback: copy-Modus früh gestorben mit Codec-Fehler
         if (not transcode_used) and ran < 25 and _looks_like_codec_err(tail):
@@ -16156,7 +16548,7 @@ class RestreamManager:
             log.warning(f"Restream #{rid}: copy fehlgeschlagen ({tail[:120]}…) → Auto-Transcode")
             self._set_status(rid, "starting", err="copy → transcode (Codec-Fallback)")
             await asyncio.sleep(3)
-            await self.start(rid, _attempts=attempts)
+            await self._wiederanlauf(rid, sitz, _attempts=attempts)
             return
         # Failover: ist die Quelle überhaupt noch live? Wenn offline → Slot SOFORT
         # freigeben (kein sinnloser Reconnect am toten Stream). Single-Modus schaltet
@@ -16211,7 +16603,7 @@ class RestreamManager:
                          "Normalfall.", rid, self._srcexpired[rid], ran, _wait)
             self._set_status(rid, "starting", err="Quell-URL erneuert")
             await asyncio.sleep(_wait)
-            await self.start(rid, _attempts=(attempts + 1 if _spin else attempts))
+            await self._wiederanlauf(rid, sitz, _attempts=(attempts + 1 if _spin else attempts))
             return
         self._srcspin.pop(rid, None)   # v4.0-W113: kein Ablauf → Serie endet
         if _nc_rstab.budget_exhausted(attempts, _RESTREAM_POLICY):
@@ -16224,7 +16616,7 @@ class RestreamManager:
                           f"Restream #{rid} → Backup-Ingest", {"id": rid})
                 self._set_status(rid, "starting", err="Failover → Backup-Ingest")
                 await asyncio.sleep(3)
-                await self.start(rid, _attempts=0)
+                await self._wiederanlauf(rid, sitz, _attempts=0)
                 return
             self._set_status(rid, "error", pid=None,
                              err=f"Aufgegeben nach {attempts} Reconnects. {tail[:280]}")
@@ -16242,9 +16634,154 @@ class RestreamManager:
         log.warning("Restream #%d rc=%s; reconnect#%d in %.0fs",
                     rid, rc, attempts + 1, delay)
         await asyncio.sleep(delay)
-        again = await self.start(rid, _attempts=attempts + 1)
+        again = await self._wiederanlauf(rid, sitz, _attempts=attempts + 1)
         if not again.get("ok"):
             log.warning(f"Restream #{rid} reconnect fehlgeschlagen: {again.get('error')}")
+
+    def _abbruch_diagnose(self, rid, info, tail):
+        """V37-DIAG2 / B138 / v4.1-W10: WELCHES Ziel den Abbruch verursacht hat.
+
+        v4.2-W179 aus _monitor herausgeloest, unveraendert — der Monitor
+        brauchte Platz fuer den Sitzungs-Riegel und stand an der 200er-Stufe."""
+        # V37-DIAG2: bei Multi-Target erkennen, WELCHES Ziel den Abbruch
+        # verursacht hat. rtmps-Handshake-Fehler (Kick/IVS) sehen anders aus
+        # als rtmp-Fehler (Twitch). Das beendet das Raten bei "nur ein Ziel".
+        _tl = tail.lower()
+        # B138: Diagnose NICHT mehr an _multistream_targets() haengen — bei
+        # genau einem Ziel (nur Kick) lief der Abbruch bisher kommentarlos
+        # durch. Und log.error statt log.warning: 'Input/output error' auf
+        # rtmps://…live-video.net ist die Meldung, die der Betreiber im
+        # error.log sucht; auf warning erschien sie dort nie.
+        if ("tls" in _tl or "ssl" in _tl or "handshake" in _tl
+                or "end of file" in _tl or "input/output error" in _tl
+                or "i/o error" in _tl):
+            # v4.1-W10: WELCHES Ziel steht wirklich im Auszug? Bis hierher
+            # nannte diese Zeile kategorisch Kick — auch wenn im stderr
+            # ausschliesslich der Twitch-Slave stand. Der Betreiber prueft
+            # danach Kick-Key, Kick-App und IP-Block bei Kick, waehrend Twitch
+            # das Problem ist. Eine Diagnose, die auf die falsche Plattform
+            # zeigt, ist schlimmer als gar keine. Verglichen wird auf den
+            # INGEST-HOST, nie auf den Plattformnamen: Kick und Twitch liegen
+            # beide auf live-video.net, und 'twitch' kommt in Twitchs eigener
+            # URL nicht vor.
+            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
+            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
+            _wen = ", ".join(_betroffen) if _betroffen else "unbekannt (kein Ziel-Host im Auszug)"
+            log.error("Restream #%d: Ingest nimmt die Verbindung nicht an — "
+                      "betroffen: %s. Reihenfolge: 1) welcher Key laeuft "
+                      "wirklich — Startzeile '%s-Ziel:' im Log, DB schlaegt "
+                      ".env; 2) laeuft derselbe Key schon woanders; "
+                      "3) IP-Block. stderr: %s",
+                      rid, _wen,
+                      (_betroffen[0].capitalize() if _betroffen else "Kick"),
+                      tail[-300:])
+        elif "rtmp" in _tl and ("refused" in _tl or "unable" in _tl
+                                or "failed" in _tl):
+            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
+            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
+            log.error("Restream #%d: rtmp-Ziel-Fehler — betroffen: %s. "
+                      "stderr: %s", rid,
+                      (", ".join(_betroffen) if _betroffen else "unbekannt"),
+                      tail[-300:])
+
+    def _monitor_eintragen(self, rid):
+        """v4.2-W179: den Monitor im eigenen Register fuehren, das stop() IMMER
+        erreicht — auch im Backoff, wenn der _procs-Eintrag schon weg ist.
+
+        Ein noch laufender alter Monitor wird beendet, ausser er ist es selbst,
+        der gerade start() ruft (dann endet er ohnehin nach dem Aufruf)."""
+        alt = self._monitors.get(rid)
+        if alt is not None and not alt.done() and alt is not asyncio.current_task():
+            alt.cancel()
+        t = asyncio.create_task(self._monitor(rid))
+        self._procs[rid]["monitor"] = self._monitors[rid] = t
+
+        def _fertig(task, rid=rid):
+            if self._monitors.get(rid) is task:
+                del self._monitors[rid]
+        t.add_done_callback(_fertig)
+
+    async def _soll_lesen(self, rid):
+        """v4.2-W179: will den Restream noch jemand? -> True/False, None = unbekannt.
+
+        Gelesen im Status-Schreiber, damit jedes vorher abgesetzte stop()
+        (desired=0, status=stopped) schon in der Tabelle steht — db_async
+        liefe in einem anderen Thread und koennte den alten Stand sehen."""
+        def _lesen():
+            with db_conn() as conn:
+                r = conn.execute("SELECT enabled, desired FROM restreams WHERE id=?",
+                                 (rid,)).fetchone()
+            return bool(r and r["enabled"] and r["desired"])
+        try:
+            return await asyncio.get_running_loop().run_in_executor(_RS_STATUS_EXEC, _lesen)
+        except Exception as e:
+            log.warning("Restream #%s: Soll-Zustand nicht lesbar (%s: %s) — der "
+                        "Wiederanlauf laeuft wie bisher.", rid, type(e).__name__, e)
+            return None
+
+    async def _wiederanlauf(self, rid, sitz, **kw):
+        """v4.2-W179: der EINE Weg, auf dem _monitor neu startet.
+
+        Bis hierher rief _monitor nach dem Backoff bedingungslos start(). Kam
+        in dieser Zeit ein stop() des Betreibers, fand es keinen Eintrag mehr
+        (der Monitor hatte ihn schon entfernt), kehrte zurueck — und der
+        Monitor stand danach mit desired=1 wieder auf, ueber jeden Neustart
+        hinweg. Jetzt: stop() zaehlt die Sitzung hoch, und hier wird vorher
+        UND nachher verglichen. `sitz` = (Sitzung beim Anlauf, Quellen-Waechter):
+        der Waechter wird durchgereicht, sonst fehlten nach dem ersten
+        Reconnect Quellen-Failover und das W159-Ausweichen."""
+        gen, src_watch = sitz if sitz else (self._sitzung.get(rid, 0), False)
+        if self._sitzung.get(rid, 0) != gen:
+            log.info("Restream #%s: inzwischen gestoppt — kein Wiederanlauf.", rid)
+            return {"ok": False, "error": "gestoppt"}
+        soll = await self._soll_lesen(rid)
+        if soll is False or self._sitzung.get(rid, 0) != gen:
+            log.info("Restream #%s: abgeschaltet oder gestoppt — kein Wiederanlauf.", rid)
+            self._set_status(rid, "stopped", pid=None)
+            return {"ok": False, "error": "gestoppt"}
+        kw.setdefault("_src_watch", src_watch)
+        self._im_wiederanlauf.add(rid)
+        try:
+            erg = await self.start(rid, **kw)
+        finally:
+            self._im_wiederanlauf.discard(rid)
+        if self._sitzung.get(rid, 0) != gen and erg.get("ok") and not erg.get("already"):
+            # stop() kam WAEHREND des Starts — der neue Sender wird wieder
+            # beendet; desired=0, wie der Betreiber es wollte (start() hatte
+            # am Ende desired=1 geschrieben).
+            log.warning("Restream #%s: waehrend des Wiederanlaufs gestoppt — der "
+                        "gerade gestartete Sender wird wieder beendet.", rid)
+            await self.stop(rid)
+            return {"ok": False, "error": "gestoppt"}
+        return erg
+
+    async def _nebenlaeufer_abraeumen(self, rid, info=None):
+        """v4.2-W179: alles, was neben dem Sender eines Laufs laeuft.
+
+        Stimme, HTML-Overlay (Schuss-Task, Dauer-Chromium — dessen Ende
+        wartet bis 5 s, deshalb im Thread), Avatar-Feeder und, mit `info`,
+        die unabhaengigen Relays. Aufgerufen vom Prozessende (_monitor), vom
+        Fehlstart (start) und vom Stop — vorher raeumte jeder Pfad nur einen
+        Teil ab."""
+        _restream_tts_stop(rid)
+        await asyncio.to_thread(_restream_html_overlay_stop, rid)
+        _restream_avatar_feeder_stop(rid)
+        if info is not None:
+            await self._relays_abraeumen(info)
+
+    async def _relays_abraeumen(self, info):
+        """V37-INDEP: Relay-Tasks canceln und ihre ffmpeg-Prozesse ernten.
+
+        v4.2-W179: auch vom Prozessende des Hauptsenders, nicht nur von stop().
+        Sonst liefen die Relays des toten Laufs weiter, und der Neuaufbau
+        startete daneben neue — zwei Publisher auf demselben Key."""
+        for _pn, _t in (info.get("indep_tasks") or {}).items():
+            if _t and not _t.done() and _t is not asyncio.current_task():
+                _t.cancel()
+        for _pn, _e in list((info.get("indep") or {}).items()):
+            _p = _e.get("proc")
+            if _p:
+                await _reap_proc(_p)   # v4.0-W75: terminate+wait → kein Zombie
 
     async def stop(self, rid, _keep_desired=False):
         """_keep_desired=True: interner Neustart durch den Guard — der
@@ -16266,11 +16803,21 @@ class RestreamManager:
             # diese Zeile ohne Bedingung hier und war die Quelle des Ping-Spams.
             # Die Zeitsperre an der Aufrufstelle greift trotzdem noch.
             _COMMUNITY_PINGED.pop(rid, None)
-        _restream_tts_stop(rid)
+        # v4.2-W179: Sitzung beenden und den Monitor aus SEINEM Register
+        # canceln — auch wenn kein _procs-Eintrag mehr da ist (Backoff). Steckt
+        # er gerade in start(), nicht mitten hinein canceln (der Sender waere
+        # gestartet und verwaist); _wiederanlauf sieht die neue Sitzung und
+        # beendet ihn selbst.
+        self._sitzung[rid] = self._sitzung.get(rid, 0) + 1
+        _mon = self._monitors.get(rid)
+        if (_mon is not None and not _mon.done() and rid not in self._im_wiederanlauf
+                and _mon is not asyncio.current_task()):
+            _mon.cancel()
         info = self._procs.pop(rid, None)
         if not info:
+            await self._nebenlaeufer_abraeumen(rid)
             return {"ok": True, "running": False}
-        if info.get("monitor"):
+        if info.get("monitor") and info["monitor"] is not asyncio.current_task():
             info["monitor"].cancel()
         _sw_stall = info.get("stallwatch")     # v4.0-W113
         if _sw_stall and not _sw_stall.done():
@@ -16281,19 +16828,17 @@ class RestreamManager:
         _sw = self._srcwatch.pop(rid, None)   # V37-SRCFAIL: Quellen-Watcher mit abräumen
         if _sw and not _sw.done():
             _sw.cancel()
-        _restream_html_overlay_stop(rid)      # V37-HTMLOV: Feeder + FIFO abräumen
-        _restream_avatar_feeder_stop(rid)     # v4.2-W34: Avatar-Feeder ebenso
-        # V37-INDEP: unabhängige Relay-Tasks + deren ffmpeg-Prozesse abräumen.
-        for _pn, _t in (info.get("indep_tasks") or {}).items():
-            if _t and not _t.done():
-                _t.cancel()
-        for _pn, _e in (info.get("indep") or {}).items():
-            _p = _e.get("proc")
-            if _p:
-                await _reap_proc(_p)   # v4.0-W75: terminate+wait → kein Zombie
-        await self._bruecke_abraeumen(rid, info)        # v4.2-W130
+        # Stimme, HTML-Overlay, Avatar-Feeder und die unabhaengigen Relays
+        # (indep_tasks) — W179: Chromium-Ende im Thread, nicht im Loop.
+        await self._nebenlaeufer_abraeumen(rid, info)
+        # v4.2-W179: ERST den Sender, DANN die Bruecke. Umgekehrt (bis W178)
+        # wartete der Bruecken-Abbau auf die Datensperre, die ein os.write in
+        # den nicht lesenden Sender haelt — stop() hing gemessen ueber 20 s,
+        # und der Sender kam nie an die Reihe. Ist der Sender weg, kehrt das
+        # write mit EPIPE zurueck. Dieselbe Reihenfolge wie in _monitor.
         proc = info["proc"]
         await _reap_proc(proc)         # v4.0-W75: SIGTERM→(SIGKILL)→wait, immer geerntet
+        await self._bruecke_abraeumen(rid, info)        # v4.2-W130
         log_event("restream.stop", "info", f"Restream #{rid} gestoppt", {"id": rid})
         return {"ok": True, "running": False}
 
@@ -16701,6 +17246,22 @@ def _detect_foreign_ad(text):
     return None
 
 
+async def _azrael_brain_kontext(source=None):
+    """v4.2-W177: kurzer Brain-Kontextblock fuer AZRAEL (nc/azraelkontext.py)
+       oder None. Neben dem Loop (sqlite) und hart begrenzt — ein haengendes
+       brain.db darf die Antwort nur um 3 s verzoegern, nie verhindern."""
+    def _brain():
+        from brain import get_brain
+        return get_brain()
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_nc_azraelkontext.sicher, _brain, db_conn, source),
+            timeout=3)
+    except asyncio.TimeoutError:
+        _nc_azraelkontext.ausfall("timeout", "brain.db antwortet nicht in 3 s")
+        return None
+
+
 class KickModerator:
     """KI-Chat-Moderator für den EIGENEN Kick-Kanal. Liest den Chat (Websocket),
        beantwortet optional Fragen (das LLM) und moderiert optional Spam/Toxizität.
@@ -16891,10 +17452,13 @@ class KickModerator:
         if tone and tone != "freundlich, locker, hilfsbereit":
             sys += f" Zusätzlicher Ton-Wunsch: {tone}."
         sys += f" Zuschauer '{sender}' schrieb:"
+        _msgs = [{"role": "system", "content": sys}]
+        _wissen = await _azrael_brain_kontext()       # v4.2-W177
+        if _wissen:
+            _msgs.append(_wissen)
+        _msgs.append({"role": "user", "content": content[:400]})
         _t0 = _time_mod.monotonic()
-        text, err = await ai_chat(
-            [{"role": "system", "content": sys}, {"role": "user", "content": content[:400]}],
-            timeout=30)
+        text, err = await ai_chat(_msgs, timeout=30)
         _ai_telemetry("Kick-Reply", len(content or ""), len(text or ""),
                       int((_time_mod.monotonic() - _t0) * 1000), bool(text), err)
         if err or not text:
@@ -16926,6 +17490,9 @@ class KickModerator:
         if ctx:
             msgs.append({"role": "system",
                          "content": f"Aktueller Kontext/Stimmung im Stream gerade: {ctx[:400]}"})
+        _wissen = await _azrael_brain_kontext(source)   # v4.2-W177: Brain-Fakten
+        if _wissen:
+            msgs.append(_wissen)
         msgs.append({"role": "user", "content": statement[:800]})
         async with self._sema:                        # Backoff (parallele AI-Calls deckeln)
             try:      # V37-B92: absolute Obergrenze — Loop darf NIE hängen
@@ -17286,6 +17853,9 @@ class KickModerator:
                         _pause = _kick_ws_pause(e, _folge)   # v4.2-W136
                         _verbindung_verloren("Kick-WebSocket", e, _pause,
                                              seit=self.stats.get("since", 0.0))
+                        # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+                        # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+                        self.stats["since"] = 0.0
                         await asyncio.sleep(_pause)
         finally:
             self.stats["connected"] = False
@@ -17347,6 +17917,9 @@ class KickModerator:
                                                 % _kz.STILLE_S)
                         _verbindung_verloren("Kick-WebSocket", e, _pause,
                                              seit=self.stats.get("since", 0.0))
+                        # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+                        # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+                        self.stats["since"] = 0.0
                         await asyncio.sleep(_pause)
         finally:
             self.stats["connected"] = False
@@ -19197,10 +19770,12 @@ async def _meme_zusammenschnitt(username, output_file):
         await asyncio.to_thread(_text_schreiben, liste, _nc_aufnahmechat.concat_liste(pfade))
         rc, err = 1, b""
         for neu in (False, True):
-            rc, _o, err = await _nc_kind.ausfuehren(
-                _nc_aufnahmechat.zusammenschnitt_cmd(liste, ziel, neu=neu,
-                                                     threads=FFMPEG_THREADS_BG),
-                600, art="ffmpeg-memes", stdout=_nc_kind.DEVNULL)
+            # v4.2-W174: durch die Encode-Warteschlange (der zweite Versuch kodiert neu).
+            async with _nc_encode.platz("meme-zusammenschnitt", username):
+                rc, _o, err = await _nc_kind.ausfuehren(
+                    _nc_aufnahmechat.zusammenschnitt_cmd(liste, ziel, neu=neu,
+                                                         threads=FFMPEG_THREADS_BG),
+                    600, art="ffmpeg-memes", stdout=_nc_kind.DEVNULL)
             if rc == 0 and os.path.isfile(ziel) and os.path.getsize(ziel) > 1024:
                 break
         if rc != 0:
@@ -19291,8 +19866,11 @@ def _aufnahme_chat_einarbeiten(video, chat, modus, username):
                     threads=_env_int("AUFNAHME_CHAT_THREADS", 2))
             else:
                 cmd = _nc_aufnahmechat.untertitel_cmd(video, ass_pfad, tmp)
-            r = subprocess.run(cmd, capture_output=True, text=True,
-                               timeout=max(900, int(dauer * 4)))
+            # v4.2-W174: durch die Encode-Warteschlange — das ist der laengste
+            # Durchgang von allen (die ganze Aufnahme), Minuten bis Stunden.
+            with _nc_encode.platz_sync("chat-" + versuch, username):
+                r = subprocess.run(cmd, capture_output=True, text=True,
+                                   timeout=max(900, int(dauer * 4)))
             if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                 os.replace(tmp, video)
                 log.info("Aufnahme-Chat @%s: %d Nachrichten %s (%.0f s).", username, len(chat),
@@ -20365,6 +20943,8 @@ def healthz():
                    # NICHT, weil niemand neu gestartet hat.
                    laufstand=_laufstand()["lage"],
                    tunnel=_tunnel_lage(),
+                   # v4.2-W174: was in der Encode-Warteschlange laeuft und wartet.
+                   encode=_nc_encode.lage(),
                    # v4.2-W141: woher die Stream-Adressen der letzten Stunde
                    # kamen, und wie oft „live" ohne Adresse blieb.
                    quellen=_nc_quellstat.lage(),
@@ -21033,9 +21613,6 @@ def api_channel_set():
 _OVERLAY = _nc_azrael.OVERLAY   # v4.1-W19: geteilt; .env-Aufloesung bleibt hier
 _OVERLAY.update({
     "title": os.getenv("OVERLAY_TITLE", "Azrael Sentinel").strip(),
-    "goal_target": _env_int("DONATION_GOAL_TARGET", 0),
-    "goal_label": os.getenv("DONATION_GOAL_LABEL", "Spendenziel").strip(),
-    "goal_purpose": os.getenv("DONATION_GOAL_PURPOSE", "").strip(),  # Transparenz: wofür?
     "azrael_show": os.getenv("OVERLAY_AZRAEL", "1").strip().lower() in ("1", "true", "yes", "on"),
     # AZRAEL-Stimme (TTS via Web Speech API im Overlay → OBS Browser-Source-Audio).
     # voice_engine: "browser" = Web-Speech im Overlay-Browser (OS-Stimmen);
@@ -22866,9 +23443,11 @@ async def _shrink_for_discord(path, limit_mb):
                "-maxrate", f"{int(v_kbps * 1.3)}k", "-bufsize", f"{v_kbps * 2}k",
                "-c:a", "aac", "-b:a", f"{a_kbps}k", "-movflags", "+faststart", out],
                threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
-        _rc, _, _ = await _nc_kind.ausfuehren(cmd, max(300, int(dur * 6)),
-                                              art="ffmpeg-discord",
-                                              stdout=_nc_kind.DEVNULL)
+        # v4.2-W174: durch die Encode-Warteschlange (nc/encodeschlange.py).
+        async with _nc_encode.platz("discord-verkleinern"):
+            _rc, _, _ = await _nc_kind.ausfuehren(cmd, max(300, int(dur * 6)),
+                                                  art="ffmpeg-discord",
+                                                  stdout=_nc_kind.DEVNULL)
         if _rc == 0 and os.path.exists(out) and os.path.getsize(out) < limit_mb * 1024 * 1024:
             return out
         if os.path.exists(out):
@@ -22877,6 +23456,62 @@ async def _shrink_for_discord(path, limit_mb):
     except Exception as e:
         log.debug("shrink-for-discord: %s", e)
     return None
+
+
+async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None):
+    """v4.2-W175: die GANZE Aufnahme in den Clip-Kanal, in Teilen <= Guild-Limit.
+
+    Gewuenscht am 11.11. („die gesamte Aufnahme soll nach Discord"). Die
+    Rechnung steht in nc/discordaufnahme, hier nur Kanal, Limit und Versand.
+    -> ergebnis wie split_and_send_video ({"gesendet", "fehler"}, dazu
+    "aus" wenn Schalter oder Discord fehlen) — die Warteschlange entscheidet
+    daran, ob sie es noch einmal versucht."""
+    ergebnis = {} if ergebnis is None else ergebnis
+    if not _nc_dcaufnahme.an():
+        ergebnis.update(aus=True, grund="%s=0" % _nc_dcaufnahme.SCHALTER)
+        return ergebnis
+    if not os.getenv("DISCORD_BOT_TOKEN", "").strip():
+        # Kein Discord eingerichtet ist der Normalfall vieler Installationen,
+        # kein Fehler — eine Meldung je Aufnahme erzoege zum Wegsehen (W85).
+        ergebnis.update(aus=True, grund="kein DISCORD_BOT_TOKEN")
+        return ergebnis
+    try:
+        import discord
+        client = _nc_discordstate.CLIENT["obj"]
+        ch = (await _nc_discordziele.clip_kanal_holen(client.guilds, DISCORD_GUILD_ID)
+              if client else None)
+        if ch is None:
+            ergebnis.update(fehler=ergebnis.get("fehler", 0) + 1,
+                            grund="Discord nicht verbunden oder in keiner Guild" if client
+                            else "Discord-Client nicht verbunden")
+        else:
+            _lim = _nc_dclimits.effective_upload_mb(getattr(ch.guild, "filesize_limit", 0),
+                                                    _DISCORD_UPLOAD_OVERRIDE)
+
+            async def _senden(teil, text):
+                await ch.send(content=text[:1900], file=discord.File(teil))
+            await _nc_dcaufnahme.hochladen(path, _nc_dclimits.gate_mb(_lim), _senden,
+                                           username, started_at, ergebnis)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        ergebnis.update(fehler=ergebnis.get("fehler", 0) + 1,
+                        grund="%s: %s" % (type(e).__name__, e))
+    if _nc_uschlange.angekommen(ergebnis):
+        log.info("Aufnahme @%s → Discord (#%s): %d Teil(e), %s", username,
+                 _nc_discordziele.clip_kanal(), ergebnis["gesendet"], os.path.basename(path))
+        _nc_meldetakt.zuruecksetzen("discord-aufnahme")
+    else:
+        laut, weg = _nc_meldetakt.melden("discord-aufnahme", str(ergebnis.get("grund"))[:60],
+                                         _time_mod.monotonic())
+        if laut:
+            log.error("Aufnahme @%s NICHT (vollstaendig) nach Discord: %s (%s von %s Teilen "
+                      "gesendet). Fehlt dem Bot das Recht, in #%s Dateien zu posten? Die "
+                      "Aufnahme bleibt auf dem Server: %s%s", username,
+                      ergebnis.get("grund") or "?", ergebnis.get("gesendet", 0),
+                      ergebnis.get("teile", "?"), _nc_discordziele.clip_kanal(), path,
+                      _nc_meldetakt.zusatz(weg))
+    return ergebnis
 
 
 async def _clip_to_discord(username, path, caption=""):
@@ -23237,9 +23872,12 @@ async def _clip_schneiden(username, reason, caption, recfile):
     try:
         # v4.2-W120: mit Zeitlimit (nc.kindprozess) — Clips sind Sekunden
         # lang, zehnfache Laenge plus zwei Minuten ist grosszuegig.
-        _rc, _, err = await _nc_kind.ausfuehren(cmd, 120 + 10 * float(real),
-                                                art="ffmpeg-clip",
-                                                stdout=_nc_kind.DEVNULL)
+        # v4.2-W174: durch die Encode-Warteschlange. Der Ausschnitt ist ueber
+        # -ss/-t fest — Warten aendert nicht, welcher Moment geschnitten wird.
+        async with _nc_encode.platz("clip", username):
+            _rc, _, err = await _nc_kind.ausfuehren(cmd, 120 + 10 * float(real),
+                                                    art="ffmpeg-clip",
+                                                    stdout=_nc_kind.DEVNULL)
         if _chat_ass:
             await asyncio.to_thread(_datei_weg, _chat_ass)
         if _rc == 0 and os.path.exists(out) and os.path.getsize(out) > 1024:
@@ -23990,6 +24628,9 @@ async def _twitch_eventsub_loop():
             raise
         except Exception as e:
             _verbindung_verloren("Twitch-EventSub", e, backoff, seit=_es_seit)   # v4.0-W116
+            # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+            # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+            _es_seit = 0.0
         await asyncio.sleep(backoff)
         backoff = min(300, int(backoff * 1.6))
         ws_url = "wss://eventsub.wss.twitch.tv/ws"
@@ -24211,6 +24852,9 @@ async def _twitch_chat_loop():
         except Exception as e:
             _verbindung_verloren("Twitch-Chat", e, backoff,                     # v4.0-W116
                                  seit=_WCHAT_STATUS["twitch"].get("since", 0.0))
+            # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+            # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+            _WCHAT_STATUS["twitch"]["since"] = 0.0
             _WCHAT_STATUS["twitch"]["reconnects"] += 1
             _WCHAT_STATUS["twitch"].update(connected=False, error=str(e)[:120])
             _TWITCH_SEND["fn"] = None
@@ -24338,6 +24982,9 @@ async def _youtube_api_chat_loop():
             # Muster, das den Discord-Gateway-Tod monatelang verdeckt hat.
             _verbindung_verloren("YouTube-Chat (Data-API)", e, backoff,
                                  seit=_WCHAT_STATUS["youtube"].get("since", 0.0))
+            # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+            # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+            _WCHAT_STATUS["youtube"]["since"] = 0.0
             _WCHAT_STATUS["youtube"]["reconnects"] += 1
             _WCHAT_STATUS["youtube"].update(connected=False, error=str(e)[:120])
             await asyncio.sleep(backoff); backoff = min(backoff * 2, 120)
@@ -24500,6 +25147,9 @@ async def _youtube_chat_loop():
             # wert ist, nicht jede einzelne Trennung (nc/flapguard.py).
             _verbindung_verloren("YouTube-Chat", e, backoff,
                                  seit=_WCHAT_STATUS["youtube"].get("since", 0.0))
+            # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+            # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+            _WCHAT_STATUS["youtube"]["since"] = 0.0
             _WCHAT_STATUS["youtube"]["reconnects"] += 1
             _WCHAT_STATUS["youtube"].update(connected=False, error=str(e)[:120])
             _YT_SEND["fn"] = None; _YT_SEND["live_chat_id"] = ""
@@ -24838,6 +25488,21 @@ async def unpause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _nc_i18n.t(f"✅ @{u} reaktiviert.") if n else _nc_i18n.t(f"@{u} war nicht pausiert."))
 
 
+async def spenden_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v4.2-W172: /spenden — PayPal, Krypto und Spendenziel, aus der .env.
+
+    Bewusst OHNE _is_authorized: die Antwort enthaelt nur, was die oeffentliche
+    Website ohnehin zeigt, und gefragt wird sie von Zuschauern — die stehen
+    in keiner Freischaltliste. Eine Spendenfrage, auf die der Bot schweigt,
+    ist genau das gemeldete Fehlerbild."""
+    if not update.message:
+        return
+    # v4.2-W173: der Text liest den Spendenstand aus der Datenbank — neben dem Loop.
+    _text = await asyncio.to_thread(_nc_spendeninfo.text, "html", _nc_i18n.t)
+    await update.message.reply_text(_text, parse_mode=ParseMode.HTML,
+                                    disable_web_page_preview=True)
+
+
 async def hilfe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """v4.2-W109: /help — die Befehlsliste, gebaut aus nc/befehle.py."""
     if not _is_authorized(update): return
@@ -25042,6 +25707,9 @@ async def run_bot():
         (filters.Entity("url") | filters.Entity("text_link")
          | filters.CaptionEntity("url")) & ~filters.COMMAND,
         on_link_video), group=1)
+    # v4.2-W175: Gruppe -> Supergruppe. Eigene Gruppe, damit kein Handler in
+    # Gruppe 0/1 die Dienstnachricht vorher abgreift.
+    app.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, on_chat_migration), group=2)
 
     _spawn(check_all_trackings(app), name="check-all-trackings")
     _spawn(_discord_bot_starten(), name="discord-bot")  # optional, env-gated (no-op ohne Token)
@@ -25637,52 +26305,54 @@ _disk_pct = _nc_probe.disk_pct
 
 def _disk_autoclean():
     """Löscht die ÄLTESTEN Aufnahmen bis DISK_AUTOCLEAN_TARGET erreicht ist —
-       aber nur bereits gesicherte (backed_up) bzw. abgeschlossene Dateien, nie
-       die gerade laufende. Gibt Bilanz zurück."""
+       aber nur gesicherte (backed_up) und nicht markierte, nie die gerade
+       laufende (v4.2-W176, Regeln in nc/storage.notfall_raeumen). Gibt Bilanz
+       zurück."""
     pct, st = _disk_pct()
     if not st or pct < DISK_AUTOCLEAN_PCT:
+        _nc_meldetakt.zuruecksetzen("disk-guard")
         return {"ran": False, "pct": pct}
     _DISK_GUARD_STATE["active"] = True
-    freed, deleted = 0, 0
     try:
-        # aktuell offene Dateien nie anfassen
-        active_files = set()
         try:
-            with db_conn() as conn:
-                for r in conn.execute("SELECT output_file FROM trackings WHERE recording=1").fetchall():
-                    if r["output_file"]:
-                        active_files.add(os.path.abspath(r["output_file"]))
-        except Exception:
-            pass
-        vids = []
-        for root, _dirs, files in os.walk(RECORDINGS_DIR):
-            for f in files:
-                if os.path.splitext(f)[1].lower() in _VIDEO_EXTS:
-                    fp = os.path.join(root, f)
-                    if os.path.abspath(fp) in active_files:
-                        continue
-                    try:
-                        vids.append((os.path.getmtime(fp), os.path.getsize(fp), fp))
-                    except OSError:
-                        pass
-        vids.sort()   # ältester zuerst
-        for _mt, sz, fp in vids:
-            cur, _ = _disk_pct()
-            if cur <= DISK_AUTOCLEAN_TARGET:
-                break
-            try:
-                os.remove(fp); freed += sz; deleted += 1
-                log.info("DISK-GUARD: gelöscht %s (%.0f MB)", os.path.basename(fp), sz / 1048576)
-            except OSError:
-                pass
+            res = _nc_storage.notfall_raeumen(RECORDINGS_DIR, _VIDEO_EXTS,
+                                              _disk_pct, DISK_AUTOCLEAN_TARGET)
+        except _nc_storage.BestandUnbekannt as e:
+            # Nicht raten: ohne Datenbank ist unbekannt, was gesichert,
+            # markiert oder gerade offen ist (W91/W149). Laut, weil die
+            # Platte trotzdem weiter vollaeuft.
+            laut, unterdr = _nc_meldetakt.melden("disk-guard", "bestand",
+                                                  _time_mod.monotonic())
+            if laut:
+                log.error("DISK-GUARD: Platte bei %d%%, Aufraeumen AUSGESETZT — "
+                          "Datenbank nicht lesbar (%s), gesicherte/markierte "
+                          "Aufnahmen unbekannt. Abhilfe: Datenbank pruefen "
+                          "(/healthz, journalctl), Platz von Hand schaffen.%s",
+                          pct, e, _nc_meldetakt.zusatz(unterdr))
+            return {"ran": False, "pct": pct, "error": "bestand-unbekannt"}
+        freed, deleted = res["freed_bytes"], res["deleted"]
         _DISK_GUARD_STATE.update(last_run=_time_mod.time(),
                                  freed_mb=round(freed / 1048576, 1), deleted=deleted)
+        pct_nach = _disk_pct()[0]
         if deleted:
             log_event("disk.autoclean", "warning",
                       f"Disk-Guard: {deleted} alte Aufnahmen gelöscht ({freed/1048576:.0f} MB frei)",
                       {"deleted": deleted, "freed_mb": round(freed / 1048576, 1)})
+        if pct_nach > DISK_AUTOCLEAN_TARGET:
+            # Vorher loeschte der Waechter in dieser Lage einfach weiter —
+            # notfalls jede ungesicherte Aufnahme. Jetzt bleibt sie stehen,
+            # und das muss der Betreiber erfahren, bevor die Platte voll ist.
+            laut, unterdr = _nc_meldetakt.melden("disk-guard", "zu-wenig",
+                                                  _time_mod.monotonic())
+            if laut:
+                log.error("DISK-GUARD: Platte noch bei %d%% (Ziel %d%%) — %d "
+                          "Aufnahmen sind ungesichert oder markiert und werden "
+                          "NICHT automatisch geloescht. Abhilfe: Sicherung "
+                          "einrichten, RECORDINGS_RETAIN_DAYS setzen oder im Deck "
+                          "aufraeumen.%s", pct_nach, DISK_AUTOCLEAN_TARGET,
+                          res["geschont"], _nc_meldetakt.zusatz(unterdr))
         return {"ran": True, "deleted": deleted, "freed_mb": round(freed / 1048576, 1),
-                "pct_before": pct, "pct_after": _disk_pct()[0]}
+                "geschont": res["geschont"], "pct_before": pct, "pct_after": pct_nach}
     finally:
         _DISK_GUARD_STATE["active"] = False
 

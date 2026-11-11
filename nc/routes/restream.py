@@ -488,19 +488,32 @@ def api_restream_edit(rid):
 
 @bp.route("/api/restream/<int:rid>/delete", methods=["POST"])
 def api_restream_delete(rid):
+    # v4.2-W178: der Stop stand in `except: pass`, geloescht wurde immer. Lief
+    # er in den Timeout, sendete ffmpeg weiter — und ohne Datenbankzeile gab
+    # es im Deck keinen Knopf mehr, der ihn haette anhalten koennen. Wer den
+    # Restream nicht stoppen kann, darf seine Zeile nicht loeschen (dieselbe
+    # Regel wie W91 bei den Aufnahmen: wer die Datei nicht loescht, behaelt
+    # die Spur).
+    m = _nc_rsstate.mgr()
     try:
-        _c().run_async(_nc_rsstate.mgr().stop(rid), timeout=15)
-    except Exception:
-        pass
+        # Ohne Manager laeuft aus diesem Prozess kein Relay — nichts zu stoppen.
+        res = _c().run_async(m.stop(rid), timeout=15) if m is not None else {"ok": True}
+    except Exception as e:
+        if _loop_not_ready(e):
+            return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
+        _c().log.error("Restream #%s: Stop vor dem Loeschen gescheitert (%s: %s) — "
+                       "Eintrag bleibt.", rid, type(e).__name__, e)
+        return jsonify(ok=False, error=_t("Restream ließ sich nicht stoppen — der Eintrag bleibt, damit er steuerbar bleibt.") + " ("
+                       + _fehler_text(e, "api_restream_delete") + ")"), 503
+    if not (isinstance(res, dict) and res.get("ok")):
+        _c().log.error("Restream #%s: Stop vor dem Loeschen meldet %r — Eintrag bleibt.",
+                       rid, res)
+        return jsonify(ok=False, error=_t("Restream ließ sich nicht stoppen — der Eintrag bleibt, damit er steuerbar bleibt.")), 503
     try:
         with db_conn() as conn:
             conn.execute("DELETE FROM restreams WHERE id=?", (rid,))
             conn.commit()
         return jsonify(ok=True)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=_fehler_text(e, "api_restream_delete")), 500
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_restream_delete")), 500
 

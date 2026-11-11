@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.21"
-CODENAME = "Leitstand"
+VERSION = "5.0.0"
+CODENAME = "Gleichtakt"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,49 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.0.0",
+        "date": "2026-11",
+        "title": "Gleichtakt",
+        # Hauptversion: Tiefengrund-Bughunt ueber alle Bereiche (W174–W179).
+        "highlights": [
+            "Restream bricht nicht mehr auf allen Zielen zugleich weg: der Waechter hielt bei Plattenlast den gesunden Sender fuer tot, weil das Text-Overlay den Fortschrittsleser blockierte",
+            "Zeitstempel-Glaettung in Aufnahme und Restream: Spruenge und Ruecklaeufe der TikTok-Quelle zerlegen keine Aufnahme mehr (Standbild, Ton weg) und trennen kein Ziel mehr",
+            "Encode-Warteschlange: Clips, Memes, Chat-Einbrennen und Verkleinern laufen nacheinander und nur, wenn die Maschine Luft hat — Aufnahme und Restream haben Vorrang",
+            "Telegram: wieder ein Thema je Nutzer; Gruppenwechsel zur Supergruppe wird erkannt und nachgezogen; Uploads gehen bei Neustart nicht mehr verloren und werden wiederholt",
+            "Discord bekommt die ganze Aufnahme in hochladbaren Teilen (DISCORD_AUFNAHME_UPLOAD), nicht nur Highlights und Memes",
+            "AZRAEL ist mit dem Brain verbunden: Antworten im Kick-Chat kennen Sendezeiten, Gewohnheiten und die letzte Sendung des Streamers; das Brain lernt keine Schein-Sitzungen mehr",
+            "Kick-Chat ueber Centrifugo, /spenden in Telegram und Discord, ein Spendenziel fuer Website, Overlay, Sendebild und Chat — mit Bits, Superchats und Subs in Euro",
+            "Sicherheit: Deck lehnt Schreibanfragen fremder Seiten ab (CSRF), LD_PRELOAD/PATH & Co. sind nicht mehr aus dem Deck setzbar",
+            "Platz-Waechter loescht nur noch Gesichertes und Unmarkiertes; keine doppelten Live-Meldungen, keine doppelte Aufnahme, Pruefschleife mit Lebenszeichen",
+        ],
+    },
+    {
+        "version": "4.6.23",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: ein Spendenziel (W173).
+        "highlights": [
+            "Ein Spendenziel für Website, Stream-Overlay, Sendebild und /spenden — dasselbe Ziel, derselbe Stand, derselbe Zeitraum",
+            "Der Stand zählt jede Spende auf eigenen Kanälen (Kick, Twitch, YouTube, im Deck erfasst) im laufenden Monat; TikTok-Gifts nie",
+            "Vorher zählte die Website nur manuell erfasste Spenden, das Overlay nur ab Stream-Start und gegen ein eigenes Ziel (Vorgabe: aus)",
+            "/spenden zeigt jetzt auch den Stand: „120 € von 500 € (24 %) · monatlich\"",
+            "Das Ziel im Overlay-Formular gilt überall und überlebt einen Neustart; leere Felder lassen es unverändert",
+        ],
+    },
+    {
+        "version": "4.6.22",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: /spenden (W172).
+        "highlights": [
+            "Neuer Befehl /spenden auf Telegram und Discord: PayPal mit Spenden-Link, alle eingetragenen Krypto-Adressen und das Spendenziel",
+            "Für jeden: Zuschauer stehen in keiner Freischaltliste, die Antwort enthält nur, was auch die Website zeigt",
+            "Eine Quelle für Website, Deck und Chat — eine im Deck geänderte Adresse gilt sofort, ohne Neustart",
+            "Ist nichts eingetragen, sagt der Bot das mit den Variablennamen, statt still zu schweigen",
+            "Neu: DONATION_LINK für einen zusätzlichen Link (z. B. die Spendenseite); README mit Abschnitt „Unterstützen\"",
+        ],
+    },
     {
         "version": "4.6.21",
         "date": "2026-11",

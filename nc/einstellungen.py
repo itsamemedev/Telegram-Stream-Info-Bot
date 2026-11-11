@@ -67,8 +67,30 @@ SCHUTZ_EXAKT = {
     # Der Dienstname steht in Neustart-Befehlen, die das Deck anzeigt.
     "SERVICE_NAME": _GRUND_BEFEHL,
 }
-SCHUTZ_PRAEFIX = (("DB_", _GRUND_DB), ("MARIADB_", _GRUND_DB), ("UPDATE_", _GRUND_BEFEHL))
-SCHUTZ_ENDUNG = ("_CMD", "_BIN", "_PATH", "_DIR", "_EXE", "_FILE", "_COMMAND", "_SCRIPT")
+# v4.2-W178: Variablen, die nicht der Bot liest, sondern das Betriebssystem
+# und jedes Programm, das er startet. setzen() legt den Wert sofort in
+# os.environ, und JEDER folgende Subprozess (ffmpeg, yt-dlp, streamlink, git
+# beim Update) erbt ihn. `PATH` traf die Endung "_PATH" nicht (kein
+# Unterstrich davor), LD_PRELOAD, PYTHONPATH, HOME (yt-dlp liest seine
+# Konfiguration mit --exec aus ~/.config) oder HTTPS_PROXY zusammen mit
+# REQUESTS_CA_BUNDLE (Update-Download ueber einen fremden Proxy mit fremdem
+# Zertifikat) waren aus dem Deck setzbar — jeder davon eine Codeausfuehrung.
+SCHUTZ_EXAKT.update({n: _GRUND_BEFEHL for n in (
+    "PATH", "HOME", "BROWSER", "SHELL", "ENV", "BASH_ENV", "EDITOR", "VISUAL",
+    "PAGER", "IFS", "TMPDIR", "TMP", "TEMP", "USER", "LOGNAME",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "FTP_PROXY",
+    "SOCKS_PROXY", "HOSTALIASES", "RES_OPTIONS", "LOCALDOMAIN",
+    "RUBYOPT", "JAVA_TOOL_OPTIONS")})
+SCHUTZ_PRAEFIX = (("DB_", _GRUND_DB), ("MARIADB_", _GRUND_DB), ("UPDATE_", _GRUND_BEFEHL),
+                  ("LD_", _GRUND_BEFEHL), ("DYLD_", _GRUND_BEFEHL),
+                  ("PYTHON", _GRUND_BEFEHL), ("GIT_", _GRUND_BEFEHL),
+                  ("NODE_", _GRUND_BEFEHL), ("PERL", _GRUND_BEFEHL),
+                  ("SSL_", _GRUND_BEFEHL), ("REQUESTS_", _GRUND_BEFEHL),
+                  ("CURL_", _GRUND_BEFEHL), ("OPENSSL_", _GRUND_BEFEHL),
+                  ("XDG_", _GRUND_BEFEHL), ("GCONV", _GRUND_BEFEHL))
+# "PATH"/"HOME" ohne Unterstrich: CDPATH, NLSPATH, LOCPATH, GNUPGHOME, ...
+SCHUTZ_ENDUNG = ("_CMD", "_BIN", "_PATH", "_DIR", "_EXE", "_FILE", "_COMMAND", "_SCRIPT",
+                 "PATH", "HOME")
 
 # ── Was geheim ist ──────────────────────────────────────────────────────────
 # Gemessen wird an NAMENSTEILEN, nicht an Teilzeichenketten. Die erste Fassung
@@ -278,9 +300,28 @@ def pruefen(name, wert):
         raise Abgelehnt(_t("Der Wert ist zu lang (höchstens 4096 Zeichen)."))
 
 
+def bekannt(name):
+    """Kennt der Bot diesen Namen? Vorlage (.env.example), .env oder schon in
+    der Tabelle.
+
+    v4.2-W178: die Sperrliste allein faengt nur, was jemand vorhergesehen hat.
+    Der Reiter bietet ohnehin nur diese Namen an — ein beliebiger anderer Name
+    kann nur am Deck vorbei kommen (fremde Seite, Skript), und dort hat er
+    nichts zu suchen. Ohne lesbare Vorlage gilt nur .env und Tabelle: lieber
+    eine neue Variable einmal in der .env setzen als die Liste aufmachen."""
+    if name in {k["name"] for k in katalog(_ZUSTAND["beispiel_pfad"])}:
+        return True
+    if _ZUSTAND["env_pfad"] and name in _envdatei.lesen(_ZUSTAND["env_pfad"]):
+        return True
+    return name in db_werte()
+
+
 def setzen(name, wert, von="deck", env=None):
     """In die Tabelle und in die laufende Umgebung. Wirft Abgelehnt."""
     pruefen(name, wert)
+    if not bekannt(name):
+        raise Abgelehnt(_t("Diesen Namen liest der Bot nicht — im Deck lassen sich nur "
+                           "Einstellungen aus der Vorlage oder der .env setzen."))
     env = os.environ if env is None else env
     jetzt = datetime.now(timezone.utc).isoformat()
     sql = ("INSERT INTO einstellungen (schluessel, wert, geaendert_um, geaendert_von) "

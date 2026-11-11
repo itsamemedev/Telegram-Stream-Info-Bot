@@ -512,7 +512,9 @@ def test_dead_chat_contract():
     # send_video-Aufruf mehr kostet. Diese Textpruefung bleibt als billiger
     # Frueherkenner daneben stehen.
     src = open("telegramversand.py", encoding="utf-8").read()
-    i = src.find("async def _send_one(fh_or_path, caption):")
+    # ANKER GEWANDERT (v4.2-W175): zwischen _send_one und der Sperre steht
+    # jetzt _fehlschlag — gezaehlt wird ab dem eigentlichen Versand.
+    i = src.find("async def _send_one_roh(fh_or_path, caption):")
     body = src[i:i + 900]
     assert "if _is_dead(chat_id):" in body, "_send_one prüft die Sperre nicht"
     # Part-Schleife bricht ab statt jeden Part scheitern zu lassen
@@ -3066,52 +3068,55 @@ def test_v40_version():
        BUILD_STAMP und nc.version NICHT auseinanderlaufen (schon dreimal
        passiert: Modul auf neu, Footer blieb auf alt)."""
     from nc import version as v
-    # ANKER GEWANDERT (v4.6.21, nicht der Vertrag): 4.6.20 -> 4.6.21. Dieser Test
+    # ANKER GEWANDERT (v5.0.0, nicht der Vertrag): 4.6.23 -> 5.0.0. Dieser Test
     # wandert absichtlich mit jeder Fassung mit — er ist die Stelle, an der
     # ein halber Versionssprung auffliegt (Modul hochgezaehlt, Footer nicht).
-    assert v.VERSION == "4.6.21" and v.current()["version"] == "4.6.21"
-    assert v.summary_line().startswith("NIGHTCRAWLER v4.6.21")
+    assert v.VERSION == "5.0.0" and v.current()["version"] == "5.0.0"
+    assert v.summary_line().startswith("NIGHTCRAWLER v5.0.0")
     top = v.latest()
-    assert top["version"] == "4.6.21" and len(top["highlights"]) >= 3
-    assert [c["version"] for c in v.changelog()][:4] == ["4.6.21", "4.6.20", "4.6.19", "4.6.18"]
+    assert top["version"] == "5.0.0" and len(top["highlights"]) >= 3
+    assert [c["version"] for c in v.changelog()][:4] == ["5.0.0", "4.6.23", "4.6.22", "4.6.21"]
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
     # Der Sprung darf die Vorgaengerfassung nicht ausraeumen. Beim
     # Umhaengen der Highlights ist genau das die Gefahr — man verschiebt
     # versehentlich ALLE statt der neuen, und 4.4 steht danach leer im
     # "Was ist neu"-Panel.
     vor = v.changelog()[1]
-    assert vor["version"] == "4.6.20" and len(vor["highlights"]) >= 4, \
-        f"4.6.20 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
-        f"auf 4.6.21 ist die Vorgaengerfassung ausgeraeumt worden"
-    assert len(v.changelog()[2]["highlights"]) >= 5, "4.6.19 ausgeraeumt"
-    assert len(v.changelog()[3]["highlights"]) >= 5, "4.6.18 ausgeraeumt"
-    assert len(v.changelog()[4]["highlights"]) >= 5, "4.6.17 ausgeraeumt"
-    assert len(v.changelog()[5]["highlights"]) >= 5, "4.6.16 ausgeraeumt"
-    assert len(v.changelog()[6]["highlights"]) >= 5, "4.6.15 ausgeraeumt"
-    assert len(v.changelog()[7]["highlights"]) >= 5, "4.6.14 ausgeraeumt"
-    assert len(v.changelog()[8]["highlights"]) >= 5, "4.6.13 ausgeraeumt"
-    assert len(v.changelog()[9]["highlights"]) >= 5, "4.6.12 ausgeraeumt"
-    assert len(v.changelog()[10]["highlights"]) >= 5, "4.6.11 ausgeraeumt"
-    assert len(v.changelog()[11]["highlights"]) >= 5, "4.6.10 ausgeraeumt"
-    assert len(v.changelog()[12]["highlights"]) >= 5, "4.6.9 ausgeraeumt"
-    assert len(v.changelog()[13]["highlights"]) >= 5, "4.6.8 ausgeraeumt"
-    assert len(v.changelog()[14]["highlights"]) >= 5, "4.6.7 ausgeraeumt"
-    assert len(v.changelog()[15]["highlights"]) >= 5, "4.6.6 ausgeraeumt"
-    assert len(v.changelog()[16]["highlights"]) >= 5, "4.6.5 ausgeraeumt"
-    assert len(v.changelog()[17]["highlights"]) >= 5, "4.6.4 ausgeraeumt"
-    assert len(v.changelog()[18]["highlights"]) >= 5, "4.6.3 ausgeraeumt"
-    assert len(v.changelog()[19]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
-    assert len(v.changelog()[20]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
-    assert len(v.changelog()[21]["highlights"]) >= 5, "4.6 ausgeraeumt"
-    assert len(v.changelog()[22]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
-    assert len(v.changelog()[23]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
-    assert len(v.changelog()[24]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
-    assert len(v.changelog()[25]["highlights"]) >= 5, "4.5 ausgeraeumt"
-    assert len(v.changelog()[27]["highlights"]) >= 10, "4.4 ausgeraeumt"
+    assert vor["version"] == "4.6.23" and len(vor["highlights"]) >= 5, \
+        f"4.6.23 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
+        f"auf 5.0.0 ist die Vorgaengerfassung ausgeraeumt worden"
+    assert len(v.changelog()[2]["highlights"]) >= 5, "4.6.22 ausgeraeumt"
+    assert len(v.changelog()[3]["highlights"]) >= 5, "4.6.21 ausgeraeumt"
+    assert len(v.changelog()[4]["highlights"]) >= 4, "4.6.20 ausgeraeumt"
+    assert len(v.changelog()[5]["highlights"]) >= 5, "4.6.19 ausgeraeumt"
+    assert len(v.changelog()[6]["highlights"]) >= 5, "4.6.18 ausgeraeumt"
+    assert len(v.changelog()[7]["highlights"]) >= 5, "4.6.17 ausgeraeumt"
+    assert len(v.changelog()[8]["highlights"]) >= 5, "4.6.16 ausgeraeumt"
+    assert len(v.changelog()[9]["highlights"]) >= 5, "4.6.15 ausgeraeumt"
+    assert len(v.changelog()[10]["highlights"]) >= 5, "4.6.14 ausgeraeumt"
+    assert len(v.changelog()[11]["highlights"]) >= 5, "4.6.13 ausgeraeumt"
+    assert len(v.changelog()[12]["highlights"]) >= 5, "4.6.12 ausgeraeumt"
+    assert len(v.changelog()[13]["highlights"]) >= 5, "4.6.11 ausgeraeumt"
+    assert len(v.changelog()[14]["highlights"]) >= 5, "4.6.10 ausgeraeumt"
+    assert len(v.changelog()[15]["highlights"]) >= 5, "4.6.9 ausgeraeumt"
+    assert len(v.changelog()[16]["highlights"]) >= 5, "4.6.8 ausgeraeumt"
+    assert len(v.changelog()[17]["highlights"]) >= 5, "4.6.7 ausgeraeumt"
+    assert len(v.changelog()[18]["highlights"]) >= 5, "4.6.6 ausgeraeumt"
+    assert len(v.changelog()[19]["highlights"]) >= 5, "4.6.5 ausgeraeumt"
+    assert len(v.changelog()[20]["highlights"]) >= 5, "4.6.4 ausgeraeumt"
+    assert len(v.changelog()[21]["highlights"]) >= 5, "4.6.3 ausgeraeumt"
+    assert len(v.changelog()[22]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
+    assert len(v.changelog()[23]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
+    assert len(v.changelog()[24]["highlights"]) >= 5, "4.6 ausgeraeumt"
+    assert len(v.changelog()[25]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
+    assert len(v.changelog()[26]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
+    assert len(v.changelog()[27]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
+    assert len(v.changelog()[28]["highlights"]) >= 5, "4.5 ausgeraeumt"
+    assert len(v.changelog()[30]["highlights"]) >= 10, "4.4 ausgeraeumt"
     # Und keine Zeile darf in ZWEI Fassungen stehen.
     doppelt = set(top["highlights"]) & set(vor["highlights"])
-    assert not doppelt, f"in 4.6.21 und 4.6.20 gleichzeitig: {list(doppelt)[:1]}"
-    ok("v4.6.21: nc.version — 4.6.21 + Changelog mit Historie, 4.6.20 bis 4.5 und 4.4 unversehrt")
+    assert not doppelt, f"in 5.0.0 und 4.6.23 gleichzeitig: {list(doppelt)[:1]}"
+    ok("v5.0.0: nc.version — 5.0.0 + Changelog mit Historie, 4.6.23 bis 4.5 und 4.4 unversehrt")
 
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
@@ -3123,7 +3128,7 @@ def test_v40_version():
         "BUILD_STAMP haengt nicht an nc.version"
     # ANKER GEWANDERT (v4.3, nicht der Vertrag): der Stempel folgt RELEASE
     # und VERSION, beide aus nc/version.py.
-    assert v.build_stamp() == "2026.11 · v4.6.21", v.build_stamp()
+    assert v.build_stamp() == "2026.11 · v5.0.0", v.build_stamp()
     # v4.1-W26: Anker mitgewandert. Die Route liegt jetzt in
     # nc/routes/auskunft.py — der VERTRAG ist unveraendert (es gibt sie, und
     # sie meldet die Version), nur ihre Fundstelle nicht.
@@ -7640,8 +7645,15 @@ def test_v40_w92_usage_and_donation():
     # Backend liefert usage + donation in den öffentlichen Stats
     src = open("bot.py").read()
     assert 'stats["usage"] = _nc_usage.snapshot()' in src, "usage nicht in _public_stats"
-    assert '"goal_eur"' in src and '"paypal"' in src and "DONATION_GOAL_EUR" in src, "Spendenblock fehlt"
-    assert 'paypal@voice4you.org' in src, "PayPal-Standardadresse fehlt"
+    # ANKER GEWANDERT (v4.2-W173): Ziel und Stand rechnet nc/spendenziel.py.
+    assert '"goal_eur"' in src and '"paypal"' in src and "_nc_spendenziel.stand(" in src \
+        and "DONATION_GOAL_EUR" in open("nc/spendenziel.py", encoding="utf-8").read(), \
+        "Spendenblock fehlt"
+    # ANKER GEWANDERT (v4.2-W172, nicht der Vertrag): die PayPal-Vorgabe steht
+    # jetzt in nc/spendeninfo.py — eine Quelle fuer Website, Deck und /spenden.
+    assert "_nc_spendeninfo.paypal()" in src and \
+        'paypal@voice4you.org' in open("nc/spendeninfo.py", encoding="utf-8").read(), \
+        "PayPal-Standardadresse fehlt"
     assert "_nc_claude.chat_sync = _claude_chat_sync_metered" in src, "Metering-Wrapper nicht installiert"
 
     # Website: 3D-Canvas + Spendenpanel + Rendering
@@ -7928,9 +7940,15 @@ def test_v40_w102_donations_3d_qr_manual():
     assert "donations/manual/<int:rid>/delete" in _money, "kein Delete-Endpoint"
     assert "def manual_total" in _ddb and "def manual_rows" in _ddb, \
         "manuelle Summe/Liste nicht in nc.donationsdb"
-    assert "def _manual_donations_total" in src and "cur += _manual_donations_total()" in src, \
+    # ANKER GEWANDERT (v4.2-W173): manuelle Spenden zaehlen ueber die Liste
+    # der eigenen Kanaele (platform='manual') in nc/spendenziel.py — einmal.
+    from nc import revenue as _rv
+    assert "manual" in _rv.PLATFORMS and "_revenue.sql_in()" in \
+        open("nc/spendenziel.py", encoding="utf-8").read(), \
         "manuelle Summe fließt nicht in current_eur"
-    assert "return _nc_donationsdb.manual_total()" in src, \
+    # ANKER GEWANDERT (v4.2-W173): die Delegation ist weg; die staerkere
+    # Aussage gilt — bot.py summiert manuelle Spenden nirgends selbst.
+    assert "manual_total" not in src.replace("_manual_donations_total liegen", ""), \
         "Bot delegiert nicht — Doppel-Logik zur manuellen Summe"
     assert "platform='manual'" in _money or "platform='manual'" in _ddb, \
         "manuelle Spenden nicht als platform='manual'"

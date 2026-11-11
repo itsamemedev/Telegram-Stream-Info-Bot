@@ -2234,7 +2234,12 @@ def _test_w26_huellen_schlucken_nichts():
     baum2 = _ast.parse(quelle)
 
     # (1) Der Sekundentakt laeuft NEBEN dem Loop.
-    assert "await _write_restream_overlay_async()" in quelle, \
+    # ANKER GEWANDERT (v4.2-W179, nicht der Vertrag): der Leser wartet nicht
+    # mehr auf das Schreiben, er feuert es ueber _overlay_takt() als Task —
+    # abgewartet hielt er die Fortschrittsmarken an (Vertrag W179). Geprueft
+    # im Syntaxbaum: der alte Textanker traf den Docstring von _overlay_takt.
+    _takt = next(n for n in baum2.body if getattr(n, "name", "") == "_overlay_takt")
+    assert "_spawn(_write_restream_overlay_async()" in _ast.unparse(_takt), \
         "der Sekundentakt schreibt wieder synchron auf dem Loop"
     for n in baum2.body:
         if isinstance(n, _ast.AsyncFunctionDef) and n.name == "_write_restream_overlay_async":
@@ -2256,8 +2261,14 @@ def _test_w26_huellen_schlucken_nichts():
     # (3) Der Anlauf-Aufruf bleibt SYNCHRON: die Textdateien muessen da sein,
     # BEVOR drawtext sie oeffnet. Ein await davor waere eine Wettlaufsituation
     # mit dem gerade startenden ffmpeg.
-    assert "_write_restream_overlay()      # Textdateien anlegen" in quelle, \
-        "der Anlauf-Aufruf ist verschwunden oder nebenlaeufig geworden"
+    # ANKER GEWANDERT (v4.2-W179): abgewartet, aber im Thread — die Zusage
+    # (Dateien da, BEVOR ffmpeg startet) bleibt, nur haelt sie den Loop nicht mehr.
+    _rm = next(n for n in baum2.body if isinstance(n, _ast.ClassDef)
+               and n.name == "RestreamManager")
+    _st = _ast.unparse(next(n for n in _rm.body if getattr(n, "name", "") == "start"))
+    assert 0 <= _st.find("await asyncio.to_thread(_write_restream_overlay)") \
+        < _st.find("asyncio.create_subprocess_exec("), \
+        "der Anlauf-Aufruf ist verschwunden oder laeuft nach dem ffmpeg-Start"
 
     # (4) DER SCHREIBER DARF NUR LESEN. Er laeuft jetzt in einem Thread,
     # waehrend der Loop den geteilten Zustand weiter veraendert. Ein
@@ -6058,7 +6069,8 @@ def _test_v42_w19_versandweg():
         _con = _ty.ModuleType("telegram.constants")
         for _n in ("TelegramError",):
             setattr(_err, _n, type(_n, (Exception,), {}))
-        for _n in ("BadRequest", "Forbidden", "NetworkError", "RetryAfter"):
+        # ANKER GEWANDERT (v4.2-W175): telegramversand faengt ChatMigrated.
+        for _n in ("BadRequest", "ChatMigrated", "Forbidden", "NetworkError", "RetryAfter"):
             setattr(_err, _n, type(_n, (_err.TelegramError,), {}))
         _con.ParseMode = _ty.SimpleNamespace(HTML="HTML")
         _sys.modules.update({"telegram": _tg, "telegram.error": _err,
@@ -6094,7 +6106,11 @@ def _test_v42_w19_versandweg():
 
         async def _safe_send(bot, chat_id, text, **kw):
             PROT["texte"].append(text)
+        # ANKER GEWANDERT (v4.2-W175): sechster Pflicht-Helfer chat_migriert.
+        async def _chat_migriert(alt, neu):
+            PROT.setdefault("migriert", []).append((alt, neu))
         _tv.konfiguriere(
+            chat_migriert=_chat_migriert,
             ensure_topic=_ensure_topic,
             is_dead=lambda c: tot,
             mark_dead=lambda c: PROT["tot"].append(c),
@@ -12634,8 +12650,15 @@ def _test_v42_w103_ohne_url_meldung_ist_gedrosselt():
     # ── (4) UND DER ERFOLGSPFAD SETZT ZURUECK. War die Adresse von Anfang an
     # da, ist die Lage vorbei; ohne das Zuruecksetzen bliebe eine
     # WIEDERKEHRENDE Stoerung bis zu 15 Minuten unsichtbar (Lehre aus W81).
-    assert '_nc_meldetakt.zuruecksetzen("live-ohne-url")' in nach, \
+    # VERTRAG GEAENDERT (v4.2-W176): hier stand die Zusicherung auf ein
+    # blankes zuruecksetzen() — und das WAR der Fehler: der Pfad laeuft auch
+    # fuer jede Offline-Pruefung jedes anderen Nutzers und leerte die Drossel
+    # fast bei jedem Poll. Seither erfolg() je Nutzer (W157-Muster); das
+    # Verhalten misst _test_v42_w176_live_ohne_url_drossel.
+    assert '_nc_meldetakt.erfolg("live-ohne-url", username)' in nach, \
         "der Erfolgspfad setzt die Drossel nicht zurueck"
+    assert '_nc_meldetakt.zuruecksetzen("live-ohne-url")' not in nach, \
+        "jede Offline-Pruefung eines anderen Nutzers leert wieder die Drossel"
 
     ok("W103: die live-ohne-URL-Zeilen laufen gedrosselt ueber EINEN Kanal")
     ok("W103: der Drossel-Schluessel ist der Kanal, der Grund der Ausgang")
@@ -20585,10 +20608,16 @@ def _test_v42_w109_ein_befehlsverzeichnis():
     alte = [n for n in _ast.walk(baum) if isinstance(n, _ast.For)
             and isinstance(n.iter, _ast.Tuple) and "CommandHandler" in _ast.unparse(n)]
     assert not alte, "eine zweite, handgeschriebene Telegram-Liste ist zurueck"
+    # v4.2-W172: die eine ausdrueckliche Ausnahme. Jede weitere muss HIER
+    # eingetragen werden — eine Liste, die still waechst, oeffnet Telegram.
+    assert B.OEFFENTLICH <= {"spenden"}, \
+        "neue oeffentliche Telegram-Befehle: %r" % sorted(B.OEFFENTLICH - {"spenden"})
     for name, handler in B.telegram_handler():
         fn = oben.get(handler)
         assert isinstance(fn, _ast.AsyncFunctionDef), \
             "/%s: Handler %s fehlt in bot.py" % (name, handler)
+        if name in B.OEFFENTLICH:
+            continue
         def _erste(f):
             return f.body[1] if _ast.get_docstring(f) else f.body[0]
         erste = _erste(fn)
@@ -21862,7 +21891,10 @@ def _test_v42_w118_gegendruck_verdrahtet():
     assert rufe("start", "_start_gesperrt"), "RestreamManager.start fragt nicht"
     # ── (3) DIE SCHLANGE: verworfen wird gezaehlt und gemeldet, und der
     # Tracking-Abruf alle 5 s laeuft im Thread.
-    assert rufe("check_all_trackings", "_pruefung_verworfen")
+    # ANKER GEWANDERT (v4.2-W176): die Runde ohne await steht jetzt in
+    # _pruef_runde, damit check_all_trackings sie als Ganzes absichert.
+    assert rufe("check_all_trackings", "_pruef_runde")
+    assert rufe("_pruef_runde", "_pruefung_verworfen")
     direkt = [c for c in rufe("check_all_trackings", "get_all_active_trackings")]
     assert not direkt, "get_all_active_trackings wieder direkt auf dem Loop"
     assert any("to_thread(get_all_active_trackings)" in _ast.unparse(c)
@@ -22234,8 +22266,9 @@ def _test_v42_w120_speicher_waechst_nicht():
 
     baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
     fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    # ANKER GEWANDERT (v4.2-W176): die Runde steht in _pruef_runde.
     assert any(isinstance(c, _ast.Call) and getattr(c.func, "id", None) == "_speicher_pflegen"
-               for c in _ast.walk(fn["check_all_trackings"])), "niemand pflegt"
+               for c in _ast.walk(fn["_pruef_runde"])), "niemand pflegt"
     # Namen im Syntaxbaum, nicht im Text: "_CLIP_LAST" steckt auch in
     # "_HYPE_CLIP_LAST" — die Mutationsprobe ist genau daran entwischt.
     namen = {c.id for c in _ast.walk(fn["_speicher_pflegen"]) if isinstance(c, _ast.Name)}
@@ -22342,7 +22375,7 @@ def _test_v42_w121_degradiert_ist_nicht_tot():
     assert len(rueck) == 1 and _ast.unparse(rueck[0].value) == "(jsonify(daten), 200 if ok else 503)", \
         "der HTTP-Code haengt nicht mehr allein an ok: %s" % [_ast.unparse(r) for r in rueck]
     assert "daten['lage'], daten['gruende'] = _nc_lage.bewerten(daten)" in _ast.unparse(hz)
-    assert "_nc_lage.bereit()" in _ast.unparse(fn["check_all_trackings"])
+    assert "_nc_lage.bereit()" in _ast.unparse(fn["_pruef_runde"])   # ANKER GEWANDERT (v4.2-W176)
 
     inst = io.open("tools/installer.sh", encoding="utf-8").read()
     unit = inst[inst.index("ExecStart=${VENV}/bin/python ${ZIEL}/bot.py"):]
@@ -24966,7 +24999,8 @@ def _test_v42_w131_aufnahme_luecken():
     # ANKER GEWANDERT (v4.2-W158): `sichern` laeuft im benannten Schritt
     # _aufnahme_fertigmachen (Tonspur, dann Chat einbrennen). Gerade das
     # Einbrennen dauert — der Platz muss davor frei sein.
-    for spaeter in ("_aufnahme_fertigmachen", "add_recording", "split_and_send_video"):
+    # ANKER GEWANDERT (v4.2-W175): der Upload laeuft in _aufnahme_verteilen.
+    for spaeter in ("_aufnahme_fertigmachen", "add_recording", "_aufnahme_verteilen"):
         assert zeilen(spaeter) and frei[0] < zeilen(spaeter)[0], \
             "Sperre wird erst nach %s frei" % spaeter
     kommunikation = zeilen("communicate")
@@ -25078,7 +25112,8 @@ def _test_v42_w132_versandziel_und_doppelstart():
         _con = _ty.ModuleType("telegram.constants")
         for _n in ("TelegramError",):
             setattr(_err, _n, type(_n, (Exception,), {}))
-        for _n in ("BadRequest", "Forbidden", "NetworkError", "RetryAfter"):
+        # ANKER GEWANDERT (v4.2-W175): telegramversand faengt ChatMigrated.
+        for _n in ("BadRequest", "ChatMigrated", "Forbidden", "NetworkError", "RetryAfter"):
             setattr(_err, _n, type(_n, (_err.TelegramError,), {}))
         _con.ParseMode = _ty.SimpleNamespace(HTML="HTML")
         _sys.modules.update({"telegram": _tg, "telegram.error": _err,
@@ -25099,7 +25134,11 @@ def _test_v42_w132_versandziel_und_doppelstart():
         raise AssertionError("Forum-Thema fuer einen gesperrten Chat angelegt")
 
     alt_vt = _tv._nc_videoteil
-    _tv.konfiguriere(ensure_topic=_ensure_topic, is_dead=lambda c: True,
+    # ANKER GEWANDERT (v4.2-W175): sechster Pflicht-Helfer chat_migriert.
+    async def _chat_migriert(alt, neu):
+        raise AssertionError("ein gesperrter Chat wurde migriert")
+    _tv.konfiguriere(chat_migriert=_chat_migriert,
+                     ensure_topic=_ensure_topic, is_dead=lambda c: True,
                      mark_dead=lambda c: None, safe_send=_safe_send,
                      topic_forget=lambda c, u: None)
     _tv._nc_videoteil = _Verboten()
@@ -25407,7 +25446,10 @@ def _test_v42_w133_drossel_und_loop():
     for fn, ziel in (("_piper_say", "_piper_pick_model"),
                      ("_stats_loop", "_nc_usage.flush"),
                      ("_stats_loop", "_nc_usage.configure"),
-                     ("handle_recording_finished", "_upload_queue_add")):
+                     # ANKER GEWANDERT (v4.2-W175): das Einreihen steht in den
+                     # benannten Schritten des Uploads.
+                     ("_aufnahme_verteilen", "_upload_queue_add"),
+                     ("_upload_rest_sichern", "_upload_queue_add")):
         rufe = [c for c in _ast.walk(_fn(fn)) if isinstance(c, _ast.Call)]
         im_thread = [c for c in rufe if _ast.unparse(c.func) == "asyncio.to_thread"
                      and c.args and _ast.unparse(c.args[0]) == ziel]
@@ -26092,7 +26134,7 @@ def _test_v42_w142_zehn_punkte():
     assert "pruefung=_nc_prueflage.fuer_healthz()" in src
     pm = _ast.unparse(_fn("_pruefstand_melden"))
     assert "log.error" in pm and "_nc_meldetakt.melden('pruefstand'" in pm
-    schleife = _ast.unparse(_fn("check_all_trackings"))
+    schleife = _ast.unparse(_fn("_pruef_runde"))   # ANKER GEWANDERT (v4.2-W176)
     assert "_pruefstand_melden(trackings)" in schleife
 
     # (6) Deck zeigt die Quellen-Statistik.
@@ -28308,8 +28350,12 @@ def _test_v42_w149_tiefengrund():
     # (4) Die Gegenprobe zaehlt keine Zeilen ohne Plattform (B138-GELD).
     c2 = _sq.connect(":memory:")
     c2.row_factory = _sq.Row
-    c2.execute("CREATE TABLE overlay_events (kind TEXT, platform TEXT, amount TEXT, ts TEXT)")
-    c2.executemany("INSERT INTO overlay_events VALUES ('donation',?,?,?)",
+    # ANKER GEWANDERT (v4.2-W178): die Gegenprobe rechnet ueber to_eur und
+    # liest dafuer auch `message` (Sub ohne Betrag) — die Spalte hat die echte
+    # Tabelle seit jeher, nur diese Attrappe nicht.
+    c2.execute("CREATE TABLE overlay_events (kind TEXT, platform TEXT, amount TEXT, ts TEXT, "
+               "message TEXT)")
+    c2.executemany("INSERT INTO overlay_events VALUES ('donation',?,?,?,'')",
                    [(None, "500", "2026-03-01"), ("kick", "20", "2026-03-01")])
     cc = L.crosscheck(c2, 2026, "('kick','twitch','youtube','manuell')")
     assert cc["overlay_estimate_eur"] == 20.0, "TikTok-Altbestand ohne Plattform zaehlt als Kick: %r" % cc
@@ -28997,7 +29043,8 @@ def _test_v42_w158_chat_in_der_aufnahme():
     lc = rumpf_ab(src, src.index("async def _start_chat_listener("))
     assert "_nc_aufnahmechat.notieren(username, who, txt)" in lc
     hs = rumpf_ab(src, src.index("async def _handle_single_tracking("))
-    assert hs.index("set_recording_file(tid, output_file, proc.pid)") < \
+    # ANKER GEWANDERT (v4.2-W176): set_recording_file laeuft im Thread.
+    assert hs.index("set_recording_file, tid, output_file, proc.pid)") < \
         hs.index("_aufnahme_chat_beginnen(username, output_file, proc)")
     hrf = next(n for n in baum.body if getattr(n, "name", "") == "handle_recording_finished")
     assert "_aufnahme_fertigmachen" in {_ast.unparse(c.func) for c in _ast.walk(hrf)
@@ -29018,6 +29065,10 @@ def _test_v42_w158_chat_in_der_aufnahme():
     ns = {"log": _lg.getLogger("w158"), "os": _os, "subprocess": _sp, "shutil": _sh,
           "json": _json, "_time_mod": _t, "_nc_aufnahmechat": A,
           "_env_int": lambda n, d: d, "_aufnahme_chat_modus": lambda: "einbrennen"}
+    # ANKER GEWANDERT (v4.2-W177, nicht der Vertrag): seit W174 geht die
+    # Kodierung durch die Encode-Warteschlange — der Namensraum braucht sie.
+    import nc.encodeschlange as _enc
+    ns["_nc_encode"] = _enc
     # Review #203: der Stopp-Pfad behaelt den Chat. ANKER GEWANDERT
     # (v4.2-W163, nicht der Vertrag): vorgemerkt statt beigelegt.
     st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
@@ -29878,12 +29929,18 @@ def _test_v42_w164_alles_auf_einmal():
     summe = sum(float(r[0].replace(",", ".")) for r in c.execute(
         "SELECT amount FROM overlay_events WHERE kind='donation' AND platform IN " + R.sql_in()))
     assert summe == 35.5, "eine manuelle Spende fehlt im Spendenziel (oder TikTok zaehlt)"
-    # Die Website-Summe rechnet manuell getrennt — sie darf die Liste NICHT
-    # benutzen, sonst zaehlte jede manuelle Spende doppelt.
+    # Keine manuelle Spende darf doppelt zaehlen. ANKER GEWANDERT (v4.2-W173):
+    # bis W172 addierte die Website manual_total() getrennt und durfte die
+    # Liste deshalb NICHT benutzen. Seit W173 laeuft jede Anzeige ueber EINE
+    # Abfrage in nc/spendenziel.py, die 'manual' ueber die Liste einschliesst —
+    # also darf dort und auf der Website nichts zusaetzlich addiert werden.
     src = open("bot.py", encoding="utf-8").read()
-    st = src[src.index('goal = _nc_envnum.env_float("DONATION_GOAL_EUR"'):]
-    st = st[:st.index("_pp = os.getenv")]
-    assert "cur += _manual_donations_total()" in st and "sql_in" not in st
+    st = src[src.index("_ziel = _nc_spendenziel.stand(_conn)") - 400:]
+    st = st[:st.index("_pp = _nc_spendeninfo.paypal()")]
+    assert "_manual_donations_total" not in st, "manuelle Spenden zaehlen auf der Website doppelt"
+    zq = open("nc/spendenziel.py", encoding="utf-8").read()
+    assert "manual_total" not in zq and "_revenue.sql_in()" in zq, \
+        "das Spendenziel addiert manuelle Spenden doppelt oder ohne die Liste"
     ov = open("templates/overlay.html", encoding="utf-8").read()
     assert "manual:'DIREKT'" in ov
 
@@ -30076,8 +30133,9 @@ def _test_v42_w167_upload_wartet_nicht_auf_chat():
     namen = {n.id for n in _ast.walk(fm) if isinstance(n, _ast.Name)}
     assert "_aufnahme_chat_einarbeiten" not in namen, "auch nicht ueber to_thread"
     hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
+    # ANKER GEWANDERT (v4.2-W175): der Upload laeuft in _aufnahme_verteilen.
     assert hrf.index("_aufnahme_fertigmachen(output_file, username)") < \
-        hrf.index("split_and_send_video("), "Reihenfolge: fertigmachen, dann Upload"
+        hrf.index("_aufnahme_verteilen("), "Reihenfolge: fertigmachen, dann Upload"
 
     # Ausgefuehrt: das Einarbeiten haengt ewig — fertigmachen kehrt trotzdem zurueck.
     gemerkt, geweckt = [], []
@@ -30306,18 +30364,14 @@ def _test_v42_w168_ein_thema_ein_kanal():
     import ast as _ast
     import asyncio as _aio
     import logging as _lg
-    import os as _os
-    import shutil as _sh
     import sqlite3 as _sq
-    import threading as _th
     import time as _tm
     import types as _ty
-    import pruefhilfen as P
     from contextlib import contextmanager as _cm
     from nc import discordziele as Z
     from nc import meldetakt as M
     from nc import telegramfehler as T
-    from nc import topicumzug as U
+    from nc import discordaufnahme as DA
 
     src = open("bot.py", encoding="utf-8").read()
     baum = _ast.parse(src)
@@ -30344,13 +30398,17 @@ def _test_v42_w168_ein_thema_ein_kanal():
     # (1) Discord-/track-Nutzer sind NUR Discord: kein Ersatz-Telegram mehr.
     assert T.nur_telegram([gilde, -100, -100, "x", gilde]) == ([-100], [gilde, "x"])
     M.ZUSTAND.clear()
+    # ANKER GEWANDERT (v4.2-W175): der Hinweis nennt den Clip-Kanal und den Schalter.
     ns = _exec(baum, ["_telegram_ziele", "_fanout_ziele"],
-               {"_nc_tgfehler": T, "_nc_meldetakt": M, "_time_mod": _tm, "log": lg})
+               {"_nc_tgfehler": T, "_nc_meldetakt": M, "_time_mod": _tm, "log": lg,
+                "_nc_discordziele": Z, "_nc_dcaufnahme": DA})
     assert ns["_telegram_ziele"]([gilde, -7], "anna") == [-7], \
         "eine Discord-Aufnahme geht wieder nach Telegram"
     ns["_telegram_ziele"]([gilde], "ben")
+    ns["_telegram_ziele"]([gilde], "ben")
     hinweis = [z for _l, z in zeilen if "nur nach Discord" in z]
-    assert len(hinweis) == 1, ("der Hinweis kommt bei jeder Aufnahme", hinweis)
+    # v4.2-W175: gedrosselt JE NUTZER (anna, ben) — nicht einmal fuer alle.
+    assert len(hinweis) == 2, ("der Hinweis kommt bei jeder Aufnahme", hinweis)
     paare, chats = ns["_fanout_ziele"](
         [{"id": 1, "group_id": gilde}, {"id": 2, "group_id": -100},
          {"id": 3, "group_id": -100}], 9, -5, "anna")
@@ -30361,172 +30419,17 @@ def _test_v42_w168_ein_thema_ein_kanal():
     hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
     assert "for ftid, fchat in target_paare:" in hrf and "zip(target_tids" not in hrf
     assert "fchat is not None" in hrf, "die Offline-Meldung geht an die Guild"
-    uw = rumpf_ab(src, src.index("async def _upload_window_loop("))
+    # ANKER GEWANDERT (v4.2-W175): der Durchgang steht in _upload_queue_abarbeiten.
+    uw = rumpf_ab(src, src.index("async def _upload_queue_abarbeiten("))
     assert "if not chat_id or not fpath" in uw, \
         "ein aufgeschobener Discord-Eintrag wirft IndexError statt verworfen zu werden"
 
-    # (2) Telegram: EIN Upload-Thema je Gruppe — egal wie viele Nutzer.
-    erstellt = []
-
-    class _Bot:
-        async def create_forum_topic(self, chat_id, name):
-            erstellt.append((chat_id, name))
-            return _ty.SimpleNamespace(message_thread_id=100 + len(erstellt))
-
-    themen = {}
-    ns2 = {"TELEGRAM_USE_TOPICS": True, "_TG_TOPICS": themen, "_TG_TOPICS_LOCK": _th.Lock(),
-           "_tg_topics_save": lambda: None, "log": lg, "os": _os, "asyncio": _aio,
-           "_TG_UPLOAD_TOPIC_KEY": "#uploads", "_TG_TOPIC_ANLEGEN": {}}
-    from nc.util import _topic_key
-    ns2["_topic_key"] = _topic_key
-
-    async def _forum(_c, _b):
-        return True
-    ns2["_chat_is_forum"] = _forum
-    _exec(baum, ["_upload_topic_name", "_ensure_topic", "_topic_anlegen", "_topic_forget"], ns2)
-    a = _aio.run(ns2["_ensure_topic"](-100, "anna", _Bot()))
-    b = _aio.run(ns2["_ensure_topic"](-100, "ben", _Bot()))
-    assert a == b and len(erstellt) == 1, ("je Nutzer wieder ein Thema", erstellt)
-    assert erstellt[0][1] == "🎬 Aufnahmen"
-    _aio.run(ns2["_ensure_topic"](-100, "#live-notices", _Bot(), name="📡"))
-    assert len(erstellt) == 2, "das Melde-Thema ist im Upload-Thema aufgegangen"
-    ns2["_topic_forget"](-100, "anna")
-    assert "-100:#uploads" not in themen and "-100:#live-notices" in themen, \
-        "ein geloeschtes Upload-Thema wird nie vergessen — jeder Upload geht ins Leere"
-    # Review #210: zwei gleichzeitige Uploads legen EIN Thema an, nicht zwei.
-    themen.clear(); del erstellt[:]; ns2["_TG_TOPIC_ANLEGEN"].clear()
-
-    class _LahmerBot(_Bot):
-        async def create_forum_topic(self, chat_id, name):
-            await _aio.sleep(0.05)
-            return await _Bot.create_forum_topic(self, chat_id, name)
-
-    async def _zwei():
-        return await _aio.gather(ns2["_ensure_topic"](-300, "anna", _LahmerBot()),
-                                 ns2["_ensure_topic"](-300, "ben", _LahmerBot()))
-    t1, t2 = _aio.run(_zwei())
-    assert len(erstellt) == 1 and t1 == t2, ("parallele Uploads, zwei Upload-Themen", erstellt)
+    # (2)–(4) v4.2-W175: das gemeinsame Upload-Thema und der Topic-Umzug sind
+    # auf Wunsch des Betreibers zurueckgenommen — geprueft wird das Gegenteil
+    # in _test_v42_w175_telegram_discord. Uebrig bleibt der Zaehler, an dem
+    # seit W175 die Upload-Warteschlange haengt.
     tv = open("telegramversand.py", encoding="utf-8").read()
     assert 'ergebnis["gesendet" if ok else "fehler"] += 1' in tv
-
-    # (3) Topic-Umzug: rein.
-    alt = {"-100:anna": 7, "-100:#live-notices": 8, "-100:#uploads": 9, "x:anna": 3,
-           "-200:Ben": 4}
-    assert U.alte_themen(alt) == [(-100, "anna", 7), (-200, "Ben", 4)]
-    z = {"gesendet": {}}
-    assert U.offen(["a", "b", "a"], z, -100, "anna") == ["a", "b"]
-    U.gesendet(z, -100, "Anna", "a")
-    assert U.offen(["a", "b"], z, -100, "anna") == ["b"], "Neustart laedt doppelt hoch"
-    assert not U.angekommen({}) and not U.angekommen({"gesendet": 0, "fehler": 0})
-    assert not U.angekommen({"gesendet": 2, "fehler": 1})
-    assert U.angekommen({"gesendet": 1, "fehler": 0})
-    d = P.verzeichnis()
-    try:
-        pfad = _os.path.join(d, "u.json")
-        assert U.lade(pfad) == {"gesendet": {}}
-        U.speichere(pfad, z)
-        assert U.lade(pfad) == z
-        with open(pfad, "w") as fh:
-            fh.write("[1]")
-        try:
-            U.lade(pfad)
-            raise AssertionError("ein kaputter Stand laedt alles noch einmal hoch")
-        except ValueError:
-            pass
-
-        # (4) Topic-Umzug ausgefuehrt: geloescht wird NUR nach vollem Nachziehen.
-        aufnahmen = []
-        for i in range(2):
-            f = _os.path.join(d, "a%d.mp4" % i)
-            P.attrappe(f, 10)
-            aufnahmen.append(f)
-        weg = _os.path.join(d, "weg.mp4")
-        gesendet, geloescht, scheitern = [], [], [False]
-
-        async def _send(chat, datei, app, nutzer, ergebnis=None):
-            gesendet.append(datei)
-            kaputt = scheitern[0] is True or scheitern[0] == datei
-            ergebnis["gesendet"] = 0 if kaputt else 1
-            ergebnis["fehler"] = 1 if kaputt else 0
-
-        db_zeilen = list(aufnahmen) + [weg]
-
-        async def _db_async(fn):
-            return [{"filepath": f} for f in db_zeilen]
-
-        class _TBot:
-            async def delete_forum_topic(self, chat_id, message_thread_id):
-                geloescht.append(message_thread_id)
-
-            async def close_forum_topic(self, chat_id, message_thread_id):
-                geloescht.append(("zu", message_thread_id))
-
-        async def _schlaf(_s):
-            return None
-        themen.clear(); themen["-100:anna"] = 7
-        ns3 = {"asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
-               "_should_defer_upload": lambda: False, "db_async": _db_async, "os": _os,
-               "_nc_topicumzug": U, "split_and_send_video": _send, "log": lg,
-               "_TG_TOPICS_LOCK": _th.Lock(), "_TG_TOPICS": themen, "_topic_key": _topic_key,
-               "_tg_topics_save": lambda: None}
-        _exec(baum, ["_tg_topic_umziehen"], ns3)
-        app = _ty.SimpleNamespace(bot=_TBot())
-        stand = _os.path.join(d, "stand.json")
-        z = {"gesendet": {}}
-        scheitern[0] = True
-        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
-        assert geloescht == [], "das alte Thema ist weg, obwohl das Video nicht ankam"
-        assert themen == {"-100:anna": 7}
-        scheitern[0] = False
-        del gesendet[:]
-        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
-        assert gesendet == aufnahmen, ("nachgezogen wird, was auf der Platte liegt", gesendet)
-        assert geloescht == [("zu", 7)] and themen == {}, \
-            ("Review #210: eine Aufnahme ohne Datei liegt NUR noch im alten Thema — "
-             "geschlossen, nicht geloescht", geloescht, themen)
-        assert U.lade(stand) == {"gesendet": {}}
-        assert any("nicht mehr auf der Platte" in z for _l, z in zeilen)
-        # Alles da: geloescht. Keine einzige Zeile: geschlossen (die Retention
-        # hat Datei UND Zeile entfernt — das Thema traegt die einzige Kopie).
-        db_zeilen[:] = aufnahmen
-        for erwartet, zeilen_db in ((7, aufnahmen), (("zu", 7), [])):
-            db_zeilen[:] = zeilen_db
-            themen["-100:anna"] = 7
-            del geloescht[:]
-            _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, {"gesendet": {}}, stand))
-            assert geloescht == [erwartet], (zeilen_db, geloescht)
-        db_zeilen[:] = aufnahmen
-        # Erste Datei durch, zweite scheitert: der Stand kennt die erste — auf
-        # der Platte, nicht nur im Speicher.
-        themen["-100:anna"] = 7
-        del gesendet[:], geloescht[:]
-        scheitern[0] = aufnahmen[1]
-        z = {"gesendet": {}}
-        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
-        assert geloescht == [] and U.offen(aufnahmen, U.lade(stand), -100, "anna") == \
-            [aufnahmen[1]], "der Fortschritt wird nicht gemerkt — der Neustart laedt doppelt"
-        scheitern[0] = False
-        # Teilweise durch, dann Neustart: nichts doppelt.
-        themen["-100:anna"] = 7
-        del gesendet[:], geloescht[:]
-        z = {"gesendet": {}}
-        U.gesendet(z, -100, "anna", aufnahmen[0])
-        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
-        assert gesendet == [aufnahmen[1]], ("nach dem Neustart doppelt hochgeladen", gesendet)
-        # Fehlendes Recht zum Loeschen: laut, Thema bleibt gemerkt.
-        class _Verbot:
-            async def delete_forum_topic(self, chat_id, message_thread_id):
-                raise RuntimeError("Not enough rights to manage topics")
-        themen["-100:anna"] = 7
-        _aio.run(ns3["_tg_topic_umziehen"](_ty.SimpleNamespace(bot=_Verbot()),
-                                           -100, "anna", 7, {"gesendet": {}}, stand))
-        assert themen == {"-100:anna": 7}
-        assert any(l >= _lg.ERROR and "Themen verwalten" in z for l, z in zeilen)
-    finally:
-        _sh.rmtree(d, ignore_errors=True)
-    um = rumpf_ab(src, src.index("async def _tg_topic_umzug("))
-    assert "_tg_topic_umziehen(" in um
-    assert '_spawn(_tg_topic_umzug(bot_app), name="tg-topic-umzug")' in src
 
     # (5) Dashboard: die Standardgruppe ist Telegram, nie eine Guild.
     assert T.standardgruppe(0, 0, [gilde, -100], 0, ()) == -100
@@ -30710,8 +30613,7 @@ def _test_v42_w168_ein_thema_ein_kanal():
     assert za.index("_nc_ziele.loeschbar(") < za.index("await _bereich_umziehen(")
     assert za.count("_umzugsmarken(") == 1 and za.index("_umzugsmarken(") < za.index("for cat in alte")
     lg.handlers.clear()
-    ok("W168: ein Upload-Thema statt @name-Themen (alte nachgezogen, dann geloescht), "
-       "Discord-/track nur Discord, Dashboard-Standard Telegram samt Bestand, ein Clip-Kanal")
+    ok("W168: Discord-/track nur Discord, Dashboard-Standard Telegram samt Bestand, ein Clip-Kanal")
 
 def _test_v42_w169_link_video():
     """v4.2-W169: gemeldet am 07.11. — „Wenn ich in Discord oder Telegram einen
@@ -31275,6 +31177,2881 @@ def _test_v42_w171_kick_centrifugo():
     ok("v4.2-W171: Kick-Chat ueber Centrifugo — Anmeldung, Abo, Ping, Buendel, Erneuerung")
 
 
+def _test_v42_w172_spenden():
+    """v4.2-W172: „Der Bot hat weder in Discord noch in Telegram die Donation-
+    Funktion." /spenden nennt PayPal, Krypto und Ziel — aus derselben Quelle
+    wie Website und Deck, fuer JEDEN (nur Oeffentliches), und sagt laut, wenn
+    nichts eingetragen ist."""
+    import ast as _ast
+    import os as _os
+    from nc import spendeninfo as SP
+    from nc import befehle as BF
+
+    namen = ["DONATION_PAYPAL", "DONATION_GOAL_PURPOSE", "DONATION_GOAL_EUR",
+             "DONATION_PERIOD", "DONATION_LINK", "DONATION_BTC_ADDRESS",
+             "DONATION_ETH_ADDRESS", "DONATION_BCH_ADDRESS", "DONATION_LTC_ADDRESS",
+             "DONATION_XMR_ADDRESS", "DONATION_SOL_ADDRESS"]
+    alt = {n: _os.environ.get(n) for n in namen}
+    try:
+        for n in namen:
+            _os.environ.pop(n, None)
+        # (1) Vorgabe: PayPal wie im Website-Panel, Ziel 500 € monatlich.
+        t = SP.text("md")
+        assert "paypal@voice4you.org" in t and "500" in t and "monatlich" in t, t
+        assert "paypal.com/donate/?business=paypal%40voice4you.org" in t
+        # (2) Zur LAUFZEIT gelesen: eine im Deck gesetzte Adresse gilt sofort.
+        _os.environ["DONATION_BTC_ADDRESS"] = "bc1qw172"
+        _os.environ["DONATION_SOL_ADDRESS"] = "So1w172"
+        _os.environ["DONATION_GOAL_PURPOSE"] = "Server <am> Laufen & mehr"
+        t = SP.text("md")
+        assert "Bitcoin: `bc1qw172`" in t and "Solana: `So1w172`" in t, t
+        assert t.index("Bitcoin") < t.index("Solana"), "Reihenfolge wie die Website"
+        h = SP.text("html")
+        assert "<code>bc1qw172</code>" in h
+        assert "Server &lt;am&gt; Laufen &amp; mehr" in h and "<am>" not in h, \
+            "Text aus der .env ungeschuetzt in Telegram-HTML — eine spitze Klammer " \
+            "liesse die ganze Antwort mit 'can't parse entities' scheitern"
+        assert "&amp;currency_code=EUR" in h, "der PayPal-Link muss in HTML maskiert sein"
+        # (3) Nichts eingetragen: laut, mit den Variablennamen — kein leerer Block.
+        _os.environ["DONATION_PAYPAL"] = ""
+        for n in namen[5:]:
+            _os.environ.pop(n, None)
+        leer = SP.text("md")
+        assert "DONATION_PAYPAL" in leer and "DONATION_<COIN>_ADDRESS" in leer, leer
+        assert "Danke" not in leer
+        # (4) Uebersetzung wirkt auf jeden Text.
+        en = SP.text("md", lambda x: "EN[" + x + "]")
+        assert "EN[Projekt unterstützen]" in en
+        # Unlesbar: dieselbe Vorgabe wie das Website-Panel (nc.envnum) — Chat
+        # und Seite duerfen nicht zwei verschiedene Ziele nennen.
+        _os.environ["DONATION_GOAL_EUR"] = "kaputt"
+        assert SP.stand()["ziel_eur"] == 500.0
+        _os.environ["DONATION_GOAL_EUR"] = "0"
+        assert "Ziel" not in SP.text("md"), "ein Ziel 0 gehoert nicht in den Text"
+    finally:
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+
+    # (5) Verzeichnis: auf beiden Plattformen, fuer jeden, Discord nativ
+    # (ein offener Shim-Befehl gaebe Discord-Mitgliedern Betreiberrechte).
+    b = BF.NACH_NAME["spenden"]
+    assert b.plattformen == BF._BEIDE and b.recht == "jeder" and b.discord == "nativ", b
+    assert not BF.pruefen() and "spenden" in BF.OEFFENTLICH
+    assert "/spenden" in BF.hilfe_text(BF.DC, ist_betreiber=False), \
+        "Zuschauer sehen /spenden nicht in der Hilfe"
+
+    # (6) Telegram-Handler: ohne Freischaltung, mit HTML; Discord-Befehl vorhanden.
+    src = open("bot.py", encoding="utf-8").read()
+    fn = next(n for n in _ast.parse(src).body
+              if isinstance(n, _ast.AsyncFunctionDef) and n.name == "spenden_cmd")
+    rufe = {_ast.unparse(c.func) for c in _ast.walk(fn) if isinstance(c, _ast.Call)}
+    assert "_is_authorized" not in rufe, \
+        "Zuschauer stehen in keiner Freischaltliste — der Bot schwiege auf /spenden"
+    # ANKER GEWANDERT (v4.2-W173): der Text liest den Stand aus der Datenbank
+    # und laeuft deshalb ueber asyncio.to_thread.
+    assert "asyncio.to_thread(_nc_spendeninfo.text, 'html'" in _ast.unparse(fn) \
+        and "ParseMode.HTML" in _ast.unparse(fn)
+    dsrc = open("discordbot.py", encoding="utf-8").read()
+    assert 'name="spenden"' in dsrc and 'to_thread(_nc_spendeninfo.text, "md"' in dsrc
+    # Website und /spenden lesen PayPal an EINER Stelle.
+    assert "_nc_spendeninfo.paypal()" in src and \
+        'os.getenv("DONATION_PAYPAL"' not in src, "zweite PayPal-Lesestelle in bot.py"
+    ok("v4.2-W172: /spenden auf Telegram und Discord — PayPal, Krypto, Ziel, leer laut")
+
+
+def _test_v42_w173_ein_spendenziel():
+    """v4.2-W173: „Die Spendenziele sind nicht miteinander verknuepft — es ist
+    immer dasselbe, egal ob Website, Stream oder Telegram/Discord." Bis hier
+    drei Ziele: Website (500, nur manuelle Spenden, seit Installation),
+    Overlay/Sendebild (Vorgabe 0 = aus, nur ab Stream-Start), /spenden (kein
+    Stand). Jetzt eine Rechnung in nc/spendenziel.py, und jede Anzeige liest sie."""
+    import ast as _ast
+    import os as _os
+    import sqlite3 as _sq
+    from datetime import datetime as _dt, timezone as _tz
+    from nc import spendenziel as Z
+    from nc import spendeninfo as SP
+
+    namen = ["DONATION_GOAL_EUR", "DONATION_GOAL_TARGET", "DONATION_CURRENT_EUR",
+             "DONATION_PERIOD", "DONATION_GOAL_LABEL", "DONATION_GOAL_PURPOSE"]
+    alt = {n: _os.environ.get(n) for n in namen}
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.execute("CREATE TABLE overlay_events (ts TEXT, kind TEXT, name TEXT, amount TEXT, "
+              "message TEXT, platform TEXT)")
+    c.executemany("INSERT INTO overlay_events VALUES (?, 'donation', 'x', ?, '', ?)", [
+        ("2026-11-03T10:00:00+00:00", "10", "kick"),
+        ("2026-11-04T10:00:00+00:00", "25,50", "manual"),     # im Deck erfasst
+        ("2026-11-05T10:00:00+00:00", "99", "tiktok"),        # NIE eigenes Geld
+        ("2026-11-06T10:00:00+00:00", "kaputt", "twitch"),    # zaehlt 0, wirft nicht
+        ("2026-10-31T23:59:00+00:00", "40", "youtube"),       # Vormonat
+        ("2026-11-01T00:00:00+00:00", "5", "youtube"),        # erster Moment des Monats
+    ])
+    c.execute("INSERT INTO overlay_events VALUES ('2026-11-07T10:00:00+00:00', 'follow', "
+              "'f', '1000', '', 'kick')")
+    jetzt = _dt(2026, 11, 11, 12, tzinfo=_tz.utc)
+    try:
+        for n in namen:
+            _os.environ.pop(n, None)
+        # (1) Vorgabe: 500 € monatlich — auch dort, wo bisher 0 = aus galt.
+        st = Z.stand(c, jetzt)
+        assert st["ziel_eur"] == 500.0 and st["zeitraum"] == "monatlich", st
+        assert st["aktuell_eur"] == 40.5, \
+            "Kick 10 + Deck 25,50 + YouTube 5 am Monatsersten; TikTok, Vormonat und " \
+            "Follows zaehlen nicht — gerechnet: %r" % st["aktuell_eur"]
+        assert st["prozent"] == 8.1
+        # (2) Sockel aus der .env kommt dazu; Gesamtzeitraum zaehlt den Vormonat.
+        _os.environ["DONATION_CURRENT_EUR"] = "100"
+        _os.environ["DONATION_PERIOD"] = "gesamt"
+        assert Z.stand(c, jetzt)["aktuell_eur"] == 180.5
+        assert Z.fenster_start(jetzt) is None
+        _os.environ["DONATION_PERIOD"] = "monatlich"
+        assert Z.fenster_start(jetzt) == "2026-11-01"
+        # (3) Alter Name bleibt lesbar, der neue gewinnt.
+        _os.environ["DONATION_GOAL_TARGET"] = "300"
+        assert Z.ziel_eur() == 300.0, "eine bestehende .env verliert ihr Overlay-Ziel"
+        _os.environ["DONATION_GOAL_EUR"] = "750"
+        assert Z.ziel_eur() == 750.0
+        _os.environ["DONATION_GOAL_EUR"] = "0"
+        assert Z.stand(c, jetzt)["prozent"] == 0.0, "Ziel 0 darf nicht durch 0 teilen"
+    finally:
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+
+    # (4) /spenden zeigt den Stand aus derselben Rechnung.
+    s = {"paypal": "p@x", "krypto": [], "zweck": "", "ziel_eur": 500.0,
+         "aktuell_eur": 40.5, "prozent": 8.1, "zeitraum": "monatlich", "link": ""}
+    t = SP.text("md", s=s)
+    assert "Stand: 40 € von 500 € (8 %) · monatlich" in t, t
+    t = SP.text("md", s=dict(s, aktuell_eur=None, prozent=None))
+    assert "Stand" not in t and "Ziel: 500 € monatlich" in t, \
+        "ohne lesbaren Stand darf /spenden keine 0 € behaupten"
+
+    # (5) Jede Anzeige liest dieselbe Rechnung — und keine rechnet mehr selbst.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    ps = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+              and "stats[\"donation\"]" in _ast.unparse(n).replace("'", '"'))
+    psq = _ast.unparse(ps)
+    assert "_nc_spendenziel.stand(" in psq and "_manual_donations_total()" not in psq, \
+        "die Website rechnet wieder ihr eigenes Ziel"
+    assert "_nc_spendenziel.stand(conn)" in src and "_OVERLAY.get(\"goal_target\")" not in src, \
+        "das Sendebild hat wieder ein eigenes Ziel"
+    assert '"goal_target": _env_int' not in src, "das Overlay-Ziel lebt wieder nur im Speicher"
+    ov = open("nc/routes/overlay.py", encoding="utf-8").read()
+    assert "_nc_spendenziel.stand(conn)" in ov and "goal_current +=" not in ov
+
+    # (6) Deck-Formular: leeres Feld = unveraendert; das Ziel landet in der
+    # Einstellungs-Tabelle (dieselbe wie im Reiter „Einstellungen").
+    import nc.routes.overlay as OV
+    gesetzt = []
+    echt = OV._nc_einst.setzen
+    OV._nc_einst.setzen = lambda n, w, von="": gesetzt.append((n, w))
+    try:
+        OV._ziel_speichern({"title": "x", "goal_target": "", "goal_label": "",
+                            "goal_purpose": None})
+        assert gesetzt == [], "ein leeres Feld setzte das gemeinsame Ziel: %r" % gesetzt
+        OV._ziel_speichern({"goal_target": "750,5", "goal_label": "Server",
+                            "goal_purpose": "Miete"})
+        assert gesetzt == [("DONATION_GOAL_EUR", "750.5"), ("DONATION_GOAL_LABEL", "Server"),
+                           ("DONATION_GOAL_PURPOSE", "Miete")], gesetzt
+        gesetzt.clear()
+        OV._ziel_speichern({"goal_target": "0"})
+        assert gesetzt == [("DONATION_GOAL_EUR", "0")], "0 = kein Ziel muss setzbar bleiben"
+    finally:
+        OV._nc_einst.setzen = echt
+    dh = open("templates/dashboard.html", encoding="utf-8").read()
+    oc = dh[dh.index("async function ovConfig(){"):dh.index("async function ovTest(")]
+    assert "parseInt($('#ov_goaltarget')?.value||'0'" not in oc and "if(gt) body.goal_target" in oc, \
+        "das Formular schickt leere Felder wieder als Ziel 0"
+    ok("v4.2-W173: ein Spendenziel fuer Website, Overlay, Sendebild und /spenden")
+
+
+def _test_v42_w174_encode_warteschlange():
+    """v4.2-W174: „Aufnahmen mit Pixelsalat und/oder fehlendem Ton — wenn er die
+    Videos nicht alle gleichzeitig encoden kann, eine Warteschlange." Sechs
+    Hintergrund-Kodierungen starteten sofort, egal wie viele schon liefen; jede
+    nahm einer laufenden Aufnahme Rechenzeit, bis sie ihre Quelle zu langsam
+    las (Kette aus W108)."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import threading as _th
+    import time as _tm
+    from nc import encodeschlange as E
+
+    alt = {n: _os.environ.get(n) for n in ("ENCODE_PARALLEL", "ENCODE_LAST_ANTEIL",
+                                           "ENCODE_WARTEN_MAX_S")}
+    alt_frei, alt_pruef = E.last_frei, E.PRUEF_S
+    E.PRUEF_S = 0.01
+    try:
+        _os.environ["ENCODE_PARALLEL"] = "1"
+        E.last_frei = lambda *a, **k: True
+        # (1) Hoechstens eine gleichzeitig, in Ankunftsreihenfolge.
+        gleichzeitig, maximal, reihe = [0], [0], []
+        sp = _th.Lock()
+
+        def _job(i):
+            with E.platz_sync("test", str(i)):
+                with sp:
+                    gleichzeitig[0] += 1
+                    maximal[0] = max(maximal[0], gleichzeitig[0])
+                    reihe.append(i)
+                _tm.sleep(0.03)
+                with sp:
+                    gleichzeitig[0] -= 1
+        faeden = []
+        for i in range(5):
+            t = _th.Thread(target=_job, args=(i,))
+            t.start()
+            faeden.append(t)
+            _tm.sleep(0.005)       # Ankunftsreihenfolge festlegen
+        for t in faeden:
+            t.join(5)
+        assert maximal[0] == 1, "zwei Kodierungen liefen gleichzeitig (%d)" % maximal[0]
+        assert reihe == [0, 1, 2, 3, 4], "nicht in Ankunftsreihenfolge: %r" % reihe
+        lg = E.lage()
+        assert lg["laeuft"] == [] and lg["wartet"] == [] and lg["erledigt"] >= 5
+
+        # (2) Volle Maschine: wartet; nach der Obergrenze laeuft sie trotzdem.
+        E.last_frei = lambda *a, **k: False
+        _os.environ["ENCODE_WARTEN_MAX_S"] = "0.15"
+        zw = E.lage()["zwangsstart"]
+        t0 = _tm.monotonic()
+        with E.platz_sync("test-last"):
+            gewartet = _tm.monotonic() - t0
+        assert gewartet >= 0.14, "startete trotz voller Maschine sofort (%.2f s)" % gewartet
+        assert E.lage()["zwangsstart"] == zw + 1, "ein verhungerter Job wird nicht gezaehlt"
+        # Lastgrenze selbst: 8 Kerne, Anteil 0,7 → frei unter 5,6.
+        E.last_frei = alt_frei
+        _os.environ["ENCODE_LAST_ANTEIL"] = "0.7"
+        assert E.last_frei(5.5, 8) and not E.last_frei(5.7, 8)
+
+        # (3) Abbruch im Loop gibt den Platz frei — sonst stuende die Schlange fuer immer.
+        E.last_frei = lambda *a, **k: True
+        _os.environ["ENCODE_WARTEN_MAX_S"] = "1800"
+
+        async def _abbruch():
+            async def _lang():
+                async with E.platz("abbruch"):
+                    await _aio.sleep(30)
+            t = _aio.ensure_future(_lang())
+            await _aio.sleep(0.05)
+            assert len(E.lage()["laeuft"]) == 1
+            t.cancel()
+            try:
+                await t
+            except _aio.CancelledError:
+                pass
+            async with E.platz("danach"):
+                return True
+        assert _aio.run(_aio.wait_for(_abbruch(), 3)), "Platz nach Abbruch nicht frei"
+        assert E.lage()["laeuft"] == []
+        _os.environ["ENCODE_PARALLEL"] = "kaputt"
+        assert E.parallel() == 1
+    finally:
+        E.last_frei, E.PRUEF_S = alt_frei, alt_pruef
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+
+    # (4) Verdrahtung: jede Hintergrund-Kodierung geht durch das Tor.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name):
+        return _ast.unparse(next(n for n in baum.body if getattr(n, "name", "") == name))
+    for name, marke in (("_shrink_for_discord", "_nc_encode.platz('discord-verkleinern')"),
+                        ("_clip_schneiden", "_nc_encode.platz('clip', username)"),
+                        ("_aufnahme_chat_einarbeiten", "_nc_encode.platz_sync('chat-' + versuch"),
+                        ):
+        assert marke in _fn(name), "%s kodiert wieder an der Schlange vorbei" % name
+    meme = next(n for n in baum.body if "zusammenschnitt_cmd" in _ast.unparse(n)
+                and isinstance(n, _ast.AsyncFunctionDef))
+    assert "_nc_encode.platz('meme-zusammenschnitt'" in _ast.unparse(meme)
+    vt = open("nc/videoteil.py", encoding="utf-8").read()
+    assert 'async with _encodeschlange.platz("zerlegen-neu-kodieren")' in vt
+    assert "encode=_nc_encode.lage()" in src, "/healthz zeigt die Schlange nicht"
+    ok("v4.2-W174: Hintergrund-Kodierungen nacheinander — Grenze, Reihenfolge, Last, Abbruch")
+
+
+def _test_v42_w177_brain_verwoben():
+    """v4.2-W177: „die Gehirn-Strukturen sind nicht miteinander verwoben."
+    Zwoelf Befunde aus brain/ und seinen Raendern, fast alle derselben Klasse:
+    zwei Teile, die einander nie erreichten — ein falscher Parametername, ein
+    Metrikname, den niemand schreibt, eine Route mit doppeltem Praefix, eine
+    Tabelle, die es nicht gibt —, und jedes Mal schluckte ein `except` oder
+    ein `log.debug` den Grund."""
+    import ast as _ast
+    import contextlib as _cl
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import sqlite3 as _sq
+    import time as _tm
+
+    from nc import meldetakt as _mt
+
+    class _Fang(_lg.Handler):
+        def __init__(self):
+            super().__init__(_lg.DEBUG)
+            self.zeilen = []
+
+        def emit(self, rec):
+            self.zeilen.append((rec.levelno, rec.getMessage()))
+
+    def _fangen(name):
+        h = _Fang()
+        lg = _lg.getLogger(name)
+        lg.addHandler(h)
+        return h, lg
+
+    env_alt = {k: _os.environ.get(k) for k in (
+        "BRAIN_ACT_PAUSE_DEAD_SOURCE", "BRAIN_DEAD_STREAK_ALERT",
+        "BRAIN_DEAD_RETRY_HOURS", "BRAIN_LLM_BACKEND", "BRAIN_LLM_MAX_CALLS_H",
+        "BRAIN_EMBED_BACKEND", "BRAIN_EMBED_URL")}
+    tmp = _ph.verzeichnis("w177-")
+    try:
+        from brain import Brain
+        hirn = Brain(_os.path.join(tmp, "brain.db"))
+
+        # (1) Mehrere trackings-Zeilen je Nutzer: EIN Zustand, keine Kippe.
+        # Vorher: pausierte Zeile mit altem last_live + aktive Zeile offline
+        # -> online/offline im Wechsel -> je Tick eine Phantom-Session.
+        import brain_bridge as BB
+        z = BB._trackings_je_nutzer([
+            {"username": "anna", "recording": 0, "pid": None, "last_live": 1, "paused": 1},
+            {"username": "anna", "recording": 0, "pid": None, "last_live": 0, "paused": 0},
+            {"username": "bert", "recording": 1, "pid": 4711, "last_live": 1, "paused": 0},
+            {"username": "bert", "recording": 0, "pid": None, "last_live": 0, "paused": 0},
+            {"username": "cleo", "recording": 0, "pid": None, "last_live": 1, "paused": 1},
+        ])
+        assert z["anna"] == {"online": False, "paused": False, "pids": []}, z["anna"]
+        assert z["bert"]["online"] and z["bert"]["pids"] == [4711], z["bert"]
+        assert z["cleo"]["paused"] and not z["cleo"]["online"], z["cleo"]
+
+        bot_db = _os.path.join(tmp, "bot.db")
+        c = _sq.connect(bot_db)
+        c.executescript(
+            "CREATE TABLE trackings(id INTEGER PRIMARY KEY, username TEXT, last_live INT,"
+            " recording INT, pid INT, paused INT DEFAULT 0);"
+            "CREATE TABLE restreams(id INTEGER PRIMARY KEY, label TEXT, status TEXT, pid INT,"
+            " source_username TEXT, started_at TEXT, enabled INT DEFAULT 1);"
+            "CREATE TABLE stream_memories(id INTEGER PRIMARY KEY, username TEXT, summary TEXT,"
+            " lines INT, created_at TEXT);"
+            "INSERT INTO trackings(username,last_live,recording,pid,paused) VALUES"
+            " ('anna',1,0,NULL,1),('anna',0,0,NULL,0);")
+        c.commit()
+        c.close()
+
+        @_cl.contextmanager
+        def _bdb():
+            k = _sq.connect(bot_db)
+            k.row_factory = _sq.Row
+            try:
+                yield k
+                k.commit()
+            finally:
+                k.close()
+
+        alt_get, alt_ctx = BB.get_brain, dict(BB._ctx)
+        try:
+            BB.get_brain = lambda: hirn
+            BB._ctx["db_conn"] = _bdb
+            for _ in range(4):
+                BB._sync_db_state()
+            with hirn._db_lock, hirn._conn() as k:
+                n_tr = k.execute("SELECT COUNT(*) FROM transitions WHERE kind='stream'"
+                                 " AND key='anna'").fetchone()[0]
+                n_se = k.execute("SELECT COUNT(*) FROM stream_sessions").fetchone()[0]
+            assert hirn.state.get("stream", "anna")["state"] == "offline"
+            assert n_se == 0, "Phantom-Sessions aus kippendem Zustand: %d" % n_se
+            assert n_tr <= 1, "Zustand kippt je Tick: %d Uebergaenge" % n_tr
+
+            # (9b) Ingest bei BRAIN_EMBED_BACKEND=off: gewollt still, kein Aufruf.
+            _os.environ["BRAIN_EMBED_BACKEND"] = "off"
+            aufrufe = []
+            alt_ix = hirn.semantic.index_text
+            hirn.semantic.index_text = lambda *a, **k: aufrufe.append(a) or False
+            with _bdb() as k:
+                k.execute("INSERT INTO stream_memories(username,summary,created_at)"
+                          " VALUES('anna','x','t')")
+            BB._ingest_stream_memories()
+            hirn.semantic.index_text = alt_ix
+            assert aufrufe == [], "Ingest trotz BRAIN_EMBED_BACKEND=off"
+        finally:
+            BB.get_brain = alt_get
+            BB._ctx.clear()
+            BB._ctx.update(alt_ctx)
+
+        # (2) Auto-Pause: die zweite Chance haelt, bis die Straehne waechst.
+        from brain.agents import RecoveryAgent
+        _os.environ.update(BRAIN_ACT_PAUSE_DEAD_SOURCE="1", BRAIN_DEAD_STREAK_ALERT="2",
+                           BRAIN_DEAD_RETRY_HOURS="1")
+        straehne = {"tot": 5}
+        pausiert, reakt = [], []
+        ctx = {"pause_source": lambda w: pausiert.append(w) or True,
+               "unpause_source": lambda w: reakt.append(w) or True,
+               "dead_streak": lambda: dict(straehne)}
+        ag = RecoveryAgent(hirn)
+        t0 = _tm.time()
+        ag._pause_dead_sources(ctx, t0)
+        assert pausiert == ["tot"], pausiert
+        ag._pause_dead_sources(ctx, t0 + 7200)          # Karenz um: reaktivieren
+        assert reakt == ["tot"] and pausiert == ["tot"], \
+            "im selben Lauf wieder pausiert: %s" % pausiert
+        ag._pause_dead_sources(ctx, t0 + 7380)          # naechste Runde, Straehne gleich
+        assert pausiert == ["tot"], "zweite Chance hielt keine Runde: %s" % pausiert
+        straehne["tot"] = 6                              # weiter tot geprueft
+        ag._pause_dead_sources(ctx, t0 + 7560)
+        assert pausiert == ["tot", "tot"], pausiert
+        # Altbestand: eine Pause aus der Zeit VOR der Straehnen-Tabelle hat
+        # keinen gemerkten Wert — dann haelt der Lauf-Riegel die zweite Chance.
+        with hirn._db_lock, hirn._conn() as k:
+            k.execute("INSERT INTO paused_sources(who,ts) VALUES('altbestand',?)", (t0,))
+        straehne["altbestand"] = 9
+        pausiert.clear()
+        ag._pause_dead_sources(ctx, t0 + 9000)
+        assert "altbestand" not in pausiert, "Altbestand im selben Lauf wieder pausiert"
+        del straehne["altbestand"]
+        # Ein werfender Reaktivierungs-Hook ist ein Befund, kein `pass`.
+        ctx["unpause_source"] = lambda w: 1 / 0
+        with hirn._db_lock, hirn._conn() as k:
+            k.execute("INSERT OR REPLACE INTO paused_sources(who,ts) VALUES('tot',?)", (t0,))
+        fs = ag._pause_dead_sources(ctx, t0 + 60000)
+        assert any("Reaktivierungs-Hook" in f["text"] for f in fs), fs
+
+        # (3)+(4) Wochenreport: Systemlast und Empfehlungen aus echten Namen.
+        from brain import report as R
+        jetzt = _tm.time()
+        hirn.memory.record_metrics({"load_ratio15": 0.75, "disk_max_pct": 63.0}, ts=jetzt - 60)
+        for f in (("dora", "sessions_per_week", 3.5), ("dora", "duration_class", "long"),
+                  ("dora", "active_hour", _tm.gmtime().tm_hour)):
+            hirn.knowledge.assert_fact(f[0], f[1], f[2], 1.0, source="test", reason="t")
+        md = R.weekly(hirn)
+        assert "Last je Kern (15 min): Ø 0.75" in md and "Disk-Peak: 63%" in md, md
+        assert "## Empfehlungen" in md and "**@dora**" in md and "/Woche aktiv" in md, md
+        h, lg = _fangen("brain.report")
+        alt_rec = hirn.knowledge.recommend
+        try:
+            hirn.knowledge.recommend = lambda **k: 1 / 0
+            md = R.weekly(hirn)
+        finally:
+            hirn.knowledge.recommend = alt_rec
+            lg.removeHandler(h)
+        assert "Empfehlungen nicht lesbar: ZeroDivisionError" in md, md
+        assert any(lv >= _lg.WARNING and "Empfehlungen" in m for lv, m in h.zeilen), h.zeilen
+
+        # (5) Stundenbudget zaehlt nur llama.cpp; Cloud-Aufrufe sind frei.
+        from brain.llm import BudgetExhausted, LLMRuntime
+        _os.environ.update(BRAIN_LLM_BACKEND="auto", BRAIN_LLM_MAX_CALLS_H="2")
+        llm = LLMRuntime()
+        lokal_tot, gerufen = [True], []
+
+        def _call(backend, messages, timeout, max_tokens):
+            gerufen.append(backend)
+            if backend == "llamacpp" and lokal_tot[0]:
+                raise RuntimeError("weg")
+            return "antwort-" + backend
+        llm._call = _call
+        for _ in range(3):
+            assert llm.chat([{"role": "user", "content": "x"}])["backend"] == "freeai"
+        assert llm.budget()["used_h"] == 0, "Cloud-Aufrufe fressen das lokale Budget"
+        lokal_tot[0] = False
+        for _ in range(2):
+            assert llm.chat([{"role": "user", "content": "x"}])["backend"] == "llamacpp"
+        assert llm.budget()["remaining"] == 0
+        gerufen.clear()
+        r = llm.chat([{"role": "user", "content": "x"}])
+        assert r["ok"] and r["backend"] == "freeai" and gerufen == ["freeai"], (r, gerufen)
+        try:
+            llm.chat([{"role": "user", "content": "x"}], backends=["llamacpp"])
+            raise AssertionError("BudgetExhausted fehlt bei reiner Lokal-Kette")
+        except BudgetExhausted:
+            pass
+
+        # (6) backends= schraenkt ein: bei lokalem Fehler kein zweiter Cloud-Weg.
+        llm2 = LLMRuntime()
+        lokal_tot[0] = True
+        gerufen.clear()
+        llm2._call = _call
+        r = llm2.chat([{"role": "user", "content": "x"}], backends=["llamacpp"])
+        assert not r["ok"] and gerufen == ["llamacpp"], (r, gerufen)
+        _os.environ["BRAIN_LLM_BACKEND"] = "off"
+        assert not LLMRuntime().chat([{"role": "u", "content": "x"}],
+                                     backends=["llamacpp"])["ok"], "backends= hebelt off aus"
+        baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+        stellen = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+                   and ((_ast.unparse(n.func).endswith("llm.chat"))
+                        or (_ast.unparse(n.func).endswith("to_thread") and n.args
+                            and _ast.unparse(n.args[0]).endswith("llm.chat")))]
+        assert len(stellen) == 3, [_ast.unparse(s)[:80] for s in stellen]
+        for s in stellen:
+            assert "['llamacpp']" in _ast.unparse(s), _ast.unparse(s)[:160]
+
+        # (7) Wachstumskurve: richtige Route, Fehler sichtbar.
+        html = open("templates/brain.html", encoding="utf-8").read()
+        assert 'api("/growth?days=30")' in html and '"/brain/growth' not in html
+        grow = html[html.index("async function loadGrowth"):]
+        grow = grow[:grow.index("const pts")]
+        assert "catch (e) { return; }" not in grow and '$("#gr-stats")' in grow, grow
+        assert '@bp.route("/api/brain/growth")' in open("nc/routes/brain.py", encoding="utf-8").read()
+
+        # (8) Archiv-Index: indexed=1 nur, wenn etwas angenommen wurde.
+        from nc.intel import library as L
+        from nc.intel import transcripts as T
+        kon = _sq.connect(":memory:")
+        T.ensure_schema(kon)
+        T.save_segments(kon, 9, [{"start": 0, "end": 4, "text": "Ein langes Segment mit Inhalt."}])
+
+        class _Tot:
+            def index_text(self, *a, **k):
+                raise OSError("Connection refused")
+
+        class _Aus(_Tot):
+            def aktiv(self):
+                return False
+        _mt.zuruecksetzen(L._KANAL)
+        h, lg = _fangen("nc.intel.library")
+        try:
+            r = L.index_recording(kon, _Tot(), 9)
+            assert not r["ok"] and "OSError" in r["error"], r
+            assert not T.get_meta(kon, 9)["indexed"], "tote Indizierung als erledigt markiert"
+            assert L.unindexed_ids(kon, [9]) == [9]
+            assert any(lv >= _lg.WARNING and "BRAIN_EMBED_BACKEND=off" in m
+                       for lv, m in h.zeilen), h.zeilen
+            n = len(h.zeilen)
+            L.index_recording(kon, _Tot(), 9)
+            assert len(h.zeilen) == n, "Index-Ausfall ungedrosselt"
+            _mt.zuruecksetzen(L._KANAL)          # sonst schweigt die Drossel ohnehin
+            r = L.index_recording(kon, _Aus(), 9)
+            assert not r["ok"] and len(h.zeilen) == n, "off ist kein Ausfall"
+        finally:
+            lg.removeHandler(h)
+            kon.close()
+
+        # (9) Embedding: Ausfall laut, gedrosselt, mit Abhilfe; off still.
+        _os.environ["BRAIN_EMBED_BACKEND"] = "llamacpp"
+        _os.environ["BRAIN_EMBED_URL"] = "http://127.0.0.1:1"
+        from brain import semantic as S
+        _mt.zuruecksetzen(S._KANAL)
+        h, lg = _fangen("brain.semantic")
+        try:
+            assert hirn.semantic.aktiv()
+            assert hirn.semantic.index_text("stream_memory", "anna", "hallo welt") is False
+            assert hirn.semantic.index_text("stream_memory", "anna", "hallo welt") is False
+            laut = [m for lv, m in h.zeilen if lv >= _lg.WARNING]
+            assert len(laut) == 1 and "BRAIN_EMBED_BACKEND=off" in laut[0] \
+                and "8089" in laut[0], laut
+            assert hirn.semantic.stats()["letzter_fehler"], hirn.semantic.stats()
+            _os.environ["BRAIN_EMBED_BACKEND"] = "off"
+            _mt.zuruecksetzen(S._KANAL)          # sonst schweigt die Drossel ohnehin
+            n = len(h.zeilen)
+            assert not hirn.semantic.aktiv() and hirn.semantic._embed("x") is None
+            assert len(h.zeilen) == n
+        finally:
+            lg.removeHandler(h)
+
+        # (10) /brain-Statuszeile: beide Felder existieren.
+        hirn.rules._log_decision(type("R", (), {"name": "w177", "priority": 1,
+                                                "tags": ()})(), "probe", "ok", {})
+        o = hirn.overview()
+        assert isinstance(o["rules_enabled"], int) and o["decisions_24h"] >= 1, o.keys()
+
+        # (11) Wachstum zaehlt Sessions aus brain.db, nicht chat_log.
+        with hirn._db_lock, hirn._conn() as k:
+            k.execute("INSERT INTO stream_sessions(username,started,ended,duration_s)"
+                      " VALUES('eva',1,2,1),('eva',3,NULL,NULL)")
+            k.execute("INSERT INTO stream_sessions(username,started,ended,duration_s,abandoned)"
+                      " VALUES('eva',5,6,1,1)")
+        assert hirn.memory.session_count() == 1
+        gs = _ast.unparse(next(n for n in baum.body
+                               if getattr(n, "name", "") == "_brain_growth_snapshot"))
+        assert "session_count()" in gs and "chat_log" not in gs, gs
+
+        # (12a) AZRAEL bekommt Brain-Wissen — kurz, und nie auf Kosten der Antwort.
+        from nc import azraelkontext as AK
+        assert AK.streamer_waehlen("kick:zuschauer", ["@quelle"]) == "quelle"
+        assert AK.streamer_waehlen("dora", ["quelle"]) == "dora"
+        assert AK.streamer_waehlen("cohost", []) is None
+        with _bdb() as k:
+            k.execute("INSERT INTO stream_memories(username,summary,created_at) VALUES"
+                      " ('dora','alt','t'),('dora',?,'t')", ("Neu: " + "Kochen " * 80,))
+        hirn.knowledge.assert_fact("dora", "peak_hour_utc", 20, 0.5, source="t", reason="t")
+        m = AK.nachricht(hirn, _bdb, "dora")
+        assert m["role"] == "system" and len(m["content"]) <= AK.MAX_ZEICHEN, m
+        for teil in ("@dora", "20 Uhr UTC", "3.5 Sendungen", "lang", "Letzte Sendung: Neu:"):
+            assert teil in m["content"], (teil, m["content"])
+        assert AK.nachricht(hirn, _bdb, "niemand") is None
+        assert len(AK.block("x" * 400, {"duration_class": "long"})) == AK.MAX_ZEICHEN
+        hirn.state.set("restream", "restream:1", "live", source="dora")
+        assert "@dora" in AK.nachricht(hirn, _bdb, "twitch:fan")["content"]
+        _mt.zuruecksetzen(AK.KANAL)
+        h, lg = _fangen("nc.azraelkontext")
+        try:
+            assert AK.sicher(lambda: 1 / 0, _bdb, "dora") is None
+            assert AK.sicher(lambda: 1 / 0, _bdb, "dora") is None
+            laut = [m for lv, m in h.zeilen if lv >= _lg.WARNING]
+            assert len(laut) == 1 and "ZeroDivisionError" in laut[0], laut
+        finally:
+            lg.removeHandler(h)
+        km = next(n for n in baum.body if getattr(n, "name", "") == "KickModerator")
+        for meth in ("react", "_reply"):
+            f = _ast.unparse(next(n for n in km.body if getattr(n, "name", "") == meth))
+            assert "_azrael_brain_kontext(" in f, meth
+            assert f.index("_azrael_brain_kontext(") < f.index("ai_chat("), meth
+
+        # (12b) Scheduler-Hinweise wirken nur frisch und nie unter 60 s.
+        from brain.scheduler import MIN_INTERVAL_S, frische_intervalle
+        jetzt = _tm.time()
+        fr = frische_intervalle([("a", 120, jetzt - 10), ("b", 30, jetzt),
+                                 ("c", 120, jetzt - 7200), ("d", "x", jetzt),
+                                 ("e", 0, jetzt)], jetzt)
+        assert fr == {"a": 120, "b": MIN_INTERVAL_S}, fr
+        hd = _ast.unparse(next(n for n in baum.body if getattr(n, "name", "") == "_brain_hint_delay"))
+        assert "frische_intervalle(" in hd and "_nc_meldetakt.melden" in hd, hd
+    finally:
+        for k, v in env_alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+        _sh.rmtree(tmp, ignore_errors=True)
+    ok("v4.2-W177: Brain verwoben — Sync je Nutzer, Pause-Straehne, Report, Budget, "
+       "Lokal-Kette, Wachstum, Archiv-Index, Embedding laut, AZRAEL-Kontext, frische Hints")
+def _w176_bot_baum():
+    import ast as _ast
+    src = io.open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = {n.name: n for n in baum.body
+          if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef))}
+    return src, baum, fn
+
+
+def _test_v42_w176_disk_guard_schont():
+    """v4.2-W176 (1): der Disk-Guard loeschte ab 88 % die aeltesten Videos,
+    ohne nach starred/backed_up zu fragen, und las die offenen Aufnahmen in
+    einem `except: pass` — bei gesperrter Datenbank war die Schutzmenge leer.
+    Gemessen gegen echtes SQL in einer eigenen Datenbank."""
+    import ast as _ast
+    import contextlib as _cl
+    import logging as _lg
+    import sqlite3 as _sq
+    import nc.storage as S
+
+    d = _ph.verzeichnis()
+    db = _sq.connect(":memory:")
+    db.row_factory = _sq.Row
+    db.execute("CREATE TABLE trackings (id INTEGER, output_file TEXT, recording INTEGER)")
+    db.execute("CREATE TABLE recordings (filepath TEXT, starred INTEGER, backed_up INTEGER)")
+    namen = {"a_gesichert.mp4": (1, 0), "b_markiert.mp4": (1, 1),
+             "c_ungesichert.mp4": (0, 0), "d_ohne_db.mp4": None,
+             "e_aktiv.mp4": (1, 0), "f_null.mp4": (None, None), "notiz.txt": (1, 0)}
+    for i, (n, z) in enumerate(namen.items()):
+        p = os.path.join(d, n)
+        _ph.attrappe(p, 1024)
+        os.utime(p, (1000 + i, 1000 + i))
+        if z is not None:
+            db.execute("INSERT INTO recordings VALUES (?,?,?)", (p, z[1], z[0]))
+    db.execute("INSERT INTO trackings VALUES (1, ?, 1)", (os.path.join(d, "e_aktiv.mp4"),))
+    db.commit()
+
+    @_cl.contextmanager
+    def _conn():
+        yield db
+
+    weg = []
+    alt = S.db_conn
+    S.db_conn = _conn
+    try:
+        res = S.notfall_raeumen(d, {".mp4"}, lambda: (95, None), 0,
+                                entfernen=weg.append)
+        assert [os.path.basename(p) for p in weg] == ["a_gesichert.mp4"], \
+            "der Disk-Guard loescht ungesicherte, markierte oder offene Aufnahmen: %s" % weg
+        assert res["deleted"] == 1 and res["geschont"] == 4, res
+        # Ziel erreicht -> keine weitere Loeschung.
+        del weg[:]
+        S.notfall_raeumen(d, {".mp4"}, lambda: (70, None), 78, entfernen=weg.append)
+        assert weg == [], "unter dem Ziel wird trotzdem geloescht"
+
+        @_cl.contextmanager
+        def _gesperrt():
+            raise _sq.OperationalError("database is locked")
+            yield  # pragma: no cover
+        S.db_conn = _gesperrt
+        try:
+            S.notfall_raeumen(d, {".mp4"}, lambda: (95, None), 0, entfernen=weg.append)
+            raise AssertionError("gesperrte Datenbank wird als leerer Bestand geraten")
+        except S.BestandUnbekannt:
+            pass
+        assert weg == [], weg
+    finally:
+        S.db_conn = alt
+
+    # Der Bot-Teil: BestandUnbekannt wird laut, ohne zu loeschen.
+    src, baum, fn = _w176_bot_baum()
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+
+    class _Speicher:
+        BestandUnbekannt = S.BestandUnbekannt
+
+        @staticmethod
+        def notfall_raeumen(*_a, **_k):
+            raise S.BestandUnbekannt("database is locked")
+
+    import nc.meldetakt as M
+    import time as _t
+    M.ZUSTAND.clear()
+    lg = _lg.getLogger("w176-disk"); hd = _H(); lg.addHandler(hd)
+    ns = {"_disk_pct": lambda: (95, object()), "DISK_AUTOCLEAN_PCT": 88,
+          "DISK_AUTOCLEAN_TARGET": 78, "_DISK_GUARD_STATE": {},
+          "_nc_storage": _Speicher, "RECORDINGS_DIR": d, "_VIDEO_EXTS": {".mp4"},
+          "_nc_meldetakt": M, "_time_mod": _t, "log": lg, "log_event": None}
+    exec(compile(_ast.Module(body=[fn["_disk_autoclean"]], type_ignores=[]),
+                 "bot.py", "exec"), ns)
+    try:
+        r = ns["_disk_autoclean"]()
+    finally:
+        lg.removeHandler(hd)
+        M.ZUSTAND.clear()
+    assert r["ran"] is False and r.get("error") == "bestand-unbekannt", r
+    assert any(lv == _lg.ERROR and "AUSGESETZT" in m for lv, m in zeilen), zeilen
+    ok("W176: Disk-Guard loescht nur gesicherte, unmarkierte, nicht offene "
+       "Aufnahmen und bricht bei unlesbarer Datenbank laut ab")
+
+
+def _test_v42_w176_live_ohne_url_drossel():
+    """v4.2-W176 (2): ein Offline-Nutzer leerte bei jeder Pruefung die
+    live-ohne-url-Drossel — 60 statt 2 Zeilen in 30 Minuten. Gemessen am
+    echten _url_nachschlag aus bot.py."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import time as _t
+    import nc.livefolge as LF
+    import nc.meldetakt as M
+
+    src, baum, fn = _w176_bot_baum()
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append(r.getMessage())
+
+    class _Q:
+        @staticmethod
+        def zaehlen(_q):
+            return None
+
+    async def _nichts(*_a, **_k):
+        return None
+
+    lg = _lg.getLogger("w176-url"); lg.setLevel(_lg.INFO); hd = _H(); lg.addHandler(hd)
+    ns = {"_nc_live": LF, "_nc_meldetakt": M, "_time_mod": _t, "log": lg,
+          "_nc_quellstat": _Q, "_resolve_via_html": _nichts,
+          "_nachschlag_ytdlp": _nichts, "_RATE_LIMIT_PENALTY": {},
+          "_RATE_LIMIT_BACKOFF": {}}
+    exec(compile(_ast.Module(body=[fn["_ohne_url_melden"], fn["_url_nachschlag"]],
+                             type_ignores=[]), "bot.py", "exec"), ns)
+    nach = ns["_url_nachschlag"]
+    M.ZUSTAND.clear(); M.STOERER.clear()
+    try:
+        for _runde in range(20):
+            _aio.run(nach("blind", None, "live", None))
+            _aio.run(nach("schlaeft", None, "offline", None))
+        laut = [z for z in zeilen if "live-ohne-URL @blind" in z]
+        assert len(laut) == 1, "die Offline-Pruefung eines anderen Nutzers leert " \
+            "die Drossel (%d Zeilen statt 1)" % len(laut)
+        # Erfolg DESSELBEN Nutzers leert sie — die naechste Stoerung ist sofort laut.
+        _aio.run(nach("blind", None, "live", {"hls_url": "https://x.example/a.m3u8"}))
+        _aio.run(nach("blind", None, "live", None))
+        laut = [z for z in zeilen if "live-ohne-URL @blind" in z]
+        assert len(laut) == 2, "nach der Erholung nicht wieder sofort laut"
+    finally:
+        lg.removeHandler(hd)
+        M.ZUSTAND.clear(); M.STOERER.clear()
+    ok("W176: live-ohne-URL-Drossel wird nur vom Erfolg desselben Nutzers geleert")
+
+
+def _test_v42_w176_flattern_seit_zurueck():
+    """v4.2-W176 (3): nach einer Trennung blieb die Verbindungsmarke `since`
+    stehen. Jeder folgende Fehlversuch galt damit als „hielt seit Stunden",
+    leerte die Akte des Flatter-Waechters, und eine Dauerstoerung nach einer
+    einmal stabilen Verbindung eskalierte nie."""
+    import ast as _ast
+    import nc.flapguard as F
+
+    # Der Mechanismus: mit veralteter Marke nie laut, mit zurueckgesetzter schon.
+    w = F.FlapWatch()
+    laut = 0
+    for i in range(10):
+        jetzt = 5000.0 + 30 * i
+        laut += w.trennung("alt", jetzt - 1000.0, jetzt).melden
+    assert laut == 0
+    w = F.FlapWatch()
+    assert any(w.trennung("neu", 0.0, 5000.0 + 30 * i).melden for i in range(10))
+
+    # Jede Aufrufstelle setzt ihre Marke direkt danach auf 0.
+    src, baum, fn = _w176_bot_baum()
+    stellen = 0
+    for n in _ast.walk(baum):
+        for feld in ("body", "orelse", "finalbody"):
+            liste = getattr(n, feld, None)
+            if not isinstance(liste, list):
+                continue
+            for i, st in enumerate(liste):
+                if not (isinstance(st, _ast.Expr) and isinstance(st.value, _ast.Call)
+                        and getattr(st.value.func, "id", "") == "_verbindung_verloren"):
+                    continue
+                stellen += 1
+                seit = next(k.value for k in st.value.keywords if k.arg == "seit")
+                quelle = _ast.unparse(seit).replace(".get('since', 0.0)", "['since']")
+                danach = liste[i + 1:i + 3]
+                assert any(isinstance(a, _ast.Assign) and _ast.unparse(a.targets[0]) == quelle
+                           and isinstance(a.value, _ast.Constant) and a.value.value == 0.0
+                           for a in danach), \
+                    "Z.%d: %s wird nach der Trennung nicht zurueckgesetzt" % (st.lineno, quelle)
+    assert stellen == 6, stellen
+    ok("W176: nach jeder Trennung faellt die Verbindungsmarke auf 0 (6 Stellen)")
+
+
+def _test_v42_w176_live_einmal_je_nutzer():
+    """v4.2-W176 (4): derselbe Nutzer in zwei Chats — zwei Discord-Embeds,
+    zwei Live-Threads, Oracle/Director doppelt, und das zweite Offline fand
+    keinen Sitzungsstart mehr."""
+    import ast as _ast
+    import nc.livemeldung as L
+
+    L.STAND.clear()
+    assert L.live_an("u") is True and L.live_an("u") is False
+    assert L.live_aus("u") is True and L.live_aus("u") is False
+    assert L.live_an("u") is True, "nach dem Offline ist ein neues Live wieder eins"
+    L.STAND.clear()   # Neustart: der Zustand ist unbekannt
+    assert L.live_aus("v") is True and L.live_aus("v") is False
+    L.STAND.clear()
+
+    src, baum, fn = _w176_bot_baum()
+    h = fn["_handle_single_tracking"]
+    eltern = {}
+    for n in _ast.walk(h):
+        for k in _ast.iter_child_nodes(n):
+            eltern[k] = n
+
+    def _bedingt(knoten):
+        while knoten in eltern:
+            knoten = eltern[knoten]
+            if isinstance(knoten, _ast.If) and _ast.unparse(knoten.test) in (
+                    "_erst", "_nc_livemeldung.live_aus(username)"):
+                return True
+        return False
+
+    zahl = {"_discord_post_user": 0, "_discord_live_thread": 0,
+            "_oracle_memorize": 0, "_director_finalize": 0}
+    for c in _ast.walk(h):
+        if isinstance(c, _ast.Call) and getattr(c.func, "id", "") in zahl:
+            zahl[c.func.id] += 1
+            assert _bedingt(c), "Z.%d: %s laeuft je Chat statt je Nutzer" % (c.lineno, c.func.id)
+    assert zahl == {"_discord_post_user": 2, "_discord_live_thread": 2,
+                    "_oracle_memorize": 1, "_director_finalize": 1}, zahl
+    sitzung = [n for n in _ast.walk(h) if isinstance(n, _ast.Subscript)
+               and _ast.unparse(n.value) == "_LIVE_SESSION_START"] + \
+              [n for n in _ast.walk(h) if isinstance(n, _ast.Call)
+               and _ast.unparse(n.func) == "_LIVE_SESSION_START.pop"]
+    assert len(sitzung) == 2 and all(_bedingt(n) for n in sitzung), \
+        "der Sitzungsstart haengt am Chat, nicht am Nutzer"
+    ok("W176: Discord-Embed, Live-Thread, Oracle, Director und Sitzungsstart "
+       "einmal je Nutzer")
+
+
+def _test_v42_w176_spawn_marker_vor_lock():
+    """v4.2-W176 (5): der Spawn-Marker kam erst nach dem Commit — dazwischen
+    gab reaper_loop den Lock frei, und der naechste Poll startete eine zweite
+    Aufnahme. Gemessen an den echten Funktionen gegen SQLite."""
+    import ast as _ast
+    import contextlib as _cl
+    import logging as _lg
+    import sqlite3 as _sq
+    import threading as _th
+    import time as _t
+
+    src, baum, fn = _w176_bot_baum()
+    db = _sq.connect(":memory:", check_same_thread=False)
+    db.row_factory = _sq.Row
+    db.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, username TEXT, "
+               "recording INTEGER DEFAULT 0, paused INTEGER DEFAULT 0, "
+               "output_file TEXT, pid INTEGER)")
+    db.execute("INSERT INTO trackings (id, username) VALUES (1, 'u'), (2, 'u')")
+    db.commit()
+    marker = {}
+    beim_update = []
+    dazwischen = []    # ein Worker, der waehrend des UPDATE eines anderen gewinnt
+
+    class _Conn:
+        def execute(self, sql, args=()):
+            if sql.startswith("UPDATE trackings SET recording=1"):
+                beim_update.append(args[0] in marker)
+                if dazwischen:
+                    dazwischen.pop()()
+            return db.execute(sql, args)
+
+        def commit(self):
+            db.commit()
+
+    @_cl.contextmanager
+    def _conn():
+        yield _Conn()
+
+    ns = {"db_conn": _conn, "_RECORDING_SPAWN_AT": marker,
+          "_RECORDING_SPAWN_LOCK": _th.Lock(), "_time_mod": _t,
+          "log": _lg.getLogger("w176-lock")}
+    teile = [fn[n] for n in ("try_acquire_recording_lock", "_lock_update",
+                             "set_recording_file")]
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
+    lock, datei = ns["try_acquire_recording_lock"], ns["set_recording_file"]
+
+    assert lock(1, username="u") is True and beim_update == [True], \
+        "der Spawn-Marker steht erst nach dem UPDATE — der Reaper sieht ein Loch"
+    vorher = marker[1]
+    # Ein zweiter Worker scheitert am selben Tracking: der Marker des ersten bleibt.
+    assert lock(1, username="u") is False and marker.get(1) is vorher, \
+        "ein gescheiterter Versuch loescht den Marker des Gewinners"
+    # ...und am anderen Tracking desselben Nutzers: dort bleibt keiner liegen.
+    assert lock(2, username="u") is False and 2 not in marker, marker
+    # Verschraenkt: B setzt seinen Marker, A gewinnt waehrend B's UPDATE, B
+    # scheitert — B darf A's Marker nicht wegraeumen.
+    db.execute("UPDATE trackings SET recording=0 WHERE id=1"); db.commit()
+    marker.clear()
+    gewinner = []
+    dazwischen.append(lambda: gewinner.append((lock(1, username="u"), marker.get(1))))
+    assert lock(1, username="u") is False and gewinner and gewinner[0][0] is True
+    assert marker.get(1) is gewinner[0][1], \
+        "der Verlierer raeumt den Marker des Gewinners weg — der Reaper sieht ein Loch"
+    # Der Reaper gibt den Lock frei -> set_recording_file meldet den Verlust.
+    db.execute("UPDATE trackings SET recording=0 WHERE id=1"); db.commit()
+    assert datei(1, "x.mp4", 4242) is False, "Aufnahme ohne Lock wird eingetragen"
+    assert db.execute("SELECT pid FROM trackings WHERE id=1").fetchone()["pid"] is None
+    db.execute("UPDATE trackings SET recording=1 WHERE id=1"); db.commit()
+    assert datei(1, "x.mp4", 4242) is True
+
+    # Der Aufrufer bricht ab und gibt einen fremden Lock nicht frei.
+    h = _ast.unparse(fn["_handle_single_tracking"])
+    assert "if not await asyncio.to_thread(set_recording_file, tid, output_file, proc.pid):" in h
+    assert "if not isinstance(e, _AufnahmeLockVerloren):" in h
+    ok("W176: Spawn-Marker vor dem Lock, Rueckgabe statt Aufnahme ohne Lock")
+
+
+def _test_v42_w176_kein_db_im_loop():
+    """v4.2-W176 (6)+(7): synchrone Datenbankaufrufe im Event-Loop, und der
+    Rate-Limit-Backoff rechnete mit der Uhr von vor der Aufloesung."""
+    import ast as _ast
+
+    src, baum, fn = _w176_bot_baum()
+    verboten = {
+        "_handle_single_tracking": {"get_tracking_state", "claim_live_transition",
+                                    "decide_preferred_recorder", "_tracking_max_duration",
+                                    "start_recording_attempt", "finish_recording_attempt",
+                                    "clear_recording", "set_recording_file",
+                                    "try_acquire_recording_lock"},
+        "_disk_alarm_loop": {"get_storage_stats"},
+        "_daily_summary_loop": {"_build_daily_summary"},
+    }
+    for f, namen in verboten.items():
+        direkt = [c.func.id for c in _ast.walk(fn[f]) if isinstance(c, _ast.Call)
+                  and getattr(c.func, "id", "") in namen]
+        assert not direkt, "%s ruft %s direkt im Loop" % (f, direkt)
+        im_thread = {a.id for c in _ast.walk(fn[f]) if isinstance(c, _ast.Call)
+                     and _ast.unparse(c.func) == "asyncio.to_thread"
+                     for a in c.args[:1] if isinstance(a, _ast.Name)}
+        assert namen <= im_thread, (f, namen - im_thread)
+    zuw = [n for n in _ast.walk(fn["_live_status_aufloesen"]) if isinstance(n, _ast.Assign)
+           and _ast.unparse(n.targets[0]) == "_RATE_LIMIT_BACKOFF[username]"]
+    assert len(zuw) == 1 and _ast.unparse(zuw[0].value) == "_time_mod.monotonic() + penalty", \
+        [_ast.unparse(z.value) for z in zuw]
+    ok("W176: Pruefpfad, Platten-Alarm und Tageszusammenfassung neben dem Loop; "
+       "Backoff mit der Uhr beim Schreiben")
+
+
+def _test_v42_w176_pruefschleife_lebt():
+    """v4.2-W176 (8): eine Ausnahme in einem Nebenschritt beendete die
+    Pruefschleife still, und weder sie noch die Worker hatten ein
+    Lebenszeichen fuer den Waechter."""
+    import ast as _ast
+    import asyncio as _aio
+    import nc.prueflage as P
+
+    src, baum, fn = _w176_bot_baum()
+    # Die Schleife: die Runde steht im try, Lebenszeichen nur nach Erfolg.
+    ca = fn["check_all_trackings"]
+    tr = [t for t in _ast.walk(ca) if isinstance(t, _ast.Try)
+          and "_pruef_runde(trackings, now, _pflege_runde)" in
+          "\n".join(_ast.unparse(b) for b in t.body)]
+    assert len(tr) == 1, "die Runde ist nicht abgesichert"
+    rumpf = "\n".join(_ast.unparse(b) for b in tr[0].body)
+    assert "_hb('check-loop')" in rumpf and "_nc_prueflage.runde_gelaufen()" in rumpf
+    assert any("_loop_fehler('check_all_trackings'" in _ast.unparse(h)
+               for h in tr[0].handlers)
+    assert isinstance(fn["_pruef_runde"], _ast.FunctionDef), "die Runde darf kein await haben"
+
+    # Die Worker: eine Ausnahme geht durch _loop_fehler, das Lebenszeichen
+    # kommt auch bei leerer Schlange, und die Schlange laeuft weiter.
+    schlaege, fehler, gesehen = [], [], []
+
+    async def _laeuft():
+        q = _aio.Queue()
+
+        async def _handle(t, _app):
+            gesehen.append(t)
+            if t == "kaputt":
+                raise RuntimeError("Nebenschritt")
+
+        class _Aio:
+            TimeoutError = _aio.TimeoutError
+
+            @staticmethod
+            async def wait_for(aw, timeout):
+                assert timeout < 420, "Warten laenger als WATCHDOG_STALL_S"
+                return await _aio.wait_for(aw, 0.05)
+
+        ns = {"live_check_queue": q, "_handle_single_tracking": _handle,
+              "_hb": schlaege.append, "_loop_fehler": lambda n, e: fehler.append(n),
+              "asyncio": _Aio}
+        exec(compile(_ast.Module(body=[fn["live_check_worker"]], type_ignores=[]),
+                     "bot.py", "exec"), ns)
+        for t in ("kaputt", "gut"):
+            q.put_nowait(t)
+        task = _aio.ensure_future(ns["live_check_worker"](None, 3))
+        await _aio.sleep(0.3)
+        task.cancel()
+        try:
+            await task
+        except _aio.CancelledError:
+            pass
+    _aio.run(_laeuft())
+    assert gesehen == ["kaputt", "gut"], "der Worker stirbt an einer Ausnahme"
+    assert fehler == ["live_check_worker"], fehler
+    assert schlaege.count("live-worker-3") >= 4, "kein Lebenszeichen bei leerer Schlange"
+
+    # /healthz: das Alter der letzten Runde.
+    alt = (dict(P.LETZTE), dict(P.RUNDE))
+    try:
+        P.LETZTE["uebersicht"] = {"aktiv": 1, "ueberfaellig": 0, "unbekannt": 0, "ausstehend": 0}
+        P.RUNDE["at"] = None
+        assert P.fuer_healthz(jetzt=100.0)["runde_vor_s"] is None
+        P.runde_gelaufen(jetzt=100.0)
+        assert P.fuer_healthz(jetzt=130.0)["runde_vor_s"] == 30.0
+    finally:
+        P.LETZTE.update(alt[0]); P.RUNDE.update(alt[1])
+    ok("W176: Pruefschleife und Worker abgesichert, mit Lebenszeichen und "
+       "Rundenalter in /healthz")
+
+
+def _test_v42_w176_vacuum_nach_faelligkeit():
+    """v4.2-W176 (9): VACUUM schlief vor dem ersten Lauf sieben Tage (jeder
+    Neustart setzte das zurueck), und es startete wie die
+    Zuschauer-Stichprobe nur mit DAILY_SUMMARY_CHAT_ID."""
+    import ast as _ast
+    import nc.dbwartung as W
+
+    d = _ph.verzeichnis()
+    p = W.stand_datei(os.path.join(d, "tiktok_bot.db"))
+    assert os.path.dirname(p) == os.path.abspath(d)
+    assert W.letzter_lauf(p) is None and W.faellig_in(None, 5.0) == 0.0
+    W.merken(p, 1000.0)
+    assert W.letzter_lauf(p) == 1000.0
+    assert W.faellig_in(W.letzter_lauf(p), 1001.0) == W.ABSTAND_S - 1
+    assert W.faellig_in(W.letzter_lauf(p), 1000.0 + W.ABSTAND_S) == 0.0
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("{kaputt")
+    assert W.letzter_lauf(p) is None, "ein unlesbarer Stand gilt nicht als faellig"
+
+    src, baum, fn = _w176_bot_baum()
+    ca = fn["check_all_trackings"]
+    for name in ("_viewer_sample_loop", "_db_vacuum_loop"):
+        aufrufe = [s for s in ca.body if isinstance(s, _ast.Expr)
+                   and _ast.unparse(s).startswith("_spawn(%s()" % name)]
+        assert aufrufe, "%s startet nicht unbedingt" % name
+    vl = fn["_db_vacuum_loop"]
+    rufe = {_ast.unparse(c.func) for c in _ast.walk(vl) if isinstance(c, _ast.Call)}
+    assert "_nc_dbwartung.faellig_in" in rufe and "_nc_dbwartung.merken" in rufe
+    schlaf = [_ast.unparse(c.args[0]) for c in _ast.walk(vl) if isinstance(c, _ast.Call)
+              and _ast.unparse(c.func) == "asyncio.sleep"]
+    assert "7 * 24 * 3600" not in schlaf, schlaf
+    merk = [i for i in _ast.walk(vl) if isinstance(i, _ast.If)
+            and _ast.unparse(i.test) == "await asyncio.to_thread(_run)"]
+    assert merk and "_nc_dbwartung.merken(" in _ast.unparse(merk[0].body[0]), \
+        "ein gescheitertes VACUUM gilt als erledigt"
+    ok("W176: VACUUM nach Faelligkeit mit gemerktem Stand, Stichprobe und "
+       "Wartung ohne Chat")
+def _test_v42_w178_spenden_in_eur():
+    """v4.2-W178: Spendenziel, Overlay-Bilanz und Steuer-Gegenprobe lasen den
+    Betrag mit parse_eur/float. overlay_events.amount traegt aber „100 Bits",
+    „$5.00" oder NULL (Twitch-Sub, YouTube-Mitgliedschaft) — alles zaehlte 0 €,
+    waehrend nc.donations.to_eur genau dafuer existierte und keinen Aufrufer
+    hatte. Gemessen an echten Zeilen, nicht an nackten Zahlen."""
+    import os as _os
+    import sqlite3 as _sq
+    from nc import spendenziel as Z
+    from nc import ledger as L
+    import nc.routes.overlay as OV
+
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.execute("CREATE TABLE overlay_events (id INTEGER PRIMARY KEY, ts TEXT, kind TEXT, "
+              "name TEXT, amount TEXT, message TEXT, platform TEXT)")
+    c.executemany("INSERT INTO overlay_events (ts, kind, name, amount, message, platform) "
+                  "VALUES (?, 'donation', 'x', ?, ?, ?)", [
+                      ("2026-11-02T10:00:00+00:00", "100 Bits", "", "twitch"),         # 1,00 €
+                      ("2026-11-03T10:00:00+00:00", "$5.00", "Superchat", "youtube"),  # 4,60 €
+                      ("2026-11-04T10:00:00+00:00", None, "Twitch Sub", "twitch"),     # 2,50 €
+                      ("2026-11-05T10:00:00+00:00", "25,50", "", "manual"),           # 25,50 €
+                      ("2026-11-06T10:00:00+00:00", "99", "", "tiktok"),              # fremdes Geld
+                  ])
+    namen = ("OVERLAY_USD_EUR", "OVERLAY_TWITCH_BITS_EUR", "OVERLAY_TWITCH_SUB_EUR",
+             "OVERLAY_KICK_SUB_EUR", "OVERLAY_YT_MEMBER_EUR", "OVERLAY_TIKTOK_COIN_EUR")
+    alt = {n: _os.environ.get(n) for n in namen}
+    try:
+        for n in namen:
+            _os.environ.pop(n, None)
+        # (1) Spendenziel: alle vier eigenen Kanaele, TikTok bleibt draussen.
+        assert Z.eingang(c, None) == 33.6, \
+            "Bits/Dollar/Sub zaehlen nicht (oder TikTok zaehlt): %r" % Z.eingang(c, None)
+        assert Z.eingang(c, "2026-11-04") == 28.0
+        # Die Kurse aus der .env wirken — bis hier las sie niemand.
+        _os.environ["OVERLAY_USD_EUR"] = "1.0"
+        assert Z.eingang(c, None) == 34.0, "OVERLAY_USD_EUR wirkt nicht"
+        _os.environ.pop("OVERLAY_USD_EUR")
+
+        # (2) Overlay-Bilanz je Plattform liest dieselbe Rechnung.
+        bp = {}
+        OV._bilanz(c.execute("SELECT kind, amount, platform, message FROM overlay_events "
+                             "WHERE platform != 'tiktok'").fetchall(), bp)
+        assert bp["twitch"] == {"donations": 2, "amount": 3.5, "follows": 0}, bp
+        assert bp["youtube"]["amount"] == 4.6 and bp["manual"]["amount"] == 25.5, bp
+        ov = open("nc/routes/overlay.py", encoding="utf-8").read()
+        assert "SELECT kind, amount, platform, message FROM overlay_events" in ov, \
+            "die Overlay-Abfrage liefert der Umrechnung die Nachricht nicht mit"
+
+        # (3) Steuer-Gegenprobe: dieselben Zeilen, TikTok ausdruecklich nicht.
+        L.ensure_schema(c, backend="sqlite")
+        cc = L.crosscheck(c, 2026, "('kick','twitch','youtube','manual')")
+        assert cc["available"] and cc["overlay_estimate_eur"] == 33.6, cc
+    finally:
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+    ok("v4.2-W178: Bits, Dollar-Superchats und Subs zaehlen im Spendenziel in EUR")
+
+
+def _test_v42_w178_herkunft_csrf():
+    """v4.2-W178: _auth_guard laesst den SSH-Tunnel ohne Token durch — damit
+    auch das versteckte Formular jeder fremden Seite im selben Browser, das an
+    localhost:3000/api/donations/reset schickt. Gemessen an der echten
+    Hook-Funktion aus bot.py in einer Flask-App."""
+    import ast as _ast
+    import time as _time
+    import logging as _lg
+    from flask import Flask, jsonify, request
+    from nc import herkunft as H
+    from nc import i18n as _i18n
+    from nc import meldetakt as M
+
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+              and n.name == "_herkunft_guard")
+    assert any(_ast.unparse(d) == "dashboard_app.before_request" for d in fn.decorator_list), \
+        "der Herkunfts-Riegel haengt nicht an der App"
+    fn.decorator_list = []
+    vertraut = set()
+    ns = {"request": request, "jsonify": jsonify, "_nc_herkunft": H, "_nc_meldetakt": M,
+          "_time_mod": _time, "log": _lg.getLogger("w178"), "TRUSTED_PROXIES": vertraut,
+          "_nc_i18n": _i18n}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+
+    app = Flask(__name__)
+    app.before_request(ns["_herkunft_guard"])
+    gelaufen = []
+
+    @app.route("/api/donations/reset", methods=["GET", "POST"])
+    def _reset():
+        gelaufen.append(request.method)
+        return jsonify(ok=True)
+
+    @app.route("/api/kick/oauth/callback", methods=["POST"])
+    def _cb():
+        return jsonify(ok=True)
+
+    k = app.test_client()
+    lok = {"REMOTE_ADDR": "127.0.0.1"}
+
+    def post(koepfe, pfad="/api/donations/reset"):
+        return k.post(pfad, headers=koepfe, environ_base=lok,
+                      base_url="http://localhost:3000")
+
+    M.zuruecksetzen("deck-herkunft")
+    # (1) Fremde Seite: abgewiesen, und die Route laeuft NICHT.
+    r = post({"Sec-Fetch-Site": "cross-site", "Origin": "https://boese.example"})
+    assert r.status_code == 403 and not gelaufen, (r.status_code, gelaufen)
+    assert r.get_json()["ok"] is False and "Sec-Fetch-Site" in r.get_json()["grund"]
+    # same-site ist NICHT genug: ein anderer Port auf demselben Rechner.
+    assert post({"Sec-Fetch-Site": "same-site"}).status_code == 403
+    # Alter Browser ohne Sec-Fetch-*: Origin entscheidet.
+    assert post({"Origin": "https://boese.example"}).status_code == 403
+    assert post({"Origin": "http://localhost:4000"}).status_code == 403, "anderer Port"
+    assert post({"Origin": "null"}).status_code == 403, "Sandbox-iframe"
+    assert not gelaufen, gelaufen
+
+    # (2) Das Deck selbst und Werkzeuge ohne Browser laufen weiter.
+    assert post({"Sec-Fetch-Site": "same-origin",
+                 "Origin": "http://localhost:3000"}).status_code == 200
+    assert post({"Origin": "http://localhost:3000"}).status_code == 200
+    assert post({}).status_code == 200, "curl/tools ohne Kopfzeilen abgewiesen"
+    assert post({"Sec-Fetch-Site": "none"}).status_code == 200
+    assert k.get("/api/donations/reset",
+                 headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200, \
+        "Lesen ist nicht betroffen"
+    assert post({"Sec-Fetch-Site": "cross-site"}, "/api/kick/oauth/callback").status_code == 200
+
+    # (3) Hinter nginx: Host ohne Port, Origin mit — und X-Forwarded-Host
+    # zaehlt nur vom vertrauten Proxy.
+    assert k.post("/api/donations/reset", base_url="https://deck.example",
+                  headers={"Origin": "https://deck.example:8443"},
+                  environ_base={"REMOTE_ADDR": "10.0.0.5"}).status_code == 200
+    proxy = {"Origin": "https://deck.example", "X-Forwarded-Host": "deck.example"}
+    assert post(proxy).status_code == 403, "X-Forwarded-Host von einem Unbekannten zaehlt"
+    vertraut.add("127.0.0.1")
+    assert post(proxy).status_code == 200, "vertrauter Proxy: X-Forwarded-Host gilt nicht"
+    vertraut.clear()
+    M.zuruecksetzen("deck-herkunft")
+
+    # (4) Die reine Entscheidung, ohne Flask.
+    assert H.entscheiden("PUT", "/x", {"Sec-Fetch-Site": "cross-site"})
+    assert H.entscheiden("DELETE", "/x", {"Origin": "https://a.b", "Host": "c.d"})
+    assert H.entscheiden("PATCH", "/x", {"Origin": "https://h:99999999", "Host": "h"})
+    assert H.entscheiden("OPTIONS", "/x", {"Sec-Fetch-Site": "cross-site"}) is None
+    ok("v4.2-W178: schreibende Deck-Anfragen nur von der eigenen Seite (CSRF)")
+
+
+def _test_v42_w178_einstellungen_umgebung():
+    """v4.2-W178: setzen() legt den Wert sofort in os.environ, und jeder
+    Subprozess erbt ihn. PATH traf die Endung "_PATH" nicht; LD_PRELOAD,
+    PYTHONPATH, HOME, HTTPS_PROXY + REQUESTS_CA_BUNDLE waren aus dem Deck
+    setzbar — jeder davon eine Codeausfuehrung. Dazu: nur Namen, die der Bot
+    kennt (Vorlage, .env, Tabelle)."""
+    import os as _os
+    import logging as _lg
+    from nc import dbwrap as W
+    from nc import einstellungen as E
+    from nc import schema as S
+
+    for n in ("PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+              "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "HOME", "BROWSER", "SHELL",
+              "BASH_ENV", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE",
+              "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "XDG_CONFIG_HOME",
+              "GIT_SSH", "GIT_CONFIG_COUNT", "NODE_OPTIONS", "PERL5OPT", "TMPDIR",
+              "CDPATH", "GNUPGHOME", "OPENSSL_CONF"):
+        assert E.schutzgrund(n), "%s ist aus dem Deck setzbar" % n
+        try:
+            E.pruefen(n, "/tmp/x")
+            raise AssertionError("angenommen: %s" % n)
+        except E.Abgelehnt:
+            pass
+    # Was der Reiter braucht, bleibt setzbar.
+    for n in ("RECORD_PROXY", "ALERT_DISK_PCT", "AI_PROVIDER", "DONATION_GOAL_EUR"):
+        assert not E.schutzgrund(n), "%s waere ohne Grund gesperrt" % n
+
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    alt_zustand = dict(E._ZUSTAND)
+    alt_geaendert = set(E._GEAENDERT)
+    d = _ph.verzeichnis()
+    db, envp = _os.path.join(d, "t.db"), _os.path.join(d, ".env")
+    with open(envp, "w") as f:
+        f.write("NUR_IN_DER_ENV_W178=1\n")
+    try:
+        W.configure_db(db_path=db, backend="sqlite")
+        with W.db_conn() as c:
+            S.anlegen(c, backend="sqlite", mariadb_db="", log=_lg.getLogger("w178"))
+        E._ZUSTAND.update(env_pfad=envp, beispiel_pfad=".env.example")
+        env = {}
+        # (1) Erlaubnisliste: ein unbekannter Name kommt nur am Deck vorbei.
+        try:
+            E.setzen("W178_ERFUNDEN", "1", env=env)
+            raise AssertionError("ein Name, den der Bot nicht liest, wurde gesetzt")
+        except E.Abgelehnt as e:
+            assert "liest der Bot nicht" in e.grund, e.grund
+        assert "W178_ERFUNDEN" not in env and "W178_ERFUNDEN" not in E.db_werte()
+        E.setzen("ALERT_DISK_PCT", "91", env=env)            # aus der Vorlage
+        E.setzen("NUR_IN_DER_ENV_W178", "2", env=env)        # aus der .env
+        assert env == {"ALERT_DISK_PCT": "91", "NUR_IN_DER_ENV_W178": "2"}, env
+        # (2) Am Deck vorbei eingetragen: beim Start ignoriert und gemeldet,
+        # nicht in die Umgebung gelegt.
+        with W.db_conn() as c:
+            c.execute("INSERT INTO einstellungen (schluessel, wert) VALUES ('LD_PRELOAD','/tmp/x.so')")
+            c.execute("INSERT INTO einstellungen (schluessel, wert) VALUES ('PATH','/tmp/boese')")
+        env2 = {"DB_PATH": db, "PATH": "/usr/bin"}
+        b = E.in_umgebung_laden(env2, envp, ".env.example")
+        assert "LD_PRELOAD" not in env2 and env2["PATH"] == "/usr/bin", env2
+        assert sorted(b["ignoriert"]) == ["LD_PRELOAD", "PATH"], b
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+        E._ZUSTAND.clear()
+        E._ZUSTAND.update(alt_zustand)
+        E._GEAENDERT.clear()
+        E._GEAENDERT.update(alt_geaendert)
+    ok("v4.2-W178: Prozess-Umgebung (PATH, LD_*, PYTHON*, Proxy, CA) nicht aus dem Deck setzbar")
+
+
+def _test_v42_w178_manuelle_spenden_nicht_lesbar():
+    """v4.2-W178: manual_rows fing jeden Fehler auf log.debug und gab [] —
+    die Route antwortete ok:true mit Summe 0, und das Deck schrieb „Noch keine
+    manuellen Einträge", waehrend die Datenbank nur klemmte."""
+    import os as _os
+    import sqlite3 as _sq
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc import dbwrap as W
+    import nc.routes.money as MO
+
+    class _Log:
+        def __init__(self): self.zeilen = []
+        def _s(self, *a, **k): self.zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+        warning = info = error = debug = _s
+    lg = _Log()
+    alt_ctx = _ncctx._CTX
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    leer = _os.path.join(_ph.verzeichnis(), "ohne_tabelle.db")
+    _sq.connect(leer).close()
+    try:
+        _ncctx.configure(log=lg, arg_int=lambda n, dflt, lo=None, hi=None: dflt)
+        app = Flask(__name__)
+        app.register_blueprint(MO.bp)
+        k = app.test_client()
+        W.configure_db(db_path=leer, backend="sqlite")
+        r = k.get("/api/donations/manual")
+        assert r.status_code == 503 and r.get_json()["ok"] is False, (r.status_code, r.get_json())
+        assert "total_eur" not in r.get_json(), "ein Ausfall behauptet wieder eine Summe"
+        assert any("nicht lesbar" in z for z in lg.zeilen), lg.zeilen
+        with W.db_conn() as c:
+            c.execute("CREATE TABLE overlay_events (id INTEGER PRIMARY KEY, ts TEXT, kind TEXT, "
+                      "name TEXT, amount TEXT, message TEXT, platform TEXT)")
+        r = k.get("/api/donations/manual")
+        assert r.status_code == 200 and r.get_json()["count"] == 0, r.get_json()
+        r = k.post("/api/donations/add", json={"amount": "12,50"})
+        assert r.status_code == 200 and r.get_json()["total_eur"] == 12.5, r.get_json()
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+        _ncctx._CTX = alt_ctx
+    dh = open("templates/dashboard.html", encoding="utf-8").read()
+    fn = dh[dh.index("async function donManualLoad(){"):dh.index("async function donAddManual(")]
+    assert "if(!d||!d.ok){ return; }" not in fn and "Manuelle Spenden gerade nicht lesbar:" in fn, \
+        "das Deck verschweigt den Ausfall wieder"
+    ok("v4.2-W178: manuelle Spenden — ein Ausfall ist 503, nicht „keine Einträge“")
+
+
+def _test_v42_w178_restream_loeschen_erst_nach_stop():
+    """v4.2-W178: api_restream_delete stoppte in `except: pass` und loeschte
+    immer. Lief der Stop in den Timeout, sendete ffmpeg weiter — ohne Zeile,
+    also ohne Knopf im Deck, der ihn haette anhalten koennen."""
+    import os as _os
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc import dbwrap as W
+    from nc import restreamstate as RS
+    import nc.routes.restream as RR
+
+    class _Log:
+        def __init__(self): self.zeilen = []
+        def _s(self, *a, **k): self.zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+        warning = info = error = debug = _s
+    lg = _Log()
+
+    class _Mgr:
+        def stop(self, rid):
+            return ("stop", rid)       # kein Coroutine-Objekt: run_async ist Attrappe
+
+    verhalten = {"art": "timeout"}
+
+    def _run_async(arbeit, timeout=None):
+        if verhalten["art"] == "timeout":
+            raise TimeoutError("15 s")
+        if verhalten["art"] == "loop":
+            raise RuntimeError("event loop not ready")
+        return verhalten["art"]
+
+    alt_ctx, alt_mgr = _ncctx._CTX, RS.MGR["obj"]
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    db = _os.path.join(_ph.verzeichnis(), "rs.db")
+    try:
+        W.configure_db(db_path=db, backend="sqlite")
+        with W.db_conn() as c:
+            c.execute("CREATE TABLE restreams (id INTEGER PRIMARY KEY, name TEXT)")
+            c.execute("INSERT INTO restreams (id, name) VALUES (7, 'ziel')")
+        _ncctx.configure(log=lg, run_async=_run_async, arg_int=lambda *a, **k: 0)
+        RS.MGR["obj"] = _Mgr()
+        app = Flask(__name__)
+        app.register_blueprint(RR.bp)
+        k = app.test_client()
+
+        def zeile():
+            with W.db_conn() as c:
+                return c.execute("SELECT COUNT(*) AS n FROM restreams WHERE id=7").fetchone()["n"]
+
+        r = k.post("/api/restream/7/delete")
+        assert r.status_code == 503 and zeile() == 1, \
+            "Stop gescheitert, Zeile trotzdem weg (%s, %s)" % (r.status_code, zeile())
+        assert "nicht stoppen" in r.get_json()["error"], r.get_json()
+        assert any("Eintrag bleibt" in z for z in lg.zeilen), lg.zeilen
+        verhalten["art"] = "loop"
+        r = k.post("/api/restream/7/delete")
+        assert r.status_code == 503 and r.get_json().get("transient") and zeile() == 1
+        verhalten["art"] = {"ok": False, "error": "x"}
+        assert k.post("/api/restream/7/delete").status_code == 503 and zeile() == 1
+        verhalten["art"] = {"ok": True, "running": False}
+        r = k.post("/api/restream/7/delete")
+        assert r.status_code == 200 and zeile() == 0, (r.status_code, zeile())
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+        _ncctx._CTX = alt_ctx
+        RS.MGR["obj"] = alt_mgr
+    dh = open("templates/dashboard.html", encoding="utf-8").read()
+    i = dh.index("async function rsDelete(id)")
+    assert "(d&&d.error)" in dh[i:dh.index("\n", i)], "das Deck verschweigt einen gescheiterten Stop"
+    ok("v4.2-W178: Restream-Eintrag bleibt, wenn der Stop scheitert")
+
+
+def _test_v42_w178_ledger_parallel():
+    """v4.2-W178: add_entry las MAX(seq_no) und den letzten row_hash ohne
+    Sperre. Zwei Buchungen gleichzeitig: UNIQUE-Fehler (HTTP 500) oder — bei
+    verschiedenen Jahren — zwei Zeilen am selben Vorgaenger, und verify_chain
+    meldet die Kette ab da fuer immer als gebrochen."""
+    import contextlib as _cl
+    import os as _os
+    import sqlite3 as _sq
+    import threading as _th
+    import time as _tm
+    from nc import dbwrap as W
+    from nc import ledger as L
+
+    echt_last, echt_lock = L._last_row, L._BUCHUNG_LOCK
+
+    def langsam(conn):
+        r = echt_last(conn)
+        _tm.sleep(0.02)                # das Fenster, in dem ein zweiter liest
+        return r
+
+    def lauf(datei, je=6, faeden=3):
+        fehler = []
+        start = _th.Barrier(faeden)
+
+        def arbeit(nr):
+            start.wait()
+            for i in range(je):
+                con = _sq.connect(datei, timeout=30)
+                con.row_factory = _sq.Row
+                try:
+                    L.add_entry(con, "%d-03-%02d" % (2025 + (i + nr) % 2, i + 1), "kick", 10 + i)
+                except Exception as e:
+                    fehler.append("%s: %s" % (type(e).__name__, e))
+                finally:
+                    con.close()
+        tt = [_th.Thread(target=arbeit, args=(n,)) for n in range(faeden)]
+        for t in tt:
+            t.start()
+        for t in tt:
+            t.join(60)
+        con = _sq.connect(datei)
+        con.row_factory = _sq.Row
+        try:
+            kette = L.verify_chain(con)
+            n = con.execute("SELECT COUNT(*) AS n FROM revenue_entries").fetchone()["n"]
+        finally:
+            con.close()
+        return fehler, kette, n
+
+    d = _ph.verzeichnis()
+    try:
+        L._last_row = langsam
+        for nr, (name, sperre) in enumerate((
+                ("mit Prozess-Sperre", echt_lock),
+                # Zwei Prozesse (Bot und tools/) teilen keine Python-Sperre —
+                # dann muss die Datenbank allein halten.
+                ("ohne Prozess-Sperre", _cl.nullcontext()))):
+            datei = _os.path.join(d, "ledger_%d.db" % nr)
+            con = _sq.connect(datei)
+            L.ensure_schema(con, backend="sqlite")
+            con.commit()
+            con.close()
+            L._BUCHUNG_LOCK = sperre
+            fehler, kette, n = lauf(datei)
+            assert not fehler and n == 18, "%s: %d Buchungen, Fehler %s" % (name, n, fehler[:2])
+            assert kette["ok"], "%s: Kette gebrochen bei %s" % (name, kette)
+    finally:
+        L._last_row, L._BUCHUNG_LOCK = echt_last, echt_lock
+
+    # MariaDB: benannte Sperre VOR dem Lesen, Freigabe auch nach einem Fehler.
+    class _Cur:
+        def __init__(self, z): self.z = z
+        def fetchone(self): return self.z
+        def fetchall(self): return []
+
+    class _Fake:
+        def __init__(self, insert_wirft=False):
+            self.sql, self.insert_wirft = [], insert_wirft
+
+        def execute(self, sql, params=()):
+            self.sql.append(" ".join(sql.split()[:2]))
+            if "GET_LOCK" in sql:
+                return _Cur({"ok": 1})
+            if "MAX(seq_no)" in sql:
+                return _Cur({"m": 0})
+            if sql.startswith("INSERT") and self.insert_wirft:
+                raise RuntimeError("Attrappe: INSERT faellt")
+            return _Cur(None)
+
+        def commit(self): self.sql.append("COMMIT")
+        def rollback(self): self.sql.append("ROLLBACK")
+
+    alt_backend = W.DB_BACKEND
+    try:
+        W.DB_BACKEND = "mariadb"
+        f = _Fake()
+        L.add_entry(f, "2026-01-02", "kick", 5)
+        s = [x for x in f.sql if not x.startswith(("CREATE", "ALTER"))]
+        assert s[0] == "SELECT GET_LOCK(?," and s[-1] == "SELECT RELEASE_LOCK(?)", s
+        assert s.index("SELECT GET_LOCK(?,") < s.index("SELECT COALESCE(MAX(seq_no),") \
+            < s.index("COMMIT") < s.index("SELECT RELEASE_LOCK(?)"), s
+        f = _Fake(insert_wirft=True)
+        try:
+            L.add_entry(f, "2026-01-02", "kick", 5)
+            raise AssertionError("INSERT-Fehler verschluckt")
+        except RuntimeError:
+            pass
+        assert f.sql[-2:] == ["ROLLBACK", "SELECT RELEASE_LOCK(?)"], f.sql[-3:]
+    finally:
+        W.DB_BACKEND = alt_backend
+    ok("v4.2-W178: Ledger-Buchungen gleichzeitig — Folgenummer und Kette bleiben heil")
+
+
+def _w179_manager(baum, namen, extra):
+    """RestreamManager mit genau diesen Methoden aus bot.py, Rest als Attrappe."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import time as _t
+    rm = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "RestreamManager")
+    koerper = [n for n in rm.body if getattr(n, "name", None) in namen]
+    klasse = _ast.ClassDef(name="RM", bases=[], keywords=[], body=koerper, decorator_list=[],
+                           type_params=[])
+    ns = {"asyncio": _aio, "log": _lg.getLogger("w179"), "_time_mod": _t,
+          "log_event": lambda *a, **k: None, "_COMMUNITY_PINGED": {}}
+    ns.update(extra)
+    mod = _ast.fix_missing_locations(_ast.Module(body=[klasse], type_ignores=[]))
+    exec(compile(mod, "bot.py", "exec"), ns)
+    return ns["RM"]
+
+
+def _test_v42_w179_restream_lebenszyklus():
+    """v4.2-W179: „Alle drei Ziele brechen gleichzeitig weg", „Restream laesst
+    sich nicht stoppen", Zombies und haengende Feeder — zehn Befunde im
+    Lebenszyklus des RestreamManager, jeder hier gemessen oder im Syntaxbaum
+    festgehalten."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import subprocess as _sp
+    import threading as _th
+    import time as _t
+    import pruefhilfen as P
+    from nc import sendebruecke as B
+    from nc import durchreicher as D
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name, wo=None):
+        koerper = (wo or baum).body
+        return next(n for n in koerper if getattr(n, "name", "") == name)
+    rm = _fn("RestreamManager")
+
+    # ── (1) STOP IM BACKOFF. Der Monitor hat den Eintrag schon entfernt und
+    # schlaeft; stop() muss ihn trotzdem erreichen, sonst steht der Restream
+    # danach wieder auf (mit desired=1, also auch nach jedem Neustart).
+    gestartet, gestoppt_soll = [], []
+
+    class _Stab:
+        @staticmethod
+        def budget_after_run(a, ran, pol, progressed=True):
+            return a
+
+        @staticmethod
+        def budget_exhausted(a, pol):
+            return False
+
+        @staticmethod
+        def reconnect_delay(a, pol):
+            return 0.3
+
+    async def _row(fn):
+        return {"enabled": 1, "status": "error", "source_username": "quelle"}
+
+    async def _nichts(*a, **k):
+        return None
+
+    RM = _w179_manager(baum, {"__init__", "_monitor", "_monitor_eintragen", "_wiederanlauf",
+                              "_nebenlaeufer_abraeumen", "_relays_abraeumen", "stop"},
+                       {"_nc_rstab": _Stab, "_RESTREAM_POLICY": None, "db_async": _row,
+                        "_looks_like_codec_err": lambda t: False,
+                        "_looks_like_source_expired": lambda t: False,
+                        "_restream_tts_stop": lambda rid: None,
+                        "_restream_html_overlay_stop": lambda rid: None,
+                        "_restream_avatar_feeder_stop": lambda rid: None,
+                        "_reap_proc": _nichts, "KICK_INGEST_URL_BACKUP": "",
+                        "KICK_STREAM_KEY_BACKUP": ""})
+
+    class _Proc:
+        pid, returncode = 4242, 1
+
+        async def wait(self):
+            return 1
+
+    def _neu(start_dauer=0.0):
+        m = RM()
+        m._set_status = lambda *a, **k: None
+        m._set_desired = lambda rid, on: gestoppt_soll.append(on)
+        m._read_progress = m._read_stderr = m._bruecke_abraeumen = _nichts
+        m._abbruch_diagnose = lambda *a: None
+
+        async def _ton(*a, **k):
+            return False
+        m._ton_folge = _ton
+
+        async def _quelle(u, force_fresh=False):
+            return "https://x/y.flv", None
+        m._resolve_source = _quelle
+
+        async def _soll(rid):
+            return True
+        m._soll_lesen = _soll
+
+        async def _start(rid, **kw):
+            gestartet.append(kw)
+            await _aio.sleep(start_dauer)
+            return {"ok": True}
+        m.start = _start
+        m._procs[7] = {"proc": _Proc(), "started": _t.monotonic(), "attempts": 0,
+                       "src_watch": True}
+        return m
+
+    async def _lauf(fall):
+        m = _neu(start_dauer=0.4 if fall == "im-start" else 0.0)
+        m._monitor_eintragen(7)
+        mon = m._monitors[7]
+        if fall == "backoff":
+            await _aio.sleep(0.1)          # Monitor schlaeft im Backoff (0,3 s)
+            await m.stop(7)
+            await _aio.sleep(0.6)
+        elif fall == "im-start":
+            await _aio.sleep(0.45)         # Backoff vorbei, start() laeuft
+            assert 7 in m._im_wiederanlauf
+            await m.stop(7)
+            await _aio.sleep(0.6)
+        else:
+            await _aio.sleep(0.6)
+        return m, mon
+
+    del gestartet[:]
+    m, mon = _aio.run(_aio.wait_for(_lauf("backoff"), 10))
+    assert gestartet == [], "stop() im Backoff — der Monitor startete trotzdem neu: %r" % gestartet
+    assert mon.done() and 7 not in m._monitors, "der Monitor laeuft nach stop() weiter"
+    # (10) Ohne stop: der Wiederanlauf reicht den Quellen-Waechter durch.
+    del gestartet[:]
+    _aio.run(_aio.wait_for(_lauf("ohne"), 10))
+    assert gestartet == [{"_attempts": 1, "_src_watch": True}], \
+        "nach dem ersten Reconnect fehlt der Quellen-Waechter: %r" % gestartet
+    # stop() WAEHREND start(): der neue Sender wird wieder beendet, desired=0.
+    del gestartet[:], gestoppt_soll[:]
+    _aio.run(_aio.wait_for(_lauf("im-start"), 10))
+    assert len(gestartet) == 1 and gestoppt_soll[-1] is False and gestoppt_soll.count(False) == 2, \
+        "stop() waehrend des Wiederanlaufs — der Sender blieb stehen: %r" % gestoppt_soll
+
+    # ── (4) DER FORTSCHRITT WIRD GESTEMPELT, AUCH WENN DAS OVERLAY HAENGT.
+    # Abgewartet hielt das Schreiben (bis 68 s unter Plattenlast) den Leser an,
+    # _stall_watch sah keinen Zuwachs und erntete nach 75 s den gesunden Sender.
+    gezaehlt = []
+    haengt = _aio.Event()
+
+    async def _haengt():
+        await haengt.wait()
+
+    ns_takt = {"_OVERLAY_SCHREIBT": {"an": False}}
+    exec(compile(_ast.Module(body=[_fn("_overlay_takt")], type_ignores=[]), "bot.py", "exec"),
+         ns_takt)
+    RP = _w179_manager(baum, {"_read_progress"},
+                       {"RESTREAM_OVERLAY": True, "_overlay_takt": ns_takt["_overlay_takt"],
+                        "_write_restream_overlay_async": _haengt,
+                        "_loop_fehler": lambda *a: None})
+    ns_takt["_write_restream_overlay_async"] = _haengt
+
+    async def _fortschritt():
+        aufgaben = []
+        ns_takt["_spawn"] = lambda coro, name=None: aufgaben.append(_aio.ensure_future(coro))
+        r = RP()
+        r._update_health = lambda rid, buf, pname=None: gezaehlt.append(buf.get("frame"))
+        r._mark_blind = lambda *a, **k: None
+        leser = _aio.StreamReader()
+        for i in range(5):
+            leser.feed_data(b"frame=%d\nprogress=continue\n" % i)
+        proc = type("P", (), {"stdout": leser})()
+        t = _aio.ensure_future(r._read_progress(1, proc))
+        await _aio.sleep(0.3)
+        t.cancel()
+        for a in aufgaben:
+            a.cancel()
+        return len(aufgaben)
+    n_auf = _aio.run(_aio.wait_for(_fortschritt(), 10))
+    assert gezaehlt == ["0", "1", "2", "3", "4"], \
+        "ein haengendes Overlay haelt die Fortschrittsmarken an: %r" % gezaehlt
+    assert n_auf >= 1, "der Overlay-Takt wird gar nicht mehr ausgeloest"
+    ns_takt["_OVERLAY_SCHREIBT"]["an"] = True
+    ns_takt["_spawn"] = lambda *a, **k: (_ for _ in ()).throw(AssertionError("Stau"))
+    ns_takt["_overlay_takt"]()            # schreibt schon einer: kein zweiter Task
+
+    # ── (2) STOP BLOCKIERT NICHT, WENN DER SENDER NICHT LIEST. Echte Pipe, ein
+    # Thread haengt in daten() -> os.write; _schliessen kehrt trotzdem zurueck,
+    # und der Schreiber schliesst den fd, sobald der Sender weg ist (EPIPE).
+    lese, schreib = _os.pipe()
+    _os.set_blocking(schreib, False)
+    try:
+        while True:
+            _os.write(schreib, b"\0" * 65536)
+    except BlockingIOError:
+        pass
+    _os.set_blocking(schreib, True)
+    br = B.Bruecke(schreib, [], None, None, name="#w179")
+    br._fueller_frei = True
+    br._um.paket = lambda p: p
+    br.SCHLIESSEN_WARTEN_S = 0.3
+    paket = b"\x47\x01\x00\x10" + b"\xff" * 184
+    ergebnis = []
+    schreiber = _th.Thread(target=lambda: ergebnis.append(br.daten(B.FUELLER, paket)),
+                           daemon=True)
+    schreiber.start()
+    _t.sleep(0.3)
+    assert schreiber.is_alive(), "Aufbau: der Schreiber haengt nicht im write"
+    zu = _th.Thread(target=br._schliessen, daemon=True)
+    t0 = _t.monotonic()
+    zu.start()
+    zu.join(3)
+    assert not zu.is_alive(), "Bruecke._schliessen haengt am Schreiber, der in den Sender schreibt"
+    assert _t.monotonic() - t0 < 2.0
+    _os.close(lese)                          # der Sender ist weg
+    schreiber.join(3)
+    assert not schreiber.is_alive() and ergebnis == [False], ergebnis
+    assert br._fd is None, "der Schreiber hat den Sender-Eingang nicht geschlossen"
+    try:
+        _os.fstat(schreib)
+        raise AssertionError("fd des Sender-Eingangs ist noch offen (Leck je Stop)")
+    except OSError:
+        pass
+    st = _ast.unparse(_fn("stop", rm))
+    assert 0 <= st.find("await _reap_proc(proc)") < st.find("await self._bruecke_abraeumen"), \
+        "stop() baut die Bruecke vor dem Sender ab — haengt, wenn der Sender nicht liest"
+
+    # ── (3) KEIN ZOMBIE: ein Prozess, der SIGTERM ueberhoert, wird nach dem
+    # kill() auch geerntet (returncode gesetzt = waitpid gelaufen).
+    for beende in (B.Bruecke._beende, D._beende):
+        p = _sp.Popen(["sh", "-c", "trap '' TERM; sleep 30"])
+        _t.sleep(0.2)
+        beende(p)
+        assert p.returncode is not None, "%s laesst einen <defunct> stehen" % beende.__qualname__
+    ob = open("nc/overlaybrowser.py", encoding="utf-8").read()
+    be = _ast.unparse(next(n for n in _ast.walk(_ast.parse(ob))
+                           if getattr(n, "name", "") == "_beenden"))
+    assert be.count("p.wait(timeout=5)") == 2, "Overlay-Browser: kill() ohne wait()"
+
+    # ── (5) FEEDER-THREAD IN open(fifo) WIRD GEWECKT.
+    ns_w = {"os": _os}
+    exec(compile(_ast.Module(body=[_fn("_fifo_schreiber_wecken")], type_ignores=[]),
+                 "bot.py", "exec"), ns_w)
+    heim = P.verzeichnis()
+    fifo = _os.path.join(heim, "avatar.fifo")
+    _os.mkfifo(fifo)
+    halt = _th.Event()
+
+    def _feeder():
+        with open(fifo, "wb"):
+            halt.is_set()
+    f = _th.Thread(target=_feeder, daemon=True)
+    f.start()
+    _t.sleep(0.2)
+    halt.set()
+    ns_w["_fifo_schreiber_wecken"](fifo)
+    f.join(2)
+    weg = not f.is_alive()
+    if not weg:                              # aufraeumen, damit der Lauf nicht haengt
+        _os.close(_os.open(fifo, _os.O_RDONLY | _os.O_NONBLOCK))
+        f.join(2)
+    assert weg, "ein Feeder in open(fifo) bleibt nach dem Stop fuer immer stehen"
+    for stopp in ("_restream_avatar_feeder_stop", "_restream_html_overlay_stop"):
+        assert "_fifo_schreiber_wecken(" in _ast.unparse(_fn(stopp)), stopp
+    for start, stopp in (("_restream_avatar_feeder_start", "_restream_avatar_feeder_stop"),
+                         ("_restream_html_overlay_start", "_restream_html_overlay_stop")):
+        erst = _fn(start).body[1]            # nach dem Docstring
+        assert stopp in _ast.unparse(erst), "%s raeumt den alten Lauf nicht zuerst ab" % start
+    hs = _ast.unparse(_fn("_restream_html_overlay_stop"))
+    assert "call_soon_threadsafe(t.cancel)" in hs, "Task.cancel aus einem Thread ist nicht sicher"
+
+    # ── (6)(8) PROZESSENDE raeumt alles ab: Feeder UND unabhaengige Relays.
+    nb = _ast.unparse(_fn("_nebenlaeufer_abraeumen", rm))
+    for teil in ("_restream_tts_stop(rid)", "asyncio.to_thread(_restream_html_overlay_stop, rid)",
+                 "_restream_avatar_feeder_stop(rid)", "self._relays_abraeumen(info)"):
+        assert teil in nb, teil
+    mo = _ast.unparse(_fn("_monitor", rm))
+    assert "await self._nebenlaeufer_abraeumen(rid, info)" in mo
+    assert "self.start(" not in mo, "der Monitor startet an _wiederanlauf vorbei"
+    assert "self.start(" not in _ast.unparse(_fn("_ton_folge", rm))
+    ra = _ast.unparse(_fn("_relays_abraeumen", rm))
+    assert "_t.cancel()" in ra and "await _reap_proc(_p)" in ra
+    sp = _ast.unparse(_fn("_spawn_independent", rm))
+    assert "self._procs.get(rid) is mein" in sp and "while rid in self._procs" not in sp, \
+        "der Relay haengt an der rid, nicht an seinem Eintrag — doppelte Publisher"
+
+    # ── (7) FEHLSTART: kein UnboundLocalError, alle Feeder weg.
+    sa = _fn("start", rm)
+    sa_t = _ast.unparse(sa)
+    assert 0 <= sa_t.find("_kw, _br_fds = ({}, None)") < sa_t.find("cmd = _build_restream_cmd("), \
+        "_kw/_br_fds erst im try — der Fehlerpfad stirbt mit UnboundLocalError"
+    hdl = next(h for h in _ast.walk(sa) if isinstance(h, _ast.ExceptHandler)
+               and "ffmpeg-Start" in _ast.unparse(h))
+    assert "self._nebenlaeufer_abraeumen(rid)" in _ast.unparse(hdl)
+
+    # ── (9) KEINE SYNCHRONEN BLOCKIERER im Loop.
+    sd = _ast.unparse(_fn("_set_desired", rm))
+    assert "_RS_STATUS_EXEC.submit" in sd and "db_conn" not in sd, "desired-Commit im Loop"
+    assert "await asyncio.to_thread(_write_restream_overlay)" in sa_t
+    so = _ast.unparse(_fn("_soll_lesen", rm))
+    assert "run_in_executor(_RS_STATUS_EXEC" in so, \
+        "Soll-Zustand an der Reihenfolge der Statuswechsel vorbei gelesen"
+    ok("v4.2-W179: Stop im Backoff und im Start, Fortschritt trotz haengendem Overlay, "
+       "Bruecke ohne Haenger, keine Zombies, Feeder geweckt, Relays/Feeder je Lauf abgeraeumt")
+
+
+def _test_v42_w179_zeitstempel_spruenge():
+    """v4.2-W179: „Aufnahmen mit Pixelsalat und/oder fehlendem Ton" und „der
+    TikTok-Stream wurde nicht entgegengenommen". Im Server-Log: „pts has no
+    value", „Non-monotonic DTS … changing to", „timestamp discontinuity
+    -11989666". Nachgestellt mit echtem ffmpeg: CDN-Spruenge um ±12 s, PES
+    ohne PTS. Aufnahme und Zubringer der Sendebruecke muessen eine Datei bzw.
+    einen Strom liefern, der dekodierbar ist, Bild UND Ton traegt und die
+    Inhaltsdauer behaelt (nc/zeitglaetter.py)."""
+    import functools as _ft
+    import http.server as _hs
+    import json as _json
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import threading as _th
+    import pruefhilfen as P
+    from nc import reccmd as RC
+    from nc import restreamcmd as R
+    from nc import tonspur as T
+    from nc import zeitglaetter as Z
+
+    # (1) Der Ausdruck selbst: Kommata maskiert (sonst zerlegt -bsf die Kette),
+    # aac_adtstoasc in DERSELBEN Kette (ein zweites -bsf:a ersetzt das erste).
+    assert "," not in Z.ausdruck().replace("\\,", ""), "unmaskiertes Komma im setts-Ausdruck"
+    alt_v = Z.verfuegbar
+    try:
+        Z.verfuegbar = lambda ffmpeg="ffmpeg": True
+        a = Z.bsf_args(ton_vorher="aac_adtstoasc")
+        assert a.count("-bsf:a") == 1 and a[a.index("-bsf:a") + 1].startswith("aac_adtstoasc,setts=")
+        Z.verfuegbar = lambda ffmpeg="ffmpeg": False
+        assert Z.bsf_args(ton_vorher="aac_adtstoasc") == ["-bsf:a", "aac_adtstoasc"], \
+            "ohne setts muss die Aufnahme trotzdem starten — und aac_adtstoasc behalten"
+        assert Z.bsf_args() == []
+    finally:
+        Z.verfuegbar = alt_v
+
+    if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
+        ok("W179: Zeitstempel-Glaettung (rein); ffmpeg fehlt — Lauf uebersprungen")
+        return
+    assert Z.verfuegbar(), "dieses ffmpeg kennt setts nicht — Vertrag nicht pruefbar"
+    heim = P.verzeichnis()
+
+    def _stueck(name, versatz, fmt):
+        p = _os.path.join(heim, name)
+        _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x568:r=25",
+                 "-f", "lavfi", "-i", "sine=f=440:sample_rate=44100", "-t", "4",
+                 "-c:v", "libx264", "-preset", "ultrafast", "-g", "50", "-bf", "2",
+                 "-c:a", "aac", "-output_ts_offset", str(versatz), "-f", fmt, p],
+                check=True, timeout=60)
+        return p
+
+    def _ohne_pts(pfad):
+        b = bytearray(open(pfad, "rb").read())
+        n = 0
+        ts = 188                                    # Paketlaenge, kein Quelltext-Fenster
+        for i in range(0, len(b) - ts + 1, ts):
+            q = b[i:i + ts]
+            if not (q[1] & 0x40) or (((q[1] & 0x1F) << 8) | q[2]) != 0x100:
+                continue
+            o = 4 + ((q[4] + 1) if (q[3] & 0x20) else 0)
+            if q[o:o + 3] == b"\0\0\1" and not ((q[3] & 0x20) and q[4] and (q[5] & 0x40)):
+                n += 1
+                if n % 4 == 0:
+                    b[i + o + 7] &= 0x3F            # PES ohne PTS/DTS
+        open(pfad, "wb").write(bytes(b))
+
+    # FLV: ein Live-CDN schickt beim Wiederverbinden einen frischen Strom samt
+    # Kopf — zweiter Teil 12 s VOR dem ersten.
+    with open(_os.path.join(heim, "r.flv"), "wb") as f:
+        for i, v in enumerate((100, 92)):
+            b = open(_stueck("t%d.flv" % i, v, "flv"), "rb").read()
+            f.write(b if i == 0 else b[13:])
+    # HLS: +12 s Sprung, und PES ohne PTS.
+    segs = [_stueck("h0.ts", 100, "mpegts"), _stueck("h1.ts", 116, "mpegts")]
+    _ohne_pts(segs[1])
+    with open(_os.path.join(heim, "s.m3u8"), "w") as f:
+        f.write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n")
+        for s in segs:
+            f.write("#EXTINF:4.0,\n%s\n" % _os.path.basename(s))
+        f.write("#EXT-X-ENDLIST\n")
+    h = _ft.partial(_hs.SimpleHTTPRequestHandler, directory=heim)
+    h.log_message = lambda *a: None
+    srv = _hs.ThreadingHTTPServer(("127.0.0.1", 0), h)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    basis = "http://127.0.0.1:%d/" % srv.server_address[1]
+
+    def _befund(datei):
+        j = _json.loads(_sp.run(["ffprobe", "-v", "error", "-show_entries",
+                                 "stream=codec_type,duration", "-of", "json", datei],
+                                capture_output=True, text=True, timeout=30).stdout or "{}")
+        dauer = {s["codec_type"]: float(s.get("duration") or 0) for s in j.get("streams", [])}
+        dek = _sp.run(["ffmpeg", "-v", "error", "-i", datei, "-f", "null", "-"],
+                      capture_output=True, text=True, timeout=60).stderr
+        vts = [float(x.strip(",")) for x in _sp.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "packet=dts_time", "-of", "csv=p=0", datei], capture_output=True, text=True,
+            timeout=30).stdout.split() if x.strip(",") not in ("", "N/A")]
+        luecke = max((b - a for a, b in zip(vts, vts[1:])), default=99)
+        return dauer, len([z for z in dek.splitlines() if z.strip()]), len(vts), luecke
+
+    RC.configure(cookie_header=lambda: "", ensure_cookie_file_netscape=lambda: None,
+                 pick_checked_pull_proxy=lambda: "", stream_url_ttl=lambda u: 999,
+                 log_event=lambda *a, **k: None, resolve_tiktok_live_stream=None,
+                 REC_403_UNTIL={}, REC_PROXY={}, REC_PROXY_FAILED={},
+                 REC_PROXY_LOCK=_th.Lock(), COOKIE_FILE="", FFMPEG_NICE_RECORD=0,
+                 FFMPEG_THREADS_RECORD=1, RECORDER_PREF="native", RECORD_403_YTDLP=False,
+                 STREAM_URL_MIN_TTL=0)
+    try:
+        # (2) DIE AUFNAHME.
+        for quelle in ("r.flv", "s.m3u8"):
+            aus = _os.path.join(heim, quelle + ".mp4")
+            cmd = RC._build_native_cmd(basis + quelle, aus, 60, pull_proxy="")
+            assert T.hat_tonspur(cmd, optional_ok=True), cmd   # Recorder: sichern() prueft nach
+            assert "+igndts" not in " ".join(cmd), "igndts zerlegt bei Spruengen die B-Frame-Reihenfolge"
+            r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
+            assert r.returncode == 0, r.stderr[-400:]
+            dauer, fehler, n, luecke = _befund(aus)
+            assert fehler == 0, "%s: %d Dekodierfehler (Pixelsalat)" % (quelle, fehler)
+            assert n == 200 and luecke < 0.1, "%s: Bild mit Luecke/Standbild (%d, %.2f s)" % (
+                quelle, n, luecke)
+            assert dauer.get("audio", 0) > 7.5 and abs(dauer["audio"] - dauer["video"]) < 0.5, \
+                "%s: Ton fehlt oder laeuft weg %r" % (quelle, dauer)
+        # (3) DER ZUBRINGER DER SENDEBRUECKE: derselbe FLV-Sprung, der Strom an
+        # den Sender bleibt lueckenlos und monoton (alt: 8 s Ton und Bild auf
+        # einen Zeitpunkt geschoben, der Sender verlor rund 11 s Ausgabe).
+        R.configure(
+            cookie_header=lambda: "", pick_pull_proxy=lambda: "",
+            restream_overlay_files=lambda rid=None: {}, FFMPEG_THREADS_LIVE=3,
+            FFMPEG_THREADS_RELAY=2, RESTREAM_AVATAR="", RESTREAM_BITRATE_K=4500,
+            RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170, RESTREAM_AVATAR_LOOP="",
+            RESTREAM_CANVAS_H=720, RESTREAM_CANVAS_W=1280, RESTREAM_FONT="",
+            RESTREAM_FPS=25, RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=False,
+            RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+            RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+            RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+        z = R.zubringer(basis + "r.flv")
+        assert T.hat_tonspur(z) and z[-1] == "pipe:1"
+        aus = _os.path.join(heim, "zub.ts")
+        r = _sp.run(z[:-1] + [aus], capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, r.stderr[-400:]
+        dauer, fehler, n, luecke = _befund(aus)
+        assert fehler == 0 and n == 200 and luecke < 0.1, (fehler, n, luecke)
+    finally:
+        srv.shutdown()
+    ok("W179: Zeitstempel-Spruenge (FLV -12 s, HLS +12 s, PES ohne PTS) — Aufnahme und "
+       "Zubringer dekodierbar, mit Ton, ohne Standbild")
+
+
+def _w175_hilfen():
+    """Gemeinsames Werkzeug der W175-Vertraege: Quelltext, Funktionen einzeln
+    ausfuehren, Logzeilen mitschneiden."""
+    import ast as _ast
+    import logging as _lg
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(b, name):
+        return next(n for n in b.body if getattr(n, "name", "") == name)
+
+    def _exec(b, namen, ns):
+        teile = [_fn(b, n) for n in namen]
+        exec(compile(_ast.Module(body=teile, type_ignores=[]), "x.py", "exec"), ns)
+        return ns
+
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+    lg = _lg.getLogger("w175")
+    lg.handlers[:] = [_H()]
+    lg.setLevel(_lg.DEBUG)
+    lg.propagate = False
+    return src, baum, _fn, _exec, zeilen, lg
+
+
+def _w175_telegram_stub():
+    """telegram.error wie in W19 stubben, falls kein echtes Paket da ist —
+    pytest faehrt diesen Vertrag auch allein."""
+    import sys as _sys
+    import types as _ty
+    if "telegram" not in _sys.modules:
+        _tg = _ty.ModuleType("telegram")
+        _err = _ty.ModuleType("telegram.error")
+        _con = _ty.ModuleType("telegram.constants")
+        _err.TelegramError = type("TelegramError", (Exception,), {})
+        for _n in ("BadRequest", "ChatMigrated", "Forbidden", "NetworkError", "RetryAfter"):
+            setattr(_err, _n, type(_n, (_err.TelegramError,), {}))
+        _con.ParseMode = _ty.SimpleNamespace(HTML="HTML")
+        _sys.modules.update({"telegram": _tg, "telegram.error": _err,
+                             "telegram.constants": _con})
+    import telegramversand as _tv
+    return _tv
+
+
+def _test_v42_w175_themen_je_nutzer():
+    """v4.2-W175 (A): „wieder ein Forum-Thema je getracktem Nutzer". W168 hatte
+    alle Uploads einer Gruppe in ein Thema „🎬 Aufnahmen" gelegt und beim Start
+    die @name-Themen dorthin umgezogen und GELOESCHT. Liefe dieser Umzug weiter,
+    loeschte er jedes neue @name-Thema samt Videos beim naechsten Neustart."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import threading as _th
+    import types as _ty
+    from nc.util import _topic_key
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+    erstellt = []
+
+    class _Bot:
+        async def create_forum_topic(self, chat_id, name):
+            await _aio.sleep(0.01)
+            erstellt.append((chat_id, name))
+            return _ty.SimpleNamespace(message_thread_id=100 + len(erstellt))
+
+    themen = {"-100:#uploads": 9}            # das gemeinsame Thema aus W168
+    ns = {"TELEGRAM_USE_TOPICS": True, "_TG_TOPICS": themen, "_TG_TOPICS_LOCK": _th.Lock(),
+          "_tg_topics_save": lambda: None, "log": lg, "os": _os, "asyncio": _aio,
+          "_TG_TOPIC_ANLEGEN": {}, "_topic_key": _topic_key}
+
+    async def _forum(_c, _b):
+        return True
+    ns["_chat_is_forum"] = _forum
+    _exec(baum, ["_ensure_topic", "_topic_anlegen", "_topic_forget"], ns)
+    a = _aio.run(ns["_ensure_topic"](-100, "anna", _Bot()))
+    b = _aio.run(ns["_ensure_topic"](-100, "ben", _Bot()))
+    assert a != b and [n for _c, n in erstellt] == ["@anna", "@ben"], \
+        ("die Uploads landen wieder in EINEM gemeinsamen Thema", erstellt)
+    assert a not in (9,) and b not in (9,), "Uploads gehen ins alte gemeinsame Thema"
+    assert _aio.run(ns["_ensure_topic"](-100, "anna", _Bot())) == a and len(erstellt) == 2
+    _aio.run(ns["_ensure_topic"](-100, "#live-notices", _Bot(), name="📡 Live & Offline"))
+    assert erstellt[-1][1] == "📡 Live & Offline", "das Melde-Thema hat seinen Namen verloren"
+    ns["_topic_forget"](-100, "anna")
+    assert "-100:anna" not in themen and "-100:ben" in themen and "-100:#uploads" in themen, \
+        ("ein geloeschtes @anna-Thema vergisst den falschen Schluessel", themen)
+    # Zwei gleichzeitige Uploads DESSELBEN Nutzers: ein Thema, nicht zwei.
+    del erstellt[:]
+
+    async def _zwei():
+        return await _aio.gather(ns["_ensure_topic"](-300, "carl", _Bot()),
+                                 ns["_ensure_topic"](-300, "carl", _Bot()))
+    t1, t2 = _aio.run(_zwei())
+    assert t1 == t2 and len(erstellt) == 1, ("parallele Uploads, zwei @carl-Themen", erstellt)
+    # Das gemeinsame Thema bleibt stehen — nichts im Bot loescht noch Themen.
+    namen = {getattr(n, "name", "") for n in baum.body}
+    assert not {"_tg_topic_umzug", "_tg_topic_umziehen", "_upload_topic_name"} & namen, \
+        "der Topic-Umzug ist zurueck — er loescht die neuen @name-Themen beim Start"
+    loescher = [n.attr for n in _ast.walk(baum) if isinstance(n, _ast.Attribute)
+                and n.attr in ("delete_forum_topic", "close_forum_topic")]
+    assert not loescher, ("bot.py loescht/schliesst wieder Forum-Themen", loescher)
+    assert not _os.path.exists(_os.path.join("nc", "topicumzug.py"))
+    assert "_TG_UPLOAD_TOPIC_KEY" not in {n.id for n in _ast.walk(baum)
+                                          if isinstance(n, _ast.Name)}
+    ok("W175: ein Forum-Thema je Nutzer („@name“), Melde-Thema unveraendert, kein Umzug, "
+       "das gemeinsame Thema bleibt unangetastet")
+
+
+def _test_v42_w175_discord_ganze_aufnahme():
+    """v4.2-W175 (B): „die GESAMTE Aufnahme soll nach Discord, in hochladbaren
+    Teilen" — bisher gingen nur Highlights/Memes in den Clip-Kanal, und ein
+    Discord-/track-Nutzer bekam ohne Highlight gar nichts."""
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import types as _ty
+    import pruefhilfen as P
+    from nc import discordaufnahme as DA
+    from nc import discordlimits as DL
+    from nc import discordziele as Z
+    from nc import meldetakt as M
+    from nc import uploadschlange as U
+    from nc import videoteil as V
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+    MB = 1024 * 1024
+    assert DA.an("") and DA.an("1") and DA.an("ja") and not DA.an("0") and not DA.an("aus")
+    alt_env = _os.environ.pop("DISCORD_AUFNAHME_UPLOAD", None)
+    try:
+        assert DA.an(), "Vorgabe muss AN sein"
+        _os.environ["DISCORD_AUFNAHME_UPLOAD"] = "0"
+        assert not DA.an(), "der Schalter wird nicht gelesen (Modul-Konstante?)"
+    finally:
+        _os.environ.pop("DISCORD_AUFNAHME_UPLOAD", None)
+        if alt_env is not None:
+            _os.environ["DISCORD_AUFNAHME_UPLOAD"] = alt_env
+
+    d = P.verzeichnis()
+    alt = {k: getattr(V, k) for k in ("kopier_teilen", "neu_kodieren", "platz_reicht")}
+    aufrufe = []
+    try:
+        klein = _os.path.join(d, "klein.mp4")
+        gross = _os.path.join(d, "gross.mp4")
+        P.attrappe(klein, 5 * MB)
+        P.attrappe(gross, 100 * MB)
+        teilgroessen = [[9, 9, 9]]
+
+        async def _kopier(pfad, praefix, ziel):
+            aufrufe.append(("kopier", praefix, ziel))
+            groessen = teilgroessen.pop(0) if teilgroessen else [9]
+            aus = []
+            for i, g in enumerate(groessen):
+                t = "%s_%03d.mp4" % (praefix, i)
+                P.attrappe(t, g * MB)
+                aus.append(t)
+            return aus, None
+
+        async def _neu(pfad, praefix, ziel):
+            aufrufe.append(("neu", praefix, ziel))
+            t = "%s_re_000.mp4" % praefix
+            P.attrappe(t, 8 * MB)
+            return [t], None
+        V.kopier_teilen, V.neu_kodieren = _kopier, _neu
+        V.platz_reicht = lambda p, faktor=1.2: (True, "")
+        gesendet = []
+        scheitern = [0]
+
+        async def _senden(teil, text):
+            if scheitern[0]:
+                scheitern[0] -= 1
+                raise RuntimeError("403 Missing Permissions")
+            gesendet.append((teil, _os.path.getsize(teil) // MB, text))
+
+        # (1) Passt die Datei, geht sie unzerlegt raus.
+        e = _aio.run(DA.hochladen(klein, 9, _senden, "an_na", pause_s=0))
+        assert U.angekommen(e) and gesendet[0][0] == klein and not aufrufe, (e, aufrufe)
+        assert "an\\_na" in gesendet[0][2], "Discord-Markdown aus dem Handle nicht entschaerft"
+        # (2) Zu gross: geteilt mit dem Ziel = Limit, jeder Teil in Reihenfolge,
+        # danach aufgeraeumt; die Aufnahme selbst bleibt.
+        del gesendet[:]
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        assert aufrufe == [("kopier", gross + "_dcpart", 9)], aufrufe
+        assert [g for _t, g, _x in gesendet] == [9, 9, 9] and U.angekommen(e), (gesendet, e)
+        assert "Teil 2/3" in gesendet[1][2]
+        assert not [f for f in _os.listdir(d) if "_dcpart" in f], "Teile bleiben liegen"
+        assert _os.path.exists(gross)
+        # Der Telegram-Versand sammelt "<datei>_part_*.mp4" ein — die
+        # Discord-Teile duerfen dort nie auftauchen.
+        assert not (gross + "_dcpart_000.mp4").startswith(gross + "_part_")
+        # (3) Ohne Neukodieren zu grob (lange GOPs): halbes Ziel, dann neu kodiert.
+        del gesendet[:], aufrufe[:]
+        teilgroessen[:] = [[30, 9], [20, 9]]
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        assert [a[0] for a in aufrufe] == ["kopier", "kopier", "neu"] and aufrufe[1][2] == 4, \
+            aufrufe
+        assert U.angekommen(e) and len(gesendet) == 1
+        # (4) Fehlendes Recht: nach drei Fehlschlaegen in Folge Schluss, alles gezaehlt.
+        del gesendet[:], aufrufe[:]
+        teilgroessen[:] = [[9] * 6]
+        scheitern[0] = 99
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        scheitern[0] = 0
+        assert e["fehler"] == 6 and e["gesendet"] == 0 and not U.angekommen(e), e
+        assert "Missing Permissions" in e["grund"] and "nicht versucht" in e["grund"]
+        # (5) Ein Teil bleibt zu gross: gezaehlt, nicht still gesendet.
+        teilgroessen[:] = [[9, 30], [9, 30]]
+        V.neu_kodieren = lambda *a: _aio.sleep(0, result=(None, "kaputt"))
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        assert e == {"gesendet": 0, "fehler": 1, "grund": "Teilen gescheitert: kaputt"}, e
+        # …und ein neu kodierter Teil, der trotzdem zu gross ist, zaehlt als Fehler.
+        teilgroessen[:] = [[30], [30]]
+
+        async def _neu_zu_gross(pfad, praefix, ziel):
+            t = "%s_re_000.mp4" % praefix
+            P.attrappe(t, 30 * MB)
+            return [t], None
+        V.neu_kodieren = _neu_zu_gross
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        assert e["gesendet"] == 0 and e["fehler"] == 1 and "bleibt 30.0 MB" in e["grund"], e
+    finally:
+        for k, v in alt.items():
+            setattr(V, k, v)
+        _sh.rmtree(d, ignore_errors=True)
+    nk = open("nc/videoteil.py", encoding="utf-8").read()
+    assert "async with _encodeschlange.platz(" in rumpf_ab(nk, nk.index("async def neu_kodieren(")), \
+        "Neu-Kodieren laeuft an der Encode-Warteschlange vorbei"
+
+    # (6) bot._aufnahme_nach_discord: Guild-Limit mit Reserve, Clip-Kanal, laut.
+    class _Kanal:
+        name = "clips"
+
+        def __init__(self, limit_mb, kaputt=False):
+            self.guild = _ty.SimpleNamespace(filesize_limit=limit_mb * MB)
+            self.kaputt, self.posts = kaputt, []
+
+        async def send(self, content=None, file=None):
+            if self.kaputt:
+                raise RuntimeError("Missing Access")
+            self.posts.append((content, file))
+    gemerkt = {}
+
+    async def _hoch(pfad, grenze, senden, nutzer, beginn=None, ergebnis=None):
+        gemerkt["grenze"] = grenze
+        await senden(pfad, "t")
+        ergebnis.update(gesendet=1, fehler=0)
+        return ergebnis
+    kanal = [_Kanal(50)]
+
+    async def _holen(gilden, bevorzugt=0, name=None, anlegen=True):
+        return kanal[0]
+    client = _ty.SimpleNamespace(guilds=[1])
+    fake_dc = _ty.ModuleType("discord")
+    fake_dc.File = lambda p: ("datei", p)
+    import sys as _sys
+    alt_dc = _sys.modules.get("discord")
+    _sys.modules["discord"] = fake_dc
+    M.zuruecksetzen()
+    try:
+        ns = _exec(baum, ["_aufnahme_nach_discord"], {
+            "_nc_dcaufnahme": _ty.SimpleNamespace(an=lambda: True, SCHALTER=DA.SCHALTER,
+                                                  hochladen=_hoch),
+            "os": _ty.SimpleNamespace(getenv=lambda k, v="": "tok", path=_os.path),
+            "_nc_discordstate": _ty.SimpleNamespace(CLIENT={"obj": client}),
+            "_nc_discordziele": _ty.SimpleNamespace(clip_kanal_holen=_holen,
+                                                    clip_kanal=Z.clip_kanal),
+            "DISCORD_GUILD_ID": 0, "_nc_dclimits": DL, "_DISCORD_UPLOAD_OVERRIDE": None,
+            "_nc_uschlange": U, "_nc_meldetakt": M, "_time_mod": __import__("time"),
+            "log": lg, "asyncio": _aio})
+        e = _aio.run(ns["_aufnahme_nach_discord"]("anna", "/x/a.mp4"))
+        assert U.angekommen(e) and gemerkt["grenze"] == DL.gate_mb(50) == 49, (e, gemerkt)
+        assert kanal[0].posts == [("t", ("datei", "/x/a.mp4"))]
+        kanal[0] = _Kanal(10, kaputt=True)
+        del zeilen[:]
+
+        async def _hoch2(pfad, grenze, senden, nutzer, beginn=None, ergebnis=None):
+            return await DA.hochladen(pfad, grenze, senden, nutzer, beginn, ergebnis, pause_s=0)
+        ns["_nc_dcaufnahme"].hochladen = _hoch2
+        d2 = P.verzeichnis()
+        try:
+            f = _os.path.join(d2, "a.mp4")
+            P.attrappe(f, MB)
+            e = _aio.run(ns["_aufnahme_nach_discord"]("anna", f))
+        finally:
+            _sh.rmtree(d2, ignore_errors=True)
+        assert not U.angekommen(e) and e["fehler"] == 1
+        assert any(l >= _lg.ERROR and "Missing Access" in z and "#clips" in z
+                   for l, z in zeilen), ("Discord-Fehler nicht laut", zeilen)
+        ns["_nc_dcaufnahme"].an = lambda: False
+        assert _aio.run(ns["_aufnahme_nach_discord"]("anna", f)).get("aus")
+    finally:
+        if alt_dc is None:
+            _sys.modules.pop("discord", None)
+        else:
+            _sys.modules["discord"] = alt_dc
+
+    # (7) Jede fertige Aufnahme: Telegram-Chats UND "discord", auch ohne
+    # Telegram-Ziel (reines Discord-/track-Tracking).
+    tg, dc, schlange = [], [], []
+
+    async def _split(chat, datei, app, nutzer, started_at=None, ended_at=None):
+        tg.append(chat)
+
+    async def _nach_dc(nutzer, datei, beginn=None):
+        dc.append(datei)
+
+    async def _schlaf(_s):
+        return None
+    nsv = _exec(baum, ["_aufnahme_verteilen"], {
+        "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
+        "split_and_send_video": _split, "_aufnahme_nach_discord": _nach_dc,
+        "_upload_queue_add": lambda *a, **k: schlange.append((a, k))})
+    offen = ["discord"]
+    _aio.run(nsv["_aufnahme_verteilen"](None, offen, "/r/a.mp4", "anna", None, None, False))
+    assert dc == ["/r/a.mp4"] and tg == [] and offen == [], (dc, tg, offen)
+    offen = [-100, "discord"]
+    _aio.run(nsv["_aufnahme_verteilen"](None, offen, "/r/a.mp4", "anna", None, None, True))
+    assert [k.get("ziel") for _a, k in schlange] == [None, "discord"] and tg == [], schlange
+    assert schlange[1][0][0] is None, "der Discord-Eintrag traegt eine Chat-ID"
+    hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
+    assert '["discord"] if _nc_dcaufnahme.an() else []' in hrf and "_aufnahme_verteilen(" in hrf
+    ok("W175: ganze Aufnahme in Teilen <= Guild-Limit in den Clip-Kanal, auch fuer "
+       "Discord-/track, Schalter DISCORD_AUFNAHME_UPLOAD, Fehler laut")
+
+
+def _test_v42_w175_upload_schlange():
+    """v4.2-W175 (Befunde 2–5): die Warteschlange wiederholte nie, lief ohne
+    Fenster gar nicht, und ein Neustart mitten im Upload trug die Aufnahme
+    doppelt ein und verlor den Rest."""
+    import ast as _ast
+    import asyncio as _aio
+    import json as _json
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import threading as _th
+    import time as _tm
+    import types as _ty
+    import pruefhilfen as P
+    from datetime import datetime as _dt
+    from nc import discordaufnahme as DA
+    from nc import discordziele as Z
+    from nc import meldetakt as M
+    from nc import telegramfehler as T
+    from nc import uploadschlange as U
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+
+    # (1) rein
+    assert not U.angekommen({}) and not U.angekommen({"gesendet": 2, "fehler": 1})
+    assert U.angekommen({"gesendet": 1, "fehler": 0})
+    lage, neu = U.nach_versuch({"file": "a"}, {"gesendet": 0, "fehler": 1, "grund": "Timeout"}, 100.0)
+    assert lage == "wieder" and neu["versuche"] == 1 and neu["naechster_versuch"] == 700.0
+    assert neu["letzter_fehler"] == "Timeout"
+    assert U.nach_versuch(neu, {}, 0)[1]["naechster_versuch"] == 1200.0     # verdoppelt
+    assert U.nach_versuch({"versuche": 4}, {}, 0)[0] == "aufgeben"
+    assert U.nach_versuch({"versuche": 4}, {"gesendet": 1}, 0)[0] == "fertig"
+    assert U.faellig({}, 0) and U.faellig({"naechster_versuch": "x"}, 0)
+    assert not U.faellig({"naechster_versuch": 50.0}, 10.0)
+
+    # (2) Der Durchgang: Fehlschlag bleibt liegen, Erfolg geht, nach
+    # MAX_VERSUCHE laut aufgegeben; Discord-Eintraege gehen nach Discord.
+    d = P.verzeichnis()
+    try:
+        qpfad = _os.path.join(d, "pending.json")
+        datei = _os.path.join(d, "a.mp4")
+        P.attrappe(datei, 10)
+        jetzt = [1000.0]
+        ergebnisse, gesendet = [], []
+
+        async def _split(chat, f, app, nutzer, started_at=None, ended_at=None, ergebnis=None):
+            gesendet.append(("tg", chat))
+            ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
+
+        async def _nach_dc(nutzer, f, beginn=None, ergebnis=None):
+            gesendet.append(("dc", f))
+            ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
+
+        async def _schlaf(_s):
+            return None
+        M.zuruecksetzen()
+        ns = {"_UPLOAD_QUEUE_LOCK": _th.Lock(), "_upload_queue_path": lambda: qpfad,
+              "json": _json, "os": _os, "log": lg, "_nc_uschlange": U, "datetime": _dt,
+              "_time_mod": _ty.SimpleNamespace(time=lambda: jetzt[0], monotonic=_tm.monotonic),
+              "_is_upload_window": lambda _d: True, "split_and_send_video": _split,
+              "_aufnahme_nach_discord": _nach_dc, "_parse_iso": lambda s: None,
+              "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
+              "_nc_tgfehler": T, "_nc_meldetakt": M, "_nc_discordziele": Z,
+              "_nc_dcaufnahme": DA}
+        _exec(baum, ["_upload_queue_load", "_upload_queue_save", "_upload_queue_remove",
+                     "_upload_queue_update", "_upload_queue_abarbeiten", "_upload_queue_nachher",
+                     "_telegram_ziele"], ns)
+
+        def _stand():
+            return ns["_upload_queue_load"]()
+        ns["_upload_queue_save"]([{"chat_id": -100, "file": datei, "username": "anna",
+                                   "queued_at": "q1"},
+                                  {"chat_id": None, "ziel": "discord", "file": datei,
+                                   "username": "anna", "queued_at": "q1"}])
+        ergebnisse[:] = [{"gesendet": 0, "fehler": 1, "grund": "Timeout"},
+                         {"gesendet": 3, "fehler": 0}]
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert gesendet == [("tg", -100), ("dc", datei)], gesendet
+        st = _stand()
+        assert len(st) == 1 and st[0]["versuche"] == 1 and st[0]["chat_id"] == -100, \
+            ("ein gescheiterter Upload verschwindet nach dem ersten Versuch", st)
+        assert any(l >= _lg.ERROR and "Versuch 1 von 5" in z and "Timeout" in z
+                   for l, z in zeilen), zeilen
+        del gesendet[:]
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert gesendet == [], "die Pause nach dem Fehlschlag wird nicht eingehalten"
+        for _i in range(4):
+            jetzt[0] += 7 * 3600
+            ergebnisse[:] = [{}]                       # nichts gesendet (toter Chat)
+            _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert _stand() == [], "nach MAX_VERSUCHE bleibt der Eintrag fuer immer liegen"
+        assert any(l >= _lg.ERROR and "AUFGEGEBEN" in z and datei in z for l, z in zeilen)
+        # Erfolg beim zweiten Versuch: weg.
+        ns["_upload_queue_save"]([{"chat_id": -100, "file": datei, "username": "b",
+                                   "queued_at": "q2", "versuche": 1}])
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert _stand() == []
+        # Datei weg: verworfen, aber laut.
+        ns["_upload_queue_save"]([{"chat_id": -100, "file": datei + "x", "username": "c",
+                                   "queued_at": "q3"}])
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert _stand() == [] and any(l >= _lg.ERROR and "nicht mehr auf der Platte" in z
+                                      for l, z in zeilen)
+        # Discord abgeschaltet: verworfen statt fuenfmal versucht.
+        ns["_upload_queue_save"]([{"chat_id": None, "ziel": "discord", "file": datei,
+                                   "username": "d", "queued_at": "q4"}])
+        ergebnisse[:] = [{"aus": True, "grund": "DISCORD_AUFNAHME_UPLOAD=0"}]
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert _stand() == []
+
+        # (3) Neustart mitten im Upload: der Rest landet in der Schlange.
+        schlange = []
+
+        async def _split_bricht(chat, f, app, nutzer, started_at=None, ended_at=None):
+            if chat == -2:
+                raise _aio.CancelledError()
+            gesendet.append(("tg", chat))
+        nsv = _exec(baum, ["_aufnahme_verteilen", "_upload_rest_sichern"], {
+            "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
+            "split_and_send_video": _split_bricht, "_aufnahme_nach_discord": _nach_dc,
+            "_upload_queue_add": lambda *a, **k: schlange.append((a, k)), "log": lg})
+        nachlauf = {"eingetragen": True, "offen": [-1, -2, -3, "discord"], "ende": "E"}
+        try:
+            _aio.run(nsv["_aufnahme_verteilen"](None, nachlauf["offen"], datei, "anna",
+                                                None, "E", False))
+            raise AssertionError("der Abbruch kam nicht an")
+        except _aio.CancelledError:
+            pass
+        assert nachlauf["offen"] == [-2, -3, "discord"], \
+            ("was noch fehlt, ist nicht mehr bekannt", nachlauf["offen"])
+        _aio.run(nsv["_upload_rest_sichern"](nachlauf, datei, "anna", None))
+        assert [(a[0], k.get("ziel")) for a, k in schlange] == \
+            [(-2, None), (-3, None), (None, "discord")], schlange
+        assert all(k.get("grund") == "Neustart mitten im Upload" for _a, k in schlange)
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+    # …und der Abbruchzweig traegt nach dem Eintragen nicht ein zweites Mal ein.
+    hrf = _fn(baum, "handle_recording_finished")
+    zweig = next(h for n in _ast.walk(hrf) if isinstance(n, _ast.Try) for h in n.handlers
+                 if h.type is not None and "CancelledError" in _ast.unparse(h.type))
+    wenn = next(s for s in zweig.body if isinstance(s, _ast.If))
+    assert "nachlauf" in _ast.unparse(wenn.test) and \
+        "_upload_rest_sichern" in _ast.unparse(wenn.body) and \
+        isinstance(wenn.body[-1], _ast.Raise), "der Stopp-Pfad traegt wieder doppelt ein"
+    assert zweig.body.index(wenn) < next(
+        i for i, s in enumerate(zweig.body) if "_aufnahme_beim_stopp_sichern" in _ast.unparse(s))
+    gesetzt = [n for n in _ast.walk(hrf) if isinstance(n, _ast.Call)
+               and _ast.unparse(n.func) == "nachlauf.update"
+               and any(k.arg == "eingetragen" for k in n.keywords)]
+    assert gesetzt, "das Eintragen wird nicht vermerkt"
+
+    # (4) Die Schleife laeuft auch ohne Fenster.
+    uw = _fn(baum, "_upload_window_loop")
+    assert not [n for n in _ast.walk(uw) if isinstance(n, _ast.Return)], \
+        "die Schleife steigt ohne Fenster wieder aus"
+    rb = _fn(baum, "check_all_trackings")
+    for wenn in (n for n in _ast.walk(rb) if isinstance(n, _ast.If)):
+        assert "_upload_window_loop" not in _ast.unparse(wenn), \
+            "der Start der Schleife haengt wieder am Fenster"
+    assert "_upload_window_loop(bot_app)" in _ast.unparse(rb)
+    laeufe = []
+
+    class _Stopp(Exception):
+        pass
+
+    async def _schlaf2(_s):
+        if len(laeufe) >= 2:
+            raise _Stopp()
+
+    async def _durchgang(_app):
+        laeufe.append(1)
+    nsl = _exec(baum, ["_upload_window_loop"], {
+        "UPLOAD_WINDOW_START": 0, "UPLOAD_WINDOW_END": 0, "log": lg, "datetime": _dt,
+        "_is_upload_window": lambda _d: True, "_upload_queue_abarbeiten": _durchgang,
+        "_loop_fehler": lambda *a: None,
+        "asyncio": _ty.SimpleNamespace(sleep=_schlaf2)})
+    try:
+        _aio.run(nsl["_upload_window_loop"](None))
+    except _Stopp:
+        pass
+    assert len(laeufe) == 2, "ohne Fenster wird die Schlange nie abgearbeitet"
+
+    # (5) Hinweis „nur Discord" je Nutzer gedrosselt und mit Schalter.
+    M.zuruecksetzen()
+    del zeilen[:]
+    gilde = 1521964594653036677
+    nsz = _exec(baum, ["_telegram_ziele"], {
+        "_nc_tgfehler": T, "_nc_meldetakt": M, "_time_mod": _tm, "log": lg,
+        "_nc_discordziele": Z, "_nc_dcaufnahme": _ty.SimpleNamespace(
+            an=lambda: True, SCHALTER=DA.SCHALTER)})
+    for nutzer in ("anna", "ben", "anna"):
+        nsz["_telegram_ziele"]([gilde], nutzer)
+    hinweise = [z for _l, z in zeilen if "Discord-Guild" in z]
+    assert len(hinweise) == 2 and "@ben" in hinweise[1], \
+        ("ein fester Drossel-Schluessel verschluckt jeden weiteren Nutzer", hinweise)
+    assert "nur nach Discord (#clips)" in hinweise[0]
+    nsz["_nc_dcaufnahme"].an = lambda: False
+    nsz["_telegram_ziele"]([gilde], "carl")
+    assert "NIRGENDWOHIN" in zeilen[-1][1] and DA.SCHALTER in zeilen[-1][1]
+    ok("W175: Warteschlange wiederholt mit Pause und gibt laut auf, laeuft ohne Fenster, "
+       "Neustart mitten im Upload reiht den Rest ein statt doppelt einzutragen")
+
+
+def _test_v42_w175_chat_migriert():
+    """v4.2-W175 (Befund 1): einfache Gruppe → Supergruppe aendert die Chat-ID.
+    `ChatMigrated` fing niemand — danach scheiterte jeder Versand still, und
+    Befehle aus der neuen Gruppe fielen an ALLOWED_CHAT_IDS weg."""
+    import ast as _ast
+    import asyncio as _aio
+    import json as _json
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import sqlite3 as _sq
+    import time as _tm
+    import types as _ty
+    import pruefhilfen as P
+    from contextlib import contextmanager as _cm
+    from nc import meldetakt as M
+    from nc import telegramfehler as T
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+    # (1) rein
+    zl = [(1, "anna", -5), (2, "Ben", -5), (3, "ben", -1009), (4, "carl", -7)]
+    assert T.migration_plan(zl, -5, -1009) == ([1], [2])
+    assert T.migration_plan(zl, -5, -5) == ([], []) and T.migration_plan(zl, -5, 0) == ([], [])
+    assert T.migriert_erlaubt(-1009, {-5}, {-5: -1009})
+    assert not T.migriert_erlaubt(-1009, {-6}, {-5: -1009})
+    assert not T.migriert_erlaubt(None, {-5}, {-5: None})
+
+    # (2) _chat_migriert: Datenbank, Abbildung auf der Platte, laute Zeile.
+    d = P.verzeichnis()
+    con = _sq.connect(":memory:")
+    con.row_factory = _sq.Row
+    con.executescript(
+        "CREATE TABLE trackings (id INTEGER PRIMARY KEY, username TEXT, group_id INTEGER,"
+        " UNIQUE(group_id, username));"
+        "CREATE TABLE tracking_tags (tracking_id INTEGER, tag TEXT);"
+        "INSERT INTO trackings VALUES (1,'anna',-5),(2,'ben',-5),(3,'ben',-1009),(4,'carl',-7);"
+        "INSERT INTO tracking_tags VALUES (2,'x');")
+
+    @_cm
+    def _dbc():
+        yield con
+        con.commit()
+    abbildung = {}
+    M.zuruecksetzen()
+    try:
+        ns = _exec(baum, ["_tg_migriert_pfad", "_tg_migriert_laden", "_chat_migriert"], {
+            "_TG_MIGRIERT": abbildung, "RECORDINGS_DIR": d, "os": _os, "json": _json,
+            "db_conn": _dbc, "_nc_tgfehler": T, "_TG_FORUM_CACHE": {-5: (False, 0)},
+            "_nc_meldetakt": M, "_time_mod": _tm, "log": lg})
+        assert ns["_chat_migriert"](-5, -1009) == 1
+        rest = {(r["id"], r["group_id"]) for r in con.execute("SELECT id, group_id FROM trackings")}
+        assert rest == {(1, -1009), (3, -1009), (4, -7)}, rest
+        assert con.execute("SELECT COUNT(*) FROM tracking_tags").fetchone()[0] == 0
+        assert abbildung == {-5: -1009} and ns["_TG_FORUM_CACHE"] == {}
+        assert any(l >= _lg.ERROR and "ALLOWED_CHAT_IDS" in z and "-1009" in z
+                   for l, z in zeilen), zeilen
+        abbildung.clear()
+        ns["_tg_migriert_laden"]()
+        assert abbildung == {-5: -1009}, "die Abbildung ueberlebt keinen Neustart"
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+
+    # (3) _is_authorized: die neue ID einer freigeschalteten Gruppe gilt.
+    def _upd(cid, uid=1):
+        return _ty.SimpleNamespace(effective_user=_ty.SimpleNamespace(id=uid),
+                                   effective_chat=_ty.SimpleNamespace(id=cid))
+    nsa = _exec(baum, ["_is_authorized"], {"Update": object,
+                                           "ALLOWED_USER_IDS": set(), "ALLOWED_CHAT_IDS": {-5},
+                                           "_nc_tgfehler": T, "_TG_MIGRIERT": {-5: -1009}})
+    assert nsa["_is_authorized"](_upd(-1009)) and not nsa["_is_authorized"](_upd(-1010))
+
+    # (4) _safe_send: ChatMigrated → umschreiben, einmal an die neue ID.
+    class _TE(Exception):
+        pass
+
+    class _CM(_TE):
+        def __init__(self, neu):
+            super().__init__("Group migrated to supergroup")
+            self.new_chat_id = neu
+    fehler_ns = {n: type(n, (_TE,), {}) for n in ("RetryAfter", "Forbidden", "BadRequest",
+                                                  "NetworkError")}
+    umgeschrieben, gesendet = [], []
+
+    class _Bot:
+        async def send_message(self, chat_id, text, **kw):
+            gesendet.append((chat_id, kw.get("message_thread_id")))
+            if chat_id == -5:
+                raise _CM(-1009)
+    nss = _exec(baum, ["_safe_send"], dict(
+        fehler_ns, ChatMigrated=_CM, TelegramError=_TE, _TG_MIGRIERT={},
+        _is_dead=lambda c: False, _nc_i18n=_ty.SimpleNamespace(t=lambda t, l=None: t),
+        _chat_migriert=lambda a, n: umgeschrieben.append((a, n)), asyncio=_aio, log=lg,
+        _mark_dead=lambda c: None))
+    assert _aio.run(nss["_safe_send"](_Bot(), -5, "hallo", message_thread_id=7)) is True
+    assert umgeschrieben == [(-5, -1009)] and gesendet == [(-5, 7), (-1009, None)], gesendet
+    del gesendet[:]
+    nss["_TG_MIGRIERT"][-5] = -1009
+    assert _aio.run(nss["_safe_send"](_Bot(), -5, "hallo")) and gesendet == [(-1009, None)]
+
+    # (5) Video-Versand: ab dem migrierten Teil geht alles an die neue ID.
+    _tv = _w175_telegram_stub()
+    CM = _tv.ChatMigrated
+    mig, sends = [], []
+
+    class _VBot:
+        async def send_video(self, chat_id, datei, **kw):
+            sends.append((chat_id, kw.get("message_thread_id")))
+            if chat_id == -5:
+                e = CM("migrated")
+                e.new_chat_id = -1009
+                raise e
+
+    async def _mig(alt, neu):
+        mig.append((alt, neu))
+
+    async def _topic(c, u, b):
+        return 4711
+
+    async def _safe(*a, **k):
+        return True
+    _tv.konfiguriere(chat_migriert=_mig, ensure_topic=_topic, is_dead=lambda c: False,
+                     mark_dead=lambda c: None, safe_send=_safe, topic_forget=lambda c, u: None)
+    d = P.verzeichnis()
+    try:
+        f = _os.path.join(d, "a.mp4")
+        P.attrappe(f, 1024)
+        erg = {}
+        _aio.run(_tv.split_and_send_video(-5, f, _ty.SimpleNamespace(bot=_VBot()), "anna",
+                                          ergebnis=erg))
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+    assert mig == [(-5, -1009)] and sends == [(-5, 4711), (-1009, None)], sends
+    assert erg == {"gesendet": 1, "fehler": 0}, erg
+
+    # (6) Die Dienstnachricht wird verarbeitet — beide Richtungen.
+    aufrufe = []
+    nsm = _exec(baum, ["on_chat_migration"], {
+        "Update": object, "ContextTypes": _ty.SimpleNamespace(DEFAULT_TYPE=object),
+        "asyncio": _aio, "_chat_migriert": lambda a, n: aufrufe.append((a, n)), "log": lg})
+    for m in (_ty.SimpleNamespace(chat_id=-5, migrate_to_chat_id=-1009, migrate_from_chat_id=None),
+              _ty.SimpleNamespace(chat_id=-1009, migrate_to_chat_id=None, migrate_from_chat_id=-5)):
+        _aio.run(nsm["on_chat_migration"](_ty.SimpleNamespace(effective_message=m), None))
+    assert aufrufe == [(-5, -1009), (-5, -1009)], aufrufe
+    rb = _fn(baum, "run_bot")
+    assert any("StatusUpdate.MIGRATE" in _ast.unparse(n) and "on_chat_migration" in _ast.unparse(n)
+               for n in _ast.walk(rb) if isinstance(n, _ast.Call)
+               and _ast.unparse(n.func) == "app.add_handler"), "kein Handler fuer die Umwandlung"
+    ok("W175: ChatMigrated — Trackings umgeschrieben (Dubletten weg), neu gesendet, "
+       "Befehle aus der neuen Gruppe erlaubt, ALLOWED_CHAT_IDS laut gemeldet")
+
+
+def _test_v42_w175_kleinbefunde():
+    """v4.2-W175 (Befunde 6–10): /tracklist, Level-Up aus /daily, Zaehlung und
+    Kuerzung im Telegram-Versand, Forum-Pruefung."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import re as _re
+    import shutil as _sh
+    import types as _ty
+    import pruefhilfen as P
+    from nc import meldetakt as M
+    from nc.textmore import pre_nachrichten
+    from nc.textutil import safe
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+
+    # (6) /tracklist: Notiz escaped, geteilt unter 4096.
+    zeilen_t = ["%02d · @nutzer_mit_langem_namen_%03d  LIVE" % (i, i) for i in range(300)]
+    msgs = pre_nachrichten("KOPF\n", zeilen_t, "\nFUSS")
+    assert len(msgs) > 1 and all(len(m) <= 4000 for m in msgs), [len(m) for m in msgs]
+    assert msgs[0].startswith("KOPF\n") and msgs[-1].endswith("\nFUSS")
+    assert all(m.count("<pre>") == 1 and m.count("</pre>") == 1 for m in msgs)
+    wieder = [z for m in msgs for z in m.split("<pre>")[1].split("</pre>")[0].split("\n")]
+    assert wieder == zeilen_t, "Zeilen gehen beim Teilen verloren"
+    antworten = []
+
+    class _Msg:
+        async def reply_text(self, text, **kw):
+            antworten.append(text)
+    tr = [{"id": i, "username": "nutzer_mit_langem_namen_%03d" % i, "last_live": 0, "recording": 0, "paused": 0,
+           "notes": "<b>&" if i == 0 else ""} for i in range(150)]
+    nst = _exec(baum, ["tracklist"], {
+        "Update": object, "ContextTypes": _ty.SimpleNamespace(DEFAULT_TYPE=object),
+        "_is_authorized": lambda u: True, "asyncio": _aio,
+        "get_trackings_for_group": lambda gid: tr, "safe": safe,
+        "_nc_prueflage": _ty.SimpleNamespace(lage=lambda *a, **k: {
+            "zustand": "offline", "ueberfaellig": False, "geprueft_vor_s": 0}),
+        "pre_nachrichten": pre_nachrichten, "utc_clock": lambda: "12:00",
+        "_nc_i18n": _ty.SimpleNamespace(t=lambda t: t),
+        "ParseMode": _ty.SimpleNamespace(HTML="HTML")})
+    _aio.run(nst["tracklist"](_ty.SimpleNamespace(
+        message=_Msg(), effective_chat=_ty.SimpleNamespace(id=-5)), None))
+    assert len(antworten) > 1 and all(len(a) <= 4096 for a in antworten), \
+        [len(a) for a in antworten]
+    assert "// &lt;b&gt;&amp;" in antworten[0], "die Notiz geht roh ins HTML"
+
+    # (7) Level-Up aus /daily: Interaction hat kein .author.
+    dsrc = open("discordbot.py", encoding="utf-8").read()
+    dbaum = _ast.parse(dsrc)
+    aufrufe = [n for n in _ast.walk(dbaum) if isinstance(n, _ast.Call)
+               and getattr(n.func, "id", "") == "_on_level_up"]
+    assert len(aufrufe) == 2
+    daily = [n for n in aufrufe if "inter" in _ast.unparse(n.args[0])]
+    assert daily and all(isinstance(n.args[0], _ast.Call) and
+                         {k.arg for k in n.args[0].keywords} >= {"author", "guild", "channel"}
+                         for n in daily), "/daily reicht wieder die Interaction durch"
+    gepostet = []
+
+    class _Kanal:
+        async def send(self, t):
+            gepostet.append(t)
+    M.zuruecksetzen()
+    nsl = _exec(dbaum, ["_on_level_up"], {
+        "_nc_rang": _ty.SimpleNamespace(rang_fuer_level=lambda l: None, RANG_STUFEN=()),
+        "DISCORD_LEVELUP_CHANNEL": "", "_nc_i18n": _ty.SimpleNamespace(t=lambda t: t),
+        "discord": _ty.SimpleNamespace(utils=_ty.SimpleNamespace(get=lambda *a, **k: None)),
+        "log": lg, "_nc_meldetakt": M, "_time_mod": __import__("time")})
+    nutzer = _ty.SimpleNamespace(mention="<@1>")
+    _aio.run(nsl["_on_level_up"](_ty.SimpleNamespace(author=nutzer, guild=None,
+                                                     channel=_Kanal()), 5))
+    assert gepostet and "<@1>" in gepostet[0] and "Level 5" in gepostet[0]
+    del zeilen[:]
+    _aio.run(nsl["_on_level_up"](_ty.SimpleNamespace(user=nutzer, guild=None,
+                                                     channel=_Kanal()), 6))
+    assert any(l >= _lg.ERROR and "AttributeError" in z for l, z in zeilen), \
+        ("ein gescheiterter Level-Up steht wieder nur auf debug", zeilen)
+
+    # (8)/(9) Telegram-Versand: uebersprungener Teil zaehlt, Fehlertext erst
+    # kuerzen, dann escapen.
+    _tv = _w175_telegram_stub()
+    texte, sends = [], []
+    BR = _tv.BadRequest
+
+    class _VBot:
+        def __init__(self, fehler=None):
+            self.fehler = fehler
+
+        async def send_video(self, chat_id, datei, **kw):
+            sends.append(chat_id)
+            if self.fehler:
+                raise self.fehler
+
+    async def _safe(bot, chat, text, **kw):
+        texte.append(text)
+
+    async def _topic(c, u, b):
+        return None
+
+    async def _mig(a, n):
+        return None
+    _tv.konfiguriere(chat_migriert=_mig, ensure_topic=_topic, is_dead=lambda c: False,
+                     mark_dead=lambda c: None, safe_send=_safe, topic_forget=lambda c, u: None)
+    d = P.verzeichnis()
+    alt_vt, alt_sleep = _tv._nc_videoteil, _tv.asyncio.sleep
+
+    async def _kein_schlaf(_s):
+        return None
+    try:
+        f = _os.path.join(d, "a.mp4")
+        P.attrappe(f, 1024)
+        erg = {}
+        _aio.run(_tv.split_and_send_video(-5, f, _ty.SimpleNamespace(
+            bot=_VBot(BR("x" * 186 + "<" * 10))), "anna", ergebnis=erg))
+        fehlerzeile = [t for t in texte if "UPLOAD FEHLGESCHLAGEN" in t][0]
+        code = fehlerzeile.split("<code>")[1].split("</code>")[0]
+        assert not _re.search(r"&(?!lt;|gt;|amp;|quot;|#x27;|#39;)", code), \
+            ("der Fehlertext wird nach dem Escapen gekuerzt — kaputtes HTML", code[-12:])
+        assert erg["fehler"] == 1 and "BadRequest" in erg["grund"]
+        teile = []
+        for i, mb in enumerate((10, 60)):
+            t = _os.path.join(d, "a.mp4_part_%03d.mp4" % i)
+            P.attrappe(t, mb * 1024 * 1024)
+            teile.append(t)
+        P.attrappe(f, 200 * 1024 * 1024)
+
+        async def _kopier(*a):
+            return list(teile), None
+        _tv._nc_videoteil = _ty.SimpleNamespace(
+            ZIEL_TEIL_MB=45, TELEGRAM_HARD_MB=50, platz_reicht=lambda p: (True, ""),
+            kopier_teilen=_kopier, zu_gross=lambda t, g=None: [], wegwerfen=lambda t: None)
+        _tv.asyncio.sleep = _kein_schlaf
+        erg = {}
+        del sends[:]
+        _aio.run(_tv.split_and_send_video(-5, f, _ty.SimpleNamespace(bot=_VBot()), "anna",
+                                          ergebnis=erg))
+        assert len(sends) == 1 and erg["gesendet"] == 1 and erg["fehler"] == 1, \
+            ("ein uebersprungener Teil zaehlt nicht — die Schlange hielte das fuer Erfolg", erg)
+    finally:
+        _tv._nc_videoteil, _tv.asyncio.sleep = alt_vt, alt_sleep
+        _sh.rmtree(d, ignore_errors=True)
+
+    # (10) Forum-Pruefung: ein Fehler gilt nur kurz und wird gemeldet.
+    uhr = [1000.0]
+    fragen = []
+
+    class _FBot:
+        kaputt = True
+
+        async def get_chat(self, cid):
+            fragen.append(cid)
+            if self.kaputt:
+                raise TimeoutError("Timed out")
+            return _ty.SimpleNamespace(is_forum=True)
+    M.zuruecksetzen()
+    del zeilen[:]
+    nsf = _exec(baum, ["_chat_is_forum"], {
+        "_time_mod": _ty.SimpleNamespace(monotonic=lambda: uhr[0]), "_TG_FORUM_CACHE": {},
+        "_TG_FORUM_TTL": 3600, "_TG_FORUM_FEHLER_TTL": 60, "_nc_meldetakt": M, "log": lg})
+    bot = _FBot()
+    assert _aio.run(nsf["_chat_is_forum"](-5, bot)) is False
+    assert any(l >= _lg.ERROR and "Timed out" in z for l, z in zeilen), zeilen
+    uhr[0] += 30
+    _aio.run(nsf["_chat_is_forum"](-5, bot))
+    assert fragen == [-5], "innerhalb der kurzen Frist wird jede Sekunde neu gefragt"
+    uhr[0] += 31
+    bot.kaputt = False
+    assert _aio.run(nsf["_chat_is_forum"](-5, bot)) is True and len(fragen) == 2, \
+        "ein Fehler wird wieder eine Stunde lang als „kein Forum“ gemerkt"
+    ok("W175: /tracklist escaped und geteilt, Level-Up aus /daily, Versand zaehlt jeden "
+       "Fehlschlag und kuerzt vor dem Escapen, Forum-Fehler gilt 60 s und ist laut")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -31796,6 +34573,31 @@ def main():
     _test_v42_w169_link_video()
     _test_v42_w170_overlay_ein_browser()
     _test_v42_w171_kick_centrifugo()
+    _test_v42_w172_spenden()
+    _test_v42_w173_ein_spendenziel()
+    _test_v42_w174_encode_warteschlange()
+    _test_v42_w175_themen_je_nutzer()
+    _test_v42_w175_discord_ganze_aufnahme()
+    _test_v42_w175_upload_schlange()
+    _test_v42_w175_chat_migriert()
+    _test_v42_w175_kleinbefunde()
+    _test_v42_w179_restream_lebenszyklus()
+    _test_v42_w179_zeitstempel_spruenge()
+    _test_v42_w177_brain_verwoben()
+    _test_v42_w176_disk_guard_schont()
+    _test_v42_w176_live_ohne_url_drossel()
+    _test_v42_w176_flattern_seit_zurueck()
+    _test_v42_w176_live_einmal_je_nutzer()
+    _test_v42_w176_spawn_marker_vor_lock()
+    _test_v42_w176_kein_db_im_loop()
+    _test_v42_w176_pruefschleife_lebt()
+    _test_v42_w176_vacuum_nach_faelligkeit()
+    _test_v42_w178_spenden_in_eur()
+    _test_v42_w178_herkunft_csrf()
+    _test_v42_w178_einstellungen_umgebung()
+    _test_v42_w178_manuelle_spenden_nicht_lesbar()
+    _test_v42_w178_restream_loeschen_erst_nach_stop()
+    _test_v42_w178_ledger_parallel()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -146,8 +146,13 @@ def main():
                 "INSERT INTO stream_sessions(username, started, ended, "
                 "duration_s, recorded) VALUES(?,?,?,?,1)",
                 ("reportcanary", _now - 7200, _now - 3600, 3600))
+            # ANKER GEWANDERT (v4.2-W177): hier stand 'cpu' — ein Name, den
+            # niemand schreibt. Der Vertrag fror damit genau den Fehler ein,
+            # der den Systemabschnitt im echten Report leer liess.
             _c.execute("INSERT INTO metrics(name, value, ts) "
-                       "VALUES('cpu', 0.5, ?)", (_now - 60,))
+                       "VALUES('load_ratio15', 7.5, ?)", (_now - 60,))
+            _c.execute("INSERT INTO metrics(name, value, ts) "
+                       "VALUES('disk_max_pct', 71.0, ?)", (_now - 60,))
         rv = tc.get("/api/brain/report/weekly")
         assert rv.status_code == 200, rv.status_code
         # Markdown, nicht JSON — der Browser soll den Text zeigen.
@@ -159,7 +164,8 @@ def main():
         # 3600s duration_s ⇒ "1h00m" aus _fmt_dur.
         assert "@reportcanary" in md, md
         assert "1h00m" in md, md
-        assert "## System" in md and "Ø 50%" in md, md
+        assert "## System" in md and "Peak 7.50" in md, md   # Ø mischt die echte Messung des Ticks
+        assert "Disk-Peak: 71%" in md, md
 
     print("test_m2 OK — Sync/Regeln/Cooldown/Router-DB/Flask/Report/Cleanup grün"
           + ("" if app else " (Flask übersprungen)"))

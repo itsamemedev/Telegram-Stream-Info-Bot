@@ -45,6 +45,33 @@ MAX_INTERVAL_S = 900
 _KERNEL = (0.25, 0.5, 0.25)
 
 
+# v4.2-W177: ein Hinweis gilt nur, solange er frisch ist. plan() laeuft alle
+# BRAIN_SCHED_EVERY_S (300 s) und rechnet mit der AKTUELLEN Stunde; steht der
+# Bridge-Tick, bleibt in sched_hints die Empfehlung einer laengst vergangenen
+# Stunde stehen — und der Bot pollte einen "heissen" Streamer von gestern
+# Abend weiter im Minutentakt. Drei Planrunden Toleranz.
+HINT_MAX_ALTER_S = 900
+
+
+def frische_intervalle(rows, jetzt: float,
+                       max_alter_s: float = HINT_MAX_ALTER_S) -> dict:
+    """(username, interval_s, ts)-Zeilen → {username: interval_s}, nur frische
+    und plausible. Unter MIN_INTERVAL_S wird angehoben: ein Hinweis darf das
+    Polling verfeinern, aber keinen Sekundentakt gegen TikTok erzeugen."""
+    out = {}
+    for user, interval, ts in rows:
+        # plan() schreibt Zahlen; alles andere ist kein Hinweis, sondern
+        # ein Fremdeintrag — verworfen, nie geraten.
+        if not (user and isinstance(interval, (int, float))
+                and isinstance(ts, (int, float))):
+            continue
+        alter = jetzt - ts
+        if interval <= 0 or alter < -60 or alter > max_alter_s:
+            continue
+        out[user] = max(int(interval), MIN_INTERVAL_S)
+    return out
+
+
 class Scheduler:
     def __init__(self, conn_factory: Callable, db_lock: threading.Lock):
         self._conn = conn_factory

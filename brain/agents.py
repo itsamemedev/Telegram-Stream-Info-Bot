@@ -283,6 +283,15 @@ class RecoveryAgent(Agent):
         with b._db_lock, b._conn() as c:
             c.execute("CREATE TABLE IF NOT EXISTS paused_sources("
                       "who TEXT PRIMARY KEY, ts REAL)")
+            # v4.2-W177: die Straehne beim Pausieren merken — und zwar
+            # ueber die Reaktivierung hinaus. Ohne sie pausierte derselbe
+            # Lauf, der nach der Karenz reaktiviert hatte, die Quelle sofort
+            # wieder: `_PREFLIGHT_DEAD_STREAK[w]` steht unveraendert hoch,
+            # denn eine pausierte Quelle wird nicht geprueft. Die zweite
+            # Chance dauerte damit null Sekunden, ein manuelles /unpause
+            # hielt bis zur naechsten Agentenrunde.
+            c.execute("CREATE TABLE IF NOT EXISTS paused_streak("
+                      "who TEXT PRIMARY KEY, streak INTEGER)")
         try:
             streaks = streak_cb() or {}
         except Exception:
@@ -292,12 +301,14 @@ class RecoveryAgent(Agent):
         # bleibt er tot, greift Stufe 3 beim nächsten Preflight erneut.
         unpause = (ctx or {}).get("unpause_source")
         retry_h = env_float("BRAIN_DEAD_RETRY_HOURS", 12)
+        reaktiviert: set = set()
         if callable(unpause) and retry_h > 0:
             with b._db_lock, b._conn() as c:
                 stale = c.execute(
                     "SELECT who FROM paused_sources WHERE ts < ?",
                     (now - retry_h * 3600,)).fetchall()
             for (w,) in stale:
+                reaktiviert.add(w)
                 try:
                     if unpause(w):
                         findings.append({"level": "info",
@@ -307,18 +318,32 @@ class RecoveryAgent(Agent):
                             b.memory.record_metric("sources_reactivated", 1, now)
                         except Exception:
                             pass
-                except Exception:
-                    pass
+                except Exception as ex:
+                    # v4.2-W177: war `pass` — ein Reaktivierungs-Hook, der
+                    # wirft, liess die Quelle still pausiert.
+                    findings.append({"level": "warn",
+                                     "text": f"Reaktivierungs-Hook fuer {w} warf: {ex}"})
                 with b._db_lock, b._conn() as c:
                     c.execute("DELETE FROM paused_sources WHERE who=?", (w,))
 
         for who, n in streaks.items():
             if n < thresh or ":" in str(who):   # Restream-Quellen überspringen
                 continue
+            if who in reaktiviert:
+                continue        # zweite Chance: erst neue Preflights abwarten
             with b._db_lock, b._conn() as c:
                 seen = c.execute("SELECT 1 FROM paused_sources WHERE who=?",
                                  (who,)).fetchone()
+                alt = c.execute("SELECT streak FROM paused_streak WHERE who=?",
+                                (who,)).fetchone()
             if seen:
+                continue
+            if alt is not None and int(n) == int(alt[0]):
+                # Seit der letzten Auto-Pause kein neuer toter Preflight:
+                # die Quelle wurde (manuell oder nach Karenz) reaktiviert und
+                # noch nicht wieder geprueft. Erneut pausiert wird erst,
+                # wenn die Straehne weiter gewachsen ist (oder nach einem
+                # Erfolg neu aufgelaufen ist — dann ist sie eine andere Zahl).
                 continue
             try:
                 ok = bool(pause(who))
@@ -330,6 +355,8 @@ class RecoveryAgent(Agent):
                 with b._db_lock, b._conn() as c:
                     c.execute("INSERT OR REPLACE INTO paused_sources(who,ts) "
                               "VALUES(?,?)", (who, now))
+                    c.execute("INSERT OR REPLACE INTO paused_streak(who,streak) "
+                              "VALUES(?,?)", (who, int(n)))
                 findings.append({"level": "info",
                                  "text": f"{who} nach {n}× Preflight-tot "
                                          f"automatisch pausiert (Stufe 3)"})

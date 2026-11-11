@@ -27,6 +27,7 @@ import logging
 import os
 import shutil
 
+from nc import encodeschlange as _encodeschlange  # v4.2-W174
 from nc import kindprozess as _kind  # v4.2-W120
 from nc.ffbuild import ff_cmd
 from nc.ffdiag import _ffmpeg_stderr_tail
@@ -224,9 +225,12 @@ async def neu_kodieren(pfad, praefix, ziel_mb):
              laenge, vbr, seg, orig_mbps)
     try:
         # Grosszuegig: Neukodieren ist deutlich langsamer als Kopieren.
-        rc, _, stderr = await _kind.ausfuehren(cmd, max(600, int(laenge * 3)),
-                                               art="ffmpeg-reencode",
-                                               stdout=_kind.DEVNULL)
+        # v4.2-W174: durch die Encode-Warteschlange — ein Upload darf warten,
+        # eine Aufnahme nebenan darf nicht zerfallen.
+        async with _encodeschlange.platz("zerlegen-neu-kodieren"):
+            rc, _, stderr = await _kind.ausfuehren(cmd, max(600, int(laenge * 3)),
+                                                   art="ffmpeg-reencode",
+                                                   stdout=_kind.DEVNULL)
     except asyncio.TimeoutError:
         return None, "re-encode timeout"
     except Exception as e:

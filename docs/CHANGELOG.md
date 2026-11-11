@@ -11,6 +11,131 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [5.0.0] — 2026-11-11 · „Gleichtakt"
+
+Hauptversion. Tiefengrund-Bughunt über alle Bereiche: fünf Analysen
+(Restream/Aufnahme, Telegram/Discord, Tracking/Dauerläufer, Brain, Dashboard),
+rund 60 bestätigte Befunde, jeder behoben mit Vertrag und Mutationsprobe
+(über 180 Proben, alle gefangen). Gemeldet vom Betreiber: „durch die hohe
+CPU-Last bricht der ganze Stream zusammen", „Aufnahmen mit Pixelsalat und/oder
+fehlendem Ton", „Telegram-Uploads in Gruppen ohne Topics funktionieren nicht",
+„die Gehirn-Strukturen sind nicht miteinander verwoben", „mir fehlt noch der
+Timestamp-Abgleich".
+
+### Restream und Aufnahme (v4.2 W179, W174)
+
+- **Alle Ziele brachen zugleich weg:** `_read_progress` wartete auf jedes
+  Text-Overlay-Schreiben (unter Plattenlast bis 68 s); ohne Fortschrittsmarke
+  erklärte der Stillstands-Wächter den gesunden tee-Sender nach 75 s für tot.
+  Das Overlay wird jetzt nebenher geschrieben.
+- **Zeitstempel-Glättung** (`nc/zeitglaetter.py`, Bitstream-Filter `setts`):
+  gemessen ergab ein Rücksprung um 12 s in der Aufnahme 8 s Bild und Ton auf
+  12 ms gestaucht, im Restream 10,4 s Ausgabe in 22 s. Danach volle Dauer, mit
+  Ton, ohne Korrektur. `+igndts` ist aus dem Aufnahme-Bauer heraus.
+- **Encode-Warteschlange** (`nc/encodeschlange.py`): Clip, Meme-Zusammenschnitt,
+  Chat-Einbrennen, Discord-Verkleinern und Zerlegen-Neukodierung nacheinander
+  (`ENCODE_PARALLEL`), nur unter `ENCODE_LAST_ANTEIL` der Kerne, nach
+  `ENCODE_WARTEN_MAX_S` trotzdem; in `/healthz` als `encode`.
+- Zombie-Prozesse (`kill()` ohne `wait()`), `stop()` hing bei nicht lesendem
+  Sender, Restream lief nach Stopp im Backoff wieder an, Feeder-Threads hingen
+  in `open(fifo)`, Reconnect räumte Overlay/Avatar/Relays nicht ab, Fehlstart
+  mit `UnboundLocalError`, Quellen-Failover fiel nach dem ersten Reconnect weg.
+
+### Telegram und Discord (v4.2 W175)
+
+- **Ein Thema je Nutzer** wieder; der W168-Umzug ins gemeinsame Thema ist
+  entfernt, das gemeinsame Thema bleibt stehen.
+- **Discord bekommt die ganze Aufnahme** in Teilen unter dem Guild-Limit
+  (`DISCORD_AUFNAHME_UPLOAD`, Vorgabe an), auch für reine Discord-Trackings.
+- **ChatMigrated:** Gruppe → Supergruppe ändert die Chat-ID; Trackings werden
+  umgeschrieben, die neue ID einer freigeschalteten Gruppe gilt, laut gemeldet.
+- Upload bei Neustart verloren (und doppelte Zeile), Warteschlange ohne
+  Upload-Fenster nie abgearbeitet, Fehlschläge nie wiederholt (jetzt mit
+  Pause bis 6 h und Höchstzahl), /tracklist-HTML, Level-Up aus /daily,
+  Forum-Prüfung cachte Fehler eine Stunde.
+
+### Tracking und Dauerläufer (v4.2 W176)
+
+- Platz-Wächter löschte ab 88 % auch Markiertes und Ungesichertes; bei
+  gesperrter Datenbank ohne Schutzmenge. Jetzt nur Gesichertes, bei
+  Datenbankfehler gar nichts.
+- Live/Offline je Nutzer nur einmal (Discord-Embed, Thread, Oracle, Director);
+  Wettlauf zur doppelten Aufnahme geschlossen; Datenbankzugriffe aus dem
+  Event-Loop; Prüfschleife mit Supervisor und Lebenszeichen; VACUUM lief nie.
+
+### Brain und AZRAEL (v4.2 W177)
+
+- **Verwoben:** AZRAEL bekommt im Kick-Chat Kontext aus dem Brain
+  (`nc/azraelkontext.py`); Brain-Hinweise zur Abfrage-Taktung als Opt-in.
+- Mehrere Trackings je Nutzer erzeugten Schein-Sitzungen; „zweite Chance"
+  pausierte sofort wieder; Wochenreport-Empfehlungen und Lastzeile leer;
+  Stundenbudget zählte Cloud-Aufrufe; Lernkurve 404; Archiv-Index markierte
+  ohne Vektor als indiziert; Embedding-Ausfall still.
+
+### Dashboard, Geld, Sicherheit (v4.2 W178)
+
+- Spendenziel zählt Bits, Dollar-Superchats und Subs in Euro (`nc.donations`).
+- **CSRF:** schreibende Anfragen fremder Seiten werden abgewiesen
+  (`nc/herkunft.py`).
+- **Einstellungen:** `PATH`, `LD_*`, `PYTHON*` und weitere sind gesperrt; nur
+  Namen aus Vorlage/.env/Tabelle setzbar.
+- Manuelle Spenden: Lesefehler statt „keine Einträge"; Restream-Löschen
+  behält die Zeile, wenn der Stopp scheitert; Steuer-Journal unter Sperre.
+
+### Außerdem in dieser Version
+
+Enthält die Patches 4.6.20–4.6.23: dauerhafter Overlay-Chromium, Kick-Chat
+über Centrifugo, `/spenden`, ein Spendenziel für alle Anzeigen.
+
+## [4.6.23] — 2026-11-11 · „Leitstand"
+
+### Geändert — ein Spendenziel für alle Anzeigen (v4.2 W173)
+
+Gemeldet am 11.11.: „Die Spendenziele sind noch nicht miteinander verknüpft.
+Es ist ja immer dasselbe, egal ob Website, Stream oder Telegram/Discord."
+
+Bis hier drei getrennte Rechnungen:
+
+| Anzeige | Ziel | Stand |
+|---|---|---|
+| Website | `DONATION_GOAL_EUR` (500) | Sockel + nur im Deck erfasste Spenden, seit Installation |
+| Overlay, Sendebild | `DONATION_GOAL_TARGET` (0 = aus), Deck-Feld nur im Speicher | Kick/Twitch/YouTube/Deck, nur ab Stream-Start |
+| `/spenden` | `DONATION_GOAL_EUR` | keiner |
+
+- `nc/spendenziel.py`: **ein** Ziel (`DONATION_GOAL_EUR`; `DONATION_GOAL_TARGET`
+  bleibt als alter Name lesbar), **ein** Stand (Sockel `DONATION_CURRENT_EUR`
+  plus jede Spende auf eigenen Kanälen im Zeitraum, TikTok nie), **ein**
+  Zeitraum (`DONATION_PERIOD`, Vorgabe monatlich ab dem Ersten).
+- Website, `/api/overlay/state`, Sendebild-Zeile und `/spenden` lesen diese
+  Rechnung. `/spenden` zeigt jetzt den Stand.
+- Das Ziel im Overlay-Formular schreibt über `nc/einstellungen.py` — gilt
+  überall und überlebt einen Neustart. Leere Felder bleiben unverändert;
+  vorher setzte ein nicht ausgefülltes Feld das Ziel auf 0.
+- Zwei stille Auffänge (Website-Block, Overlay-Zustand) melden jetzt.
+
+Vertrag `_test_v42_w173_ein_spendenziel`, 8 von 8 Mutationsproben gefangen.
+
+## [4.6.22] — 2026-11-11 · „Leitstand"
+
+### Neu — /spenden auf Telegram und Discord (v4.2 W172)
+
+Gemeldet am 11.11.: „Der Bot hat weder in Discord noch in Telegram die
+Donation-Funktion. Spendenadressen kann er ja aus der env laden, wobei die
+Adressen auch in die README sollten."
+
+- `nc/spendeninfo.py`: PayPal (mit Spenden-Link), alle gesetzten
+  Krypto-Adressen, Zweck und Ziel — dieselben Quellen wie Website und Deck
+  (`DONATION_PAYPAL`, `DONATION_<COIN>_ADDRESS`, `DONATION_GOAL_*`), bei
+  jedem Aufruf gelesen. Die Website liest PayPal jetzt auch von dort.
+- `/spenden` steht in `nc/befehle.py`, also auch in Hilfe und Telegram-Menü.
+  **Für jeden**: auf Telegram ohne Freischaltung (Zuschauer stehen in keiner
+  Liste, die Antwort ist öffentlich), auf Discord als eigener Befehl.
+- Ist nichts eingetragen, nennt der Bot die Variablen statt einer leeren
+  Antwort. Text aus der `.env` wird für Telegram-HTML maskiert.
+- Neu: `DONATION_LINK` (optional). README: Abschnitt „Unterstützen".
+
+Vertrag `_test_v42_w172_spenden`, 7 von 7 Mutationsproben gefangen.
+
 ## [4.6.21] — 2026-11-07 · „Leitstand"
 
 ### Behoben — Kick-Chat über Centrifugo (v4.2 W171)

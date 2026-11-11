@@ -15,9 +15,15 @@ Segment-Referenz-Format:  rec:<recording_id>:<t_start_int>
 """
 from __future__ import annotations
 
+import logging
 import re
+import time
 
+from .. import meldetakt as _meldetakt
 from . import transcripts as T
+
+log = logging.getLogger("nc.intel.library")
+_KANAL = "archiv-index"
 
 KIND = "recording"
 _REF = re.compile(r"^rec:(\d+):(\d+)$")
@@ -44,18 +50,45 @@ def index_recording(conn, backend, recording_id: int, username: str = "",
     segs = T.get_segments(conn, recording_id, paramstyle)
     if not segs:
         return {"ok": False, "error": "keine Segmente", "indexed": 0}
+    aktiv = getattr(backend, "aktiv", None)
+    if callable(aktiv) and not aktiv():
+        # BRAIN_EMBED_BACKEND=off ist eine Entscheidung, kein Ausfall: still,
+        # indexed bleibt 0 — wird das Backend eingeschaltet, holt der Lauf
+        # die Aufnahme nach.
+        return {"ok": False, "error": "Embedding aus (BRAIN_EMBED_BACKEND=off)",
+                "indexed": 0, "of": len(segs)}
     done = 0
+    geeignet = 0
+    grund = "Backend nahm kein Segment an (Embedding-Server erreichbar?)"
     for s in segs:
         text = (s["text"] or "").strip()
         if len(text) < min_chars:
             continue
+        geeignet += 1
         ref = make_ref(recording_id, s["start"])
         try:
             if backend.index_text(KIND, username or "", text, ref=ref, ts=created_at):
                 done += 1
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            grund = "%s: %s" % (type(e).__name__, str(e)[:160])
             continue
+    if geeignet and not done:
+        # v4.2-W177: vorher stand indexed=1 auch bei done == 0. Lief der
+        # Embedding-Server nicht, galt jede Aufnahme als indiziert, wurde nie
+        # wieder versucht, und "Frag dein Archiv" fand sie nie — ohne eine
+        # Zeile im Log. Jetzt bleibt indexed=0 (der naechste Lauf versucht es
+        # erneut), und der Ausfall wird gedrosselt gemeldet.
+        laut, unterdrueckt = _meldetakt.melden(_KANAL, grund.split(":")[0], time.time())
+        if laut:
+            log.warning("Archiv-Index: Aufnahme %s nicht indiziert — %d Segmente, "
+                        "keines angenommen (%s). Abhilfe: Embedding-Server auf "
+                        "BRAIN_EMBED_URL starten (llama-server --embedding, Vorgabe "
+                        "Port 8089) oder BRAIN_EMBED_BACKEND=off setzen.%s",
+                        recording_id, geeignet, grund, _meldetakt.zusatz(unterdrueckt))
+        return {"ok": False, "error": grund, "indexed": 0, "of": len(segs)}
     T.set_status(conn, recording_id, T.DONE, indexed=1, paramstyle=paramstyle)
+    if done:
+        _meldetakt.zuruecksetzen(_KANAL)
     return {"ok": True, "indexed": done, "of": len(segs)}
 
 

@@ -28,6 +28,18 @@ _CACHE = {"btc_sats": None, "ts": 0.0}
 _TTL = 600.0                       # 10 min — Explorer schonen
 
 
+def gesetzte():
+    """v4.2-W172: [(Bezeichnung, Adresse)] — nur die gesetzten, ohne QR-Code.
+    Fuer /spenden: ein Chat-Text braucht keine SVG, und die Lesestelle bleibt
+    hier, wo tools/gen_env_example.py die Liste _COINS aufloesen kann."""
+    aus = []
+    for _coin, label, env in _COINS:
+        a = (os.getenv(env, "") or "").strip()
+        if a:
+            aus.append((label, a))
+    return aus
+
+
 def addresses():
     """Konfigurierte Adressen (nur die gesetzten), Reihenfolge wie _COINS,
        je mit QR-Code als Inline-SVG (BIP21 'bitcoin:' für BTC, sonst roh)."""

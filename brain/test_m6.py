@@ -80,8 +80,10 @@ def main():
     assert r["ok"] and b.llm.budget()["remaining"] == 1
     r = b.llm.chat([{"role": "user", "content": "y2"}])
     assert r["ok"] and b.llm.budget()["remaining"] == 0
+    # v4.2-W177: das Budget sperrt nur den llamacpp-Schritt. Mit reiner
+    # Lokal-Kette (so ruft bot.py) bleibt BudgetExhausted das Ergebnis.
     try:
-        b.llm.chat([{"role": "user", "content": "z"}])
+        b.llm.chat([{"role": "user", "content": "z"}], backends=["llamacpp"])
         raise AssertionError("Budget nicht durchgesetzt")
     except BudgetExhausted:
         pass

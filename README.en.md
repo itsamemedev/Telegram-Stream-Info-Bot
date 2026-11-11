@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.21 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v5.0.0 Lockstep" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -14,7 +14,7 @@
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-operating-it)
-[![Discord](https://img.shields.io/badge/Discord-66%20slash%20commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-operating-it)
+[![Discord](https://img.shields.io/badge/Discord-67%20slash%20commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-operating-it)
 [![Kick · Twitch · YouTube](https://img.shields.io/badge/Restream-Kick%20%C2%B7%20Twitch%20%C2%B7%20YouTube-53FC18?style=flat-square)](#-restream)
 [![SQLite · MariaDB](https://img.shields.io/badge/Database-SQLite%20%C2%B7%20MariaDB-003545?style=flat-square&logo=mariadb&logoColor=white)](#️-database)
 [![Prometheus · Grafana](https://img.shields.io/badge/Monitoring-Prometheus%20%C2%B7%20Grafana-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-monitoring)
@@ -38,7 +38,7 @@
 | **What for** | Live monitoring, recording and multi-target restreaming of TikTok streams, with AI moderation on Kick, Twitch and YouTube |
 | **For whom** | Operators who want this on **their own** hardware — one Linux server, no SaaS, no third-party platform between stream and targets |
 | **Runs on** | Ubuntu/Debian with systemd, Python 3.12–3.14, ffmpeg, streamlink, yt-dlp — database SQLite or MariaDB |
-| **Operated through** | Telegram, Discord (66 slash commands) and a web deck with four themes in German, English and Spanish — settings right in the deck |
+| **Operated through** | Telegram, Discord (67 slash commands) and a web deck with four themes in German, English and Spanish — settings right in the deck |
 | **Monitoring** | 16 watchdog agents, real-time situation map, Prometheus and Grafana with alert rules |
 | **Quality** | over a thousand contracts, CI on three Python versions and against the frozen production state, `pip-audit`, CodeQL |
 | **License** | GPL-3.0-or-later |
@@ -53,7 +53,7 @@
 - [🕹️ Operating it](#️-operating-it) · [📡 Restream](#-restream) · [🧠 AZRAEL and the watchdogs](#-azrael-and-the-watchdogs)
 - [🖥️ Dashboard](#️-dashboard) · [📈 Monitoring](#-monitoring) · [🚀 Operations](#-operations)
 - [🛡️ Security](#️-security) · [🩺 Troubleshooting](#-troubleshooting) · [🧪 Development](#-development)
-- [🆕 New in v4.6](#-new-in-v46) · [📊 Project status](#-project-status) · [🤝 Contributing](#-contributing) · [📄 License](#-license)
+- [🆕 New in v5.0](#-new-in-v50) · [New in v4.6](#-new-in-v46) · [📊 Project status](#-project-status) · [💸 Support](#-support) · [🤝 Contributing](#-contributing) · [📄 License](#-license)
 
 ---
 
@@ -84,7 +84,7 @@
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
 | **Multilingual** | German, English and Spanish, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
 | **Database** | SQLite **or** MariaDB · move with `update.sh --mariadb`, counted again · central schema module · export tool · database watchdog |
-| **Settings** | “Settings” tab in the deck: all ~594 variables searchable, stored in the database, protected keys only from `.env` |
+| **Settings** | “Settings” tab in the deck: all ~599 variables searchable, stored in the database, protected keys only from `.env` |
 | **Monitoring** | `/metrics` for Prometheus · Grafana dashboard with every metric · 16 alert rules with tests · set up with `tools/observability.sh` |
 
 </details>
@@ -119,7 +119,7 @@ flowchart TD
 ```mermaid
 flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
-    DC["🎮 Discord<br/>66 slash commands"]:::ein --> BOT
+    DC["🎮 Discord<br/>67 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
     BOT["bot.py<br/>monolith · 27,441 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
     BOT -->|configure| NC["nc/ — 185 domain modules<br/>39 blueprints"]:::lib
@@ -206,7 +206,7 @@ nothing and triggers nothing; a schedule never silently moves a database.
 
 ## ⚙️ Settings
 
-**In the deck, tab “Settings”.** All of the roughly 594 variables from
+**In the deck, tab “Settings”.** All of the roughly 599 variables from
 `.env.example` with group, default and description, searchable. Every row says
 where the value comes from — *set in the deck*, *from .env* or *default*. Values
 are stored in the database (SQLite or MariaDB) and take precedence over `.env`
@@ -277,7 +277,7 @@ journal (`-wal`) and whether the schema matches the code, every five minutes.
 
 Since v4.2-W109 every command lives in **one** registry
 ([`nc/befehle.py`](nc/befehle.py)) — Telegram and Discord register from it, and
-`/help` builds its list from it on both platforms. The 29 shared commands have
+`/help` builds its list from it on both platforms. The 31 shared commands have
 **the same name on both platforms**; the former `sys_` names on Discord are gone.
 
 | Command | Effect |
@@ -312,16 +312,17 @@ Since v4.2-W109 every command lives in **one** registry
 | `/stats` | Statistics |
 | `/ai` `‹frage›` | Ask AZRAEL |
 | `/help` | Show all commands |
+| `/spenden` | Support the project: PayPal and crypto addresses |
 | `/start` | Start and quick overview (Telegram only) |
 | `/update` | Install update from the repo (Telegram only) |
 
 <details>
-<summary><h3>Discord — 66 slash commands</h3></summary>
+<summary><h3>Discord — 67 slash commands</h3></summary>
 
 <br>
 
 **Shared with Telegram** *(same name, same effect)*
-`/tiktok` · `/live` · `/quelle` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
+`/tiktok` · `/live` · `/quelle` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help` · `/spenden`
 
 **Analysis**
 `/status` · `/streaminfo`
@@ -566,6 +567,25 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 
 ---
 
+## 🆕 New in v5.0
+
+**“Lockstep”** — a deep bug hunt across every area, 60 findings fixed, each
+with a contract and a mutation probe:
+
+- **Stable restream:** under disk load the watchdog killed the healthy sender —
+  all targets at once. Plus zombie processes, a hanging stop, and a restream
+  that came back after being stopped.
+- **Timestamp smoothing** in recording and restream: jumps in the TikTok source
+  no longer produce a frozen picture without sound.
+- **Encode queue:** background encodes run one after another, only when the
+  machine has room.
+- **Telegram:** one topic per user again, supergroup migration, no lost uploads.
+  **Discord:** the whole recording in parts.
+- **AZRAEL with brain context**, Kick chat via Centrifugo, `/spenden`, one
+  donation goal everywhere.
+- **Security:** CSRF protection in the deck, dangerous environment variables
+  blocked.
+
 ## 🆕 New in v4.6
 
 **“Control Room”** — everything configurable, everything watched:
@@ -630,6 +650,10 @@ replies with the video.
 instead of starting a new one for every frame: about eleven times less CPU.
 **Patch 4.6.21** — Kick chat works again: Kick moved from Pusher to Centrifugo
 and the bot follows (check on the server: `tools/kickchat.py`).
+**Patch 4.6.22** — `/spenden` on Telegram and Discord: PayPal, crypto addresses and
+the donation goal from the `.env`, for everyone.
+**Patch 4.6.23** — one donation goal for website, overlay, stream picture and
+`/spenden`: same goal, same progress, same period.
 
 Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -641,15 +665,31 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6.21** — “Control Room” (2026.11) |
+| Current version | **5.0.0** — “Lockstep” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
-| Discord slash commands | 66 |
+| Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 14 |
-| Configuration variables | ~594 |
+| Configuration variables | ~599 |
 | Languages | German (source), English, Spanish |
 
 Next big step: keep taking `bot.py` apart — **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**.
+
+---
+
+## 💸 Support
+
+NIGHTCRAWLER and Azrael Sentinel are self-hosted, without ads and without a
+sponsor. Server, VPS tunnel, storage and AI compute cost real money every
+month.
+
+| Method | Address |
+|---|---|
+| **PayPal** | [`paypal@voice4you.org`](https://www.paypal.com/donate/?business=paypal%40voice4you.org&currency_code=EUR&item_name=Azrael%20Sentinel%20-%20Betrieb) |
+
+Crypto addresses and the donation goal are on the website; in chat the bot
+lists everything with **`/spenden`** (Telegram and Discord). Operators set the
+addresses in the `.env` (`DONATION_PAYPAL`, `DONATION_<COIN>_ADDRESS`).
 
 ---
 
@@ -691,7 +731,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.21 · “Control Room”**
+**NIGHTCRAWLER v5.0.0 · “Lockstep”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

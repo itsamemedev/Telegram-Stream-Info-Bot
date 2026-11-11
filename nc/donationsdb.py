@@ -50,21 +50,23 @@ def parse_eur(raw):
 def manual_rows(limit=200):
     """Manuell im Dashboard erfasste Spenden (overlay_events platform='manual').
        Bewusst getrennt von Plattform-Trinkgeldern; werden aus den Plattform-
-       Summen gefiltert (kein Doppelzählen)."""
+       Summen gefiltert (kein Doppelzählen).
+
+       v4.2-W178: ein Lesefehler geht an den Aufrufer. Bis hier stand
+       `except: log.debug` mit leerer Liste — die Route antwortete ok:true,
+       Summe 0, und das Deck schrieb „Noch keine manuellen Einträge", waehrend
+       die Datenbank nur gesperrt war. Leer und nicht gelesen sahen gleich aus."""
     rows = []
-    try:
-        with db_conn() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT id, ts, name, amount, message FROM overlay_events "
-                        "WHERE kind='donation' AND platform='manual' "
-                        "ORDER BY ts DESC LIMIT ?", (int(limit),))
-            for r in cur.fetchall():
-                amt = parse_eur(r["amount"])
-                rows.append({"id": r["id"], "ts": r["ts"], "note": r["name"] or "",
-                             "amount_eur": round(amt, 2) if amt is not None else 0.0,
-                             "message": r["message"] or ""})
-    except Exception as e:
-        log.debug("manual donations read: %s", e)
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, ts, name, amount, message FROM overlay_events "
+                    "WHERE kind='donation' AND platform='manual' "
+                    "ORDER BY ts DESC LIMIT ?", (int(limit),))
+        for r in cur.fetchall():
+            amt = parse_eur(r["amount"])
+            rows.append({"id": r["id"], "ts": r["ts"], "note": r["name"] or "",
+                         "amount_eur": round(amt, 2) if amt is not None else 0.0,
+                         "message": r["message"] or ""})
     return rows
 
 

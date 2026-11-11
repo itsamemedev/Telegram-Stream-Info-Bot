@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.21 Centro de control" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v5.0.0 Compás" width="100%">
 
 ### La sala de control para streaming en directo
 #### Vigilancia · Grabación · Restream multidestino · Moderación con IA
@@ -14,7 +14,7 @@
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-manejo)
-[![Discord](https://img.shields.io/badge/Discord-66%20comandos-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-manejo)
+[![Discord](https://img.shields.io/badge/Discord-67%20comandos-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-manejo)
 [![Kick · Twitch · YouTube](https://img.shields.io/badge/Restream-Kick%20%C2%B7%20Twitch%20%C2%B7%20YouTube-53FC18?style=flat-square)](#-restream)
 [![SQLite · MariaDB](https://img.shields.io/badge/Base%20de%20datos-SQLite%20%C2%B7%20MariaDB-003545?style=flat-square&logo=mariadb&logoColor=white)](#️-base-de-datos)
 [![Prometheus · Grafana](https://img.shields.io/badge/Monitorizaci%C3%B3n-Prometheus%20%C2%B7%20Grafana-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-monitorización)
@@ -37,7 +37,7 @@
 | **Para qué** | Vigilancia en directo, grabación y restream multidestino de streams de TikTok, con moderación por IA en Kick, Twitch y YouTube |
 | **Para quién** | Operadores que lo quieren en hardware **propio** — un servidor Linux, sin SaaS, sin plataforma ajena entre el stream y los destinos |
 | **Funciona en** | Ubuntu/Debian con systemd, Python 3.12–3.14, ffmpeg, streamlink, yt-dlp — base de datos SQLite o MariaDB |
-| **Manejo** | Telegram, Discord (66 comandos) y un panel web con cuatro temas en alemán, inglés y español — los ajustes, directamente en el panel |
+| **Manejo** | Telegram, Discord (67 comandos) y un panel web con cuatro temas en alemán, inglés y español — los ajustes, directamente en el panel |
 | **Monitorización** | 16 agentes vigilantes, mapa de situación en tiempo real, Prometheus y Grafana con reglas de alerta |
 | **Calidad** | más de mil contratos, CI en tres versiones de Python y contra el estado de producción congelado, `pip-audit`, CodeQL |
 | **Licencia** | GPL-3.0-or-later |
@@ -50,7 +50,7 @@
 - [⚙️ Ajustes](#️-ajustes) · [🗄️ Base de datos](#️-base-de-datos) · [🕹️ Manejo](#️-manejo)
 - [📡 Restream](#-restream) · [🧠 AZRAEL y los vigilantes](#-azrael-y-los-vigilantes) · [🖥️ Panel](#️-panel)
 - [📈 Monitorización](#-monitorización) · [🚀 Operación](#-operación) · [🛡️ Seguridad](#️-seguridad)
-- [🩺 Diagnóstico](#-diagnóstico) · [🆕 Novedades en v4.6](#-novedades-en-v46) · [📊 Estado del proyecto](#-estado-del-proyecto) · [📄 Licencia](#-licencia)
+- [🩺 Diagnóstico](#-diagnóstico) · [🆕 Novedades en v5.0](#-novedades-en-v50) · [Novedades en v4.6](#-novedades-en-v46) · [📊 Estado del proyecto](#-estado-del-proyecto) · [💸 Apoyar](#-apoyar) · [📄 Licencia](#-licencia)
 
 ---
 
@@ -64,7 +64,7 @@
 ```mermaid
 flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
-    DC["🎮 Discord<br/>66 comandos"]:::ein --> BOT
+    DC["🎮 Discord<br/>67 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
     BOT["bot.py<br/>monolito · 27.441 líneas"]:::core
     BOT -->|configure| NC["nc/ — 185 módulos<br/>39 blueprints"]:::lib
@@ -134,7 +134,7 @@ dispara nada.
 
 ## ⚙️ Ajustes
 
-**En el panel, pestaña “Ajustes”.** Las unas 594 variables de `.env.example`
+**En el panel, pestaña “Ajustes”.** Las unas 599 variables de `.env.example`
 con grupo, valor por defecto y descripción, con búsqueda. Cada fila indica de
 dónde viene el valor — *fijado en el panel*, *desde .env* o *por defecto*. Se
 guarda en la base de datos y, en el siguiente arranque, tiene prioridad sobre
@@ -199,8 +199,9 @@ esquema coincide con el código.
 | `/ai` · `/aireset` · `/brain` · `/report` | Preguntar a AZRAEL, reiniciar el contexto de IA, estado del cerebro, informe semanal |
 | `/cookies` · `/sysres` · `/logs` · `/diag` | Cookies, recursos del sistema, últimos errores, diagnóstico completo |
 | `/about` · `/help` · `/start` · `/update` | Acerca de, ayuda, inicio, instalar actualización (solo Telegram) |
+| `/spenden` | Apoyar el proyecto: PayPal y direcciones cripto |
 
-**Discord — 66 comandos:** los comunes llevan el mismo nombre que en Telegram;
+**Discord — 67 comandos:** los comunes llevan el mismo nombre que en Telegram;
 además análisis (`/status`, `/streaminfo`), seguimiento (`/livenow`,
 `/restream_status`, `/follow`), clips (`/clips`, `/clip`, `/clipoftheweek`),
 comunidad (`/rank`, `/leaderboard`, `/daily`, `/profile`, `/event`), moderación
@@ -315,6 +316,16 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
+## 🆕 Novedades en v5.0
+
+**“Compás”** — una caza profunda de errores en todas las áreas, 60 hallazgos
+corregidos, cada uno con contrato y prueba de mutación: restream estable (el
+vigilante ya no mata al emisor sano bajo carga de disco), suavizado de marcas
+de tiempo en grabación y restream, cola de codificación, un tema de Telegram
+por usuario, la grabación completa en partes a Discord, AZRAEL con contexto del
+cerebro, chat de Kick por Centrifugo, `/spenden`, una sola meta de donaciones y
+protección CSRF en el panel.
+
 ## 🆕 Novedades en v4.6
 
 **“Centro de control”** — todo configurable, todo vigilado: ajustes en el panel
@@ -322,7 +333,7 @@ guardados en la base de datos, mudanza de SQLite a MariaDB en un paso con
 recuento, Prometheus y Grafana completos con 16 reglas de alerta, el 14.º
 vigilante para la base de datos, un mapa de situación redibujado y `update.sh`
 que pregunta por lo que falta. **Parche 4.6.1:** detrás del nginx del
-instalador el panel estaba abierto sin inicio de sesión; once fallos corregidos. **Parche 4.6.2:** la mudanza a MariaDB lleva el diario fiscal y el archivo. **Parche 4.6.3:** MariaDB compara byte a byte como SQLite. **Parche 4.6.4:** cookies seguras tras el proxy HTTPS. **Parche 4.6.5:** los directos de suscriptores/18+ se reconocen, un restream oscuro se notifica y Kick busca su clúster Pusher. **Parche 4.6.6:** un restream cuya fuente envía datos sin imagen conmutable ya no se queda en silencio en la pantalla de pausa. **Parche 4.6.7:** el mapa de situación es una pantalla de radar con barrido, persistencia, módulos de cristal y paquetes de datos. **Parche 4.6.8:** Kick solo prueba clústeres Pusher reales, el estado del restream ya no bloquea el bucle y sin avalancha de registros del resolvedor. **Parche 4.6.9:** el chat de TikTok aparece ahora también en las grabaciones (incrustado o como pista de subtítulos, `AUFNAHME_CHAT`). **Parche 4.6.10:** un restream sin imagen de origen cambia a un destino con imagen, el director de hype monta los memes y los clips llevan el chat. **Parche 4.6.11:** en modo HTML vuelven a llegar la imagen y el sonido de la fuente. **Parche 4.6.12:** caza profunda de errores — la búsqueda de clúster de Kick tras un cambio de clave, una sala cerrada termina con el directo, el chat de la grabación termina con ella, sin chat doble en los clips y las categorías 🎯 ajenas en Discord no se tocan. **Parche 4.6.13:** el montaje de memes respeta la ventana de subida y el diario fiscal comprueba tipo de cambio e importe original. **Parche 4.6.14:** el chat de una grabación guardada al detener se incorpora al archivo en el siguiente arranque en lugar de quedar al lado como `.ass`. **Parche 4.6.15:** los `.ass` antiguos se recogen e incorporan al arrancar; las donaciones registradas en el panel cuentan para la meta del overlay. **Parche 4.6.16:** «sin URL de origen reproducible» indica en el panel también por qué no funcionó el paso directo. **Parche 4.6.17:** subidas a Telegram para seguimientos de Discord, la subida ya no espera al chat, el paso directo prueba streamlink y Kick prueba claves conocidas. **Parche 4.6.18:** un solo tema de subidas en Telegram en lugar de temas @nombre (los antiguos se vuelven a subir y luego se borran), un solo canal de clips en Discord en lugar de áreas 🎯, y los seguimientos del panel van a Telegram. **Parche 4.6.19:** al publicar un enlace de YouTube o TikTok en Telegram o Discord, el bot responde con el vídeo. **Parche 4.6.20:** el overlay HTML mantiene abierto un Chromium por restream en lugar de arrancar uno nuevo por imagen: unas once veces menos CPU. **Parche 4.6.21:** el chat de Kick vuelve a funcionar: Kick pasó de Pusher a Centrifugo y el bot lo sigue.
+instalador el panel estaba abierto sin inicio de sesión; once fallos corregidos. **Parche 4.6.2:** la mudanza a MariaDB lleva el diario fiscal y el archivo. **Parche 4.6.3:** MariaDB compara byte a byte como SQLite. **Parche 4.6.4:** cookies seguras tras el proxy HTTPS. **Parche 4.6.5:** los directos de suscriptores/18+ se reconocen, un restream oscuro se notifica y Kick busca su clúster Pusher. **Parche 4.6.6:** un restream cuya fuente envía datos sin imagen conmutable ya no se queda en silencio en la pantalla de pausa. **Parche 4.6.7:** el mapa de situación es una pantalla de radar con barrido, persistencia, módulos de cristal y paquetes de datos. **Parche 4.6.8:** Kick solo prueba clústeres Pusher reales, el estado del restream ya no bloquea el bucle y sin avalancha de registros del resolvedor. **Parche 4.6.9:** el chat de TikTok aparece ahora también en las grabaciones (incrustado o como pista de subtítulos, `AUFNAHME_CHAT`). **Parche 4.6.10:** un restream sin imagen de origen cambia a un destino con imagen, el director de hype monta los memes y los clips llevan el chat. **Parche 4.6.11:** en modo HTML vuelven a llegar la imagen y el sonido de la fuente. **Parche 4.6.12:** caza profunda de errores — la búsqueda de clúster de Kick tras un cambio de clave, una sala cerrada termina con el directo, el chat de la grabación termina con ella, sin chat doble en los clips y las categorías 🎯 ajenas en Discord no se tocan. **Parche 4.6.13:** el montaje de memes respeta la ventana de subida y el diario fiscal comprueba tipo de cambio e importe original. **Parche 4.6.14:** el chat de una grabación guardada al detener se incorpora al archivo en el siguiente arranque en lugar de quedar al lado como `.ass`. **Parche 4.6.15:** los `.ass` antiguos se recogen e incorporan al arrancar; las donaciones registradas en el panel cuentan para la meta del overlay. **Parche 4.6.16:** «sin URL de origen reproducible» indica en el panel también por qué no funcionó el paso directo. **Parche 4.6.17:** subidas a Telegram para seguimientos de Discord, la subida ya no espera al chat, el paso directo prueba streamlink y Kick prueba claves conocidas. **Parche 4.6.18:** un solo tema de subidas en Telegram en lugar de temas @nombre (los antiguos se vuelven a subir y luego se borran), un solo canal de clips en Discord en lugar de áreas 🎯, y los seguimientos del panel van a Telegram. **Parche 4.6.19:** al publicar un enlace de YouTube o TikTok en Telegram o Discord, el bot responde con el vídeo. **Parche 4.6.20:** el overlay HTML mantiene abierto un Chromium por restream en lugar de arrancar uno nuevo por imagen: unas once veces menos CPU. **Parche 4.6.21:** el chat de Kick vuelve a funcionar: Kick pasó de Pusher a Centrifugo y el bot lo sigue. **Parche 4.6.22:** `/spenden` en Telegram y Discord: PayPal, direcciones cripto y meta de donaciones. **Parche 4.6.23:** una sola meta de donaciones para la web, el overlay, la imagen del stream y `/spenden`.
 Todas las oleadas en
 **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -332,12 +343,27 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **4.6.21** — “Centro de control” (2026.11) |
+| Versión actual | **5.0.0** — “Compás” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
-| Comandos de Discord | 66 |
+| Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |
 | Variables de configuración | ~577 |
 | Idiomas | alemán (origen), inglés, español |
+
+---
+
+## 💸 Apoyar
+
+NIGHTCRAWLER y Azrael Sentinel se alojan por cuenta propia, sin publicidad y
+sin patrocinador. El servidor, el túnel VPS, el almacenamiento y el cálculo de
+la IA cuestan dinero real cada mes.
+
+| Vía | Dirección |
+|---|---|
+| **PayPal** | [`paypal@voice4you.org`](https://www.paypal.com/donate/?business=paypal%40voice4you.org&currency_code=EUR&item_name=Azrael%20Sentinel%20-%20Betrieb) |
+
+Las direcciones cripto y la meta de donaciones están en la web; en el chat el
+bot lo muestra todo con **`/spenden`** (Telegram y Discord).
 
 ---
 
@@ -349,6 +375,6 @@ comunidad en **[Discord](https://discord.gg/psvnxm7tSV)** · **[lafap.de](https:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.21 · “Centro de control”**
+**NIGHTCRAWLER v5.0.0 · “Compás”**
 
 </div>

@@ -33,7 +33,7 @@ import re
 
 from telegram.constants import ParseMode
 from telegram.error import (
-    BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError,
+    BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError,
 )
 
 from nc import videoteil as _nc_videoteil
@@ -46,13 +46,15 @@ log = logging.getLogger("TikTokBot")
 # Vom Bot belegt — siehe konfiguriere(). Vorher None: ein Zugriff davor soll
 # krachen und nicht still eine Aufnahme verschlucken.
 # ══════════════════════════════════════════════════════════════════════════
+_chat_migriert = None   # v4.2-W175: Gruppe wurde Supergruppe -> Trackings umschreiben
 _ensure_topic = None    # legt das Forum-Thema des Users an bzw. findet es
 _is_dead = None         # ist dieser Chat als unerreichbar gemerkt?
 _mark_dead = None       # Chat als unerreichbar merken
 _safe_send = None       # Textversand mit denselben Sperr-/Fehlerregeln
 _topic_forget = None    # gemerktes Thema verwerfen (Forum geloescht/umgebaut)
 
-_PFLICHT = ("ensure_topic", "is_dead", "mark_dead", "safe_send", "topic_forget")
+_PFLICHT = ("chat_migriert", "ensure_topic", "is_dead", "mark_dead", "safe_send",
+            "topic_forget")
 
 
 def konfiguriere(**kw):
@@ -127,9 +129,23 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
         ok, err = await _send_one_roh(fh_or_path, caption)
         if ergebnis is not None:
             ergebnis["gesendet" if ok else "fehler"] += 1
+            if not ok:
+                ergebnis["grund"] = err
         return ok, err
 
+    def _fehlschlag(grund):
+        # v4.2-W175: Fehler, die nicht durch _send_one gehen (Teil zu gross,
+        # Split gescheitert, Absturz), zaehlten nicht. Ein uebersprungener
+        # Teil neben gesendeten sah damit aus wie ein voller Erfolg, und die
+        # Warteschlange (nc/uploadschlange) haette den Eintrag entfernt.
+        if ergebnis is not None:
+            ergebnis["fehler"] += 1
+            ergebnis["grund"] = grund
+
     async def _send_one_roh(fh_or_path, caption):
+        # v4.2-W175: wird die Gruppe zur Supergruppe, gilt ab dem naechsten
+        # Teil die neue ID — fuer den Versand UND die Fehlermeldungen unten.
+        nonlocal chat_id
         # V37-B97: _mark_dead() setzt bei 'chat not found' längst eine Sperre,
         # aber nur _safe_send() (Textnachrichten) hat sie je gelesen. Der
         # Video-Upload rannte für JEDEN Part jeder Aufnahme erneut hinein —
@@ -237,6 +253,27 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
                 return True, None
             except Exception as e2:
                 return False, f"Netzwerk/Timeout (auch nach Retry): {e2}"
+        except ChatMigrated as e:
+            # v4.2-W175: bisher „Telegram: …" je Teil, und das fuer jede
+            # Aufnahme — die alte Gruppen-ID nimmt nie wieder etwas an.
+            alt, neu = chat_id, getattr(e, "new_chat_id", None)
+            if not neu:
+                return False, f"Chat migriert, neue ID unbekannt: {e}"
+            await _chat_migriert(alt, neu)
+            chat_id = neu
+            UPLOAD_TIMEOUTS.pop("message_thread_id", None)   # Thema der alten Gruppe
+            try:
+                if hasattr(fh_or_path, 'seek'):
+                    fh_or_path.seek(0)
+                await bot_app.bot.send_video(
+                    chat_id, fh_or_path, caption=caption,
+                    parse_mode=ParseMode.HTML, supports_streaming=True,
+                    **UPLOAD_TIMEOUTS)
+                return True, None
+            except Exception as e2:
+                log.error("Upload @%s: Versand nach Umwandlung %s → %s gescheitert: %s",
+                          username, alt, neu, e2)
+                return False, f"Chat migriert ({alt} → {neu}), erneuter Versand gescheitert: {e2}"
         except TelegramError as e:
             return False, f"Telegram: {e}"
 
@@ -268,7 +305,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
                         bot_app.bot, chat_id,
                         f"⚠ <b>UPLOAD FEHLGESCHLAGEN · @{safe(username)}</b>\n"
                         f"<i>Aufnahme liegt auf Server ({size_mb:.0f} MB)</i>\n"
-                        f"<code>{safe(err)[:200]}</code>",
+                        f"<code>{safe((err or '')[:200])}</code>",
                         parse_mode=ParseMode.HTML, disable_notification=True)
                 except Exception: pass
             return
@@ -280,6 +317,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
         disk_ok, disk_info = _nc_videoteil.platz_reicht(filepath)
         if not disk_ok:
             log.error(f"split @{username} abgebrochen: {disk_info}")
+            _fehlschlag(f"zu wenig Platz: {disk_info}")
             try:
                 await _safe_send(
                     bot_app.bot, chat_id,
@@ -317,6 +355,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
                               username, rep_err or "?")
         if part_files is None:
             log.error(f"ffmpeg split failed: {split_err}")
+            _fehlschlag("Split gescheitert")
             for orphan in glob.glob(f"{prefix}_*.mp4"):
                 try: os.remove(orphan)
                 except OSError: pass
@@ -357,6 +396,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
                 filepath, prefix, cur_target)
             if part_files is None:
                 log.error(f"re-split #{attempt} failed: {split_err}")
+                _fehlschlag("Re-Split gescheitert")
                 # F42-Bug-Hunt-Fix B3: User-Notif beim Re-Split-Fail. Vorher
                 # silent return — der User sah die OFFLINE-Notif "Upload läuft"
                 # aber kein Upload kam. Jetzt klare Fehlermeldung.
@@ -409,6 +449,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
             else:
                 log.error(f"split: Re-Encode-Fallback fehlgeschlagen: {re_err} — "
                           f"Datei bleibt komplett auf Server")
+                _fehlschlag("Neu-Kodieren gescheitert")
                 # BUG-FIX: part_files ist hier leer (alle Parts wurden oben gelöscht,
                 # Globs finden nichts mehr). Vorher lief die for-Schleife mit [] durch
                 # und das Video ging lautlos verloren. Jetzt: explizite Notif + return.
@@ -435,6 +476,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
                 if part_size_mb > _nc_videoteil.TELEGRAM_HARD_MB:
                     log.error(f"part {i}/{total} bleibt {part_size_mb:.1f} MB > "
                               f"{_nc_videoteil.TELEGRAM_HARD_MB} MB hard limit — skip")
+                    _fehlschlag(f"Teil {i}/{total} bleibt {part_size_mb:.0f} MB")
                     try:
                         await _safe_send(
                             bot_app.bot, chat_id,
@@ -465,7 +507,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
                         await _safe_send(
                             bot_app.bot, chat_id,
                             f"⚠ <b>PART {i}/{total} FEHLGESCHLAGEN · @{safe(username)}</b>\n"
-                            f"<code>{safe(err)[:200]}</code>",
+                            f"<code>{safe((err or '')[:200])}</code>",
                             parse_mode=ParseMode.HTML, disable_notification=True)
                     except Exception: pass
             finally:
@@ -482,6 +524,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
     except Exception as e:
         # Letzter Auffang — z.B. wenn os.path.getsize crasht
         log.error(f"Video-Splitting/-Upload crash: {e}", exc_info=True)
+        _fehlschlag(f"Absturz: {e}")
     finally:
         # BUG-FIX: B47-Repair-Temp aufräumen (vollgroße Dublette der ohnehin
         # retainten Original-Aufnahme). Läuft auf JEDEM Pfad inkl. Early-Returns.

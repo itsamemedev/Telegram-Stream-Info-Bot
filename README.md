@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.21 Leitstand" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v5.0.0 Gleichtakt" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -14,7 +14,7 @@
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-bedienung)
-[![Discord](https://img.shields.io/badge/Discord-66%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-bedienung)
+[![Discord](https://img.shields.io/badge/Discord-67%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-bedienung)
 [![Kick · Twitch · YouTube](https://img.shields.io/badge/Restream-Kick%20%C2%B7%20Twitch%20%C2%B7%20YouTube-53FC18?style=flat-square)](#-restream)
 [![SQLite · MariaDB](https://img.shields.io/badge/Datenbank-SQLite%20%C2%B7%20MariaDB-003545?style=flat-square&logo=mariadb&logoColor=white)](#️-datenbank)
 [![Prometheus · Grafana](https://img.shields.io/badge/Beobachtung-Prometheus%20%C2%B7%20Grafana-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-beobachtung)
@@ -38,7 +38,7 @@
 | **Wofür** | Live-Überwachung, Aufnahme und Multi-Ziel-Restream von TikTok-Streams, mit KI-Moderation in Kick, Twitch und YouTube |
 | **Für wen** | Betreiber, die das auf **eigener** Hardware wollen — ein Linux-Server, kein SaaS, keine Fremdplattform zwischen Stream und Zielen |
 | **Läuft auf** | Ubuntu/Debian mit systemd, Python 3.12–3.14, ffmpeg, streamlink, yt-dlp — Datenbank SQLite oder MariaDB |
-| **Bedienung** | Telegram, Discord (66 Slash-Commands) und ein Web-Deck mit vier Themen auf Deutsch, Englisch und Spanisch — Einstellungen direkt im Deck |
+| **Bedienung** | Telegram, Discord (67 Slash-Commands) und ein Web-Deck mit vier Themen auf Deutsch, Englisch und Spanisch — Einstellungen direkt im Deck |
 | **Beobachtung** | 16 Wächter-Agenten, Lagebild in Echtzeit, Prometheus und Grafana mit Alarmregeln |
 | **Qualität** | über tausend Verträge, CI auf drei Python-Fassungen und gegen den eingefrorenen Produktionsstand, `pip-audit`, CodeQL |
 | **Lizenz** | GPL-3.0-or-later |
@@ -53,7 +53,7 @@
 - [🕹️ Bedienung](#️-bedienung) · [📡 Restream](#-restream) · [🧠 AZRAEL und die Wächter](#-azrael-und-die-wächter)
 - [🖥️ Dashboard](#️-dashboard) · [📈 Beobachtung](#-beobachtung) · [🚀 Betrieb](#-betrieb)
 - [🛡️ Sicherheit](#️-sicherheit) · [🩺 Fehlersuche](#-fehlersuche) · [🧪 Entwicklung](#-entwicklung)
-- [🆕 Neu in v4.6](#-neu-in-v46) · [📊 Projektstatus](#-projektstatus) · [🤝 Mitwirken](#-mitwirken) · [📄 Lizenz](#-lizenz)
+- [🆕 Neu in v5.0](#-neu-in-v50) · [Neu in v4.6](#-neu-in-v46) · [📊 Projektstatus](#-projektstatus) · [💸 Unterstützen](#-unterstützen) · [🤝 Mitwirken](#-mitwirken) · [📄 Lizenz](#-lizenz)
 
 ---
 
@@ -83,7 +83,7 @@
 | **Dashboard** | 379 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · Umzug per `update.sh --mariadb` mit Nachzählen · zentrales Schema-Modul · Export-Werkzeug · Datenbank-Wächter |
-| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~594 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
+| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~599 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
 | **Beobachtung** | `/metrics` für Prometheus · Grafana-Dashboard mit jedem Messwert · 16 Alarmregeln mit Tests · Einrichtung per `tools/observability.sh` |
 
 </details>
@@ -118,10 +118,10 @@ flowchart TD
 ```mermaid
 flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
-    DC["🎮 Discord<br/>66 Slash-Commands"]:::ein --> BOT
+    DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 27.625 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
-    BOT -->|configure| NC["nc/ — 187 Fachmodule<br/>39 Blueprints"]:::lib
+    BOT["bot.py<br/>Monolith · 28.295 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT -->|configure| NC["nc/ — 196 Fachmodule<br/>39 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
     BOT --> DB[("SQLite oder MariaDB<br/>+ Einstellungen")]:::db
@@ -204,7 +204,7 @@ löst nichts aus; ein Zeitplan zieht nie still eine Datenbank um.
 
 ## ⚙️ Einstellungen
 
-**Im Deck, Reiter „Einstellungen“.** Alle rund 594 Variablen aus `.env.example`
+**Im Deck, Reiter „Einstellungen“.** Alle rund 599 Variablen aus `.env.example`
 mit Gruppe, Vorgabe und Beschreibung, durchsuchbar. Je Zeile steht, woher der
 Wert kommt — *vom Deck gesetzt*, *aus der .env* oder *Vorgabe*. Gespeichert wird
 in der Datenbank (SQLite oder MariaDB); die Werte gelten beim nächsten Start
@@ -275,7 +275,7 @@ bei SQLite das Journal (`-wal`) und ob das Schema zum Code passt.
 
 Seit v4.2-W109 stehen alle Befehle in **einem** Verzeichnis
 ([`nc/befehle.py`](nc/befehle.py)) — Telegram und Discord registrieren daraus,
-und `/help` baut auf beiden Plattformen die Liste daraus. Die 29 gemeinsamen
+und `/help` baut auf beiden Plattformen die Liste daraus. Die 31 gemeinsamen
 Befehle heißen **auf beiden Plattformen gleich**; die früheren
 `sys_`-Namen auf Discord gibt es nicht mehr.
 
@@ -311,16 +311,17 @@ Befehle heißen **auf beiden Plattformen gleich**; die früheren
 | `/stats` | Statistik |
 | `/ai` `‹frage›` | AZRAEL fragen |
 | `/help` | Alle Befehle anzeigen |
+| `/spenden` | Projekt unterstützen: PayPal und Krypto-Adressen |
 | `/start` | Einstieg und Kurzuebersicht (nur Telegram) |
 | `/update` | Update vom Repo einspielen (nur Telegram) |
 
 <details>
-<summary><h3>Discord — 66 Slash-Commands</h3></summary>
+<summary><h3>Discord — 67 Slash-Commands</h3></summary>
 
 <br>
 
 **Gemeinsam mit Telegram** *(gleicher Name, gleiche Wirkung)*
-`/tiktok` · `/live` · `/quelle` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
+`/tiktok` · `/live` · `/quelle` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help` · `/spenden`
 
 **Analyse**
 `/status` · `/streaminfo`
@@ -550,8 +551,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 27.625 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 379 Routen und 632 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 28.295 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 379 Routen und 648 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -567,6 +568,24 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 ```
 
 ---
+
+## 🆕 Neu in v5.0
+
+**„Gleichtakt“** — ein Tiefengrund-Bughunt über alle Bereiche, 60 behobene
+Befunde, jeder mit Vertrag und Mutationsprobe:
+
+- **Restream stabil:** der Wächter schoss bei Plattenlast den gesunden Sender
+  ab — alle Ziele zugleich. Dazu Zombie-Prozesse, hängender Stopp, Restream
+  der nach dem Stopp wieder anlief.
+- **Zeitstempel-Glättung** in Aufnahme und Restream: Sprünge der TikTok-Quelle
+  ergeben kein Standbild ohne Ton mehr.
+- **Encode-Warteschlange:** Hintergrund-Kodierungen nacheinander, nur bei
+  freier Maschine.
+- **Telegram:** wieder ein Thema je Nutzer, Supergruppen-Wechsel, keine
+  verlorenen Uploads. **Discord:** die ganze Aufnahme in Teilen.
+- **AZRAEL mit Brain-Kontext**, Kick-Chat über Centrifugo, `/spenden`, ein
+  Spendenziel überall.
+- **Sicherheit:** CSRF-Schutz im Deck, gefährliche Umgebungsvariablen gesperrt.
 
 ## 🆕 Neu in v4.6
 
@@ -631,6 +650,10 @@ antwortet mit dem Video.
 statt für jedes Bild einen neu zu starten: rund elfmal weniger CPU.
 **Patch 4.6.21** — der Kick-Chat läuft wieder: Kick hat von Pusher auf Centrifugo
 gewechselt, der Bot folgt (Prüfung auf dem Server: `tools/kickchat.py`).
+**Patch 4.6.22** — `/spenden` auf Telegram und Discord: PayPal, Krypto-Adressen und
+Spendenziel aus der `.env`, für jeden.
+**Patch 4.6.23** — ein Spendenziel für Website, Overlay, Sendebild und `/spenden`:
+dasselbe Ziel, derselbe Stand, derselbe Zeitraum.
 
 Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -642,15 +665,31 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.6.21** — „Leitstand“ (2026.11) |
+| Aktuelle Version | **5.0.0** — „Gleichtakt“ (2026.11) |
 | Flask-Routen | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
-| Discord-Slash-Commands | 66 |
-| Fachmodule | 187 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Discord-Slash-Commands | 67 |
+| Fachmodule | 196 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 16 |
-| Konfigurationsvariablen | ~594 |
+| Konfigurationsvariablen | ~599 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |
 
 Nächster großer Schritt: `bot.py` weiter zerlegen — **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.
+
+---
+
+## 💸 Unterstützen
+
+NIGHTCRAWLER und Azrael Sentinel laufen selbst gehostet, ohne Werbung und ohne
+Sponsor. Server, VPS-Tunnel, Speicher und KI-Rechenzeit kosten jeden Monat
+echtes Geld.
+
+| Weg | Adresse |
+|---|---|
+| **PayPal** | [`paypal@voice4you.org`](https://www.paypal.com/donate/?business=paypal%40voice4you.org&currency_code=EUR&item_name=Azrael%20Sentinel%20-%20Betrieb) |
+
+Krypto-Adressen und den Stand des Spendenziels zeigt die Website; im Chat
+nennt der Bot alles mit **`/spenden`** (Telegram und Discord). Betreiber setzen
+die Adressen in der `.env` (`DONATION_PAYPAL`, `DONATION_<COIN>_ADDRESS`).
 
 ---
 
@@ -692,7 +731,7 @@ Programm erhalten haben. Falls nicht: <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.21 · „Leitstand“**
+**NIGHTCRAWLER v5.0.0 · „Gleichtakt“**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

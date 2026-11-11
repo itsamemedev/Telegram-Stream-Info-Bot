@@ -6,7 +6,6 @@
 #
 # Env:
 #   BRAIN_EMBED_BACKEND = llamacpp | off   (default llamacpp; V37: ollama entfernt)
-#   BRAIN_EMBED_URL     = http://127.0.0.1:11434    (bzw. :8089 für llamacpp)
 #   BRAIN_EMBED_URL     = http://127.0.0.1:8089      (llama-server --embedding)
 #   BRAIN_EMBED_MAX     = 20000                      (Vektor-Obergrenze, FIFO)
 
@@ -28,11 +27,37 @@ def _env(k: str, d: str) -> str:
     return (os.getenv(k, d) or d).strip()
 
 
+def _aus() -> bool:
+    return _env("BRAIN_EMBED_BACKEND", "llamacpp").lower() in ("off", "none", "0")
+
+
+# v4.2-W177: Meldedrossel des Embedding-Kanals. Der Server auf :8089 wird
+# nicht mitgeliefert, und jeder Fehler stand bis hierher auf log.debug — der
+# Ingest der Stream-Erinnerungen brach jede Runde still ab, "Frag dein
+# Archiv" fand nichts, und im Log stand nichts. Erste Meldung und jeder neue
+# Grund sofort, sonst hoechstens alle 15 min (nc.meldetakt, Schluessel =
+# Kanal). Der Erfolgspfad setzt zurueck.
+_KANAL = "brain-embed"
+ABHILFE = ("Abhilfe: einen Embedding-Server auf BRAIN_EMBED_URL starten "
+           "(llama-server --embedding -m <embedding-modell.gguf> --port 8089) "
+           "oder BRAIN_EMBED_BACKEND=off setzen — dann bleibt das semantische "
+           "Gedaechtnis bewusst aus und meldet nichts.")
+
+
+def _embed_fehler(grund: str, detail: str, url: str) -> None:
+    from nc import meldetakt as _mt      # lokal: brain/ bleibt ohne nc importierbar
+    laut, unterdrueckt = _mt.melden(_KANAL, grund, time.time())
+    if laut:
+        log.warning("Embedding fehlgeschlagen (%s) unter %s: %s. %s%s",
+                    grund, url, detail, ABHILFE, _mt.zusatz(unterdrueckt))
+
+
 class SemanticMemory:
     def __init__(self, conn_factory, db_lock):
         self._conn = conn_factory
         self._lock = db_lock
         self._emb_lock = threading.Lock()   # ein Embed-Call zur Zeit (CPU)
+        self.letzter_fehler = None          # v4.2-W177: fuer stats()/Deck
         with self._lock, self._conn() as c:
             c.execute("""CREATE TABLE IF NOT EXISTS sem_vectors(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,17 +69,20 @@ class SemanticMemory:
                 name TEXT PRIMARY KEY, last_id INTEGER)""")
 
     # ---------------- Embedding-Backend ----------------
+    def aktiv(self) -> bool:
+        """False bei BRAIN_EMBED_BACKEND=off — ein gewollter, stiller Zustand."""
+        return not _aus()
+
     def _embed(self, text: str):
-        backend = _env("BRAIN_EMBED_BACKEND", "llamacpp").lower()
-        if backend in ("off", "none", "0"):
+        if _aus():
             return None
         text = (text or "").strip()[:2000]
         if not text:
             return None
+        url = _env("BRAIN_EMBED_URL", "http://127.0.0.1:8089")
         with self._emb_lock:
             try:
                 # V37: nur noch llama.cpp (llama-server --embedding); Ollama entfernt.
-                url = _env("BRAIN_EMBED_URL", "http://127.0.0.1:8089")
                 req = urllib.request.Request(
                     url.rstrip("/") + "/embedding",
                     data=json.dumps({"content": text}).encode(),
@@ -64,12 +92,24 @@ class SemanticMemory:
                 vec = j.get("embedding") or (j[0].get("embedding")
                                              if isinstance(j, list) else None)
                 if not vec:
+                    self.letzter_fehler = "leere Antwort"
+                    _embed_fehler("leer", "Antwort ohne 'embedding' — laeuft dort "
+                                  "ein Chat-Server ohne --embedding?", url)
                     return None
+                # llama-server mit --pooling none liefert je Token einen
+                # Vektor (Liste von Listen) — dann den ersten nehmen statt an
+                # sum(x*x) mit TypeError zu sterben.
+                if vec and isinstance(vec[0], list):
+                    vec = vec[0]
                 # Normieren → Cosine wird zum Skalarprodukt
                 n = math.sqrt(sum(x * x for x in vec)) or 1.0
+                self.letzter_fehler = None
+                from nc import meldetakt as _mt
+                _mt.zuruecksetzen(_KANAL)
                 return [x / n for x in vec]
             except Exception as e:
-                log.debug("Embedding fehlgeschlagen: %s", e)
+                self.letzter_fehler = f"{type(e).__name__}: {e}"
+                _embed_fehler(type(e).__name__, str(e)[:200], url)
                 return None
 
     # ---------------- Schreiben ----------------
@@ -137,4 +177,6 @@ class SemanticMemory:
             u = c.execute("SELECT COUNT(DISTINCT username) FROM sem_vectors").fetchone()[0]
         return {"vectors": n, "users": u,
                 "backend": _env("BRAIN_EMBED_BACKEND", "llamacpp"),
+                # v4.2-W177: "nichts indiziert" und "Backend tot" unterscheiden
+                "letzter_fehler": getattr(self, "letzter_fehler", None),
                 "model": _env("BRAIN_EMBED_MODEL", "nomic-embed-text")}

@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
+
+log = logging.getLogger("brain.report")
 
 
 def _fmt_dur(s: float) -> str:
@@ -48,16 +51,26 @@ def weekly(brain, days: int = 7) -> str:
     # --- Systemlast -------------------------------------------------------
     try:
         with brain._db_lock, brain._conn() as c:
+            # v4.2-W177: hier standen `cpu` und `disk_pct` — Namen, die
+            # niemand schreibt. brain_bridge._record_metrics fuehrt
+            # `load_ratio15` (Last je Kern, 15 min) und `disk_max_pct`; der
+            # Systemabschnitt blieb deshalb in jedem Wochenreport leer.
             cpu = c.execute("SELECT AVG(value), MAX(value) FROM metrics "
-                            "WHERE name='cpu' AND ts >= ?", (since,)).fetchone()
+                            "WHERE name='load_ratio15' AND ts >= ?",
+                            (since,)).fetchone()
             dsk = c.execute("SELECT MAX(value) FROM metrics "
-                            "WHERE name='disk_pct' AND ts >= ?", (since,)).fetchone()
+                            "WHERE name='disk_max_pct' AND ts >= ?",
+                            (since,)).fetchone()
             rst = c.execute("SELECT MAX(value) FROM metrics "
                             "WHERE name='restreams_running' AND ts >= ?",
                             (since,)).fetchone()
         out.append("## System\n")
         if cpu and cpu[0] is not None:
-            out.append(f"- CPU: Ø {cpu[0]:.0%} · Peak {cpu[1]:.0%}")
+            # Verhaeltnis Last/Kerne, kein Prozentwert: 1.00 heisst "alle
+            # Kerne voll", darueber wartet Arbeit. Als Prozent formatiert
+            # laese sich 1.4 wie "140 % CPU", was es nicht ist.
+            out.append(f"- Last je Kern (15 min): Ø {cpu[0]:.2f} · "
+                       f"Peak {cpu[1]:.2f} (1.00 = alle Kerne ausgelastet)")
         if dsk and dsk[0] is not None:
             out.append(f"- Disk-Peak: {dsk[0]:.0f}%")
         if rst and rst[0] is not None:
@@ -172,15 +185,22 @@ def weekly(brain, days: int = 7) -> str:
         pass
 
     # --- Empfehlungen aus dem Wissensgraph --------------------------------
+    # v4.2-W177: hier stand recommend(limit=3) — der Parameter heisst `top`.
+    # Der TypeError ging in ein `except: pass`, und die Empfehlungen fehlten
+    # in JEDEM Wochenreport. Die Schluessel waren ebenfalls falsch
+    # (username/why statt user/reason). Ein Fehler steht jetzt im Report
+    # und im Log.
     try:
-        recs = brain.knowledge.recommend(limit=3)
+        recs = brain.knowledge.recommend(top=3)
         if recs:
             out.append("## Empfehlungen\n")
             for r in recs:
-                out.append(f"- **@{r['username']}** (Score {r['score']:.2f}): "
-                           f"{r['why']}")
+                out.append(f"- **@{r['user']}** (Score {r['score']:.2f}): "
+                           f"{r['reason']}")
             out.append("")
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("Wochenreport: Empfehlungen nicht lesbar: %s: %s",
+                    type(e).__name__, e)
+        out.append(f"*Empfehlungen nicht lesbar: {type(e).__name__}: {e}*\n")
 
     return "\n".join(out) + "\n"

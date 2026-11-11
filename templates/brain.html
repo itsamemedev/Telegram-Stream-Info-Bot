@@ -567,8 +567,14 @@ async function loadMetric() {
 /* ---------------- WACHSTUM / LERNKURVE ---------------- */
 async function loadGrowth() {
   let d;
-  try { d = await api("/brain/growth?days=30"); }
-  catch (e) { return; }
+  // v4.2-W177: hier stand der Pfad MIT eigenem brain-Praefix — api() setzt
+  // /api/brain schon davor, die Anfrage ging doppelt praefixiert ins 404, und der
+  // leere catch liess die Kurve still leer. Ein Fehler steht jetzt da.
+  try { d = await api("/growth?days=30"); }
+  catch (e) {
+    $("#gr-stats").textContent = "Fehler: " + (e && e.message || e);
+    return;
+  }
   const pts = (d && d.points) || [];
   const cv = $("#growth");
   const W = cv.width = cv.clientWidth * devicePixelRatio;

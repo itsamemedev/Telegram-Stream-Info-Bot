@@ -61,9 +61,13 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import math
 import re
+import threading
 from datetime import datetime, timezone
+
+_log = logging.getLogger("TikTokBot")
 
 # Plattformen, die Geld an EIGENE Kanaele auszahlen. Deckungsgleich mit
 # REVENUE_PLATFORMS in bot.py — bewusst hier gespiegelt, damit das Modul
@@ -292,6 +296,9 @@ def add_entry(conn, booked_on, platform, gross_eur, *, kind="payout",
     net_eur    wird als gross - fee berechnet und mitgespeichert, damit eine
                spaetere Kursaenderung alte Buchungen nicht rueckwirkend
                veraendert.
+
+    Seit v4.2-W178 committet add_entry selbst (unter Sperre, siehe unten);
+    ein conn.commit() des Aufrufers danach ist harmlos.
     """
     if not _DATE_RE.match(str(booked_on or "")):
         raise LedgerError("booked_on muss YYYY-MM-DD sein (Datum der Gutschrift)")
@@ -327,6 +334,73 @@ def add_entry(conn, booked_on, platform, gross_eur, *, kind="payout",
     net = round(gross - fee, 2)
 
     ensure_schema(conn)
+    # v4.2-W178: Lesen (MAX(seq_no), letzter row_hash) und Schreiben waren
+    # nicht verbunden. Zwei Buchungen gleichzeitig (Deck und /einnahmen, oder
+    # zwei Tabs) lasen dieselbe Folgenummer — UNIQUE-Fehler, HTTP 500 — oder,
+    # bei verschiedenen Jahren, denselben prev_hash: zwei Zeilen haengen am
+    # selben Vorgaenger, und verify_chain meldet die Kette ab da fuer immer als
+    # gebrochen. Ein Steuer-Journal, das sich selbst als manipuliert ausweist,
+    # ist wertlos. Deshalb: Prozess-Sperre, dazu eine Datenbank-Sperre VOR dem
+    # Lesen (andere Prozesse, z. B. tools/), und der Commit gehoert hier hinein
+    # — eine Sperre, die vor dem Commit faellt, schuetzt nichts.
+    from nc import dbwrap as _dbwrap
+    backend = _dbwrap.DB_BACKEND
+    with _BUCHUNG_LOCK:
+        gesperrt = _db_sperren(conn, backend)
+        try:
+            res = _buchung_schreiben(conn, booked_on, p, k, gross, fee, net,
+                                     currency, fx_rate, original_amount,
+                                     doc_ref, note, storno_of)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            if gesperrt:
+                _db_entsperren(conn)
+    return res
+
+
+# Prozessweit: eine Buchung nach der anderen. Modul-global, nicht am conn —
+# jede Buchung bringt ihre eigene Verbindung mit.
+_BUCHUNG_LOCK = threading.Lock()
+_MARIADB_SPERRE = "nc_ledger_buchung"
+
+
+def _db_sperren(conn, backend) -> bool:
+    """Schreibsperre VOR dem ersten Lesen. True = benannte Sperre (MariaDB)
+    muss wieder freigegeben werden."""
+    if backend == "mariadb":
+        # GET_LOCK statt SELECT ... FOR UPDATE: Lueckensperren zweier
+        # Transaktionen vertragen sich in InnoDB, beide INSERTs liefen dann
+        # in einen Deadlock. Die benannte Sperre serialisiert sauber, auch
+        # ueber Prozesse.
+        r = conn.execute("SELECT GET_LOCK(?, 30) AS ok", (_MARIADB_SPERRE,)).fetchone()
+        if not r or int(r["ok"] or 0) != 1:
+            raise LedgerError("Journal ist gerade von einer anderen Buchung belegt "
+                              "— in einer halben Minute erneut versuchen.")
+        return True
+    # SQLite: BEGIN IMMEDIATE nimmt die Schreibsperre sofort; eine zweite
+    # Verbindung wartet hier (busy_timeout), bis die erste committet hat, und
+    # liest danach die neue Folgenummer. Laeuft schon eine Transaktion mit
+    # Schreibzugriff, haelt sie die Sperre bereits.
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    return False
+
+
+def _db_entsperren(conn) -> None:
+    try:
+        conn.execute("SELECT RELEASE_LOCK(?)", (_MARIADB_SPERRE,)).fetchone()
+    except Exception as e:
+        # Bleibt die Sperre an einer Pool-Verbindung haengen, wartet jede
+        # folgende Buchung 30 s und scheitert — das muss im Fehlerlog stehen.
+        _log.error("Ledger: benannte Sperre %s nicht freigegeben (%s: %s)",
+                   _MARIADB_SPERRE, type(e).__name__, e)
+
+
+def _buchung_schreiben(conn, booked_on, p, k, gross, fee, net, currency,
+                       fx_rate, original_amount, doc_ref, note, storno_of):
     if storno_of is not None and conn.execute(
             "SELECT 1 FROM revenue_entries WHERE id=?", (storno_of,)).fetchone() is None:
         raise LedgerError(f"storno_of: Buchung {storno_of} existiert nicht")
@@ -445,10 +519,10 @@ def crosscheck(conn, year: int, revenue_sql_in: str) -> dict:
     Schaetzung aus Anzeigewerten (siehe Modul-Docstring). Sie taugt nur
     als Warnlampe — weicht sie stark ab, fehlt vermutlich eine
     Plattform-Abrechnung im Journal."""
-    est = 0.0
+    from nc import donations as _donations
     try:
         rows = conn.execute(
-            "SELECT amount FROM overlay_events WHERE kind='donation' "
+            "SELECT amount, platform, message FROM overlay_events WHERE kind='donation' "
             # Kein COALESCE(platform,'kick'): eine Zeile ohne Plattform ist
             # Altbestand aus der Zeit, als TikTok-Gifts als 'donation' mit
             # leerer Plattform geschrieben wurden (B138-GELD). Ueberall sonst
@@ -458,13 +532,13 @@ def crosscheck(conn, year: int, revenue_sql_in: str) -> dict:
             "AND platform IN " + revenue_sql_in +
             " AND ts >= ? AND ts <= ?",
             (f"{year}-01-01", f"{year}-12-31T23:59:59")).fetchall()
-        for r in rows:
-            try:
-                est += float(str(r["amount"]).replace("\u20ac", "")
-                             .replace(",", ".").strip() or 0)
-            except (TypeError, ValueError):
-                pass
-    except Exception:
+        # v4.2-W178: war float(amount) mit stillem pass — „100 Bits", „$5.00"
+        # und Subs ohne Betrag zaehlten 0, die Gegenprobe meldete dann eine
+        # zu viel gebuchte Auszahlung, wo in Wahrheit Einnahmen fehlten.
+        est = _donations.summe_eur(rows)
+    except Exception as e:
+        _log.error("Ledger-Gegenprobe: overlay_events nicht lesbar (%s: %s)",
+                   type(e).__name__, e)
         return {"available": False}
     booked = summary(conn, year)["total"]["gross"]
     diff = round(booked - est, 2)
