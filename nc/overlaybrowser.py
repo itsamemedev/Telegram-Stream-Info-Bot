@@ -32,6 +32,7 @@ Bot-frei und stdlib-only. Synchron gebaut, der Bot ruft `schuss()` per
 import base64
 import fcntl
 import json
+import logging
 import os
 import select
 import signal
@@ -39,6 +40,8 @@ import shutil
 import subprocess
 import threading
 import time
+
+log = logging.getLogger("nc.overlaybrowser")
 
 
 class OverlayBrowserFehler(RuntimeError):
@@ -198,7 +201,13 @@ class Dauerbrowser:
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            # v4.2-W179: kill() ohne wait() liess einen <defunct> stehen.
             p.kill()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                log.warning("Overlay-Browser: pid %s nach SIGKILL nicht beendet "
+                            "— bleibt als Zombie, bis er endet.", p.pid)
 
     # ── Bild ──────────────────────────────────────────────────────────
     def schuss(self, timeout=15.0):

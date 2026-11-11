@@ -2234,7 +2234,12 @@ def _test_w26_huellen_schlucken_nichts():
     baum2 = _ast.parse(quelle)
 
     # (1) Der Sekundentakt laeuft NEBEN dem Loop.
-    assert "await _write_restream_overlay_async()" in quelle, \
+    # ANKER GEWANDERT (v4.2-W179, nicht der Vertrag): der Leser wartet nicht
+    # mehr auf das Schreiben, er feuert es ueber _overlay_takt() als Task —
+    # abgewartet hielt er die Fortschrittsmarken an (Vertrag W179). Geprueft
+    # im Syntaxbaum: der alte Textanker traf den Docstring von _overlay_takt.
+    _takt = next(n for n in baum2.body if getattr(n, "name", "") == "_overlay_takt")
+    assert "_spawn(_write_restream_overlay_async()" in _ast.unparse(_takt), \
         "der Sekundentakt schreibt wieder synchron auf dem Loop"
     for n in baum2.body:
         if isinstance(n, _ast.AsyncFunctionDef) and n.name == "_write_restream_overlay_async":
@@ -2256,8 +2261,14 @@ def _test_w26_huellen_schlucken_nichts():
     # (3) Der Anlauf-Aufruf bleibt SYNCHRON: die Textdateien muessen da sein,
     # BEVOR drawtext sie oeffnet. Ein await davor waere eine Wettlaufsituation
     # mit dem gerade startenden ffmpeg.
-    assert "_write_restream_overlay()      # Textdateien anlegen" in quelle, \
-        "der Anlauf-Aufruf ist verschwunden oder nebenlaeufig geworden"
+    # ANKER GEWANDERT (v4.2-W179): abgewartet, aber im Thread — die Zusage
+    # (Dateien da, BEVOR ffmpeg startet) bleibt, nur haelt sie den Loop nicht mehr.
+    _rm = next(n for n in baum2.body if isinstance(n, _ast.ClassDef)
+               and n.name == "RestreamManager")
+    _st = _ast.unparse(next(n for n in _rm.body if getattr(n, "name", "") == "start"))
+    assert 0 <= _st.find("await asyncio.to_thread(_write_restream_overlay)") \
+        < _st.find("asyncio.create_subprocess_exec("), \
+        "der Anlauf-Aufruf ist verschwunden oder laeuft nach dem ffmpeg-Start"
 
     # (4) DER SCHREIBER DARF NUR LESEN. Er laeuft jetzt in einem Thread,
     # waehrend der Loop den geteilten Zustand weiter veraendert. Ein
@@ -29024,6 +29035,10 @@ def _test_v42_w158_chat_in_der_aufnahme():
     ns = {"log": _lg.getLogger("w158"), "os": _os, "subprocess": _sp, "shutil": _sh,
           "json": _json, "_time_mod": _t, "_nc_aufnahmechat": A,
           "_env_int": lambda n, d: d, "_aufnahme_chat_modus": lambda: "einbrennen"}
+    # v4.2-W179: seit W174 geht die Kodierung durch die Encode-Schlange — ohne
+    # sie im Namensraum starb dieser Vertrag mit NameError statt zu pruefen.
+    from nc import encodeschlange as _encq
+    ns["_nc_encode"] = _encq
     # Review #203: der Stopp-Pfad behaelt den Chat. ANKER GEWANDERT
     # (v4.2-W163, nicht der Vertrag): vorgemerkt statt beigelegt.
     st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
@@ -31593,6 +31608,310 @@ def _test_v42_w174_encode_warteschlange():
     ok("v4.2-W174: Hintergrund-Kodierungen nacheinander — Grenze, Reihenfolge, Last, Abbruch")
 
 
+def _w179_manager(baum, namen, extra):
+    """RestreamManager mit genau diesen Methoden aus bot.py, Rest als Attrappe."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import time as _t
+    rm = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "RestreamManager")
+    koerper = [n for n in rm.body if getattr(n, "name", None) in namen]
+    klasse = _ast.ClassDef(name="RM", bases=[], keywords=[], body=koerper, decorator_list=[],
+                           type_params=[])
+    ns = {"asyncio": _aio, "log": _lg.getLogger("w179"), "_time_mod": _t,
+          "log_event": lambda *a, **k: None, "_COMMUNITY_PINGED": {}}
+    ns.update(extra)
+    mod = _ast.fix_missing_locations(_ast.Module(body=[klasse], type_ignores=[]))
+    exec(compile(mod, "bot.py", "exec"), ns)
+    return ns["RM"]
+
+
+def _test_v42_w179_restream_lebenszyklus():
+    """v4.2-W179: „Alle drei Ziele brechen gleichzeitig weg", „Restream laesst
+    sich nicht stoppen", Zombies und haengende Feeder — zehn Befunde im
+    Lebenszyklus des RestreamManager, jeder hier gemessen oder im Syntaxbaum
+    festgehalten."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import subprocess as _sp
+    import threading as _th
+    import time as _t
+    import pruefhilfen as P
+    from nc import sendebruecke as B
+    from nc import durchreicher as D
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name, wo=None):
+        koerper = (wo or baum).body
+        return next(n for n in koerper if getattr(n, "name", "") == name)
+    rm = _fn("RestreamManager")
+
+    # ── (1) STOP IM BACKOFF. Der Monitor hat den Eintrag schon entfernt und
+    # schlaeft; stop() muss ihn trotzdem erreichen, sonst steht der Restream
+    # danach wieder auf (mit desired=1, also auch nach jedem Neustart).
+    gestartet, gestoppt_soll = [], []
+
+    class _Stab:
+        @staticmethod
+        def budget_after_run(a, ran, pol, progressed=True):
+            return a
+
+        @staticmethod
+        def budget_exhausted(a, pol):
+            return False
+
+        @staticmethod
+        def reconnect_delay(a, pol):
+            return 0.3
+
+    async def _row(fn):
+        return {"enabled": 1, "status": "error", "source_username": "quelle"}
+
+    async def _nichts(*a, **k):
+        return None
+
+    RM = _w179_manager(baum, {"__init__", "_monitor", "_monitor_eintragen", "_wiederanlauf",
+                              "_nebenlaeufer_abraeumen", "_relays_abraeumen", "stop"},
+                       {"_nc_rstab": _Stab, "_RESTREAM_POLICY": None, "db_async": _row,
+                        "_looks_like_codec_err": lambda t: False,
+                        "_looks_like_source_expired": lambda t: False,
+                        "_restream_tts_stop": lambda rid: None,
+                        "_restream_html_overlay_stop": lambda rid: None,
+                        "_restream_avatar_feeder_stop": lambda rid: None,
+                        "_reap_proc": _nichts, "KICK_INGEST_URL_BACKUP": "",
+                        "KICK_STREAM_KEY_BACKUP": ""})
+
+    class _Proc:
+        pid, returncode = 4242, 1
+
+        async def wait(self):
+            return 1
+
+    def _neu(start_dauer=0.0):
+        m = RM()
+        m._set_status = lambda *a, **k: None
+        m._set_desired = lambda rid, on: gestoppt_soll.append(on)
+        m._read_progress = m._read_stderr = m._bruecke_abraeumen = _nichts
+        m._abbruch_diagnose = lambda *a: None
+
+        async def _ton(*a, **k):
+            return False
+        m._ton_folge = _ton
+
+        async def _quelle(u, force_fresh=False):
+            return "https://x/y.flv", None
+        m._resolve_source = _quelle
+
+        async def _soll(rid):
+            return True
+        m._soll_lesen = _soll
+
+        async def _start(rid, **kw):
+            gestartet.append(kw)
+            await _aio.sleep(start_dauer)
+            return {"ok": True}
+        m.start = _start
+        m._procs[7] = {"proc": _Proc(), "started": _t.monotonic(), "attempts": 0,
+                       "src_watch": True}
+        return m
+
+    async def _lauf(fall):
+        m = _neu(start_dauer=0.4 if fall == "im-start" else 0.0)
+        m._monitor_eintragen(7)
+        mon = m._monitors[7]
+        if fall == "backoff":
+            await _aio.sleep(0.1)          # Monitor schlaeft im Backoff (0,3 s)
+            await m.stop(7)
+            await _aio.sleep(0.6)
+        elif fall == "im-start":
+            await _aio.sleep(0.45)         # Backoff vorbei, start() laeuft
+            assert 7 in m._im_wiederanlauf
+            await m.stop(7)
+            await _aio.sleep(0.6)
+        else:
+            await _aio.sleep(0.6)
+        return m, mon
+
+    del gestartet[:]
+    m, mon = _aio.run(_aio.wait_for(_lauf("backoff"), 10))
+    assert gestartet == [], "stop() im Backoff — der Monitor startete trotzdem neu: %r" % gestartet
+    assert mon.done() and 7 not in m._monitors, "der Monitor laeuft nach stop() weiter"
+    # (10) Ohne stop: der Wiederanlauf reicht den Quellen-Waechter durch.
+    del gestartet[:]
+    _aio.run(_aio.wait_for(_lauf("ohne"), 10))
+    assert gestartet == [{"_attempts": 1, "_src_watch": True}], \
+        "nach dem ersten Reconnect fehlt der Quellen-Waechter: %r" % gestartet
+    # stop() WAEHREND start(): der neue Sender wird wieder beendet, desired=0.
+    del gestartet[:], gestoppt_soll[:]
+    _aio.run(_aio.wait_for(_lauf("im-start"), 10))
+    assert len(gestartet) == 1 and gestoppt_soll[-1] is False and gestoppt_soll.count(False) == 2, \
+        "stop() waehrend des Wiederanlaufs — der Sender blieb stehen: %r" % gestoppt_soll
+
+    # ── (4) DER FORTSCHRITT WIRD GESTEMPELT, AUCH WENN DAS OVERLAY HAENGT.
+    # Abgewartet hielt das Schreiben (bis 68 s unter Plattenlast) den Leser an,
+    # _stall_watch sah keinen Zuwachs und erntete nach 75 s den gesunden Sender.
+    gezaehlt = []
+    haengt = _aio.Event()
+
+    async def _haengt():
+        await haengt.wait()
+
+    ns_takt = {"_OVERLAY_SCHREIBT": {"an": False}}
+    exec(compile(_ast.Module(body=[_fn("_overlay_takt")], type_ignores=[]), "bot.py", "exec"),
+         ns_takt)
+    RP = _w179_manager(baum, {"_read_progress"},
+                       {"RESTREAM_OVERLAY": True, "_overlay_takt": ns_takt["_overlay_takt"],
+                        "_write_restream_overlay_async": _haengt,
+                        "_loop_fehler": lambda *a: None})
+    ns_takt["_write_restream_overlay_async"] = _haengt
+
+    async def _fortschritt():
+        aufgaben = []
+        ns_takt["_spawn"] = lambda coro, name=None: aufgaben.append(_aio.ensure_future(coro))
+        r = RP()
+        r._update_health = lambda rid, buf, pname=None: gezaehlt.append(buf.get("frame"))
+        r._mark_blind = lambda *a, **k: None
+        leser = _aio.StreamReader()
+        for i in range(5):
+            leser.feed_data(b"frame=%d\nprogress=continue\n" % i)
+        proc = type("P", (), {"stdout": leser})()
+        t = _aio.ensure_future(r._read_progress(1, proc))
+        await _aio.sleep(0.3)
+        t.cancel()
+        for a in aufgaben:
+            a.cancel()
+        return len(aufgaben)
+    n_auf = _aio.run(_aio.wait_for(_fortschritt(), 10))
+    assert gezaehlt == ["0", "1", "2", "3", "4"], \
+        "ein haengendes Overlay haelt die Fortschrittsmarken an: %r" % gezaehlt
+    assert n_auf >= 1, "der Overlay-Takt wird gar nicht mehr ausgeloest"
+    ns_takt["_OVERLAY_SCHREIBT"]["an"] = True
+    ns_takt["_spawn"] = lambda *a, **k: (_ for _ in ()).throw(AssertionError("Stau"))
+    ns_takt["_overlay_takt"]()            # schreibt schon einer: kein zweiter Task
+
+    # ── (2) STOP BLOCKIERT NICHT, WENN DER SENDER NICHT LIEST. Echte Pipe, ein
+    # Thread haengt in daten() -> os.write; _schliessen kehrt trotzdem zurueck,
+    # und der Schreiber schliesst den fd, sobald der Sender weg ist (EPIPE).
+    lese, schreib = _os.pipe()
+    _os.set_blocking(schreib, False)
+    try:
+        while True:
+            _os.write(schreib, b"\0" * 65536)
+    except BlockingIOError:
+        pass
+    _os.set_blocking(schreib, True)
+    br = B.Bruecke(schreib, [], None, None, name="#w179")
+    br._fueller_frei = True
+    br._um.paket = lambda p: p
+    br.SCHLIESSEN_WARTEN_S = 0.3
+    paket = b"\x47\x01\x00\x10" + b"\xff" * 184
+    ergebnis = []
+    schreiber = _th.Thread(target=lambda: ergebnis.append(br.daten(B.FUELLER, paket)),
+                           daemon=True)
+    schreiber.start()
+    _t.sleep(0.3)
+    assert schreiber.is_alive(), "Aufbau: der Schreiber haengt nicht im write"
+    zu = _th.Thread(target=br._schliessen, daemon=True)
+    t0 = _t.monotonic()
+    zu.start()
+    zu.join(3)
+    assert not zu.is_alive(), "Bruecke._schliessen haengt am Schreiber, der in den Sender schreibt"
+    assert _t.monotonic() - t0 < 2.0
+    _os.close(lese)                          # der Sender ist weg
+    schreiber.join(3)
+    assert not schreiber.is_alive() and ergebnis == [False], ergebnis
+    assert br._fd is None, "der Schreiber hat den Sender-Eingang nicht geschlossen"
+    try:
+        _os.fstat(schreib)
+        raise AssertionError("fd des Sender-Eingangs ist noch offen (Leck je Stop)")
+    except OSError:
+        pass
+    st = _ast.unparse(_fn("stop", rm))
+    assert 0 <= st.find("await _reap_proc(proc)") < st.find("await self._bruecke_abraeumen"), \
+        "stop() baut die Bruecke vor dem Sender ab — haengt, wenn der Sender nicht liest"
+
+    # ── (3) KEIN ZOMBIE: ein Prozess, der SIGTERM ueberhoert, wird nach dem
+    # kill() auch geerntet (returncode gesetzt = waitpid gelaufen).
+    for beende in (B.Bruecke._beende, D._beende):
+        p = _sp.Popen(["sh", "-c", "trap '' TERM; sleep 30"])
+        _t.sleep(0.2)
+        beende(p)
+        assert p.returncode is not None, "%s laesst einen <defunct> stehen" % beende.__qualname__
+    ob = open("nc/overlaybrowser.py", encoding="utf-8").read()
+    be = _ast.unparse(next(n for n in _ast.walk(_ast.parse(ob))
+                           if getattr(n, "name", "") == "_beenden"))
+    assert be.count("p.wait(timeout=5)") == 2, "Overlay-Browser: kill() ohne wait()"
+
+    # ── (5) FEEDER-THREAD IN open(fifo) WIRD GEWECKT.
+    ns_w = {"os": _os}
+    exec(compile(_ast.Module(body=[_fn("_fifo_schreiber_wecken")], type_ignores=[]),
+                 "bot.py", "exec"), ns_w)
+    heim = P.verzeichnis()
+    fifo = _os.path.join(heim, "avatar.fifo")
+    _os.mkfifo(fifo)
+    halt = _th.Event()
+
+    def _feeder():
+        with open(fifo, "wb"):
+            halt.is_set()
+    f = _th.Thread(target=_feeder, daemon=True)
+    f.start()
+    _t.sleep(0.2)
+    halt.set()
+    ns_w["_fifo_schreiber_wecken"](fifo)
+    f.join(2)
+    weg = not f.is_alive()
+    if not weg:                              # aufraeumen, damit der Lauf nicht haengt
+        _os.close(_os.open(fifo, _os.O_RDONLY | _os.O_NONBLOCK))
+        f.join(2)
+    assert weg, "ein Feeder in open(fifo) bleibt nach dem Stop fuer immer stehen"
+    for stopp in ("_restream_avatar_feeder_stop", "_restream_html_overlay_stop"):
+        assert "_fifo_schreiber_wecken(" in _ast.unparse(_fn(stopp)), stopp
+    for start, stopp in (("_restream_avatar_feeder_start", "_restream_avatar_feeder_stop"),
+                         ("_restream_html_overlay_start", "_restream_html_overlay_stop")):
+        erst = _fn(start).body[1]            # nach dem Docstring
+        assert stopp in _ast.unparse(erst), "%s raeumt den alten Lauf nicht zuerst ab" % start
+    hs = _ast.unparse(_fn("_restream_html_overlay_stop"))
+    assert "call_soon_threadsafe(t.cancel)" in hs, "Task.cancel aus einem Thread ist nicht sicher"
+
+    # ── (6)(8) PROZESSENDE raeumt alles ab: Feeder UND unabhaengige Relays.
+    nb = _ast.unparse(_fn("_nebenlaeufer_abraeumen", rm))
+    for teil in ("_restream_tts_stop(rid)", "asyncio.to_thread(_restream_html_overlay_stop, rid)",
+                 "_restream_avatar_feeder_stop(rid)", "self._relays_abraeumen(info)"):
+        assert teil in nb, teil
+    mo = _ast.unparse(_fn("_monitor", rm))
+    assert "await self._nebenlaeufer_abraeumen(rid, info)" in mo
+    assert "self.start(" not in mo, "der Monitor startet an _wiederanlauf vorbei"
+    assert "self.start(" not in _ast.unparse(_fn("_ton_folge", rm))
+    ra = _ast.unparse(_fn("_relays_abraeumen", rm))
+    assert "_t.cancel()" in ra and "await _reap_proc(_p)" in ra
+    sp = _ast.unparse(_fn("_spawn_independent", rm))
+    assert "self._procs.get(rid) is mein" in sp and "while rid in self._procs" not in sp, \
+        "der Relay haengt an der rid, nicht an seinem Eintrag — doppelte Publisher"
+
+    # ── (7) FEHLSTART: kein UnboundLocalError, alle Feeder weg.
+    sa = _fn("start", rm)
+    sa_t = _ast.unparse(sa)
+    assert 0 <= sa_t.find("_kw, _br_fds = ({}, None)") < sa_t.find("cmd = _build_restream_cmd("), \
+        "_kw/_br_fds erst im try — der Fehlerpfad stirbt mit UnboundLocalError"
+    hdl = next(h for h in _ast.walk(sa) if isinstance(h, _ast.ExceptHandler)
+               and "ffmpeg-Start" in _ast.unparse(h))
+    assert "self._nebenlaeufer_abraeumen(rid)" in _ast.unparse(hdl)
+
+    # ── (9) KEINE SYNCHRONEN BLOCKIERER im Loop.
+    sd = _ast.unparse(_fn("_set_desired", rm))
+    assert "_RS_STATUS_EXEC.submit" in sd and "db_conn" not in sd, "desired-Commit im Loop"
+    assert "await asyncio.to_thread(_write_restream_overlay)" in sa_t
+    so = _ast.unparse(_fn("_soll_lesen", rm))
+    assert "run_in_executor(_RS_STATUS_EXEC" in so, \
+        "Soll-Zustand an der Reihenfolge der Statuswechsel vorbei gelesen"
+    ok("v4.2-W179: Stop im Backoff und im Start, Fortschritt trotz haengendem Overlay, "
+       "Bruecke ohne Haenger, keine Zombies, Feeder geweckt, Relays/Feeder je Lauf abgeraeumt")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -32117,6 +32436,7 @@ def main():
     _test_v42_w172_spenden()
     _test_v42_w173_ein_spendenziel()
     _test_v42_w174_encode_warteschlange()
+    _test_v42_w179_restream_lebenszyklus()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

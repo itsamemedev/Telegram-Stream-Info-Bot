@@ -398,6 +398,7 @@ class Bruecke:
         # einer, der laenger hing.
         self._schreibt_seit = None
         self._gestaut_bis = 0.0
+        self._zu_offen = False       # v4.2-W179: Schliessen dem Schreiber ueberlassen
         # Zustand der Wache — hier gesetzt, nicht erst in _wache, damit jeder
         # Schritt auch einzeln (im Vertrag) einen definierten Anfang hat.
         self._naechste = erste_url
@@ -500,6 +501,11 @@ class Bruecke:
                     os.write(self._fd, raus)
                 finally:
                     self._schreibt_seit = None
+                    if self._zu_offen:
+                        # v4.2-W179: _schliessen kam nicht an die Sperre, weil
+                        # genau dieser Schreibvorgang hing — er schliesst jetzt
+                        # selbst, unter der Sperre, die er ohnehin haelt.
+                        self._fd_schliessen()
                 fertig = self._uhr()
                 if fertig - t_w > 0.5:
                     self._gestaut_bis = fertig
@@ -594,6 +600,18 @@ class Bruecke:
             p.kill()
         except OSError:
             return     # schon weg — das war das Ziel
+        # v4.2-W179: kill() OHNE wait() liess den Prozess als <defunct>
+        # stehen — gemessen mit ffmpeg 6.1 je Stopp eines Zubringers, der
+        # SIGTERM ueberhoert (er haengt in write() auf die volle Pipe, und
+        # SA_RESTART setzt den Aufruf nach dem Signal einfach fort). Erst
+        # wait() holt den Exitstatus ab; nach erfolgreichem SIGTERM kehrt es
+        # sofort zurueck.
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            log.warning("Sendebrücke: pid %s nach SIGKILL nicht beendet "
+                        "(D-Zustand? Platte/NFS) — bleibt als Zombie, bis "
+                        "er endet.", getattr(p, "pid", "?"))
 
     def start(self):
         self._fue = self._starte(FUELLER, self._fueller_cmd)
@@ -615,9 +633,38 @@ class Bruecke:
         self._beende(self._fue)
         self._schliessen()
 
+    # v4.2-W179: so lange wartet _schliessen hoechstens auf die Datensperre.
+    SCHLIESSEN_WARTEN_S = 2.0
+
     def _schliessen(self):
-        with self._sperre:
-            fd, self._fd = self._fd, None
+        """Den Sender-Eingang schliessen, ohne auf einen haengenden Schreiber
+        zu warten.
+
+        v4.2-W179: hier stand `with self._sperre:`. daten() haelt dieselbe
+        Sperre waehrend os.write — und liest der Sender nicht (Ingest steht,
+        ffmpeg im Rueckstau), blockiert os.write unbegrenzt. Gemessen: stop()
+        des Managers hing damit ueber 20 s, und weil die Bruecke VOR dem
+        Sender abgebaut wurde, kam der Sender nie dran. Jetzt: kommt
+        _schliessen nicht an die Sperre, uebernimmt der haengende Schreiber
+        das Schliessen, sobald sein write zurueckkehrt (EPIPE, wenn der Sender
+        beendet ist). Den fd hier ohne Sperre zu schliessen waere schlimmer:
+        die Nummer kann sofort neu vergeben werden, und daten() schriebe
+        TS-Pakete in eine fremde Datei."""
+        if not self._sperre.acquire(timeout=self.SCHLIESSEN_WARTEN_S):
+            self._zu_offen = True
+            log.info("Sendebrücke %s: ein Schreibvorgang zum Sender haengt — "
+                     "der Eingang wird geschlossen, sobald er zurueckkehrt.",
+                     self.name)
+            return
+        try:
+            self._fd_schliessen()
+        finally:
+            self._sperre.release()
+
+    def _fd_schliessen(self):
+        # unter self._sperre
+        fd, self._fd = self._fd, None
+        self._zu_offen = False
         if fd is not None:
             try:
                 os.close(fd)

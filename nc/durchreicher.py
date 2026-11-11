@@ -125,7 +125,14 @@ def _beende(p):
         except subprocess.TimeoutExpired:
             p.kill()
         except OSError:
-            pass      # schon weg — das war das Ziel
+            return    # schon weg — das war das Ziel
+        # v4.2-W179: kill() ohne wait() hinterliess einen <defunct> je
+        # Zieher, der SIGTERM ueberhoert (wie Bruecke._beende, gemessen).
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            print("durchreicher: pid %s nach SIGKILL nicht beendet"
+                  % getattr(p, "pid", "?"), file=sys.stderr)
 
 
 def main(argv=None, popen=subprocess.Popen, which=shutil.which) -> int:
