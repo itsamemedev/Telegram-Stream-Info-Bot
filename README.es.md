@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.23 Centro de control" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v5.0.0 Compás" width="100%">
 
 ### La sala de control para streaming en directo
 #### Vigilancia · Grabación · Restream multidestino · Moderación con IA
@@ -50,7 +50,7 @@
 - [⚙️ Ajustes](#️-ajustes) · [🗄️ Base de datos](#️-base-de-datos) · [🕹️ Manejo](#️-manejo)
 - [📡 Restream](#-restream) · [🧠 AZRAEL y los vigilantes](#-azrael-y-los-vigilantes) · [🖥️ Panel](#️-panel)
 - [📈 Monitorización](#-monitorización) · [🚀 Operación](#-operación) · [🛡️ Seguridad](#️-seguridad)
-- [🩺 Diagnóstico](#-diagnóstico) · [🆕 Novedades en v4.6](#-novedades-en-v46) · [📊 Estado del proyecto](#-estado-del-proyecto) · [💸 Apoyar](#-apoyar) · [📄 Licencia](#-licencia)
+- [🩺 Diagnóstico](#-diagnóstico) · [🆕 Novedades en v5.0](#-novedades-en-v50) · [Novedades en v4.6](#-novedades-en-v46) · [📊 Estado del proyecto](#-estado-del-proyecto) · [💸 Apoyar](#-apoyar) · [📄 Licencia](#-licencia)
 
 ---
 
@@ -134,7 +134,7 @@ dispara nada.
 
 ## ⚙️ Ajustes
 
-**En el panel, pestaña “Ajustes”.** Las unas 595 variables de `.env.example`
+**En el panel, pestaña “Ajustes”.** Las unas 599 variables de `.env.example`
 con grupo, valor por defecto y descripción, con búsqueda. Cada fila indica de
 dónde viene el valor — *fijado en el panel*, *desde .env* o *por defecto*. Se
 guarda en la base de datos y, en el siguiente arranque, tiene prioridad sobre
@@ -316,6 +316,16 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
+## 🆕 Novedades en v5.0
+
+**“Compás”** — una caza profunda de errores en todas las áreas, 60 hallazgos
+corregidos, cada uno con contrato y prueba de mutación: restream estable (el
+vigilante ya no mata al emisor sano bajo carga de disco), suavizado de marcas
+de tiempo en grabación y restream, cola de codificación, un tema de Telegram
+por usuario, la grabación completa en partes a Discord, AZRAEL con contexto del
+cerebro, chat de Kick por Centrifugo, `/spenden`, una sola meta de donaciones y
+protección CSRF en el panel.
+
 ## 🆕 Novedades en v4.6
 
 **“Centro de control”** — todo configurable, todo vigilado: ajustes en el panel
@@ -333,7 +343,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **4.6.23** — “Centro de control” (2026.11) |
+| Versión actual | **5.0.0** — “Compás” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |
@@ -365,6 +375,6 @@ comunidad en **[Discord](https://discord.gg/psvnxm7tSV)** · **[lafap.de](https:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.23 · “Centro de control”**
+**NIGHTCRAWLER v5.0.0 · “Compás”**
 
 </div>

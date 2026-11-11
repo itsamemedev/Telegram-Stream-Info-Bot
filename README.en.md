@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.23 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v5.0.0 Lockstep" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -53,7 +53,7 @@
 - [🕹️ Operating it](#️-operating-it) · [📡 Restream](#-restream) · [🧠 AZRAEL and the watchdogs](#-azrael-and-the-watchdogs)
 - [🖥️ Dashboard](#️-dashboard) · [📈 Monitoring](#-monitoring) · [🚀 Operations](#-operations)
 - [🛡️ Security](#️-security) · [🩺 Troubleshooting](#-troubleshooting) · [🧪 Development](#-development)
-- [🆕 New in v4.6](#-new-in-v46) · [📊 Project status](#-project-status) · [💸 Support](#-support) · [🤝 Contributing](#-contributing) · [📄 License](#-license)
+- [🆕 New in v5.0](#-new-in-v50) · [New in v4.6](#-new-in-v46) · [📊 Project status](#-project-status) · [💸 Support](#-support) · [🤝 Contributing](#-contributing) · [📄 License](#-license)
 
 ---
 
@@ -84,7 +84,7 @@
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
 | **Multilingual** | German, English and Spanish, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
 | **Database** | SQLite **or** MariaDB · move with `update.sh --mariadb`, counted again · central schema module · export tool · database watchdog |
-| **Settings** | “Settings” tab in the deck: all ~595 variables searchable, stored in the database, protected keys only from `.env` |
+| **Settings** | “Settings” tab in the deck: all ~599 variables searchable, stored in the database, protected keys only from `.env` |
 | **Monitoring** | `/metrics` for Prometheus · Grafana dashboard with every metric · 16 alert rules with tests · set up with `tools/observability.sh` |
 
 </details>
@@ -206,7 +206,7 @@ nothing and triggers nothing; a schedule never silently moves a database.
 
 ## ⚙️ Settings
 
-**In the deck, tab “Settings”.** All of the roughly 595 variables from
+**In the deck, tab “Settings”.** All of the roughly 599 variables from
 `.env.example` with group, default and description, searchable. Every row says
 where the value comes from — *set in the deck*, *from .env* or *default*. Values
 are stored in the database (SQLite or MariaDB) and take precedence over `.env`
@@ -567,6 +567,25 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 
 ---
 
+## 🆕 New in v5.0
+
+**“Lockstep”** — a deep bug hunt across every area, 60 findings fixed, each
+with a contract and a mutation probe:
+
+- **Stable restream:** under disk load the watchdog killed the healthy sender —
+  all targets at once. Plus zombie processes, a hanging stop, and a restream
+  that came back after being stopped.
+- **Timestamp smoothing** in recording and restream: jumps in the TikTok source
+  no longer produce a frozen picture without sound.
+- **Encode queue:** background encodes run one after another, only when the
+  machine has room.
+- **Telegram:** one topic per user again, supergroup migration, no lost uploads.
+  **Discord:** the whole recording in parts.
+- **AZRAEL with brain context**, Kick chat via Centrifugo, `/spenden`, one
+  donation goal everywhere.
+- **Security:** CSRF protection in the deck, dangerous environment variables
+  blocked.
+
 ## 🆕 New in v4.6
 
 **“Control Room”** — everything configurable, everything watched:
@@ -646,12 +665,12 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6.23** — “Control Room” (2026.11) |
+| Current version | **5.0.0** — “Lockstep” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 14 |
-| Configuration variables | ~595 |
+| Configuration variables | ~599 |
 | Languages | German (source), English, Spanish |
 
 Next big step: keep taking `bot.py` apart — **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**.
@@ -712,7 +731,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.23 · “Control Room”**
+**NIGHTCRAWLER v5.0.0 · “Lockstep”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 
