@@ -384,6 +384,17 @@ def api_azrael_whisper_model():
         m = (d.get("model") or "").strip()
         if not m:
             return jsonify(ok=False, error=_t("model fehlt")), 400
+        # v5.1-W180: am 11.11. hob ein Klick auf `medium` den Bot von 973 auf
+        # 4535 MB RSS — vorher fragte niemand, ob der Speicher das traegt.
+        erlaubt, grund = _nc_whisper.wechsel_pruefen(m, _nc_whisper.frei_mb())
+        if not erlaubt and not d.get("force"):
+            _c().log.warning("Whisper-Modell-Wechsel auf %s abgelehnt: %s", m, grund)
+            return jsonify(ok=False, error=_t("Zu wenig freier Speicher für dieses "
+                                              "Whisper-Modell."),
+                           grund=grund, model=_nc_whisper.name(),
+                           bedarf_mb=_nc_whisper.bedarf_mb(m)), 409
+        if grund:
+            _c().log.info("Whisper-Modell %s: %s", m, grund)
         _c().log.info("Whisper-Modell zur Laufzeit umgeschaltet -> %s", _nc_whisper.waehle(m))
         return jsonify(ok=True, model=_nc_whisper.name(), presets=_nc_whisper.PRESETS)
     return jsonify(ok=True, model=_nc_whisper.name(), presets=_nc_whisper.PRESETS,

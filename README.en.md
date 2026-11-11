@@ -53,7 +53,7 @@
 - [🕹️ Operating it](#️-operating-it) · [📡 Restream](#-restream) · [🧠 AZRAEL and the watchdogs](#-azrael-and-the-watchdogs)
 - [🖥️ Dashboard](#️-dashboard) · [📈 Monitoring](#-monitoring) · [🚀 Operations](#-operations)
 - [🛡️ Security](#️-security) · [🩺 Troubleshooting](#-troubleshooting) · [🧪 Development](#-development)
-- [🆕 New in v5.0](#-new-in-v50) · [New in v4.6](#-new-in-v46) · [📊 Project status](#-project-status) · [💸 Support](#-support) · [🤝 Contributing](#-contributing) · [📄 License](#-license)
+- [🆕 New in v5.1](#-new-in-v51) · [New in v5.0](#-new-in-v50) · [New in v4.6](#-new-in-v46) · [📊 Project status](#-project-status) · [💸 Support](#-support) · [🤝 Contributing](#-contributing) · [📄 License](#-license)
 
 ---
 
@@ -567,6 +567,25 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 
 ---
 
+## 🆕 New in v5.1
+
+**“Keen-eared”** — local LLM and the findings from the production log of 11 Nov:
+
+- **ik_llama.cpp with Qwen3-14B-Uncensored** instead of llama.cpp.
+  `tools/ikllama.sh` removes an existing llama.cpp first, builds ik_llama.cpp,
+  downloads the model (about 9 GB, checksum, resumable) and sets up
+  `llama-server.service` on the same port. The installer and
+  `update.sh --ik-llama` call the same tool; try `bash tools/ikllama.sh --dry-run` first.
+- **Qwen3 does not think out loud:** thinking mode off, `<think>` blocks stripped.
+- **Live checks no longer pile up:** one entry per tracking, every check with a
+  deadline (`LIVE_CHECK_FRIST_S`), process start takes priority over Whisper.
+- **Whisper model switch checks memory** — the jump to 4.5 GB RSS came from
+  switching to `medium`, not from a leak.
+- **Smaller fixes:** cookie fetch without a desktop names the reason instead of
+  HTTP 502, no Telegram calls for Discord server IDs, empty TikTok room ID explained.
+- **Situation view:** encode and upload queues, Discord recording, overlay
+  browser, tunnel watch, Kick chat and donation goal at a glance.
+
 ## 🆕 New in v5.0
 
 **“Lockstep”** — a deep bug hunt across every area, 60 findings fixed, each
@@ -665,7 +684,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **5.0.0** — “Lockstep” (2026.11) |
+| Current version | **5.1.0** — “Keen-eared” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |

@@ -50,7 +50,7 @@
 - [⚙️ Ajustes](#️-ajustes) · [🗄️ Base de datos](#️-base-de-datos) · [🕹️ Manejo](#️-manejo)
 - [📡 Restream](#-restream) · [🧠 AZRAEL y los vigilantes](#-azrael-y-los-vigilantes) · [🖥️ Panel](#️-panel)
 - [📈 Monitorización](#-monitorización) · [🚀 Operación](#-operación) · [🛡️ Seguridad](#️-seguridad)
-- [🩺 Diagnóstico](#-diagnóstico) · [🆕 Novedades en v5.0](#-novedades-en-v50) · [Novedades en v4.6](#-novedades-en-v46) · [📊 Estado del proyecto](#-estado-del-proyecto) · [💸 Apoyar](#-apoyar) · [📄 Licencia](#-licencia)
+- [🩺 Diagnóstico](#-diagnóstico) · [🆕 Novedades en v5.1](#-novedades-en-v51) · [Novedades en v5.0](#-novedades-en-v50) · [Novedades en v4.6](#-novedades-en-v46) · [📊 Estado del proyecto](#-estado-del-proyecto) · [💸 Apoyar](#-apoyar) · [📄 Licencia](#-licencia)
 
 ---
 
@@ -316,6 +316,18 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
+## 🆕 Novedades en v5.1
+
+**“Oído fino”** — LLM local y los hallazgos del registro de producción del 11/11:
+ik_llama.cpp con Qwen3-14B-Uncensored en lugar de llama.cpp (`tools/ikllama.sh`
+desinstala primero un llama.cpp existente; instalador y `update.sh --ik-llama`
+usan la misma herramienta; probar antes `bash tools/ikllama.sh --dry-run`),
+Qwen3 sin modo de pensamiento, la cola de comprobaciones en directo ya no se
+atasca, el cambio de modelo de Whisper comprueba la memoria (el salto a 4,5 GB
+venía de `medium`, no de una fuga), y la vista de situación muestra colas de
+codificación y subida, grabación a Discord, navegador del overlay, túnel, chat
+de Kick y meta de donaciones.
+
 ## 🆕 Novedades en v5.0
 
 **“Compás”** — una caza profunda de errores en todas las áreas, 60 hallazgos
@@ -343,7 +355,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.0.0** — “Compás” (2026.11) |
+| Versión actual | **5.1.0** — “Oído fino” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |

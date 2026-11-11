@@ -32212,8 +32212,8 @@ def _test_v42_w176_pruefschleife_lebt():
         q = _aio.Queue()
 
         async def _handle(t, _app):
-            gesehen.append(t)
-            if t == "kaputt":
+            gesehen.append(t["username"])
+            if t["username"] == "kaputt":
                 raise RuntimeError("Nebenschritt")
 
         class _Aio:
@@ -32226,11 +32226,14 @@ def _test_v42_w176_pruefschleife_lebt():
 
         ns = {"live_check_queue": q, "_handle_single_tracking": _handle,
               "_hb": schlaege.append, "_loop_fehler": lambda n, e: fehler.append(n),
-              "asyncio": _Aio}
+              "asyncio": _Aio,
+              # v5.1-W183: Pruefung mit Frist, Vormerkung wird freigegeben
+              "_nc_pruefschlange": __import__("nc.pruefschlange", fromlist=["x"]),
+              "LIVE_CHECK_FRIST_S": 240.0, "_live_check_frist_melden": lambda t: None}
         exec(compile(_ast.Module(body=[fn["live_check_worker"]], type_ignores=[]),
                      "bot.py", "exec"), ns)
-        for t in ("kaputt", "gut"):
-            q.put_nowait(t)
+        for i, t in enumerate(("kaputt", "gut")):
+            q.put_nowait({"id": i, "username": t})
         task = _aio.ensure_future(ns["live_check_worker"](None, 3))
         await _aio.sleep(0.3)
         task.cancel()
@@ -33269,7 +33272,8 @@ def _test_v42_w175_themen_je_nutzer():
     themen = {"-100:#uploads": 9}            # das gemeinsame Thema aus W168
     ns = {"TELEGRAM_USE_TOPICS": True, "_TG_TOPICS": themen, "_TG_TOPICS_LOCK": _th.Lock(),
           "_tg_topics_save": lambda: None, "log": lg, "os": _os, "asyncio": _aio,
-          "_TG_TOPIC_ANLEGEN": {}, "_topic_key": _topic_key}
+          "_TG_TOPIC_ANLEGEN": {}, "_topic_key": _topic_key,
+          "_nc_tgfehler": __import__("nc.telegramfehler", fromlist=["x"])}   # v5.1-W182
 
     async def _forum(_c, _b):
         return True
@@ -34037,7 +34041,8 @@ def _test_v42_w175_kleinbefunde():
     del zeilen[:]
     nsf = _exec(baum, ["_chat_is_forum"], {
         "_time_mod": _ty.SimpleNamespace(monotonic=lambda: uhr[0]), "_TG_FORUM_CACHE": {},
-        "_TG_FORUM_TTL": 3600, "_TG_FORUM_FEHLER_TTL": 60, "_nc_meldetakt": M, "log": lg})
+        "_TG_FORUM_TTL": 3600, "_TG_FORUM_FEHLER_TTL": 60, "_nc_meldetakt": M, "log": lg,
+        "_nc_tgfehler": __import__("nc.telegramfehler", fromlist=["x"])})   # v5.1-W182
     bot = _FBot()
     assert _aio.run(nsf["_chat_is_forum"](-5, bot)) is False
     assert any(l >= _lg.ERROR and "Timed out" in z for l, z in zeilen), zeilen
@@ -34489,6 +34494,501 @@ def _test_v51_w181_qwen3_denkt_nicht():
     assert "health.llamacpp.modell" in dh
     ok("W181: Qwen3-Denkblock entfernt (drei Formen), enable_thinking=false + /no_think auf "
        "einer Kopie, nur-Denken ist ein Fehler, Modellname in der Probe")
+def _w180_baum_fn(datei, name):
+    """Funktionsknoten `name` aus `datei` (Top-Level), fuer die statischen Teile."""
+    import ast as _ast
+    baum = _ast.parse(open(datei, encoding="utf-8").read())
+    return next(n for n in baum.body if getattr(n, "name", "") == name)
+
+
+def _w180_aufrufe(knoten):
+    """Namen aller Aufrufe in `knoten` in Quelltext-Reihenfolge, als 'a.b'."""
+    import ast as _ast
+    out = []
+    for n in _ast.walk(knoten):
+        if isinstance(n, _ast.Call):
+            f = n.func
+            if isinstance(f, _ast.Attribute):
+                basis = f.value.id if isinstance(f.value, _ast.Name) else "?"
+                out.append((n.lineno, n.col_offset, basis + "." + f.attr))
+            elif isinstance(f, _ast.Name):
+                out.append((n.lineno, n.col_offset, f.id))
+    return [name for _l, _c, name in sorted(out)]
+
+
+def _test_v51_w180_whisper_speicher():
+    """v5.1-W180: ein Whisper-Modell, das der Speicher nicht traegt, wird
+    nicht mehr blind geladen.
+
+    Produktionslog 11.11.: 18:08:20 im Deck base -> medium, 18:08:35 WATCHDOG
+    „RSS 3321 MB", 18:15 4535 MB (vorher 973 MB), und medium lief mit RTF 2,74.
+    Die Route schaltete ohne Frage um; die RSS-Meldung klang nach einem Leck."""
+    import logging as _lg
+    import types as _ty
+    from flask import Flask
+    from nc import whispercfg as W
+    import nc.routes.azrael as AZ
+
+    assert W.bedarf_mb("medium") == 3000 and W.bedarf_mb("medium.en") == 3000
+    assert W.bedarf_mb("large-v3") == W.bedarf_mb("distil-large-v3") == 6000
+    assert W.bedarf_mb("tiny") < W.bedarf_mb("base") < W.bedarf_mb("small")
+    assert W.bedarf_mb("eigenes-modell") is None
+    assert W.frei_mb("MemTotal: 8000000 kB\nMemAvailable:  2048000 kB\n") == 2000
+    assert W.frei_mb("kaputt") is None, "unlesbar ist unbekannt, nicht null"
+
+    # Die Lage vom 11.11.: rund 1,2 GB frei, medium angefragt.
+    erlaubt, grund = W.wechsel_pruefen("medium", frei=1200)
+    assert not erlaubt, "medium bei 1200 MB frei durchgelassen — das war der OOM-Weg"
+    assert "3000" in grund and "1200" in grund and "base" in grund, grund
+    assert "small" not in grund.split("Abhilfe:")[1].split(";")[0], \
+        ("small braucht 1200 + Reserve — der Rat waere wieder zu gross", grund)
+    assert W.wechsel_pruefen("medium", frei=4000) == (True, "")
+    assert W.wechsel_pruefen("base", frei=1200) == (True, "")
+    ok_, hinweis = W.wechsel_pruefen("medium", frei=None)
+    assert ok_ and "nicht vorab" in hinweis, "unbekannter Speicher darf nicht sperren"
+    ok_, hinweis = W.wechsel_pruefen("eigenes-modell", frei=10)
+    assert ok_ and "unbekannt" in hinweis
+
+    # Die Watchdog-Zeile nennt ein grosses geladenes Modell — ein kleines nicht.
+    alt = dict(W.MODELL)
+    try:
+        W.MODELL.update(name="medium", obj=object())
+        assert "medium" in W.rss_hinweis() and "3000" in W.rss_hinweis()
+        W.MODELL.update(name="base")
+        assert W.rss_hinweis() == ""
+        W.MODELL.update(name="medium", obj=None)
+        assert W.rss_hinweis() == "", "nicht geladen haelt keinen Speicher"
+    finally:
+        W.MODELL.clear()
+        W.MODELL.update(alt)
+    wd = rumpf_ab(open("bot.py", encoding="utf-8").read(),
+                  open("bot.py", encoding="utf-8").read().find("async def _watchdog_loop"))
+    assert "_nc_whisper.rss_hinweis()" in wd, "die RSS-Meldung nennt das Modell nicht"
+
+    # Die Route: 409 mit Grund, Name unveraendert; mit force wird umgeschaltet.
+    lg = _lg.getLogger("w180")
+    lg.handlers[:] = [_lg.NullHandler()]
+    lg.propagate = False
+    alt_c, alt_t, alt_frei = AZ._c, AZ._t, W.frei_mb
+    alt_modell = dict(W.MODELL)
+    try:
+        AZ._c = lambda: _ty.SimpleNamespace(log=lg)
+        AZ._t = lambda s: s
+        W.frei_mb = lambda *a: 1200
+        W.MODELL.update(name="base", obj="geladen")
+        app = Flask("w180")
+        app.register_blueprint(AZ.bp)
+        cl = app.test_client()
+        r = cl.post("/api/azrael/whisper_model", json={"model": "medium"})
+        assert r.status_code == 409, r.status_code
+        assert r.get_json()["model"] == "base" and "1200" in r.get_json()["grund"]
+        assert W.MODELL["name"] == "base" and W.MODELL["obj"] == "geladen", \
+            "eine Ablehnung darf das geladene Modell nicht verwerfen"
+        r = cl.post("/api/azrael/whisper_model", json={"model": "medium", "force": True})
+        assert r.status_code == 200 and W.MODELL["name"] == "medium"
+    finally:
+        AZ._c, AZ._t, W.frei_mb = alt_c, alt_t, alt_frei
+        W.MODELL.clear()
+        W.MODELL.update(alt_modell)
+    ok("W180: Whisper-Wechsel prueft den freien Speicher (409 mit Zahlen und Rat), "
+       "RSS-Meldung nennt das grosse Modell")
+
+
+def _test_v51_w187_cookies_ohne_desktop():
+    """v5.1-W187: der Browser-Weg ohne Desktop ist eine Lage, kein HTTP 502.
+
+    11.11.: POST /api/cookies/fetch (browser) -> „HTTP 502 … KeyError:
+    'DBUS_SESSION_BUS_ADDRESS'" im Fehlerlog, mit Traceback-Wortlaut."""
+    import os as _os
+    import sys as _sys
+    import types as _ty
+    from flask import Flask
+    from nc import cookieholen as CH
+
+    def _fehlt(*a, **k):
+        try:
+            CH.desktop_pruefen(*a, **k)
+        except CH.KeinDesktop as e:
+            return str(e)
+        return None
+    assert _fehlt("chrome", env={}, plattform="linux")
+    assert "DBUS_SESSION_BUS_ADDRESS" in _fehlt("brave", env={}, plattform="linux")
+    assert _fehlt("chrome", env={"DBUS_SESSION_BUS_ADDRESS": "unix:x"}, plattform="linux") is None
+    assert _fehlt("firefox", env={}, plattform="linux") is None, \
+        "Firefox braucht keinen Schluesselbund"
+    assert _fehlt("chrome", env={}, plattform="darwin") is None
+
+    d = _ph.verzeichnis()
+    datei = _os.path.join(d, "cookies.txt")
+    alt_env = _os.environ.pop("DBUS_SESSION_BUS_ADDRESS", None)
+    alt_bc3 = _sys.modules.get("browser_cookie3")
+    try:
+        if _sys.platform.startswith("linux"):
+            b = CH.aktualisiere(datei, quelle="browser", browser="chrome", log=None)
+            assert not b["ok"] and b["grund"] == "kein_desktop", b
+            assert "DBUS_SESSION_BUS_ADDRESS" in b["error"] and b["abhilfe"]
+        # Auch ohne Vorabtreffer (Firefox, andere Fassung): ein KeyError aus
+        # browser_cookie3 ist dieselbe Lage.
+        def _ff(domain_name=None):
+            raise KeyError("XDG_RUNTIME_DIR")
+        _sys.modules["browser_cookie3"] = _ty.SimpleNamespace(firefox=_ff)
+        b = CH.aktualisiere(datei, quelle="browser", browser="firefox", log=None)
+        assert b["grund"] == "kein_desktop" and "XDG_RUNTIME_DIR" in b["error"], b
+        assert not _os.path.exists(datei), "nichts geschrieben"
+    finally:
+        if alt_env is not None:
+            _os.environ["DBUS_SESSION_BUS_ADDRESS"] = alt_env
+        if alt_bc3 is None:
+            _sys.modules.pop("browser_cookie3", None)
+        else:
+            _sys.modules["browser_cookie3"] = alt_bc3
+
+    import nc.routes.settings as ST
+    alt_holen, alt_t = ST._nc_cookiebezug.holen, ST._t
+    try:
+        ST._t = lambda s: s
+        ST._nc_cookiebezug.holen = lambda *a, **k: {"ok": False, "grund": "kein_desktop",
+                                                    "error": "kein Desktop"}
+        app = Flask("w187")
+        app.register_blueprint(ST.bp)
+        r = app.test_client().post("/api/cookies/fetch", json={"source": "browser"})
+        assert r.status_code == 409, ("kein Desktop ist kein Gateway-Fehler", r.status_code)
+        ST._nc_cookiebezug.holen = lambda *a, **k: {"ok": False, "error": "TikTok weg"}
+        r = app.test_client().post("/api/cookies/fetch", json={"source": "gast"})
+        assert r.status_code == 502, "der echte Ausfall bleibt 502"
+    finally:
+        ST._nc_cookiebezug.holen, ST._t = alt_holen, alt_t
+    ok("W187: Browser-Cookies ohne Desktop -> Grund kein_desktop, HTTP 409, kein Traceback")
+
+
+def _test_v51_w182_kein_telegram_fuer_guild():
+    """v5.1-W182: eine Discord-Guild wird nie gegen Telegram gefragt.
+
+    11.11.: viermal „Telegram: Forum-Pruefung fuer chat 1521964594653036677
+    fehlgeschlagen (Chat not found)" im Fehlerlog — die Live-Meldung suchte
+    ihr Melde-Thema VOR dem _is_dead()-Riegel in _safe_send."""
+    import asyncio as _aio
+    import types as _ty
+    from nc import meldetakt as M
+    from nc import telegramfehler as TF
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+    gilde = 1521964594653036677
+    fragen = []
+
+    class _Bot:
+        async def get_chat(self, cid):
+            fragen.append(cid)
+            raise RuntimeError("Chat not found")
+
+        async def create_forum_topic(self, **kw):
+            fragen.append(kw)
+            raise RuntimeError("Chat not found")
+    M.zuruecksetzen()
+    del zeilen[:]
+    ns = _exec(baum, ["_chat_is_forum", "_ensure_topic"], {
+        "_time_mod": _ty.SimpleNamespace(monotonic=lambda: 5.0), "_TG_FORUM_CACHE": {},
+        "_TG_FORUM_TTL": 3600, "_TG_FORUM_FEHLER_TTL": 60, "_nc_meldetakt": M, "log": lg,
+        "_nc_tgfehler": TF, "TELEGRAM_USE_TOPICS": True,
+        # Ein Thema aus der Zeit vor W132 darf fuer die Guild nicht gefunden werden.
+        "_TG_TOPICS": {"%s:anna" % gilde: 55},
+        "_topic_key": lambda c, u: "%s:%s" % (c, u), "_TG_TOPIC_ANLEGEN": {}, "asyncio": _aio})
+    assert _aio.run(ns["_chat_is_forum"](gilde, _Bot())) is False
+    assert _aio.run(ns["_ensure_topic"](gilde, "anna", _Bot())) is None
+    assert fragen == [], ("Telegram wurde nach einer Discord-Guild gefragt", fragen)
+    assert not zeilen, ("eine Guild ist kein Fehler, nur kein Ziel", zeilen)
+    assert ns["_TG_FORUM_CACHE"] == {}, "die Guild darf nicht als Cache-Eintrag liegen bleiben"
+    # Eine echte Gruppe wird weiter gefragt.
+    _aio.run(ns["_chat_is_forum"](-1002058519599, _Bot()))
+    assert fragen == [-1002058519599]
+    # discordbot: der Highlight-Push fragt dieselbe Grenze, nicht nur DIESE Guild.
+    dsrc = open("discordbot.py", encoding="utf-8").read()
+    assert "_nc_tgfehler.ist_telegram_chat(gid)" in dsrc
+    assert "gid == DISCORD_GUILD_ID" not in dsrc, "nur die eigene Guild war ausgenommen"
+    ok("W182: Forum-Pruefung und Thema fragen Telegram nie nach einer Discord-ID")
+
+
+def _test_v51_w183_pruefschlange_und_vortritt():
+    """v5.1-W183: Live-Check-Stau aus Doppeln und haengenden Workern.
+
+    11.11.: „Live-Check-Schlange voll … (4809 bisher)" in 18 min und
+    „WATCHDOG: Loop 'live-worker-0' seit 450s ohne Lebenszeichen". Der
+    90-s-Zeitriegel liess gestaute Trackings erneut hinein; eine Pruefung
+    hatte keine Frist; und der Fork-Poll verhungerte hinter Whisper (medium,
+    RTF 2,74), weil das Lock von Thread zu Thread ging."""
+    import asyncio as _aio
+    import threading as _th
+    import time as _tm
+    from nc import forkriegel as FR
+    from nc import pruefschlange as PS
+
+    # (1) Ein Tracking hoechstens einmal vorgemerkt.
+    PS.zuruecksetzen()
+    assert PS.vormerken(7) and not PS.vormerken(7), "dasselbe Tracking doppelt eingereiht"
+    PS.erledigt(7)
+    assert PS.vormerken(7) and PS.vorgemerkt() == 1
+    PS.zuruecksetzen()
+
+    # (2) Frist mit Lebenszeichen.
+    zeichen = []
+
+    async def _langsam():
+        await _aio.sleep(0.35)
+        return "x"
+    assert _aio.run(PS.mit_frist(_langsam(), 2.0, 0.1, lambda: zeichen.append(1))) is True
+    assert len(zeichen) >= 2, ("kein Lebenszeichen waehrend der Pruefung", zeichen)
+    abgebrochen = []
+
+    async def _haengt():
+        try:
+            await _aio.sleep(3600)
+        finally:
+            abgebrochen.append(1)
+    t0 = _tm.monotonic()
+    assert _aio.run(PS.mit_frist(_haengt(), 0.3, 0.1, lambda: None)) is False
+    assert abgebrochen and _tm.monotonic() - t0 < 2, "die Frist bricht nicht ab"
+
+    async def _wirft():
+        raise ValueError("Befund")
+    try:
+        _aio.run(PS.mit_frist(_wirft(), 1.0, 0.1, lambda: None))
+        raise AssertionError("die Ausnahme der Pruefung wurde verschluckt")
+    except ValueError:
+        pass
+
+    # (3) Vortritt: zwei Whisper-Threads halten das Lock abwechselnd ohne
+    # Luecke; ein angemeldeter Fork kommt trotzdem binnen einer Runde dran.
+    lock = _th.Lock()
+    v = FR.Vortritt(max_warten_s=5.0)
+    halt = _th.Event()
+
+    def _whisper():
+        while not halt.is_set():
+            v.abwarten()
+            with lock:
+                _tm.sleep(0.05)
+    th = [_th.Thread(target=_whisper, daemon=True) for _ in range(2)]
+    for t in th:
+        t.start()
+    _tm.sleep(0.2)
+    t0 = _tm.monotonic()
+    bekommen = False
+    try:
+        with v.anmelden():
+            while _tm.monotonic() - t0 < 3.0:
+                if lock.acquire(blocking=False):
+                    bekommen = True
+                    break
+                _tm.sleep(0.02)
+        if bekommen:
+            lock.release()
+    finally:
+        halt.set()
+        for t in th:
+            t.join(2)
+    assert bekommen and _tm.monotonic() - t0 < 1.0, \
+        ("der Fork verhungert hinter Whisper", round(_tm.monotonic() - t0, 2))
+    assert v.wartend() == 0
+    # Die Frist schuetzt Whisper vor einer endlosen Kette von Forks.
+    v2 = FR.Vortritt(max_warten_s=0.1)
+    with v2.anmelden():
+        assert v2.abwarten() is False and v2.ueberzogen == 1
+
+    # (4) Der Bot benutzt beides an der richtigen Stelle.
+    runde = _w180_aufrufe(_w180_baum_fn("bot.py", "_pruef_runde"))
+    assert "_nc_pruefschlange.vormerken" in runde and \
+        runde.index("_nc_pruefschlange.vormerken") < runde.index("live_check_queue.put_nowait"), \
+        "eingereiht wird vor der Vormerkung"
+    arbeiter = _w180_baum_fn("bot.py", "live_check_worker")
+    aufrufe = _w180_aufrufe(arbeiter)
+    assert "_nc_pruefschlange.mit_frist" in aufrufe and "_nc_pruefschlange.erledigt" in aufrufe
+    import ast as _ast
+    fin = [n for n in _ast.walk(arbeiter) if isinstance(n, _ast.Try) and n.finalbody]
+    assert any("_nc_pruefschlange.erledigt" in _w180_aufrufe(_ast.Module(body=t.finalbody,
+               type_ignores=[])) for t in fin), "erledigt() nicht im finally — ein Fehler sperrte das Tracking"
+    assert "_FORK_VORTRITT.abwarten" in _w180_aufrufe(_w180_baum_fn("bot.py",
+                                                                     "_whisper_native_section"))
+    assert "_FORK_VORTRITT.anmelden" in _w180_aufrufe(_w180_baum_fn("bot.py", "_fork_safe"))
+    ok("W183: Live-Check einmal je Tracking, mit Frist und Lebenszeichen; Fork hat "
+       "Vortritt vor Whisper")
+
+
+def _test_v51_w184_raumkennung():
+    """v5.1-W184: „invalid literal for int() with base 10: ''" am Chat-Listener.
+
+    11.11. 18:39: keine Room-ID ueber den Bot-Pfad, die Bibliothek bekam von
+    TikTok ein leeres roomId und rief int(''). Im Log stand der Python-
+    Wortlaut und daneben „Tunnel instabil, Sign-Quota knapp" — die falsche Spur."""
+    import types as _ty
+    from nc import raumkennung as RK
+    assert RK.gueltig("7706957896193411872") == 7706957896193411872
+    assert RK.gueltig(7706957896193411872) == 7706957896193411872
+    for leer in ("", " ", None, "None", "0", 0, -5, "12a", True, "７７"):
+        assert RK.gueltig(leer) is None, leer
+    assert RK.grund(ValueError("invalid literal for int() with base 10: ''")) == RK.GRUND_LEER
+    assert RK.grund(ValueError("invalid literal for int() with base 10: 'None'")) == RK.GRUND_LEER
+    assert RK.grund(ValueError("invalid literal for int() with base 10: 'abc'")) == \
+        "invalid literal for int() with base 10: 'abc'", "ein fremder Wortlaut bleibt"
+    assert RK.grund(RuntimeError("invalid literal for int() with base 10: ''")) != RK.GRUND_LEER
+    assert "Sign-Server" in RK.GRUND_LEER and "Abo" in RK.GRUND_LEER
+    src = open("bot.py", encoding="utf-8").read()
+    assert "room_id=int(_rid)" not in src, "eine unbepruefte Kennung wird wieder int() gerufen"
+    assert "_nc_raumkennung.gueltig(_rid_roh)" in src and "es = _nc_raumkennung.grund(e)" in src
+    _ = _ty
+    ok("W184: Room-ID nur als Ziffernfolge injiziert, leere roomId als Grund statt int('')")
+
+
+def _test_v51_w185_sendebruecke_meldungen():
+    """v5.1-W185: zwei Meldungen der Sendebruecke vom 11.11.
+
+    (1) „Sender nimmt nichts mehr an ([Errno 32] Broken pipe)" stand je Abbruch
+    rund 25-mal in derselben Millisekunde (250 Zeilen im Log): jedes weitere
+    Paket der Zubringer schrieb in die tote Pipe und meldete erneut.
+    (2) „Auflösung der Quelle ist abgestürzt (TimeoutError: )" — leerer Text."""
+    import logging as _lg
+    import os as _os
+    from nc import sendebruecke as B
+    assert B.ausnahme_text(ValueError("x")) == "ValueError: x"
+    t = B.ausnahme_text(TimeoutError())
+    assert t.startswith("TimeoutError") and "Zeitgrenze" in t and ": )" not in t, t
+    import asyncio as _aio
+    import concurrent.futures as _cf
+    assert "Zeitgrenze" in B.ausnahme_text(_aio.TimeoutError())
+    assert "Zeitgrenze" in B.ausnahme_text(_cf.TimeoutError())
+    assert B.ausnahme_text(KeyError()) == "KeyError (ohne Text)"
+
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append(r.getMessage())
+    lgb = _lg.getLogger("nc.sendebruecke")
+    h = _H()
+    lgb.addHandler(h)
+    alt_stufe = lgb.level
+    lgb.setLevel(_lg.DEBUG)
+    lese, schreib = _os.pipe()
+    W = None
+    try:
+        W = B.Bruecke(schreib, [], None, None, name="#bp", uhr=lambda: 100.0,
+                      start_warten_s=20.0)
+        W.daten(B.QUELLE, _w130_pat())
+        W.daten(B.QUELLE, _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)]))
+        W._wuensche(B.QUELLE, "Test")
+        assert W.daten(B.QUELLE, _w130_pes(0x100, 9000, 6000, rai=True))
+        _os.close(lese)
+        lese = None
+        for i in range(20):
+            assert not W.daten(B.QUELLE, _w130_pes(0x100, 12000 + i * 3000, 9000 + i * 3000))
+        bp = [z for z in zeilen if "nimmt nichts mehr an" in z and "endet" not in z]
+        assert len(bp) == 1, ("Broken pipe je Paket gemeldet", len(bp))
+        assert W.ende and "Broken pipe" in W.ende
+    finally:
+        lgb.removeHandler(h)
+        lgb.setLevel(alt_stufe)
+        if lese is not None:
+            _os.close(lese)
+        # Hat die Bruecke ihre Seite schon geschlossen, ist die Nummer frei
+        # und womoeglich neu vergeben — dann NICHT noch einmal schliessen.
+        if W is None or W._fd is not None:
+            _os.close(schreib)
+    ok("W185: Broken pipe einmal je Abbruch, TimeoutError ohne Text bekommt einen")
+
+
+def _test_v51_w186_lagebild_dienste():
+    """v5.1-W186: das Lagebild zeigt die Teile seit v5.0 — und WAS es zeigt,
+    entscheidet nc/lagebild.py, nicht das JavaScript."""
+    from nc import lagebild as L
+    leer = L.dienste({})
+    assert [x["name"] for x in leer] == list(L.DIENSTE) and len(leer) == 7
+    assert all(x["lage"] == "unbekannt" and x["grund"] == "nicht_geladen" for x in leer), \
+        "nicht geladen sah aus wie in Ordnung (W99)"
+
+    def lage(name, roh, gelesen=True):
+        x = [d for d in L.dienste({name: roh}, {name: gelesen}) if d["name"] == name][0]
+        return x["lage"], x["grund"]
+    # Encode-Schlange: Stau erst ab ENCODE_STAU_S.
+    assert lage("encode", {"laeuft": [], "wartet": []}) == ("ok", "leer")
+    assert lage("encode", {"laeuft": [{"art": "chat-einbrennen", "s": 500}],
+                           "wartet": [{"art": "clip", "s": 60}]}) == ("aktiv", "laeuft")
+    assert lage("encode", {"laeuft": [{"art": "x", "s": 1}],
+                           "wartet": [{"art": "clip", "s": L.ENCODE_STAU_S}]}) == ("warn", "stau")
+    # Upload-Schlange.
+    assert lage("upload", {"wartend": 0}) == ("ok", "leer")
+    assert lage("upload", {"wartend": 1, "fenster_offen": False, "fenster": "22–00"}) == \
+        ("ok", "fenster_zu"), "aufgeschoben ausserhalb des Fensters ist der Normalfall"
+    assert lage("upload", {"wartend": 2, "fenster_offen": True}) == ("aktiv", "sendet")
+    assert lage("upload", {"wartend": 2, "fehlversuche": 1, "fenster_offen": True}) == \
+        ("warn", "fehlversuch")
+    # Discord-Aufnahme.
+    assert lage("discord_aufnahme", {"an": False}) == ("aus", "abgeschaltet")
+    assert lage("discord_aufnahme", {"an": True, "verbunden": False}) == ("warn", "nicht_verbunden")
+    assert lage("discord_aufnahme", {"an": True, "verbunden": True}) == ("ok", "bereit")
+    # Overlay-Dauerbrowser.
+    assert lage("overlay", {"modus": "text", "restreams": 1}) == ("aus", "anderer_modus")
+    assert lage("overlay", {"modus": "html", "restreams": 0}) == ("ok", "bereit")
+    assert lage("overlay", {"modus": "html", "restreams": 2, "dauer": 2, "lebend": 1}) == \
+        ("fehler", "browser_tot"), "ein toter Chromium friert das Overlay ein"
+    assert lage("overlay", {"modus": "html", "restreams": 2, "dauer": 1, "lebend": 1}) == \
+        ("warn", "einzelschuss")
+    assert lage("overlay", {"modus": "html", "restreams": 1, "dauer": 1, "lebend": 1}) == \
+        ("aktiv", "laeuft")
+    # Tunnelwache: vor der ersten Probe ist nichts gemessen — kein ok, kein Alarm.
+    assert lage("tunnel", {"lage": "unbekannt"}) == ("unbekannt", "noch_nicht_geprueft")
+    assert lage("tunnel", {"lage": "fehler"}) == ("fehler", "fehler")
+    assert lage("tunnel", {"lage": "direkt"}) == ("aus", "kein_proxy")
+    assert lage("tunnel", {"lage": "ok"}) == ("ok", "ok")
+    # Kick-Chat.
+    assert lage("kick_chat", {"konfiguriert": False}) == ("aus", "nicht_konfiguriert")
+    assert lage("kick_chat", {"konfiguriert": True, "laeuft": True, "verbunden": False}) == \
+        ("warn", "nicht_verbunden")
+    assert lage("kick_chat", {"konfiguriert": True, "laeuft": True, "verbunden": True}) == \
+        ("ok", "verbunden")
+    # Spendenziel.
+    assert lage("spendenziel", {"ziel_eur": 0}) == ("aus", "kein_ziel")
+    assert lage("spendenziel", {"ziel_eur": 100, "aktuell_eur": 120, "prozent": 100}) == \
+        ("ok", "erreicht")
+    # Gelesen=False schlaegt Rohdaten; unlesbare Rohdaten sind kein ok.
+    assert lage("tunnel", {"lage": "ok"}, gelesen=False) == ("unbekannt", "nicht_geladen")
+    assert lage("encode", {"laeuft": 5}) == ("unbekannt", "rohdaten_unlesbar")
+
+    # Quellen: eine Ausnahme kostet nur ihren Dienst und kommt beim Aufrufer an.
+    alt = dict(L._QUELLEN)
+    try:
+        L._QUELLEN.clear()
+        L.dienst_quelle("tunnel", lambda: {"lage": "ok"})
+
+        def _kaputt():
+            raise OSError("Platte")
+        L.dienst_quelle("upload", _kaputt)
+        fehler = {}
+        roh, gelesen = L.dienste_lesen(lambda n, e: fehler.setdefault(n, e))
+        assert gelesen["tunnel"] and not gelesen["upload"] and not gelesen["encode"]
+        assert isinstance(fehler["upload"], OSError) and "encode" not in fehler, \
+            ("ein Ausfall kommt nicht beim Melder an", fehler)
+        try:
+            L.dienst_quelle("erfunden", lambda: {})
+            raise AssertionError("unbekannter Dienst angenommen")
+        except ValueError:
+            pass
+        bild = L.bauen([], [], [], {}, 1000.0, dienste_roh=roh, dienste_gelesen=gelesen)
+        assert [x["lage"] for x in bild["dienste"] if x["name"] == "tunnel"] == ["ok"]
+    finally:
+        L._QUELLEN.clear()
+        L._QUELLEN.update(alt)
+
+    # Der Bot meldet jeden Dienst an; das Deck zeichnet die Zeile.
+    src = open("bot.py", encoding="utf-8").read()
+    i = src.find("_nc_lagebild.dienst_quelle(")
+    assert i > 0
+    block = src[src.rfind("for _n, _f in (", 0, i):i]
+    for name in L.DIENSTE:
+        assert '"%s"' % name in block, ("Dienst nicht angemeldet", name)
+    deck = open("templates/dashboard.html", encoding="utf-8").read()
+    assert 'id="ov_lage_dienste"' in deck and "daten.dienste" in deck
+    assert "900" not in deck[deck.find("function dienstSatz"):deck.find("function kopf(){")], \
+        "die Stau-Grenze gehoert nach nc/lagebild.py, nicht ins JS"
+    ok("W186: Lagebild zeigt Encode-/Upload-Schlange, Discord-Aufnahme, Overlay-Browser, "
+       "Tunnelwache, Kick-Chat und Spendenziel — unbekannt ist nie ok")
 
 
 def _test_v42_w155_weiche_steckt():
@@ -35041,6 +35541,13 @@ def main():
     _test_v51_w181_ikllama_umstieg()
     _test_v51_w181_aufrufer_und_selbsttest()
     _test_v51_w181_qwen3_denkt_nicht()
+    _test_v51_w180_whisper_speicher()
+    _test_v51_w187_cookies_ohne_desktop()
+    _test_v51_w182_kein_telegram_fuer_guild()
+    _test_v51_w183_pruefschlange_und_vortritt()
+    _test_v51_w184_raumkennung()
+    _test_v51_w185_sendebruecke_meldungen()
+    _test_v51_w186_lagebild_dienste()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
