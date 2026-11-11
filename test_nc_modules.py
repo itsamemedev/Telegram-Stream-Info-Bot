@@ -12634,8 +12634,15 @@ def _test_v42_w103_ohne_url_meldung_ist_gedrosselt():
     # ── (4) UND DER ERFOLGSPFAD SETZT ZURUECK. War die Adresse von Anfang an
     # da, ist die Lage vorbei; ohne das Zuruecksetzen bliebe eine
     # WIEDERKEHRENDE Stoerung bis zu 15 Minuten unsichtbar (Lehre aus W81).
-    assert '_nc_meldetakt.zuruecksetzen("live-ohne-url")' in nach, \
+    # VERTRAG GEAENDERT (v4.2-W176): hier stand die Zusicherung auf ein
+    # blankes zuruecksetzen() — und das WAR der Fehler: der Pfad laeuft auch
+    # fuer jede Offline-Pruefung jedes anderen Nutzers und leerte die Drossel
+    # fast bei jedem Poll. Seither erfolg() je Nutzer (W157-Muster); das
+    # Verhalten misst _test_v42_w176_live_ohne_url_drossel.
+    assert '_nc_meldetakt.erfolg("live-ohne-url", username)' in nach, \
         "der Erfolgspfad setzt die Drossel nicht zurueck"
+    assert '_nc_meldetakt.zuruecksetzen("live-ohne-url")' not in nach, \
+        "jede Offline-Pruefung eines anderen Nutzers leert wieder die Drossel"
 
     ok("W103: die live-ohne-URL-Zeilen laufen gedrosselt ueber EINEN Kanal")
     ok("W103: der Drossel-Schluessel ist der Kanal, der Grund der Ausgang")
@@ -21868,7 +21875,10 @@ def _test_v42_w118_gegendruck_verdrahtet():
     assert rufe("start", "_start_gesperrt"), "RestreamManager.start fragt nicht"
     # ── (3) DIE SCHLANGE: verworfen wird gezaehlt und gemeldet, und der
     # Tracking-Abruf alle 5 s laeuft im Thread.
-    assert rufe("check_all_trackings", "_pruefung_verworfen")
+    # ANKER GEWANDERT (v4.2-W176): die Runde ohne await steht jetzt in
+    # _pruef_runde, damit check_all_trackings sie als Ganzes absichert.
+    assert rufe("check_all_trackings", "_pruef_runde")
+    assert rufe("_pruef_runde", "_pruefung_verworfen")
     direkt = [c for c in rufe("check_all_trackings", "get_all_active_trackings")]
     assert not direkt, "get_all_active_trackings wieder direkt auf dem Loop"
     assert any("to_thread(get_all_active_trackings)" in _ast.unparse(c)
@@ -22240,8 +22250,9 @@ def _test_v42_w120_speicher_waechst_nicht():
 
     baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
     fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    # ANKER GEWANDERT (v4.2-W176): die Runde steht in _pruef_runde.
     assert any(isinstance(c, _ast.Call) and getattr(c.func, "id", None) == "_speicher_pflegen"
-               for c in _ast.walk(fn["check_all_trackings"])), "niemand pflegt"
+               for c in _ast.walk(fn["_pruef_runde"])), "niemand pflegt"
     # Namen im Syntaxbaum, nicht im Text: "_CLIP_LAST" steckt auch in
     # "_HYPE_CLIP_LAST" — die Mutationsprobe ist genau daran entwischt.
     namen = {c.id for c in _ast.walk(fn["_speicher_pflegen"]) if isinstance(c, _ast.Name)}
@@ -22348,7 +22359,7 @@ def _test_v42_w121_degradiert_ist_nicht_tot():
     assert len(rueck) == 1 and _ast.unparse(rueck[0].value) == "(jsonify(daten), 200 if ok else 503)", \
         "der HTTP-Code haengt nicht mehr allein an ok: %s" % [_ast.unparse(r) for r in rueck]
     assert "daten['lage'], daten['gruende'] = _nc_lage.bewerten(daten)" in _ast.unparse(hz)
-    assert "_nc_lage.bereit()" in _ast.unparse(fn["check_all_trackings"])
+    assert "_nc_lage.bereit()" in _ast.unparse(fn["_pruef_runde"])   # ANKER GEWANDERT (v4.2-W176)
 
     inst = io.open("tools/installer.sh", encoding="utf-8").read()
     unit = inst[inst.index("ExecStart=${VENV}/bin/python ${ZIEL}/bot.py"):]
@@ -26098,7 +26109,7 @@ def _test_v42_w142_zehn_punkte():
     assert "pruefung=_nc_prueflage.fuer_healthz()" in src
     pm = _ast.unparse(_fn("_pruefstand_melden"))
     assert "log.error" in pm and "_nc_meldetakt.melden('pruefstand'" in pm
-    schleife = _ast.unparse(_fn("check_all_trackings"))
+    schleife = _ast.unparse(_fn("_pruef_runde"))   # ANKER GEWANDERT (v4.2-W176)
     assert "_pruefstand_melden(trackings)" in schleife
 
     # (6) Deck zeigt die Quellen-Statistik.
@@ -29003,7 +29014,8 @@ def _test_v42_w158_chat_in_der_aufnahme():
     lc = rumpf_ab(src, src.index("async def _start_chat_listener("))
     assert "_nc_aufnahmechat.notieren(username, who, txt)" in lc
     hs = rumpf_ab(src, src.index("async def _handle_single_tracking("))
-    assert hs.index("set_recording_file(tid, output_file, proc.pid)") < \
+    # ANKER GEWANDERT (v4.2-W176): set_recording_file laeuft im Thread.
+    assert hs.index("set_recording_file, tid, output_file, proc.pid)") < \
         hs.index("_aufnahme_chat_beginnen(username, output_file, proc)")
     hrf = next(n for n in baum.body if getattr(n, "name", "") == "handle_recording_finished")
     assert "_aufnahme_fertigmachen" in {_ast.unparse(c.func) for c in _ast.walk(hrf)
@@ -31941,6 +31953,473 @@ def _test_v42_w177_brain_verwoben():
         _sh.rmtree(tmp, ignore_errors=True)
     ok("v4.2-W177: Brain verwoben — Sync je Nutzer, Pause-Straehne, Report, Budget, "
        "Lokal-Kette, Wachstum, Archiv-Index, Embedding laut, AZRAEL-Kontext, frische Hints")
+def _w176_bot_baum():
+    import ast as _ast
+    src = io.open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = {n.name: n for n in baum.body
+          if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef))}
+    return src, baum, fn
+
+
+def _test_v42_w176_disk_guard_schont():
+    """v4.2-W176 (1): der Disk-Guard loeschte ab 88 % die aeltesten Videos,
+    ohne nach starred/backed_up zu fragen, und las die offenen Aufnahmen in
+    einem `except: pass` — bei gesperrter Datenbank war die Schutzmenge leer.
+    Gemessen gegen echtes SQL in einer eigenen Datenbank."""
+    import ast as _ast
+    import contextlib as _cl
+    import logging as _lg
+    import sqlite3 as _sq
+    import nc.storage as S
+
+    d = _ph.verzeichnis()
+    db = _sq.connect(":memory:")
+    db.row_factory = _sq.Row
+    db.execute("CREATE TABLE trackings (id INTEGER, output_file TEXT, recording INTEGER)")
+    db.execute("CREATE TABLE recordings (filepath TEXT, starred INTEGER, backed_up INTEGER)")
+    namen = {"a_gesichert.mp4": (1, 0), "b_markiert.mp4": (1, 1),
+             "c_ungesichert.mp4": (0, 0), "d_ohne_db.mp4": None,
+             "e_aktiv.mp4": (1, 0), "f_null.mp4": (None, None), "notiz.txt": (1, 0)}
+    for i, (n, z) in enumerate(namen.items()):
+        p = os.path.join(d, n)
+        _ph.attrappe(p, 1024)
+        os.utime(p, (1000 + i, 1000 + i))
+        if z is not None:
+            db.execute("INSERT INTO recordings VALUES (?,?,?)", (p, z[1], z[0]))
+    db.execute("INSERT INTO trackings VALUES (1, ?, 1)", (os.path.join(d, "e_aktiv.mp4"),))
+    db.commit()
+
+    @_cl.contextmanager
+    def _conn():
+        yield db
+
+    weg = []
+    alt = S.db_conn
+    S.db_conn = _conn
+    try:
+        res = S.notfall_raeumen(d, {".mp4"}, lambda: (95, None), 0,
+                                entfernen=weg.append)
+        assert [os.path.basename(p) for p in weg] == ["a_gesichert.mp4"], \
+            "der Disk-Guard loescht ungesicherte, markierte oder offene Aufnahmen: %s" % weg
+        assert res["deleted"] == 1 and res["geschont"] == 4, res
+        # Ziel erreicht -> keine weitere Loeschung.
+        del weg[:]
+        S.notfall_raeumen(d, {".mp4"}, lambda: (70, None), 78, entfernen=weg.append)
+        assert weg == [], "unter dem Ziel wird trotzdem geloescht"
+
+        @_cl.contextmanager
+        def _gesperrt():
+            raise _sq.OperationalError("database is locked")
+            yield  # pragma: no cover
+        S.db_conn = _gesperrt
+        try:
+            S.notfall_raeumen(d, {".mp4"}, lambda: (95, None), 0, entfernen=weg.append)
+            raise AssertionError("gesperrte Datenbank wird als leerer Bestand geraten")
+        except S.BestandUnbekannt:
+            pass
+        assert weg == [], weg
+    finally:
+        S.db_conn = alt
+
+    # Der Bot-Teil: BestandUnbekannt wird laut, ohne zu loeschen.
+    src, baum, fn = _w176_bot_baum()
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+
+    class _Speicher:
+        BestandUnbekannt = S.BestandUnbekannt
+
+        @staticmethod
+        def notfall_raeumen(*_a, **_k):
+            raise S.BestandUnbekannt("database is locked")
+
+    import nc.meldetakt as M
+    import time as _t
+    M.ZUSTAND.clear()
+    lg = _lg.getLogger("w176-disk"); hd = _H(); lg.addHandler(hd)
+    ns = {"_disk_pct": lambda: (95, object()), "DISK_AUTOCLEAN_PCT": 88,
+          "DISK_AUTOCLEAN_TARGET": 78, "_DISK_GUARD_STATE": {},
+          "_nc_storage": _Speicher, "RECORDINGS_DIR": d, "_VIDEO_EXTS": {".mp4"},
+          "_nc_meldetakt": M, "_time_mod": _t, "log": lg, "log_event": None}
+    exec(compile(_ast.Module(body=[fn["_disk_autoclean"]], type_ignores=[]),
+                 "bot.py", "exec"), ns)
+    try:
+        r = ns["_disk_autoclean"]()
+    finally:
+        lg.removeHandler(hd)
+        M.ZUSTAND.clear()
+    assert r["ran"] is False and r.get("error") == "bestand-unbekannt", r
+    assert any(lv == _lg.ERROR and "AUSGESETZT" in m for lv, m in zeilen), zeilen
+    ok("W176: Disk-Guard loescht nur gesicherte, unmarkierte, nicht offene "
+       "Aufnahmen und bricht bei unlesbarer Datenbank laut ab")
+
+
+def _test_v42_w176_live_ohne_url_drossel():
+    """v4.2-W176 (2): ein Offline-Nutzer leerte bei jeder Pruefung die
+    live-ohne-url-Drossel — 60 statt 2 Zeilen in 30 Minuten. Gemessen am
+    echten _url_nachschlag aus bot.py."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import time as _t
+    import nc.livefolge as LF
+    import nc.meldetakt as M
+
+    src, baum, fn = _w176_bot_baum()
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append(r.getMessage())
+
+    class _Q:
+        @staticmethod
+        def zaehlen(_q):
+            return None
+
+    async def _nichts(*_a, **_k):
+        return None
+
+    lg = _lg.getLogger("w176-url"); lg.setLevel(_lg.INFO); hd = _H(); lg.addHandler(hd)
+    ns = {"_nc_live": LF, "_nc_meldetakt": M, "_time_mod": _t, "log": lg,
+          "_nc_quellstat": _Q, "_resolve_via_html": _nichts,
+          "_nachschlag_ytdlp": _nichts, "_RATE_LIMIT_PENALTY": {},
+          "_RATE_LIMIT_BACKOFF": {}}
+    exec(compile(_ast.Module(body=[fn["_ohne_url_melden"], fn["_url_nachschlag"]],
+                             type_ignores=[]), "bot.py", "exec"), ns)
+    nach = ns["_url_nachschlag"]
+    M.ZUSTAND.clear(); M.STOERER.clear()
+    try:
+        for _runde in range(20):
+            _aio.run(nach("blind", None, "live", None))
+            _aio.run(nach("schlaeft", None, "offline", None))
+        laut = [z for z in zeilen if "live-ohne-URL @blind" in z]
+        assert len(laut) == 1, "die Offline-Pruefung eines anderen Nutzers leert " \
+            "die Drossel (%d Zeilen statt 1)" % len(laut)
+        # Erfolg DESSELBEN Nutzers leert sie — die naechste Stoerung ist sofort laut.
+        _aio.run(nach("blind", None, "live", {"hls_url": "https://x.example/a.m3u8"}))
+        _aio.run(nach("blind", None, "live", None))
+        laut = [z for z in zeilen if "live-ohne-URL @blind" in z]
+        assert len(laut) == 2, "nach der Erholung nicht wieder sofort laut"
+    finally:
+        lg.removeHandler(hd)
+        M.ZUSTAND.clear(); M.STOERER.clear()
+    ok("W176: live-ohne-URL-Drossel wird nur vom Erfolg desselben Nutzers geleert")
+
+
+def _test_v42_w176_flattern_seit_zurueck():
+    """v4.2-W176 (3): nach einer Trennung blieb die Verbindungsmarke `since`
+    stehen. Jeder folgende Fehlversuch galt damit als „hielt seit Stunden",
+    leerte die Akte des Flatter-Waechters, und eine Dauerstoerung nach einer
+    einmal stabilen Verbindung eskalierte nie."""
+    import ast as _ast
+    import nc.flapguard as F
+
+    # Der Mechanismus: mit veralteter Marke nie laut, mit zurueckgesetzter schon.
+    w = F.FlapWatch()
+    laut = 0
+    for i in range(10):
+        jetzt = 5000.0 + 30 * i
+        laut += w.trennung("alt", jetzt - 1000.0, jetzt).melden
+    assert laut == 0
+    w = F.FlapWatch()
+    assert any(w.trennung("neu", 0.0, 5000.0 + 30 * i).melden for i in range(10))
+
+    # Jede Aufrufstelle setzt ihre Marke direkt danach auf 0.
+    src, baum, fn = _w176_bot_baum()
+    stellen = 0
+    for n in _ast.walk(baum):
+        for feld in ("body", "orelse", "finalbody"):
+            liste = getattr(n, feld, None)
+            if not isinstance(liste, list):
+                continue
+            for i, st in enumerate(liste):
+                if not (isinstance(st, _ast.Expr) and isinstance(st.value, _ast.Call)
+                        and getattr(st.value.func, "id", "") == "_verbindung_verloren"):
+                    continue
+                stellen += 1
+                seit = next(k.value for k in st.value.keywords if k.arg == "seit")
+                quelle = _ast.unparse(seit).replace(".get('since', 0.0)", "['since']")
+                danach = liste[i + 1:i + 3]
+                assert any(isinstance(a, _ast.Assign) and _ast.unparse(a.targets[0]) == quelle
+                           and isinstance(a.value, _ast.Constant) and a.value.value == 0.0
+                           for a in danach), \
+                    "Z.%d: %s wird nach der Trennung nicht zurueckgesetzt" % (st.lineno, quelle)
+    assert stellen == 6, stellen
+    ok("W176: nach jeder Trennung faellt die Verbindungsmarke auf 0 (6 Stellen)")
+
+
+def _test_v42_w176_live_einmal_je_nutzer():
+    """v4.2-W176 (4): derselbe Nutzer in zwei Chats — zwei Discord-Embeds,
+    zwei Live-Threads, Oracle/Director doppelt, und das zweite Offline fand
+    keinen Sitzungsstart mehr."""
+    import ast as _ast
+    import nc.livemeldung as L
+
+    L.STAND.clear()
+    assert L.live_an("u") is True and L.live_an("u") is False
+    assert L.live_aus("u") is True and L.live_aus("u") is False
+    assert L.live_an("u") is True, "nach dem Offline ist ein neues Live wieder eins"
+    L.STAND.clear()   # Neustart: der Zustand ist unbekannt
+    assert L.live_aus("v") is True and L.live_aus("v") is False
+    L.STAND.clear()
+
+    src, baum, fn = _w176_bot_baum()
+    h = fn["_handle_single_tracking"]
+    eltern = {}
+    for n in _ast.walk(h):
+        for k in _ast.iter_child_nodes(n):
+            eltern[k] = n
+
+    def _bedingt(knoten):
+        while knoten in eltern:
+            knoten = eltern[knoten]
+            if isinstance(knoten, _ast.If) and _ast.unparse(knoten.test) in (
+                    "_erst", "_nc_livemeldung.live_aus(username)"):
+                return True
+        return False
+
+    zahl = {"_discord_post_user": 0, "_discord_live_thread": 0,
+            "_oracle_memorize": 0, "_director_finalize": 0}
+    for c in _ast.walk(h):
+        if isinstance(c, _ast.Call) and getattr(c.func, "id", "") in zahl:
+            zahl[c.func.id] += 1
+            assert _bedingt(c), "Z.%d: %s laeuft je Chat statt je Nutzer" % (c.lineno, c.func.id)
+    assert zahl == {"_discord_post_user": 2, "_discord_live_thread": 2,
+                    "_oracle_memorize": 1, "_director_finalize": 1}, zahl
+    sitzung = [n for n in _ast.walk(h) if isinstance(n, _ast.Subscript)
+               and _ast.unparse(n.value) == "_LIVE_SESSION_START"] + \
+              [n for n in _ast.walk(h) if isinstance(n, _ast.Call)
+               and _ast.unparse(n.func) == "_LIVE_SESSION_START.pop"]
+    assert len(sitzung) == 2 and all(_bedingt(n) for n in sitzung), \
+        "der Sitzungsstart haengt am Chat, nicht am Nutzer"
+    ok("W176: Discord-Embed, Live-Thread, Oracle, Director und Sitzungsstart "
+       "einmal je Nutzer")
+
+
+def _test_v42_w176_spawn_marker_vor_lock():
+    """v4.2-W176 (5): der Spawn-Marker kam erst nach dem Commit — dazwischen
+    gab reaper_loop den Lock frei, und der naechste Poll startete eine zweite
+    Aufnahme. Gemessen an den echten Funktionen gegen SQLite."""
+    import ast as _ast
+    import contextlib as _cl
+    import logging as _lg
+    import sqlite3 as _sq
+    import threading as _th
+    import time as _t
+
+    src, baum, fn = _w176_bot_baum()
+    db = _sq.connect(":memory:", check_same_thread=False)
+    db.row_factory = _sq.Row
+    db.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, username TEXT, "
+               "recording INTEGER DEFAULT 0, paused INTEGER DEFAULT 0, "
+               "output_file TEXT, pid INTEGER)")
+    db.execute("INSERT INTO trackings (id, username) VALUES (1, 'u'), (2, 'u')")
+    db.commit()
+    marker = {}
+    beim_update = []
+    dazwischen = []    # ein Worker, der waehrend des UPDATE eines anderen gewinnt
+
+    class _Conn:
+        def execute(self, sql, args=()):
+            if sql.startswith("UPDATE trackings SET recording=1"):
+                beim_update.append(args[0] in marker)
+                if dazwischen:
+                    dazwischen.pop()()
+            return db.execute(sql, args)
+
+        def commit(self):
+            db.commit()
+
+    @_cl.contextmanager
+    def _conn():
+        yield _Conn()
+
+    ns = {"db_conn": _conn, "_RECORDING_SPAWN_AT": marker,
+          "_RECORDING_SPAWN_LOCK": _th.Lock(), "_time_mod": _t,
+          "log": _lg.getLogger("w176-lock")}
+    teile = [fn[n] for n in ("try_acquire_recording_lock", "_lock_update",
+                             "set_recording_file")]
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
+    lock, datei = ns["try_acquire_recording_lock"], ns["set_recording_file"]
+
+    assert lock(1, username="u") is True and beim_update == [True], \
+        "der Spawn-Marker steht erst nach dem UPDATE — der Reaper sieht ein Loch"
+    vorher = marker[1]
+    # Ein zweiter Worker scheitert am selben Tracking: der Marker des ersten bleibt.
+    assert lock(1, username="u") is False and marker.get(1) is vorher, \
+        "ein gescheiterter Versuch loescht den Marker des Gewinners"
+    # ...und am anderen Tracking desselben Nutzers: dort bleibt keiner liegen.
+    assert lock(2, username="u") is False and 2 not in marker, marker
+    # Verschraenkt: B setzt seinen Marker, A gewinnt waehrend B's UPDATE, B
+    # scheitert — B darf A's Marker nicht wegraeumen.
+    db.execute("UPDATE trackings SET recording=0 WHERE id=1"); db.commit()
+    marker.clear()
+    gewinner = []
+    dazwischen.append(lambda: gewinner.append((lock(1, username="u"), marker.get(1))))
+    assert lock(1, username="u") is False and gewinner and gewinner[0][0] is True
+    assert marker.get(1) is gewinner[0][1], \
+        "der Verlierer raeumt den Marker des Gewinners weg — der Reaper sieht ein Loch"
+    # Der Reaper gibt den Lock frei -> set_recording_file meldet den Verlust.
+    db.execute("UPDATE trackings SET recording=0 WHERE id=1"); db.commit()
+    assert datei(1, "x.mp4", 4242) is False, "Aufnahme ohne Lock wird eingetragen"
+    assert db.execute("SELECT pid FROM trackings WHERE id=1").fetchone()["pid"] is None
+    db.execute("UPDATE trackings SET recording=1 WHERE id=1"); db.commit()
+    assert datei(1, "x.mp4", 4242) is True
+
+    # Der Aufrufer bricht ab und gibt einen fremden Lock nicht frei.
+    h = _ast.unparse(fn["_handle_single_tracking"])
+    assert "if not await asyncio.to_thread(set_recording_file, tid, output_file, proc.pid):" in h
+    assert "if not isinstance(e, _AufnahmeLockVerloren):" in h
+    ok("W176: Spawn-Marker vor dem Lock, Rueckgabe statt Aufnahme ohne Lock")
+
+
+def _test_v42_w176_kein_db_im_loop():
+    """v4.2-W176 (6)+(7): synchrone Datenbankaufrufe im Event-Loop, und der
+    Rate-Limit-Backoff rechnete mit der Uhr von vor der Aufloesung."""
+    import ast as _ast
+
+    src, baum, fn = _w176_bot_baum()
+    verboten = {
+        "_handle_single_tracking": {"get_tracking_state", "claim_live_transition",
+                                    "decide_preferred_recorder", "_tracking_max_duration",
+                                    "start_recording_attempt", "finish_recording_attempt",
+                                    "clear_recording", "set_recording_file",
+                                    "try_acquire_recording_lock"},
+        "_disk_alarm_loop": {"get_storage_stats"},
+        "_daily_summary_loop": {"_build_daily_summary"},
+    }
+    for f, namen in verboten.items():
+        direkt = [c.func.id for c in _ast.walk(fn[f]) if isinstance(c, _ast.Call)
+                  and getattr(c.func, "id", "") in namen]
+        assert not direkt, "%s ruft %s direkt im Loop" % (f, direkt)
+        im_thread = {a.id for c in _ast.walk(fn[f]) if isinstance(c, _ast.Call)
+                     and _ast.unparse(c.func) == "asyncio.to_thread"
+                     for a in c.args[:1] if isinstance(a, _ast.Name)}
+        assert namen <= im_thread, (f, namen - im_thread)
+    zuw = [n for n in _ast.walk(fn["_live_status_aufloesen"]) if isinstance(n, _ast.Assign)
+           and _ast.unparse(n.targets[0]) == "_RATE_LIMIT_BACKOFF[username]"]
+    assert len(zuw) == 1 and _ast.unparse(zuw[0].value) == "_time_mod.monotonic() + penalty", \
+        [_ast.unparse(z.value) for z in zuw]
+    ok("W176: Pruefpfad, Platten-Alarm und Tageszusammenfassung neben dem Loop; "
+       "Backoff mit der Uhr beim Schreiben")
+
+
+def _test_v42_w176_pruefschleife_lebt():
+    """v4.2-W176 (8): eine Ausnahme in einem Nebenschritt beendete die
+    Pruefschleife still, und weder sie noch die Worker hatten ein
+    Lebenszeichen fuer den Waechter."""
+    import ast as _ast
+    import asyncio as _aio
+    import nc.prueflage as P
+
+    src, baum, fn = _w176_bot_baum()
+    # Die Schleife: die Runde steht im try, Lebenszeichen nur nach Erfolg.
+    ca = fn["check_all_trackings"]
+    tr = [t for t in _ast.walk(ca) if isinstance(t, _ast.Try)
+          and "_pruef_runde(trackings, now, _pflege_runde)" in
+          "\n".join(_ast.unparse(b) for b in t.body)]
+    assert len(tr) == 1, "die Runde ist nicht abgesichert"
+    rumpf = "\n".join(_ast.unparse(b) for b in tr[0].body)
+    assert "_hb('check-loop')" in rumpf and "_nc_prueflage.runde_gelaufen()" in rumpf
+    assert any("_loop_fehler('check_all_trackings'" in _ast.unparse(h)
+               for h in tr[0].handlers)
+    assert isinstance(fn["_pruef_runde"], _ast.FunctionDef), "die Runde darf kein await haben"
+
+    # Die Worker: eine Ausnahme geht durch _loop_fehler, das Lebenszeichen
+    # kommt auch bei leerer Schlange, und die Schlange laeuft weiter.
+    schlaege, fehler, gesehen = [], [], []
+
+    async def _laeuft():
+        q = _aio.Queue()
+
+        async def _handle(t, _app):
+            gesehen.append(t)
+            if t == "kaputt":
+                raise RuntimeError("Nebenschritt")
+
+        class _Aio:
+            TimeoutError = _aio.TimeoutError
+
+            @staticmethod
+            async def wait_for(aw, timeout):
+                assert timeout < 420, "Warten laenger als WATCHDOG_STALL_S"
+                return await _aio.wait_for(aw, 0.05)
+
+        ns = {"live_check_queue": q, "_handle_single_tracking": _handle,
+              "_hb": schlaege.append, "_loop_fehler": lambda n, e: fehler.append(n),
+              "asyncio": _Aio}
+        exec(compile(_ast.Module(body=[fn["live_check_worker"]], type_ignores=[]),
+                     "bot.py", "exec"), ns)
+        for t in ("kaputt", "gut"):
+            q.put_nowait(t)
+        task = _aio.ensure_future(ns["live_check_worker"](None, 3))
+        await _aio.sleep(0.3)
+        task.cancel()
+        try:
+            await task
+        except _aio.CancelledError:
+            pass
+    _aio.run(_laeuft())
+    assert gesehen == ["kaputt", "gut"], "der Worker stirbt an einer Ausnahme"
+    assert fehler == ["live_check_worker"], fehler
+    assert schlaege.count("live-worker-3") >= 4, "kein Lebenszeichen bei leerer Schlange"
+
+    # /healthz: das Alter der letzten Runde.
+    alt = (dict(P.LETZTE), dict(P.RUNDE))
+    try:
+        P.LETZTE["uebersicht"] = {"aktiv": 1, "ueberfaellig": 0, "unbekannt": 0, "ausstehend": 0}
+        P.RUNDE["at"] = None
+        assert P.fuer_healthz(jetzt=100.0)["runde_vor_s"] is None
+        P.runde_gelaufen(jetzt=100.0)
+        assert P.fuer_healthz(jetzt=130.0)["runde_vor_s"] == 30.0
+    finally:
+        P.LETZTE.update(alt[0]); P.RUNDE.update(alt[1])
+    ok("W176: Pruefschleife und Worker abgesichert, mit Lebenszeichen und "
+       "Rundenalter in /healthz")
+
+
+def _test_v42_w176_vacuum_nach_faelligkeit():
+    """v4.2-W176 (9): VACUUM schlief vor dem ersten Lauf sieben Tage (jeder
+    Neustart setzte das zurueck), und es startete wie die
+    Zuschauer-Stichprobe nur mit DAILY_SUMMARY_CHAT_ID."""
+    import ast as _ast
+    import nc.dbwartung as W
+
+    d = _ph.verzeichnis()
+    p = W.stand_datei(os.path.join(d, "tiktok_bot.db"))
+    assert os.path.dirname(p) == os.path.abspath(d)
+    assert W.letzter_lauf(p) is None and W.faellig_in(None, 5.0) == 0.0
+    W.merken(p, 1000.0)
+    assert W.letzter_lauf(p) == 1000.0
+    assert W.faellig_in(W.letzter_lauf(p), 1001.0) == W.ABSTAND_S - 1
+    assert W.faellig_in(W.letzter_lauf(p), 1000.0 + W.ABSTAND_S) == 0.0
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("{kaputt")
+    assert W.letzter_lauf(p) is None, "ein unlesbarer Stand gilt nicht als faellig"
+
+    src, baum, fn = _w176_bot_baum()
+    ca = fn["check_all_trackings"]
+    for name in ("_viewer_sample_loop", "_db_vacuum_loop"):
+        aufrufe = [s for s in ca.body if isinstance(s, _ast.Expr)
+                   and _ast.unparse(s).startswith("_spawn(%s()" % name)]
+        assert aufrufe, "%s startet nicht unbedingt" % name
+    vl = fn["_db_vacuum_loop"]
+    rufe = {_ast.unparse(c.func) for c in _ast.walk(vl) if isinstance(c, _ast.Call)}
+    assert "_nc_dbwartung.faellig_in" in rufe and "_nc_dbwartung.merken" in rufe
+    schlaf = [_ast.unparse(c.args[0]) for c in _ast.walk(vl) if isinstance(c, _ast.Call)
+              and _ast.unparse(c.func) == "asyncio.sleep"]
+    assert "7 * 24 * 3600" not in schlaf, schlaf
+    merk = [i for i in _ast.walk(vl) if isinstance(i, _ast.If)
+            and _ast.unparse(i.test) == "await asyncio.to_thread(_run)"]
+    assert merk and "_nc_dbwartung.merken(" in _ast.unparse(merk[0].body[0]), \
+        "ein gescheitertes VACUUM gilt als erledigt"
+    ok("W176: VACUUM nach Faelligkeit mit gemerktem Stand, Stichprobe und "
+       "Wartung ohne Chat")
 
 
 def _test_v42_w155_weiche_steckt():
@@ -32468,6 +32947,14 @@ def main():
     _test_v42_w173_ein_spendenziel()
     _test_v42_w174_encode_warteschlange()
     _test_v42_w177_brain_verwoben()
+    _test_v42_w176_disk_guard_schont()
+    _test_v42_w176_live_ohne_url_drossel()
+    _test_v42_w176_flattern_seit_zurueck()
+    _test_v42_w176_live_einmal_je_nutzer()
+    _test_v42_w176_spawn_marker_vor_lock()
+    _test_v42_w176_kein_db_im_loop()
+    _test_v42_w176_pruefschleife_lebt()
+    _test_v42_w176_vacuum_nach_faelligkeit()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

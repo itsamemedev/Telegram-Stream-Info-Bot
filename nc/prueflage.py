@@ -141,9 +141,28 @@ def uebersicht(tids, laeuft_seit_s=None, jetzt=None):
     return aus
 
 
-def fuer_healthz():
+# v4.2-W176: wann die Pruefschleife zuletzt eine Runde GESCHAFFT hat. Die
+# Uebersicht oben wird nur alle 5 Minuten abgelegt und bleibt stehen, wenn die
+# Schleife stirbt — /healthz zeigte dann fuer immer den letzten guten Stand,
+# also „alles geprueft". Das Alter dieses Stempels macht den Tod sichtbar.
+RUNDE = {"at": None}
+
+
+def runde_gelaufen(jetzt=None):
+    RUNDE["at"] = time.time() if jetzt is None else jetzt
+
+
+def fuer_healthz(jetzt=None):
     """Die zuletzt abgelegte Uebersicht ohne Namen — /healthz ist oeffentlich
-    erreichbar (UptimeRobot), Nutzernamen gehoeren nicht hinein."""
+    erreichbar (UptimeRobot), Nutzernamen gehoeren nicht hinein.
+
+    `runde_vor_s`: Sekunden seit der letzten gelungenen Runde der
+    Pruefschleife (sie tickt alle 5 s); None, solange keine lief."""
     u = LETZTE["uebersicht"]
-    return (None if u is None else
-            {k: u[k] for k in ("aktiv", "ueberfaellig", "unbekannt", "ausstehend")})
+    aus = None
+    if u is not None:
+        aus = {k: u[k] for k in ("aktiv", "ueberfaellig", "unbekannt", "ausstehend")}
+        at = RUNDE["at"]
+        jetzt = time.time() if jetzt is None else jetzt
+        aus["runde_vor_s"] = None if at is None else round(max(0.0, jetzt - at), 1)
+    return aus

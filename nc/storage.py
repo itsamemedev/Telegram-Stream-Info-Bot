@@ -197,6 +197,88 @@ def cleanup(recordings_dir: str, days: int = 0,
             "errors": errors, "dry_run": dry_run, "retain_days": days}
 
 
+# ---- Notfall-Raeumen bei voller Platte (Disk-Guard) ---------------------------
+#
+# v4.2-W176: `_disk_autoclean` im Bot loeschte ab 88 % Belegung die AELTESTEN
+# Videos im Aufnahmeordner — ohne nachzusehen, ob eine davon markiert (starred)
+# oder ueberhaupt gesichert war. Der Docstring versprach „nur backed_up", der
+# Code kannte die Spalte nicht. Und die Liste der laufenden Aufnahmen stand in
+# `except Exception: pass`: bei gesperrter Datenbank — unter Plattenlast, also
+# genau dann, wenn der Waechter anspringt, Alltag — war die Schutzmenge leer.
+#
+# Jetzt: geloescht wird nur, was die Datenbank als gesichert und NICHT markiert
+# fuehrt, und nichts, was gerade aufgenommen wird. Ist die Datenbank nicht
+# lesbar, wird nicht geraten (BestandUnbekannt, dieselbe Regel wie W91 und
+# W149): „ich weiss nicht, was gesichert ist" heisst „ich darf nichts loeschen".
+
+
+class BestandUnbekannt(RuntimeError):
+    """Die Datenbank war nicht lesbar — welche Aufnahme gesichert, markiert
+    oder gerade offen ist, laesst sich nicht entscheiden."""
+
+
+def _notfall_bestand():
+    """-> (aktiv, loeschbar): absolute Pfade der offenen Aufnahmen und der
+    gesicherten, nicht markierten. Wirft bei Datenbankfehler."""
+    with db_conn() as conn:
+        aktiv = {os.path.abspath(r["output_file"]) for r in conn.execute(
+            "SELECT output_file FROM trackings WHERE recording=1").fetchall()
+            if r["output_file"]}
+        rows = conn.execute(
+            "SELECT filepath FROM recordings "
+            "WHERE COALESCE(backed_up, 0) = 1 AND COALESCE(starred, 0) = 0"
+        ).fetchall()
+    return aktiv, {os.path.abspath(r["filepath"]) for r in rows if r["filepath"]}
+
+
+def notfall_raeumen(recordings_dir: str, video_exts, pct_fn, ziel_pct: float,
+                    entfernen=os.remove) -> dict:
+    """Loescht die aeltesten GESICHERTEN, nicht markierten Aufnahmen, bis
+    `pct_fn()[0]` auf `ziel_pct` gefallen ist.
+
+    Rueckgabe: deleted, freed_bytes, geschont (Videos, die nicht geloescht
+    werden durften — ungesichert, markiert oder ohne Datenbankeintrag),
+    fehler. Wirft `BestandUnbekannt`, wenn die Datenbank nicht lesbar ist.
+    `entfernen` ist nur fuer den Vertrag austauschbar."""
+    try:
+        aktiv, loeschbar = _notfall_bestand()
+    except Exception as e:
+        raise BestandUnbekannt(str(e)) from e
+    kandidaten, geschont, fehler = [], 0, 0
+    for root, _dirs, files in os.walk(recordings_dir):
+        for f in files:
+            if os.path.splitext(f)[1].lower() not in video_exts:
+                continue
+            fp = os.path.join(root, f)
+            ap = os.path.abspath(fp)
+            if ap in aktiv:
+                continue
+            if ap not in loeschbar:
+                geschont += 1
+                continue
+            try:
+                kandidaten.append((os.path.getmtime(fp), os.path.getsize(fp), fp))
+            except OSError as e:
+                log.warning("Disk-Guard: %s nicht lesbar: %s", fp, e)
+                fehler += 1
+    kandidaten.sort()   # aelteste zuerst
+    deleted, freed = 0, 0
+    for _mt, sz, fp in kandidaten:
+        if pct_fn()[0] <= ziel_pct:
+            break
+        try:
+            entfernen(fp)
+        except OSError as e:
+            log.warning("Disk-Guard: %s nicht loeschbar: %s", fp, e)
+            fehler += 1
+            continue
+        deleted += 1
+        freed += sz
+        log.info("DISK-GUARD: gelöscht %s (%.0f MB)", os.path.basename(fp), sz / 1048576)
+    return {"deleted": deleted, "freed_bytes": freed, "geschont": geschont,
+            "fehler": fehler}
+
+
 # ---- Wann ist die Platte voll? ----------------------------------------------
 
 # Breite des Beobachtungsfensters in Tagen. Steht als Konstante da, weil die
