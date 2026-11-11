@@ -627,8 +627,9 @@ from nc import kennzahlen as _nc_kz  # v4.2-W122: Leistungs-Schnappschuss fuer /
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import discordziele as _nc_discordziele  # v4.2-W168: ein Clip-Kanal
+from nc import discordaufnahme as _nc_dcaufnahme  # v4.2-W175: ganze Aufnahme nach Discord
+from nc import uploadschlange as _nc_uschlange  # v4.2-W175: Warteschlange wiederholt Fehlschlaege
 from nc import linkvideo as _nc_linkvideo  # v4.2-W169: Link gepostet -> Video als Antwort
-from nc import topicumzug as _nc_topicumzug  # v4.2-W168: @name-Themen -> ein Upload-Thema
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat neu darf
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
@@ -1430,20 +1431,27 @@ def _upload_queue_save(items: list):
         json.dump(items, f, ensure_ascii=False)
     os.replace(tmp, _upload_queue_path())        # atomar
 
-def _upload_queue_add(chat_id, filepath, username, started_at, ended_at):
-    """Legt eine fertige Aufnahme zum späteren Upload in die Queue (thread-safe)."""
+def _upload_queue_add(chat_id, filepath, username, started_at, ended_at,
+                      ziel=None, grund=None):
+    """Legt eine fertige Aufnahme zum späteren Upload in die Queue (thread-safe).
+       v4.2-W175: `ziel="discord"` reiht den Discord-Versand der ganzen
+       Aufnahme ein (chat_id None); `grund` ersetzt den Fenster-Text, wenn der
+       Eintrag aus einem anderen Grund entsteht (Neustart mitten im Upload)."""
     entry = {
         "chat_id": chat_id, "file": filepath, "username": username,
         "started_at": started_at.isoformat() if started_at else None,
         "ended_at": ended_at.isoformat() if ended_at else None,
         "queued_at": datetime.now(timezone.utc).isoformat(),
     }
+    if ziel:
+        entry["ziel"] = ziel
     with _UPLOAD_QUEUE_LOCK:
         items = _upload_queue_load()
         items.append(entry)
         _upload_queue_save(items)
-    log.info(f"Upload aufgeschoben (außerhalb Fenster {UPLOAD_WINDOW_START:02d}–"
-             f"{UPLOAD_WINDOW_END:02d} Uhr): @{username} → chat {chat_id}")
+    log.info("Upload aufgeschoben (%s): @%s → %s", grund or (
+        f"außerhalb Fenster {UPLOAD_WINDOW_START:02d}–{UPLOAD_WINDOW_END:02d} Uhr"),
+        username, "Discord" if ziel == "discord" else f"chat {chat_id}")
 
 def _telegram_ziele(roh, username=""):
     """Fan-out-Ziele einer Aufnahme — nur Telegram-Chats.
@@ -1455,13 +1463,23 @@ def _telegram_ziele(roh, username=""):
     ein fehlendes Telegram-Video fuer einen Fehler haelt."""
     aus, discord = _nc_tgfehler.nur_telegram(roh)
     if discord:
-        laut, weg = _nc_meldetakt.melden("tg-nur-discord", "discord", _time_mod.monotonic(),
-                                         abstand_s=6 * 3600)
+        # v4.2-W175: Schluessel je Nutzer. Mit dem festen Grund "discord"
+        # sagte die Zeile nur den ERSTEN Nutzer an und schwieg dann sechs
+        # Stunden ueber alle anderen — wer nachsah, warum @ben fehlt, fand
+        # nur @anna im Log.
+        laut, weg = _nc_meldetakt.melden("tg-nur-discord", (username or "?").lower(),
+                                         _time_mod.monotonic(), abstand_s=6 * 3600)
         if laut:
+            # Seit W175 stimmt der Satz: die ganze Aufnahme geht in den
+            # Clip-Kanal (_aufnahme_nach_discord) — es sei denn, der Schalter
+            # ist aus, und dann muss die Zeile das sagen.
             log.info("Upload @%s: Ziel %s ist eine Discord-Guild (Tracking per /track) — "
-                     "geht nur nach Discord, nicht nach Telegram. Fuer Telegram das "
-                     "Tracking in der Gruppe anlegen.%s", username or "?",
-                     ", ".join(map(str, discord)), _nc_meldetakt.zusatz(weg))
+                     "%s Fuer Telegram das Tracking in der Gruppe anlegen.%s", username or "?",
+                     ", ".join(map(str, discord)),
+                     "geht nur nach Discord (#%s), nicht nach Telegram." % _nc_discordziele.clip_kanal()
+                     if _nc_dcaufnahme.an() else
+                     "geht NIRGENDWOHIN: %s=0 schaltet den Discord-Versand der Aufnahme ab."
+                     % _nc_dcaufnahme.SCHALTER, _nc_meldetakt.zusatz(weg))
     return aus
 
 
@@ -1515,10 +1533,15 @@ def _dashboard_trackings_umziehen():
 def _upload_queue_remove(entry):
     with _UPLOAD_QUEUE_LOCK:
         items = _upload_queue_load()
-        items = [e for e in items if not (
-            e.get("file") == entry.get("file")
-            and e.get("chat_id") == entry.get("chat_id")
-            and e.get("queued_at") == entry.get("queued_at"))]
+        items = [e for e in items if not _nc_uschlange.gleicher(e, entry)]
+        _upload_queue_save(items)
+
+
+def _upload_queue_update(entry, neu):
+    """v4.2-W175: einen Eintrag nach einem Fehlschlag fortschreiben (Zaehler,
+    naechster Versuch) — an seiner Stelle, damit die Reihenfolge bleibt."""
+    with _UPLOAD_QUEUE_LOCK:
+        items = [neu if _nc_uschlange.gleicher(e, entry) else e for e in _upload_queue_load()]
         _upload_queue_save(items)
 
 def _upload_queue_count() -> int:
@@ -1527,49 +1550,90 @@ def _upload_queue_count() -> int:
 
 async def _upload_window_loop(bot_app):
     """Lädt aufgeschobene Aufnahmen hoch, sobald das Upload-Fenster offen ist.
-       Läuft nur wenn ein Fenster konfiguriert ist (START != END)."""
-    if UPLOAD_WINDOW_START == UPLOAD_WINDOW_END:
-        return
-    log.info(f"Upload-Fenster-Loop aktiv: Uploads {UPLOAD_WINDOW_START:02d}:00–"
-             f"{UPLOAD_WINDOW_END:02d}:00 Uhr, sonst aufgeschoben.")
+
+       v4.2-W175: läuft IMMER, nicht nur mit konfiguriertem Fenster. Bis hier
+       startete die Schleife nur bei UPLOAD_WINDOW_START != _END — wer das
+       Fenster wieder abschaltete, liess jeden Eintrag in pending_uploads.json
+       fuer immer liegen. Seit W175 legt auch ein Neustart mitten im Upload
+       Eintraege an, mit und ohne Fenster. Ohne Fenster ist _is_upload_window
+       immer wahr; eine leere Schlange kostet einen Dateizugriff je Minute."""
+    if UPLOAD_WINDOW_START != UPLOAD_WINDOW_END:
+        log.info(f"Upload-Fenster-Loop aktiv: Uploads {UPLOAD_WINDOW_START:02d}:00–"
+                 f"{UPLOAD_WINDOW_END:02d}:00 Uhr, sonst aufgeschoben.")
     await asyncio.sleep(20)                     # nach Boot kurz atmen lassen
     while True:
         try:
             if _is_upload_window(datetime.now()):
-                with _UPLOAD_QUEUE_LOCK:
-                    items = _upload_queue_load()
-                if items:
-                    log.info(f"Upload-Fenster offen — {len(items)} aufgeschobene "
-                             f"Upload(s) werden jetzt gesendet.")
-                for entry in items:
-                    if not _is_upload_window(datetime.now()):
-                        break                   # Fenster zu → Rest beim nächsten Lauf
-                    fpath = entry.get("file")
-                    # v4.2-W168: ein Discord-Ziel (Guild) ist kein Telegram-Ziel
-                    # mehr — der Eintrag wird verworfen statt umgeleitet.
-                    _tg = _telegram_ziele([entry.get("chat_id")], entry.get("username"))
-                    chat_id = _tg[0] if _tg else None
-                    username = entry.get("username") or "?"
-                    if not chat_id or not fpath or not os.path.exists(fpath):
-                        _upload_queue_remove(entry)   # Datei weg → Eintrag verwerfen
-                        continue
-                    try:
-                        await split_and_send_video(
-                            chat_id, fpath, bot_app, username,
-                            started_at=_parse_iso(entry.get("started_at")),
-                            ended_at=_parse_iso(entry.get("ended_at")))
-                        _upload_queue_remove(entry)
-                        await asyncio.sleep(3)        # sanft zu Telegram
-                    except Exception as e:
-                        log.warning(f"Aufgeschobener Upload @{username} chat={chat_id} "
-                                    f"fehlgeschlagen: {e}")
-                        # NICHT entfernen → nächster Durchlauf versucht erneut
+                await _upload_queue_abarbeiten(bot_app)
         except Exception as e:
             # log.warning erscheint in einem ERROR-Log NIE. Dieser Dauerlaeufer
             # haelt die aufgeschobenen Uploads — faellt er aus, bleiben die
             # Aufnahmen fuer immer in der Warteschlange liegen.
             _loop_fehler("_upload_window_loop", e)
         await asyncio.sleep(60)
+
+
+async def _upload_queue_abarbeiten(bot_app):
+    """Ein Durchgang ueber die faelligen Eintraege (siehe nc/uploadschlange)."""
+    with _UPLOAD_QUEUE_LOCK:
+        items = _upload_queue_load()
+    faellig = [e for e in items if _nc_uschlange.faellig(e, _time_mod.time())]
+    if faellig:
+        log.info(f"Upload-Warteschlange: {len(faellig)} aufgeschobene "
+                 f"Upload(s) werden jetzt gesendet.")
+    for entry in faellig:
+        if not _is_upload_window(datetime.now()):
+            break                   # Fenster zu → Rest beim nächsten Lauf
+        fpath = entry.get("file")
+        username = entry.get("username") or "?"
+        ergebnis = {}
+        if entry.get("ziel") == "discord":
+            chat_id = "discord"
+        else:
+            # v4.2-W168: ein Discord-Ziel (Guild) ist kein Telegram-Ziel
+            # mehr — der Eintrag wird verworfen statt umgeleitet.
+            _tg = _telegram_ziele([entry.get("chat_id")], entry.get("username"))
+            chat_id = _tg[0] if _tg else None
+        if not chat_id or not fpath or not os.path.exists(fpath):
+            _upload_queue_remove(entry)
+            if fpath and not os.path.exists(fpath):
+                log.error("Upload-Warteschlange @%s: %s liegt nicht mehr auf der Platte "
+                          "(Retention?) — Eintrag verworfen, der Upload entfaellt.",
+                          username, fpath)
+            continue
+        beginn, ende = _parse_iso(entry.get("started_at")), _parse_iso(entry.get("ended_at"))
+        if chat_id == "discord":
+            await _aufnahme_nach_discord(username, fpath, beginn, ergebnis=ergebnis)
+        else:
+            await split_and_send_video(chat_id, fpath, bot_app, username, started_at=beginn,
+                                       ended_at=ende, ergebnis=ergebnis)
+        _upload_queue_nachher(entry, ergebnis, username, chat_id)
+        await asyncio.sleep(3)        # sanft zu Telegram
+
+
+def _upload_queue_nachher(entry, ergebnis, username, chat_id):
+    """v4.2-W175: entfernen NUR bei Erfolg. split_and_send_video wirft nie —
+    der bisherige `except`-Zweig („NICHT entfernen") lief deshalb nie, und
+    jeder gescheiterte Upload verschwand nach dem ersten Versuch still."""
+    if ergebnis.get("aus"):
+        _upload_queue_remove(entry)
+        log.info("Upload-Warteschlange @%s: Discord-Versand ist abgeschaltet (%s) — "
+                 "Eintrag verworfen.", username, ergebnis.get("grund") or "?")
+        return
+    lage, neu = _nc_uschlange.nach_versuch(entry, ergebnis, _time_mod.time())
+    if lage == "fertig":
+        _upload_queue_remove(entry)
+    elif lage == "wieder":
+        _upload_queue_update(entry, neu)
+        log.error("Aufgeschobener Upload @%s → %s gescheitert (Versuch %d von %d: %s) — "
+                  "naechster Versuch in %.0f min.", username, chat_id, neu["versuche"],
+                  _nc_uschlange.MAX_VERSUCHE, neu["letzter_fehler"],
+                  _nc_uschlange.pause_s(neu["versuche"]) / 60)
+    else:
+        _upload_queue_remove(entry)
+        log.error("Aufgeschobener Upload @%s → %s nach %d Versuchen AUFGEGEBEN (%s). "
+                  "Die Aufnahme bleibt auf dem Server: %s", username, chat_id,
+                  neu["versuche"], neu["letzter_fehler"], entry.get("file"))
 
 DB_PATH        = "tiktok_bot.db"
 
@@ -6356,7 +6420,9 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # output = f"{prefix}_%03d.mp4").
     cleaned_orphan_parts = 0
     try:
-        for f in glob.glob(os.path.join(RECORDINGS_DIR, "*_part_*.mp4")):
+        # v4.2-W175: dazu die Teile des Discord-Versands (nc/discordaufnahme).
+        for f in (glob.glob(os.path.join(RECORDINGS_DIR, "*_part_*.mp4"))
+                  + glob.glob(os.path.join(RECORDINGS_DIR, "*_dcpart_*.mp4"))):
             try:
                 # Defensiv: nur löschen wenn > 1h alt damit wir keine
                 # gerade-laufende Split-Operation killen.
@@ -8927,15 +8993,19 @@ async def check_all_trackings(bot_app):
     else:
         log.info(f"📡 Restream deaktiviert: {_rs_why}. Alle anderen Module laufen normal.")
     # Upload-Zeitfenster: aufgeschobene Uploads senden sobald das Fenster offen ist.
-    # Nur aktiv wenn ein Fenster konfiguriert ist (UPLOAD_WINDOW_START != _END).
+    # v4.2-W175: die Schleife laeuft immer — die Warteschlange fuellt auch ein
+    # Neustart mitten im Upload, und ein abgeschaltetes Fenster liess sie liegen.
+    _spawn(_upload_window_loop(bot_app), name="upload-window")
     if UPLOAD_WINDOW_START != UPLOAD_WINDOW_END:
-        _spawn(_upload_window_loop(bot_app), name="upload-window")
         _pend = _upload_queue_count()
         log.info(f"⏫ Upload-Fenster aktiv: {UPLOAD_WINDOW_START:02d}:00–"
                  f"{UPLOAD_WINDOW_END:02d}:00 Uhr (Uploads außerhalb werden aufgeschoben"
                  + (f", {_pend} in Warteschlange" if _pend else "") + ").")
-    # v4.2-W168: alte @name-Themen ins Upload-Thema, Dashboard-Trackings nach Telegram.
-    _spawn(_tg_topic_umzug(bot_app), name="tg-topic-umzug")
+    # v4.2-W168: Dashboard-Trackings nach Telegram. Der Topic-Umzug, der hier
+    # ebenfalls startete, ist seit v4.2-W175 entfernt: er zog @name-Themen ins
+    # gemeinsame Upload-Thema und LOESCHTE sie danach — seit der Betreiber die
+    # Themen je Nutzer zurueckwollte, haette er jedes neu angelegte @name-Thema
+    # samt Videos beim naechsten Start wieder geloescht.
     try:
         await asyncio.to_thread(_dashboard_trackings_umziehen)
     except Exception as e:
@@ -9043,6 +9113,7 @@ _TG_TOPICS = {}                      # "chat_id:username" -> message_thread_id
 _TG_TOPICS_LOCK = threading.Lock()
 _TG_FORUM_CACHE = {}                 # chat_id -> (is_forum: bool, checked_at_monotonic)
 _TG_FORUM_TTL = 3600                 # 1h: gelegentlich neu prüfen (Forum nachträglich aktiviert?)
+_TG_FORUM_FEHLER_TTL = 60            # v4.2-W175: ein Fehler beim Nachsehen gilt nur kurz
 
 def _tg_topics_path() -> str:
     return os.path.join(RECORDINGS_DIR, "tg_topics.json")
@@ -9071,11 +9142,9 @@ def _tg_topics_save():
 
 def _topic_forget(chat_id, username):
     """Mapping verwerfen (z.B. Topic wurde gelöscht) → wird neu erstellt.
-       v4.2-W168: ein Nutzername meint das Upload-Thema — dieselbe Abbildung
-       wie in _ensure_topic, sonst verwirft der Versand den alten @name-
-       Schluessel und schickt weiter in ein geloeschtes Upload-Thema."""
-    if username and not str(username).startswith("#"):
-        username = _TG_UPLOAD_TOPIC_KEY
+       v4.2-W175: derselbe Schluessel wie in _ensure_topic (je Nutzer) —
+       verwirft der Versand einen anderen als den, in den er sendet, geht
+       jeder weitere Upload in das geloeschte Thema."""
     with _TG_TOPICS_LOCK:
         if _TG_TOPICS.pop(_topic_key(chat_id, username), None) is not None:
             _tg_topics_save()
@@ -9087,24 +9156,29 @@ async def _chat_is_forum(chat_id, bot) -> bool:
         return c[0]
     try:
         chat = await bot.get_chat(chat_id)
-        is_forum = bool(getattr(chat, "is_forum", False))
-    except Exception:
-        is_forum = False
+    except Exception as e:
+        # v4.2-W175: bis hier wurde ein Fehler beim Nachsehen (Timeout, 429)
+        # als „kein Forum" eine Stunde lang gemerkt — still. Jeder Upload in
+        # dieser Stunde landete im Hauptchat statt im @name-Thema, und nichts
+        # sagte warum. Jetzt gilt die Antwort nur _TG_FORUM_FEHLER_TTL
+        # Sekunden, und der Grund steht gedrosselt im Log.
+        _TG_FORUM_CACHE[chat_id] = (False, now - _TG_FORUM_TTL + _TG_FORUM_FEHLER_TTL)
+        laut, weg = _nc_meldetakt.melden("tg-forum-pruefung", type(e).__name__, now)
+        if laut:
+            log.error("Telegram: Forum-Pruefung fuer chat %s fehlgeschlagen (%s) — Uploads "
+                      "gehen vorerst ohne Thema in den Chat; neuer Versuch in %d s.%s",
+                      chat_id, e, _TG_FORUM_FEHLER_TTL, _nc_meldetakt.zusatz(weg))
+        return False
+    is_forum = bool(getattr(chat, "is_forum", False))
     _TG_FORUM_CACHE[chat_id] = (is_forum, now)
     return is_forum
 
-# v4.2-W168: EIN Upload-Thema je Gruppe statt eines je Nutzer. Entschieden
-# vom Betreiber am 07.11. („erstellt der Bot mehrere Topics … das sollte
-# unterbunden werden"). Jede getrackte Person bekam ein eigenes @name-Thema —
-# bei 40 Trackings 40 Themen, und die Gruppe war nur noch Seitenleiste. Der
-# Schluessel traegt ein '#' wie das Melde-Thema: kein Handle kollidiert damit.
-_TG_UPLOAD_TOPIC_KEY = "#uploads"
+# v4.2-W175: wieder EIN Forum-Thema je getrackter Person („@name“). W168 hatte
+# alle Uploads einer Gruppe in ein gemeinsames Thema („🎬 Aufnahmen“, Schluessel
+# '#uploads') gelegt; der Betreiber wollte am 11.11. die Sortierung je Nutzer
+# zurueck. Das gemeinsame Thema bleibt in Telegram und in tg_topics.json stehen
+# (seine Videos gehen nicht verloren), bekommt aber keine neuen Uploads mehr.
 _TG_TOPIC_ANLEGEN = {}               # Schluessel -> asyncio.Lock (Review #210)
-
-
-def _upload_topic_name() -> str:
-    """Titel des Upload-Themas — als Funktion gelesen (.env kommt spaeter)."""
-    return (os.getenv("TELEGRAM_UPLOAD_TOPIC_NAME", "") or "").strip() or "🎬 Aufnahmen"
 
 
 async def _ensure_topic(chat_id, username, bot, name=None):
@@ -9112,21 +9186,20 @@ async def _ensure_topic(chat_id, username, bot, name=None):
        (kein Forum / keine Rechte / Fehler → Aufrufer sendet normal).
        'name' übersteuert den Topic-Titel — dafür gibt es das Melde-Thema
        (siehe _ensure_notify_topic), das keinem Nutzer gehört.
-       v4.2-W168: ein Nutzername ohne 'name' (der Upload-Fall) landet im
-       EINEN Upload-Thema der Gruppe, nicht mehr in einem @name-Thema."""
+       v4.2-W175: ein Nutzername ohne 'name' (der Upload-Fall) bekommt sein
+       eigenes Thema „@name“ — wie vor W168."""
     if not TELEGRAM_USE_TOPICS or not username:
         return None
-    if name is None and not str(username).startswith("#"):
-        username, name = _TG_UPLOAD_TOPIC_KEY, _upload_topic_name()
     key = _topic_key(chat_id, username)
     tid = _TG_TOPICS.get(key)
     if tid:
         return tid
     if not await _chat_is_forum(chat_id, bot):
         return None                  # normale Gruppe/Channel/DM → keine Topics
-    # Review #210: seit W168 teilen sich ALLE Uploads einer Gruppe einen
-    # Schluessel. Zwei gleichzeitige Uploads sahen beide „kein Thema" und
-    # legten zwei an — eines blieb verwaist. Nachsehen und Anlegen sind jetzt
+    # Review #210: zwei gleichzeitige Uploads mit demselben Schluessel (seit
+    # W175 derselbe Nutzer in zwei Fan-out-Laeufen, z. B. Warteschlange und
+    # frische Aufnahme) sahen beide „kein Thema" und legten zwei an — eines
+    # blieb verwaist. Nachsehen und Anlegen sind jetzt
     # EIN Schritt je Schluessel (modulglobal, nicht am Objekt: W-Regel).
     async with _TG_TOPIC_ANLEGEN.setdefault(key, asyncio.Lock()):
         return _TG_TOPICS.get(key) or await _topic_anlegen(chat_id, username, bot, name, key)
@@ -9149,92 +9222,6 @@ async def _topic_anlegen(chat_id, username, bot, name, key):
         log.debug(f"Topic-Erstellung übersprungen ({name or '@' + str(username)}, "
                   f"chat {chat_id}): {e}")
         return None
-
-
-async def _tg_topic_umzug(bot_app):
-    """v4.2-W168: die alten @name-Themen in das Upload-Thema umziehen.
-
-    Je Thema: jede noch vorhandene Aufnahme dieses Nutzers neu hochladen (sie
-    landet ueber _ensure_topic im Upload-Thema), und NUR wenn alle angekommen
-    sind, das alte Thema loeschen. Loeschen loescht in Telegram die Videos
-    darin — ohne diese Reihenfolge waeren sie weg. Laeuft einmal je Start;
-    was scheitert, wiederholt der naechste Start ohne Doppel (nc/topicumzug)."""
-    await asyncio.sleep(90)                 # Start-Burst und Polling zuerst
-    if not TELEGRAM_USE_TOPICS:
-        return
-    pfad = os.path.join(RECORDINGS_DIR, "tg_topic_umzug.json")
-    try:
-        zustand = await asyncio.to_thread(_nc_topicumzug.lade, pfad)
-    except (OSError, ValueError) as e:
-        log.error("Topic-Umzug: Fortschritt %s unlesbar (%s) — Umzug ausgesetzt, damit "
-                  "nichts doppelt hochgeladen wird. Datei pruefen oder loeschen.", pfad, e)
-        return
-    with _TG_TOPICS_LOCK:
-        themen = _nc_topicumzug.alte_themen(dict(_TG_TOPICS))
-    if themen:
-        log.info("Topic-Umzug: %d alte @name-Themen werden ins Upload-Thema „%s“ umgezogen.",
-                 len(themen), _upload_topic_name())
-    for chat_id, nutzer, tid in themen:
-        try:
-            await _tg_topic_umziehen(bot_app, chat_id, nutzer, tid, zustand, pfad)
-        except Exception as e:
-            _loop_fehler("tg-topic-umzug", e)
-
-
-async def _tg_topic_umziehen(bot_app, chat_id, nutzer, tid, zustand, pfad):
-    """Ein altes Thema: nachziehen, dann loeschen (siehe _tg_topic_umzug)."""
-    bot = bot_app.bot
-    while _should_defer_upload():           # das Upload-Fenster gilt auch hier
-        await asyncio.sleep(300)
-    rows = await db_async(lambda c: c.execute(
-        "SELECT filepath FROM recordings WHERE username=? ORDER BY id", (nutzer,)).fetchall())
-    alle = [r["filepath"] for r in rows if r["filepath"]]
-    da = await asyncio.to_thread(lambda: [f for f in alle if os.path.isfile(f)])
-    if len(da) < len(alle):
-        log.info("Topic-Umzug @%s: %d von %d Aufnahmen liegen nicht mehr auf der Platte "
-                 "und koennen nicht nachgezogen werden.", nutzer, len(alle) - len(da), len(alle))
-    for datei in _nc_topicumzug.offen(da, zustand, chat_id, nutzer):
-        ergebnis = {}
-        await split_and_send_video(chat_id, datei, bot_app, nutzer, ergebnis=ergebnis)
-        if not _nc_topicumzug.angekommen(ergebnis):
-            log.error("Topic-Umzug @%s: %s kam nicht an (%s) — das alte Thema bleibt "
-                      "stehen, der naechste Start versucht es erneut.", nutzer,
-                      os.path.basename(datei), ergebnis or "nichts gesendet")
-            return
-        _nc_topicumzug.gesendet(zustand, chat_id, nutzer, datei)
-        await asyncio.to_thread(_nc_topicumzug.speichere, pfad, zustand)
-        await asyncio.sleep(5)              # sanft zu Telegram
-    # Review #210: was die Retention schon geloescht hat, kann nicht
-    # nachgezogen werden — im alten Thema liegt dann die EINZIGE Kopie.
-    # Erkennbar ist das an Zeilen ohne Datei und an einem Nutzer ganz ohne
-    # Zeilen (Retention loescht Datei und Zeile). Dann wird das Thema nur
-    # GESCHLOSSEN: die Videos bleiben, neue Uploads gehen ins Upload-Thema.
-    # Eine Zeile, die samt Datei weg ist, waehrend andere noch da sind, sieht
-    # niemand — das bleibt die Grenze dieses Umzugs.
-    behalten = not alle or len(da) < len(alle)
-    try:
-        if behalten:
-            await bot.close_forum_topic(chat_id=chat_id, message_thread_id=tid)
-        else:
-            await bot.delete_forum_topic(chat_id=chat_id, message_thread_id=tid)
-    except Exception as e:
-        # Schon von Hand geloescht ist das Ziel, kein Fehler. Nur genau das —
-        # „chat not found" heisst etwas anderes.
-        _m = str(e).lower()
-        if "thread not found" not in _m and "topic_id_invalid" not in _m:
-            log.error("Topic-Umzug @%s: altes Thema %s in chat %s nicht loesch-/schliessbar: %s — "
-                      "dem Bot das Recht „Themen verwalten“ geben; der naechste Start "
-                      "versucht es erneut (ohne neu hochzuladen).", nutzer, tid, chat_id, e)
-            return
-    with _TG_TOPICS_LOCK:
-        _TG_TOPICS.pop(_topic_key(chat_id, nutzer), None)
-        _tg_topics_save()
-    _nc_topicumzug.erledigt(zustand, chat_id, nutzer)
-    await asyncio.to_thread(_nc_topicumzug.speichere, pfad, zustand)
-    log.info("Topic-Umzug @%s: %d Aufnahme(n) nachgezogen, altes Thema in chat %s %s.",
-             nutzer, len(da), chat_id,
-             "nur geschlossen (darin liegen Videos ohne Datei auf der Platte)" if behalten
-             else "geloescht")
 
 
 # ── Melde-Thema: Live/Offline gehört NIE in den Hauptchannel ────────────
@@ -9565,6 +9552,59 @@ async def _rec_auto_abschalten(data_dead, tid, username, bot_app, chat_id):
             log.error(f"B54 auto-disable DB write failed: {e}")
 
 
+async def _aufnahme_verteilen(bot_app, offen, output_file, username, started_at,
+                              ended_at, defer):
+    """Upload an alle Fan-Out-Ziele: Telegram-Chats und "discord".
+
+    `offen` gehoert dem Aufrufer: ein Ziel verlaesst die Liste erst, wenn es
+    erledigt (oder eingereiht) ist. Wird der Task dazwischen abgebrochen
+    (Neustart), steht in `offen` genau, was noch fehlt — v4.2-W175.
+    Sequenziell mit 3 s Pause zwischen Chats, damit Telegram nicht ueber
+    mehrere Uploads gleichzeitig stolpert. Ausserhalb des Upload-Fensters →
+    persistente Queue, der _upload_window_loop sendet, wenn es offen ist."""
+    erster = True
+    while offen:
+        ziel = offen[0]
+        dc = ziel == "discord"
+        if defer:
+            # v4.2-W133: Datei-Schreiben neben dem Loop (stand dort).
+            await asyncio.to_thread(_upload_queue_add, None if dc else ziel, output_file,
+                                    username, started_at, ended_at,
+                                    ziel="discord" if dc else None)
+        elif dc:
+            await _aufnahme_nach_discord(username, output_file, started_at)
+        else:
+            if not erster:
+                await asyncio.sleep(3)
+            await split_and_send_video(ziel, output_file, bot_app, username,
+                                       started_at=started_at, ended_at=ended_at)
+        erster = False
+        offen.pop(0)
+
+
+async def _upload_rest_sichern(nachlauf, output_file, username, started_at):
+    """v4.2-W175: beim Stopp die noch offenen Upload-Ziele einreihen.
+
+    Das laufende Ziel zaehlt mit: ob sein Upload durchkam, weiss niemand —
+    lieber ein Video doppelt im Chat als keins."""
+    offen = list(nachlauf.get("offen") or ())
+    for ziel in offen:
+        dc = ziel == "discord"
+        try:
+            await asyncio.to_thread(
+                _upload_queue_add, None if dc else ziel, output_file, username, started_at,
+                nachlauf.get("ende"), ziel="discord" if dc else None,
+                grund="Neustart mitten im Upload")
+        except Exception as e:
+            log.error("Upload @%s → %s beim Stopp NICHT eingereiht (%s) — die Aufnahme "
+                      "liegt auf dem Server, der Upload muss von Hand nachgeholt werden: %s",
+                      username, ziel, e, output_file)
+    if offen:
+        log.warning("Herunterfahren mitten im Upload @%s: %d Ziel(e) in die "
+                    "Upload-Warteschlange gelegt, sie gehen nach dem Neustart raus.",
+                    username, len(offen))
+
+
 async def _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
                                        started_at, attempt_id):
     """v4.2-W121: eine beim Stopp abgebrochene Aufnahme abschliessen.
@@ -9765,6 +9805,10 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
 
     watchdog_task = asyncio.create_task(_stall_watchdog())
     refresh_task = asyncio.create_task(_url_refresh_watchdog())   # B58
+    # v4.2-W175: was nach dem Eintragen noch aussteht — der Abbruchzweig
+    # unten braucht es, um bei einem Neustart mitten im Upload nicht ein
+    # zweites Mal einzutragen und die offenen Ziele in die Warteschlange zu legen.
+    nachlauf = {"eingetragen": False, "offen": [], "ende": None}
     try:
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -9898,6 +9942,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                           duration_secs=int(duration),
                           tracking_id=tid,
                           started_at=started_at, ended_at=ended_at)
+            nachlauf.update(eingetragen=True, ende=ended_at)
 
             # F37: Multi-Chat-Fan-Out. Wenn mehrere Chats denselben User tracken,
             # sollen ALLE die OFFLINE-Notif + Upload bekommen, nicht nur der Chat
@@ -9959,19 +10004,12 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                     except Exception as e:
                         log.warning(f"OFFLINE-Notif chat={fchat} @{username}: {e}")
 
-            # Upload an alle Fan-Out Chats (sequenziell mit 3s Pause zwischen Chats
-            # damit Telegram nicht über mehrere Uploads gleichzeitig stolpert).
-            # Außerhalb des Upload-Fensters → in die persistente Queue legen,
-            # der _upload_window_loop sendet sie wenn das Fenster offen ist.
-            for idx, fchat in enumerate(target_chats):
-                if _defer:
-                    # v4.2-W133: Datei-Schreiben neben dem Loop (stand dort).
-                    await asyncio.to_thread(_upload_queue_add, fchat, output_file,
-                                            username, started_at, ended_at)
-                    continue
-                if idx > 0: await asyncio.sleep(3)
-                await split_and_send_video(fchat, output_file, bot_app, username,
-                                           started_at=started_at, ended_at=ended_at)
+            # Upload an alle Fan-Out Chats und (v4.2-W175) die ganze Aufnahme
+            # nach Discord — siehe _aufnahme_verteilen.
+            nachlauf["offen"] = list(target_chats) + (
+                ["discord"] if _nc_dcaufnahme.an() else [])
+            await _aufnahme_verteilen(bot_app, nachlauf["offen"], output_file, username,
+                                      started_at, ended_at, _defer)
         else:
             # Kein File oder leer
             if file_exists:
@@ -10069,6 +10107,14 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         # F25: Bei Shutdown (SIGTERM) wird der Task gecancelt. Der Subprocess
         # läuft sonst orphan weiter — proc.kill() vor propagieren.
         cancelled = True
+        # v4.2-W175: der Abbruch kam NACH dem Eintragen, mitten im Upload
+        # (_aufnahmen_abschliessen bricht jeden finish-Task ab). ffmpeg ist
+        # dann laengst fertig. Bis hier lief trotzdem der Stopp-Pfad und trug
+        # die Datei ein zweites Mal ein — doppelte Zeile im Deck, und der
+        # Upload an die restlichen Chats war verloren.
+        if nachlauf["eingetragen"]:
+            await _upload_rest_sichern(nachlauf, output_file, username, started_at)
+            raise
         # v4.2-W121: SIGTERM statt SIGKILL, und die Datei wird EINGETRAGEN.
         # Vorher blieb sie ohne Datenbankzeile liegen — eine "Waise", die
         # /api/rec/orphans/clean zum Loeschen anbietet. Jedes Update (also
@@ -22877,6 +22923,62 @@ async def _shrink_for_discord(path, limit_mb):
     except Exception as e:
         log.debug("shrink-for-discord: %s", e)
     return None
+
+
+async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None):
+    """v4.2-W175: die GANZE Aufnahme in den Clip-Kanal, in Teilen <= Guild-Limit.
+
+    Gewuenscht am 11.11. („die gesamte Aufnahme soll nach Discord"). Die
+    Rechnung steht in nc/discordaufnahme, hier nur Kanal, Limit und Versand.
+    -> ergebnis wie split_and_send_video ({"gesendet", "fehler"}, dazu
+    "aus" wenn Schalter oder Discord fehlen) — die Warteschlange entscheidet
+    daran, ob sie es noch einmal versucht."""
+    ergebnis = {} if ergebnis is None else ergebnis
+    if not _nc_dcaufnahme.an():
+        ergebnis.update(aus=True, grund="%s=0" % _nc_dcaufnahme.SCHALTER)
+        return ergebnis
+    if not os.getenv("DISCORD_BOT_TOKEN", "").strip():
+        # Kein Discord eingerichtet ist der Normalfall vieler Installationen,
+        # kein Fehler — eine Meldung je Aufnahme erzoege zum Wegsehen (W85).
+        ergebnis.update(aus=True, grund="kein DISCORD_BOT_TOKEN")
+        return ergebnis
+    try:
+        import discord
+        client = _nc_discordstate.CLIENT["obj"]
+        ch = (await _nc_discordziele.clip_kanal_holen(client.guilds, DISCORD_GUILD_ID)
+              if client else None)
+        if ch is None:
+            ergebnis.update(fehler=ergebnis.get("fehler", 0) + 1,
+                            grund="Discord nicht verbunden oder in keiner Guild" if client
+                            else "Discord-Client nicht verbunden")
+        else:
+            _lim = _nc_dclimits.effective_upload_mb(getattr(ch.guild, "filesize_limit", 0),
+                                                    _DISCORD_UPLOAD_OVERRIDE)
+
+            async def _senden(teil, text):
+                await ch.send(content=text[:1900], file=discord.File(teil))
+            await _nc_dcaufnahme.hochladen(path, _nc_dclimits.gate_mb(_lim), _senden,
+                                           username, started_at, ergebnis)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        ergebnis.update(fehler=ergebnis.get("fehler", 0) + 1,
+                        grund="%s: %s" % (type(e).__name__, e))
+    if _nc_uschlange.angekommen(ergebnis):
+        log.info("Aufnahme @%s → Discord (#%s): %d Teil(e), %s", username,
+                 _nc_discordziele.clip_kanal(), ergebnis["gesendet"], os.path.basename(path))
+        _nc_meldetakt.zuruecksetzen("discord-aufnahme")
+    else:
+        laut, weg = _nc_meldetakt.melden("discord-aufnahme", str(ergebnis.get("grund"))[:60],
+                                         _time_mod.monotonic())
+        if laut:
+            log.error("Aufnahme @%s NICHT (vollstaendig) nach Discord: %s (%s von %s Teilen "
+                      "gesendet). Fehlt dem Bot das Recht, in #%s Dateien zu posten? Die "
+                      "Aufnahme bleibt auf dem Server: %s%s", username,
+                      ergebnis.get("grund") or "?", ergebnis.get("gesendet", 0),
+                      ergebnis.get("teile", "?"), _nc_discordziele.clip_kanal(), path,
+                      _nc_meldetakt.zusatz(weg))
+    return ergebnis
 
 
 async def _clip_to_discord(username, path, caption=""):
