@@ -42,6 +42,17 @@ ERLAUBTE_SEITE = frozenset(("same-origin", "none"))
 # Die Antwort „darf durch". Benannt, weil None hier kein Misserfolg ist,
 # sondern der Normalfall jeder Deck-Anfrage (tools/blindstellen.py).
 ERLAUBT = None
+
+
+def _t(text):
+    """Markiert Benutzertext fuer tools/i18n_extract.py (uebersetzt wird beim Gebrauch)."""
+    return text
+
+
+# Die Antwort an das Deck. Hier statt in bot.py: dort sammelt der Extraktor nur
+# Texte, die an Telegram/Discord gehen — eine JSON-Fehlerantwort waere in der
+# englischen Oberflaeche still deutsch geblieben.
+ABGEWIESEN = _t("Abgewiesen: Die Anfrage kam nicht vom Deck selbst (fremde Seite im Browser).")
 AUSNAHMEN = ("/api/kick/oauth/callback", "/api/twitch/oauth/callback",
              "/api/youtube/oauth/callback", "/api/yt/oauth/callback")
 

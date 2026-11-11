@@ -10671,9 +10671,8 @@ def _herkunft_guard():
                   "dem Deck selbst, hat eine andere Seite im Browser versucht, hier zu "
                   "schreiben.%s", request.method, request.path, grund,
                   _nc_meldetakt.zusatz(weg))
-    return jsonify(ok=False, error=_nc_i18n.t(
-        "Abgewiesen: Die Anfrage kam nicht vom Deck selbst (fremde Seite im Browser)."),
-                   grund=grund), 403
+    _txt = _nc_i18n.t(_nc_herkunft.ABGEWIESEN)
+    return jsonify(ok=False, error=_txt, grund=grund), 403
 
 
 # v37 Sicherheit: HTTP-Rate-Limiting gegen Flutung teurer Routen.
