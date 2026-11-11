@@ -25424,7 +25424,10 @@ def _test_v42_w133_drossel_und_loop():
     for fn, ziel in (("_piper_say", "_piper_pick_model"),
                      ("_stats_loop", "_nc_usage.flush"),
                      ("_stats_loop", "_nc_usage.configure"),
-                     ("handle_recording_finished", "_upload_queue_add")):
+                     # ANKER GEWANDERT (v4.2-W175): das Einreihen steht in den
+                     # benannten Schritten des Uploads.
+                     ("_aufnahme_verteilen", "_upload_queue_add"),
+                     ("_upload_rest_sichern", "_upload_queue_add")):
         rufe = [c for c in _ast.walk(_fn(fn)) if isinstance(c, _ast.Call)]
         im_thread = [c for c in rufe if _ast.unparse(c.func) == "asyncio.to_thread"
                      and c.args and _ast.unparse(c.args[0]) == ziel]
@@ -29035,6 +29038,11 @@ def _test_v42_w158_chat_in_der_aufnahme():
     ns = {"log": _lg.getLogger("w158"), "os": _os, "subprocess": _sp, "shutil": _sh,
           "json": _json, "_time_mod": _t, "_nc_aufnahmechat": A,
           "_env_int": lambda n, d: d, "_aufnahme_chat_modus": lambda: "einbrennen"}
+    # ANKER GEWANDERT (v4.2-W175): seit W174 laeuft das Einbrennen durch die
+    # Encode-Warteschlange — der Namensraum kannte _nc_encode nicht (schon auf
+    # cd97386 rot).
+    from nc import encodeschlange as _w174_encode
+    ns["_nc_encode"] = _w174_encode
     # Review #203: der Stopp-Pfad behaelt den Chat. ANKER GEWANDERT
     # (v4.2-W163, nicht der Vertrag): vorgemerkt statt beigelegt.
     st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
@@ -31662,6 +31670,16 @@ def _test_v42_w175_discord_ganze_aufnahme():
         V.neu_kodieren = lambda *a: _aio.sleep(0, result=(None, "kaputt"))
         e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
         assert e == {"gesendet": 0, "fehler": 1, "grund": "Teilen gescheitert: kaputt"}, e
+        # …und ein neu kodierter Teil, der trotzdem zu gross ist, zaehlt als Fehler.
+        teilgroessen[:] = [[30], [30]]
+
+        async def _neu_zu_gross(pfad, praefix, ziel):
+            t = "%s_re_000.mp4" % praefix
+            P.attrappe(t, 30 * MB)
+            return [t], None
+        V.neu_kodieren = _neu_zu_gross
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        assert e["gesendet"] == 0 and e["fehler"] == 1 and "bleibt 30.0 MB" in e["grund"], e
     finally:
         for k, v in alt.items():
             setattr(V, k, v)
