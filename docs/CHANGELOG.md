@@ -9,6 +9,48 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.3.1] — 2026-11-12 · „Leichtgewicht" (MariaDB-Vorgabe)
+
+Der Betreiber: MariaDB soll die Vorgabe für neue Installationen sein (W194).
+Vertrag `_test_v53_w194_mariadb_vorgabe`, 11 von 11 Mutationsproben gefangen.
+
+### Geändert
+
+- **Installer: MariaDB ist die Vorgabe** (`db_vorgabe`). Eine neue
+  Installation bekommt Server, Datenbank, Nutzer, C-Treiber (mysqlclient) und
+  die Einstellungen aus W193. SQLite bleibt die Vorgabe, wo MariaDB nicht
+  sicher einzurichten ist: `DB_BACKEND` steht schon in der `.env` (die Wahl
+  des Betreibers gilt), in SQLite liegen schon Daten (Umzug gehört
+  `update.sh --mariadb` mit Nachzählen), `--skip-system` bzw. kein
+  Paketmanager/root, unter 1 GB RAM.
+- **Rückfall:** lässt sich der Server nicht installieren oder die Datenbank
+  nicht anlegen, und hat **dieser** Lauf auf MariaDB umgeschaltet, schreibt
+  der Installer `DB_BACKEND=sqlite` und sagt es — vorher stand dann eine
+  `.env` auf mariadb, und der Bot startete gegen einen Server, den es nicht
+  gibt. War mariadb schon vorher gesetzt, bleibt es (dort liegen die Daten).
+- **`update.sh`:** der Umzug einer bestehenden SQLite-Installation ist im
+  geführten Modus die Empfehlung (Vorgabe Ja), unbeaufsichtigt weiter nur
+  mit `--mariadb`.
+- **Bewusst nicht:** die Vorgabe im Code (`bot.py`: `DB_BACKEND=sqlite`).
+  Eine bestehende SQLite-Installation ohne Eintrag stünde nach einem Update
+  sonst vor einer leeren MariaDB — in W143 sah genau das aus wie verlorene
+  Daten. Der Vertrag hält die Code-Vorgabe fest.
+
+### Behoben
+
+- **Overlay-Browser: `beenden()` wartet auf die ganze Prozessgruppe.** SIGKILL
+  an die Gruppe ist zugestellt, nicht vollzogen; `p.wait()` wartet nur auf
+  den Hauptprozess. Zygote und Renderer standen danach kurz weiter in
+  `/proc` — der W170-Vertrag fing das in der CI (einer von vier Läufen).
+  Jetzt höchstens 2 s Warten auf lebende Gruppenmitglieder (Zombies zählen
+  nicht), danach eine Warnung mit den PIDs. Vertrag
+  `_test_v53_w194_browser_gruppe`, 4 von 4 Mutationsproben gefangen.
+- `docs/INSTALL.md` (de/en) nannte für MariaDB `DB_HOST`, `DB_NAME`,
+  `DB_USER`, `DB_PASS` — Variablen, die der Bot nie gelesen hat; wer danach
+  einrichtete, landete bei den Vorgaben (`localhost`, `tiktok_bot`, leeres
+  Passwort). Jetzt `MARIADB_HOST/_DB/_USER/_PASSWORD`, und der Vertrag prüft
+  jeden genannten Namen gegen die Lesestellen im Code.
+
 ## [5.3.0] — 2026-11-12 · „Leichtgewicht"
 
 Zehn Bausteine getauscht, geteilt oder schlanker eingestellt (W193), jeder

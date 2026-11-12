@@ -365,7 +365,7 @@ DB-SCHEMA F102 — auf MariaDB werden zwei Tabellen jetzt korrekt angelegt
      • starts_at ist indiziert → VARCHAR(255) auf MariaDB (TEXT lässt sich
        dort nicht ohne Schlüssellänge indizieren).
 
-   Wenn du SQLite fährst (Standard): rein kosmetisch für dich, die
+   Wenn du SQLite fährst: rein kosmetisch für dich, die
    erzeugte SQLite-DDL ist verhaltensgleich — bestehende Tabellen bleiben
    unangetastet (CREATE TABLE IF NOT EXISTS), Snowflakes passten dort
    ohnehin. Der Fix greift nur, falls du je auf DB_BACKEND=mariadb gehst.

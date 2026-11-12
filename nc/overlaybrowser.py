@@ -92,6 +92,24 @@ def teilen() -> bool:
         "0", "false", "nein", "no", "aus", "off")
 
 
+def _gruppe_lebend(pgid):
+    """PIDs der Prozessgruppe, die noch leben (Zombies zaehlen nicht — eine
+    verwaiste Leiche raeumt init ab, sie belegt weder CPU noch Speicher).
+    Ohne /proc (kein Linux): [] — dann gibt es nichts nachzusehen."""
+    if not os.path.isdir("/proc"):
+        return []
+    lebend = []
+    for d in (e for e in os.listdir("/proc") if e.isdigit()):
+        try:
+            with open("/proc/%s/stat" % d, "rb") as f:
+                felder = f.read().rsplit(b")", 1)[1].split()
+        except (OSError, IndexError):
+            continue   # Prozess zwischen listdir und open beendet: genau das Ziel
+        if int(felder[3]) == pgid and felder[0] != b"Z":
+            lebend.append(d)
+    return lebend
+
+
 class _Verbindung:
     """Ein Chromium-Prozess und seine Steuer-Pipe. Mehrere Tabs teilen sie;
     jeder Aufruf laeuft unter `sperre` (RLock), Antworten kommen nach id."""
@@ -168,6 +186,19 @@ class _Verbindung:
             except subprocess.TimeoutExpired:
                 log.warning("Overlay-Browser: pid %s nach SIGKILL nicht beendet "
                             "— bleibt als Zombie, bis er endet.", p.pid)
+        # v5.3.1: SIGKILL an die Gruppe ist zugestellt, nicht vollzogen. Zygote
+        # und Renderer sind nicht unsere Kinder, p.wait() wartet nur auf den
+        # Hauptprozess — in der CI stand ein Helfer danach noch in /proc
+        # (W170-Vertrag, 1 von 4 Laeufen). Kurz warten, bis die Gruppe leer ist.
+        frist = time.monotonic() + 2.0
+        rest = _gruppe_lebend(p.pid)
+        while rest and time.monotonic() < frist:
+            time.sleep(0.01)
+            rest = _gruppe_lebend(p.pid)
+        if rest:
+            log.warning("Overlay-Browser: %d Prozess(e) der Gruppe %s leben 2 s nach "
+                        "SIGKILL noch (%s) — haengen vermutlich im Kernel (Platte/NFS).",
+                        len(rest), p.pid, ",".join(rest[:5]))
 
     def aufruf(self, methode, params, frist, sitzung=None):
         if self._w is None:

@@ -108,14 +108,18 @@ Tippfehler bricht ab. Vor dem Schreiben steht jede Änderung im Diff.
 ## Schritt 4 — Datenbank
 
 Die Datenbank legt sich beim ersten Start **selbst** an — nichts zu tun.
-Standard ist SQLite; für MariaDB in der `.env`:
+Seit v5.3.1 richtet der Installer bei einer **neuen** Installation MariaDB ein
+(Server, Datenbank, Nutzer, C-Treiber, Einstellungen); SQLite bleibt, wo schon
+Daten in SQLite liegen, ohne Paketmanager oder unter 1 GB RAM. Eine bestehende
+SQLite-Installation zieht `bash tools/update.sh --mariadb` um. Von Hand, in der
+`.env`:
 
 ```ini
 DB_BACKEND=mariadb
-DB_HOST=127.0.0.1
-DB_NAME=nightcrawler
-DB_USER=nightcrawler
-DB_PASS=…
+MARIADB_HOST=127.0.0.1
+MARIADB_DB=nightcrawler
+MARIADB_USER=nightcrawler
+MARIADB_PASSWORD=…
 ```
 
 ---

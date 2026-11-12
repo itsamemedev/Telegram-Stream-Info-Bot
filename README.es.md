@@ -165,8 +165,12 @@ panel (base de datos)   ›   .env   ›   valor por defecto del código
 
 ## 🗄️ Base de datos
 
-SQLite es el valor por defecto (un archivo, sin servicio). MariaDB conviene con
-muchos datos o varias máquinas: `bash tools/update.sh --mariadb` instala el
+Desde v5.3.1 MariaDB es el valor por defecto para instalaciones **nuevas**: el
+instalador configura servidor, base de datos, usuario, el controlador C y los
+ajustes; si el servidor no se puede configurar, se queda en SQLite y lo dice.
+SQLite (un archivo, sin servicio) sigue siendo el valor por defecto donde ya hay
+datos en SQLite, sin gestor de paquetes o con menos de 1 GB de RAM. Para una
+instalación SQLite existente, `bash tools/update.sh --mariadb` instala el
 servidor, crea la base de datos y el usuario, detiene el bot un momento, muda
 **cada tabla**, **vuelve a contar** y solo entonces fija `DB_BACKEND=mariadb`
 en `.env` (antes guarda `.env.vor-mariadb-<hora>`). Un destino con datos no se
@@ -355,7 +359,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.3.0** — “Peso ligero” (2026.11) |
+| Versión actual | **5.3.1** — “Peso ligero” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |

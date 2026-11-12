@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.3.0"
+VERSION = "5.3.1"
 CODENAME = "Leichtgewicht"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.3.1",
+        "date": "2026-11",
+        "title": "Leichtgewicht",
+        # Patch-Fassung: MariaDB als Installer-Vorgabe (W194).
+        "highlights": [
+            "MariaDB ist die Vorgabe fuer neue Installationen: der Installer richtet Server, Datenbank, Nutzer, C-Treiber und Einstellungen von sich aus ein",
+            "SQLite bleibt, wo MariaDB nicht sicher einzurichten ist: schon Daten in SQLite, kein Paketmanager, unter 1 GB RAM — oder SQLite steht ausdruecklich in der .env",
+            "Laesst sich der Server nicht einrichten, faellt die neue Installation auf SQLite zurueck und sagt es — statt den Bot gegen einen fehlenden Server starten zu lassen",
+            "Bestehende SQLite-Installationen werden nie still umgestellt: update.sh empfiehlt den Umzug (Vorgabe Ja) und macht ihn nur auf Nachfrage oder mit --mariadb",
+            "Die Anleitung nannte fuer MariaDB DB_HOST/DB_NAME/DB_USER/DB_PASS — Variablen, die der Bot nie gelesen hat; jetzt die echten MARIADB_*",
+        ],
+    },
     {
         "version": "5.3.0",
         "date": "2026-11",

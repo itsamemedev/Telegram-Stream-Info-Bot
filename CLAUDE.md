@@ -276,7 +276,7 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **482**, und wie bei
+`tools/blindstellen.py` misst diese Klasse, Bestand **483**, und wie bei
 W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
 Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
 „dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
@@ -295,6 +295,10 @@ Und die drei aus v5.2-W193: `return 0` am Ende von `nc/ytdlparbeiter.py` und
 `nc/piperarbeiter.py` ist das saubere Programmende bei EOF auf stdin, und
 `piperdienst.sprechen()` → `None` bei `PIPER_ARBEITER=0` heisst „vom Betreiber
 abgeschaltet, Einzelaufruf" — jeder andere Grund geht durch `_grund_melden`.
+Und die eine aus v5.3.1 in `nc/overlaybrowser.py`: `_gruppe_lebend()` → `[]`
+ohne `/proc` heisst „kein Linux, nichts zu warten", und der stille
+`continue` daneben (der einzige neue stille `except`) ist ein Prozess, der
+zwischen `listdir` und `open` endet — genau der Zustand, auf den gewartet wird.
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
 pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —
@@ -1166,9 +1170,14 @@ Konsolenzeile, nur leere Diagramme. Gefunden hat es das Messen im Browser
 mit Kontext (`header .bar`), und nach einem Umbau die Seite **mit echten
 Daten** rendern — ohne `stats.json` war der Fehler unsichtbar.
 
-**Der Betrieb läuft auf MariaDB** (`DB_BACKEND=mariadb`, seit 11/2026).
-Die Vorgabe im Code und im Installer ist weiter SQLite — aber wer am
-Datenbankpfad etwas verbessert, misst zuerst unter MariaDB. v5.2.0 hat das
+**Der Betrieb läuft auf MariaDB** (`DB_BACKEND=mariadb`, seit 11/2026), und
+seit v5.3.1 (W194) richtet der Installer sie bei **neuen** Installationen als
+Vorgabe ein. Die Vorgabe **im Code** (`bot.py`: `DB_BACKEND=sqlite`) bleibt
+bewusst: eine bestehende SQLite-Installation ohne Eintrag stünde nach einem
+Update sonst vor einer leeren MariaDB — das sah in W143 aus wie verlorene
+Daten. Umgestellt wird eine bestehende Installation nur durch `update.sh
+--mariadb` mit Nachzählen. Wer am Datenbankpfad etwas verbessert, misst
+zuerst unter MariaDB. v5.2.0 hat das
 nicht getan: der Verbindungsvorrat sparte unter SQLite 178 µs je Zugriff und
 unter MariaDB nichts, weil `db_conn()` dort einen eigenen Pool nimmt. Erst
 v5.2.1 (W192) hat den MariaDB-Pfad gemessen (233 → ~130 µs) — gegen einen

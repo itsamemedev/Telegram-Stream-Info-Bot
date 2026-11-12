@@ -560,8 +560,13 @@ else
   if [ "$W_MARIADB" = 1 ]; then
     Z_MARIA=1
   elif _fragen; then
-    erklaere "MariaDB lohnt, wenn die Datenbank gross wird oder mehrere Rechner darauf sollen. Der Umzug stoppt den Bot kurz, legt Server, Datenbank und Nutzer an, zieht jede Tabelle um, zaehlt nach und stellt erst dann die .env um. Die SQLite-Datei bleibt liegen — Rueckweg: DB_BACKEND=sqlite."
-    frage_ja "Datenbank nach MariaDB umziehen?" N && Z_MARIA=1
+    # v5.3-W194: MariaDB ist die Vorgabe fuer neue Installationen — hier also
+    # die Empfehlung (J). Unbeaufsichtigt weiter nur mit --mariadb: ein
+    # Zeitplan darf nie still einen Datenbank-Umzug ausloesen.
+    erklaere "MariaDB ist die Vorgabe fuer neue Installationen: ein eigener Server, der mit dem C-Treiber weniger CPU kostet. Der Umzug stoppt den Bot kurz, legt Server, Datenbank und Nutzer an, zieht jede Tabelle um, zaehlt nach und stellt erst dann die .env um. Die SQLite-Datei bleibt liegen — Rueckweg: DB_BACKEND=sqlite."
+    frage_ja "Datenbank nach MariaDB umziehen (empfohlen)?" J && Z_MARIA=1
+  else
+    info "Empfohlen: Umzug nach MariaDB — bash tools/update.sh --mariadb"
   fi
 fi
 # ── Lokales LLM (v5.1-W181) ──────────────────────────────────
