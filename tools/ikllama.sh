@@ -53,6 +53,7 @@
 #   LLM_MODELL_SHA256   leer = von Hugging Face; gesetzt = gegen diesen Wert
 #   LLM_MODELL_VERZ     /opt/models
 #   LLM_THREADS         4       (Aufnahmen haben Vorrang — siehe nc-ki-backends)
+#   LLM_THREADS_BATCH   leer = wie LLM_THREADS; Threads nur fuers EINLESEN des Prompts
 #   LLM_KONTEXT         8192
 #   IK_LLAMA_DIR        /opt/ik_llama.cpp
 #   IK_LLAMA_REPO       https://github.com/ikawrakow/ik_llama.cpp
@@ -165,6 +166,12 @@ MODELL_QUANT="$(wert LLM_MODELL_QUANT Q4_K_M)"
 MODELL_SHA="$(wert LLM_MODELL_SHA256 "" | tr 'A-F' 'a-f')"
 MODELL_VERZ_E="$(wert LLM_MODELL_VERZ /opt/models)"
 THREADS="$(wert LLM_THREADS 4)"
+# v5.5-W196: Threads fuers Einlesen getrennt einstellbar. Gemessen beim
+# Betreiber mit -t 4: 7,8 Token/s beim Einlesen, 3,4 beim Erzeugen. Einlesen
+# ist reine Rechenarbeit und verteilt sich gut; Erzeugen haengt am Speicher.
+# Vorgabe leer = unveraendert — die Kerne gehoeren Aufnahme und Restream, und
+# wie viel mehr Threads hier helfen, misst der Betreiber an SEINER Box.
+THREADS_BATCH="$(wert LLM_THREADS_BATCH "")"
 KONTEXT="$(wert LLM_KONTEXT 8192)"
 # v5.2-W193: KV-Cache quantisieren. Qwen3-14B: 40 Schichten x 8 KV-Koepfe x 128
 # x 2 Byte x (K+V) = 160 KiB je Token, bei 8192 Token Kontext 1,34 GB in f16,
@@ -189,6 +196,7 @@ if [ -z "$PORT" ]; then
 fi
 zahl(){ case "$2" in ''|*[!0-9]*) fehler "%s ist keine Zahl: %s" "$1" "$2"; exit 2;; esac; }
 zahl "Port" "$PORT"; zahl LLM_THREADS "$THREADS"; zahl LLM_KONTEXT "$KONTEXT"
+[ -z "$THREADS_BATCH" ] || zahl LLM_THREADS_BATCH "$THREADS_BATCH"
 [ -z "$JOBS" ] || zahl IK_LLAMA_JOBS "$JOBS"
 if [ "$((10#$PORT))" -lt 1024 ] || [ "$((10#$PORT))" -gt 65535 ]; then
   fehler "Port ausserhalb von 1024 bis 65535: %s" "$PORT"; exit 2
@@ -340,9 +348,18 @@ kv_schalter(){
   fi
 }
 
+# v5.5-W196: -tb nur, wenn gesetzt UND das Programm den Schalter kennt — ein
+# unbekannter Schalter liesse den Dienst nicht starten (wie bei kv_schalter).
+tb_schalter(){
+  [ -n "$THREADS_BATCH" ] || return 0
+  [ -x "$IK_BIN_E" ] || return 0
+  "$IK_BIN_E" --help 2>&1 | grep -q -- '--threads-batch' || return 0
+  printf ' -tb %s' "$THREADS_BATCH"
+}
+
 unit_text(){ # unit_text GROESSE_BYTES DATEI
   local _gb=$(( ($1 + 1073741823) / 1073741824 + 4 ))
-  local _kv; _kv="$(kv_schalter)"
+  local _kv; _kv="$(kv_schalter)$(tb_schalter)"
   local _alias; _alias="$(printf '%s' "${MODELL_DATEI%.gguf}" | tr 'A-Z' 'a-z')"
   cat > "$2" <<UNIT
 $MARKE — erzeugt von tools/ikllama.sh (v5.1-W181).
@@ -354,6 +371,7 @@ $MARKE — erzeugt von tools/ikllama.sh (v5.1-W181).
 #   --jinja     Chat-Vorlage aus dem Modell: nur damit wirkt enable_thinking=false
 #   KEIN --embeddings: der Schalter beschraenkt den Server auf Embeddings (W110)
 #   -ctk/-ctv   KV-Cache quantisiert (LLM_KV_CACHE, v5.2-W193), braucht -fa
+#   -tb         Threads nur fuers Einlesen (LLM_THREADS_BATCH, v5.5-W196), leer = wie -t
 [Unit]
 Description=ik_llama.cpp Server (NIGHTCRAWLER Brain-LLM, ${MODELL_DATEI%.gguf})
 After=network.target
@@ -706,7 +724,7 @@ fi
 # ── Dienst ───────────────────────────────────────────────────
 if [ "$NC_INIT" != "systemd" ]; then
   warn "Ohne systemd (gefunden: %s) wird kein Dienst eingerichtet." "$NC_INIT"
-  info "Von Hand starten: %s" "$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup$(kv_schalter)"
+  info "Von Hand starten: %s" "$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup$(kv_schalter)$(tb_schalter)"
   exit 0
 fi
 kopf "Dienst"

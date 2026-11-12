@@ -36742,6 +36742,188 @@ def _sys_exe():
     return _s.executable
 
 
+def _test_v55_w196_azrael_an_qwen():
+    """v5.5-W196: AZRAEL spricht mit der Persona ueber das lokale Modell.
+
+    Gemessen beim Betreiber (Qwen3-14B Q4, CPU, -t 4): 7,8 Token/s Einlesen,
+    3,4 Token/s Erzeugen. Bis hierher: Zeitlimits 25/75 s, ein Platz, der
+    zweite Aufrufer flog sofort in die Cloud, Claude ging vor, der Wechsel
+    stand auf log.debug — und _azrael_system enthielt die Persona gar nicht."""
+    import ast as _ast
+    import os as _os
+    import subprocess as _sp
+    import threading as _thr
+    import time as _t
+    from unittest import mock as _mock
+    from brain import llm as _llm
+    from nc import kiwahl as _kw
+
+    # (1) Der Platz: Vorrang und Wartezeit.
+    slot = _llm._Vorrangslot()
+    assert slot.erwerben(_llm.RANG["reaktion"], 0)
+    assert not slot.erwerben(_llm.RANG["gespraech"], 0), "belegt, aber kein Warten verlangt"
+    t0 = _t.monotonic()
+    assert not slot.erwerben(_llm.RANG["gespraech"], 0.2)
+    assert 0.15 <= _t.monotonic() - t0 < 2, "Wartezeit nicht eingehalten"
+    reihenfolge = []
+
+    def _warte(rang, name, verz):
+        _t.sleep(verz)
+        if slot.erwerben(rang, 5):
+            reihenfolge.append(name)
+            _t.sleep(0.05)
+            slot.freigeben()
+    a = _thr.Thread(target=_warte, args=(_llm.RANG["nebenbei"], "nebenbei", 0.0))
+    b = _thr.Thread(target=_warte, args=(_llm.RANG["gespraech"], "gespraech", 0.1))
+    a.start(); b.start()
+    _t.sleep(0.3)
+    assert slot.lage() == {"belegt": True, "wartend": 2}
+    slot.freigeben()
+    a.join(5); b.join(5)
+    assert reihenfolge == ["gespraech", "nebenbei"], \
+        "der Platz ging nicht an das Gespraech, obwohl es spaeter kam: %s" % reihenfolge
+
+    # (2) cache_prompt geht mit, die Zeiten werden gemerkt — echte Form der
+    # Antwort von llama-server (timings + usage), wie beim Betreiber gemessen.
+    rt = _llm.LLMRuntime()
+    gesendet = []
+
+    def _post(url, body, timeout):
+        gesendet.append(body)
+        return {"choices": [{"message": {"content": "Ich bin AZRAEL."}}],
+                "usage": {"prompt_tokens": 642},
+                "timings": {"prompt_n": 42, "prompt_ms": 5373.1, "prompt_per_second": 7.82,
+                            "predicted_n": 49, "predicted_ms": 14483.4,
+                            "predicted_per_second": 3.38}}
+    with _mock.patch.object(_llm.LLMRuntime, "_post", staticmethod(_post)), \
+         _mock.patch.dict(_os.environ, {"BRAIN_LLM_BACKEND": "llamacpp",
+                                        "BRAIN_LLM_MAX_CALLS_H": "10", "BRAIN_LLM_RESERVE": "8"}):
+        r = rt.chat([{"role": "user", "content": "x"}], vorrang="gespraech", warten_s=1)
+        assert r["ok"] and gesendet[-1].get("cache_prompt") is True, gesendet[-1]
+        st = rt.stats()
+        assert st["letzte_zeiten"]["gecacht"] == 600 and st["letzte_zeiten"]["prompt_neu"] == 42
+        assert st["cache_anteil"] == round(600 / 642, 3) and st["reserve"] == 8
+        # (3) Reserve: 1 von 10 verbraucht -> 9 uebrig > 8: Eigeninitiative darf.
+        assert rt.chat([{"role": "user", "content": "x"}], vorrang="nebenbei")["ok"]
+        # 2 verbraucht -> 8 uebrig = Reserve: Eigeninitiative nicht, Gespraech schon.
+        try:
+            rt.chat([{"role": "user", "content": "x"}], vorrang="nebenbei")
+            raise AssertionError("Eigeninitiative hat die Reserve der Gespraeche verbraucht")
+        except _llm.BudgetExhausted as e:
+            assert "Reserve" in str(e), e
+        assert rt.chat([{"role": "user", "content": "x"}], vorrang="reaktion")["ok"], \
+            "die Reserve gilt nur der Eigeninitiative — eine Live-Reaktion darf sie nehmen"
+        assert rt.chat([{"role": "user", "content": "x"}], vorrang="gespraech")["ok"]
+        assert rt.stats()["reserve_denied"] == 1
+    # Ohne timings (anderer Server): gecacht None, nicht 0 — 0 waere eine Behauptung.
+    rt._zeiten_merken({"choices": []})
+    assert rt.stats()["letzte_zeiten"]["gecacht"] is None
+
+    # (4) Die Wahl.
+    with _mock.patch.dict(_os.environ, {"AZRAEL_LLM": ""}):
+        with _mock.patch.object(_kw, "lokal_installiert", return_value=True):
+            assert _kw.azrael_wahl() == _kw.LOKAL
+        with _mock.patch.object(_kw, "lokal_installiert", return_value=False):
+            assert _kw.azrael_wahl() == _kw.AUTO, "lokal ohne Server schaltet AZRAEL stumm"
+    for roh, w in (("lokal", _kw.LOKAL), ("cloud", _kw.CLOUD), ("auto", _kw.AUTO)):
+        with _mock.patch.dict(_os.environ, {"AZRAEL_LLM": roh}):
+            assert _kw.azrael_wahl() == w
+    for zweck, v in (("Dead-Air", "nebenbei"), ("Director-Hype", "nebenbei"),
+                     ("Kick-Frage", "gespraech"), ("Kick-Recap", "gespraech"),
+                     ("Discord-Chat", "gespraech"), ("Telegram Voice", "gespraech"),
+                     ("reaktion", "reaktion"), (None, "gespraech")):
+        assert _kw.vorrang(zweck) == v, (zweck, _kw.vorrang(zweck))
+    assert _kw.wartezeit("nebenbei") == 0.0 and _kw.wartezeit("gespraech") == 90.0
+    assert _kw.gesamtzeit("reaktion") == 90 + 90 * 0.33 + 10
+    with _mock.patch.dict(_os.environ, {"AZRAEL_LOKAL_ZEIT_GESPRAECH": "300",
+                                        "AZRAEL_LOKAL_ZEIT_REAKTION": "3",
+                                        "AZRAEL_LOKAL_ZEIT_NEBENBEI": "viel"}):
+        assert _kw.zeitlimit("gespraech") == 300.0
+        assert _kw.zeitlimit("reaktion") == 10.0, "unter 10 s rechnet Qwen keinen Satz"
+        assert _kw.zeitlimit("nebenbei") == 60.0
+    alt = dict(_kw.AZRAEL_WEG)
+    try:
+        for k in ("lokal", "cloud", "claude", "verworfen"):
+            _kw.AZRAEL_WEG[k] = 0
+        _kw.weg_zaehlen("lokal"); _kw.weg_zaehlen("lokal"); _kw.weg_zaehlen("cloud")
+        _kw.weg_zaehlen("verworfen", "Zeitlimit")
+        lage = _kw.azrael_lage()
+        assert lage["lokal_anteil"] == round(2 / 3, 3) and lage["letzter_grund"] == "Zeitlimit"
+    finally:
+        _kw.AZRAEL_WEG.clear(); _kw.AZRAEL_WEG.update(alt)
+
+    # (5) Die Verdrahtung in bot.py — im Syntaxbaum, nicht im Text.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    def _rufe(name):
+        return [_ast.unparse(c.func) for c in _ast.walk(fn[name]) if isinstance(c, _ast.Call)]
+    assert "zweck" in [a.arg for a in fn["ai_chat"].args.args]
+    erste = fn["ai_chat"].body[1]
+    assert isinstance(erste, _ast.If) and "_azrael_ki" in _ast.unparse(erste), \
+        "der AZRAEL-Weg muss vor Claude und der Kette abzweigen"
+    lokal = _rufe("_azrael_lokal")
+    assert not [r for r in lokal if "freeai" in r or "claude" in r], \
+        "der lokale AZRAEL-Weg ruft die Cloud: %s" % lokal
+    assert "asyncio.to_thread" in lokal
+    # Die Weiche: bei `lokal` fuehrt sie nach _azrael_lokal — und nirgends direkt in die Cloud.
+    weiche = next(n for n in fn["_azrael_ki"].body if isinstance(n, _ast.If))
+    assert "_nc_kiwahl.LOKAL" in _ast.unparse(weiche.test)
+    assert [_ast.unparse(c.func) for c in _ast.walk(weiche) if isinstance(c, _ast.Call)
+            and "azrael_lokal" in _ast.unparse(c.func)], "lokal fuehrt nicht nach _azrael_lokal"
+    assert not [r for r in _rufe("_azrael_ki") if "freeai" in r or "claude" in r]
+    # JEDER Fehlerausgang meldet: beide except-Zweige und „ok=False".
+    for h in (h for h in _ast.walk(fn["_azrael_lokal"]) if isinstance(h, _ast.ExceptHandler)):
+        assert "_azrael_schweigt_melden" in _ast.unparse(h), "stiller Fehlerzweig: " + _ast.unparse(h)[:80]
+    nicht_ok = [n for n in fn["_azrael_lokal"].body if isinstance(n, _ast.If)
+                and "ok" in _ast.unparse(n.test)]
+    assert nicht_ok and "_azrael_schweigt_melden" in _ast.unparse(nicht_ok[0])
+    sw = _rufe("_azrael_schweigt_melden")
+    assert "_nc_meldetakt.melden" in sw and "log.warning" in sw
+    az = [c for c in _ast.walk(fn["azrael_chat"]) if isinstance(c, _ast.Call)
+          and _ast.unparse(c.func) == "ai_chat"]
+    assert az and any(k.arg == "zweck" and _ast.unparse(k.value) == "purpose" for k in az[0].keywords)
+    km = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "KickModerator")
+    meth = {n.name: _ast.unparse(n) for n in km.body if isinstance(n, _ast.AsyncFunctionDef)}
+    assert "zweck='gespraech'" in meth["_reply"] and "zweck='reaktion'" in meth["react"]
+    assert "_nc_kiwahl.gesamtzeit('reaktion')" in meth["react"], \
+        "die aeussere Grenze der Reaktion schneidet die lokale Antwort ab"
+    for m in ("_reply", "react"):
+        assert "_azrael_persona_kern()" in meth[m], m
+    # Persona zuerst, Wechselndes hinten.
+    sys_txt = _ast.unparse(fn["_azrael_system"])
+    i_kern, i_sich = sys_txt.index("_azrael_persona_kern()"), sys_txt.index("Sicherheitsregel")
+    i_zust = sys_txt.index("Systemzustand")
+    assert i_kern < i_sich < i_zust, "Persona vorn, Systemzustand hinter allem Festen"
+    # Kein stiller Rueckfall mehr im Chat-Pfad.
+    for f in ("llm_chat", "llm_chat_sync"):
+        assert _rufe(f).count("_ki_rueckfall_melden") == 2, \
+            "%s: beide Rueckfaelle (ohne Antwort, Ausnahme) muessen laut sein" % f
+    assert '"azrael_ki": _nc_kiwahl.azrael_lage()' in src and '"lokales_llm": _nc_kiwahl.llm_zeiten()' in src
+
+    # (6) ik_llama: -tb nur gesetzt UND bekannt.
+    d = _ph.verzeichnis()
+    fkt = _sp.run(["sed", "-n", "/^tb_schalter(){/,/^}/p", "tools/ikllama.sh"],
+                  capture_output=True, text=True).stdout
+    assert fkt.strip(), "tb_schalter fehlt"
+
+    def _tb(hilfe, wert):
+        b = _os.path.join(d, "llama-server")
+        with open(b, "w") as f:
+            f.write("#!/bin/sh\ncat <<'H'\n%s\nH\n" % hilfe)
+        _os.chmod(b, 0o755)
+        return _sp.run(["bash", "-c", fkt + "\ntb_schalter"], capture_output=True, text=True,
+                       env=dict(_os.environ, IK_BIN_E=b, THREADS_BATCH=wert)).stdout
+    assert _tb("  -tb N, --threads-batch N", "6") == " -tb 6"
+    assert _tb("  -tb N, --threads-batch N", "") == "", "leer = unveraendert"
+    assert _tb("  -t N, --threads N", "6") == "", "unbekannter Schalter liesse den Dienst nicht starten"
+    r = _sp.run(["bash", "tools/ikllama.sh", "--check"], capture_output=True, text=True,
+                timeout=120, env=dict(_os.environ, LLM_THREADS_BATCH="viele"))
+    assert r.returncode == 2 and "LLM_THREADS_BATCH" in r.stdout + r.stderr
+    ok("v5.5-W196: AZRAEL an Qwen — Vorrang, Reserve, Prompt-Cache, Persona vorn, kein stiller Wechsel")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -37163,6 +37345,7 @@ def main():
     _test_v53_w194_browser_gruppe()
     _test_v54_w195_cookies_vom_telefon()
     _test_v54_w195_ab18_und_werkzeuge()
+    _test_v55_w196_azrael_an_qwen()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()
