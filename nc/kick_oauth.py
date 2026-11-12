@@ -38,6 +38,24 @@ def gen_state():
     return secrets.token_urlsafe(24)
 
 
+# v5.2-W190: so lange gilt ein begonnener Flow. Kick leitet binnen Sekunden
+# zurueck; ein Rueckruf nach einer Viertelstunde ist kein Betreiber mehr.
+STATE_FRIST_S = 900
+
+
+def state_gueltig(state, pending, jetzt) -> bool:
+    """Passt der State des Rueckrufs zum offenen Flow — zeitkonstant, mit Frist?"""
+    import hmac as _hmac
+    erwartet = str((pending or {}).get("state") or "")
+    if not erwartet or not _hmac.compare_digest(str(state or "").encode("utf-8"),
+                                                erwartet.encode("utf-8")):
+        return False
+    ts = (pending or {}).get("ts")
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        return False                      # kein Zeitstempel = kein gueltiger Flow
+    return 0 <= float(jetzt) - ts <= STATE_FRIST_S
+
+
 def build_authorize_url(client_id, redirect_uri, scopes, state, challenge):
     """Vollständige Authorize-URL. Bei 127.0.0.1-Redirect wird der von Kick
        dokumentierte Sacrificial-`redirect`-Parameter vorangestellt (NextJS-Bug)."""

@@ -10722,10 +10722,12 @@ async function pollSendbar(dPre){
         src.innerHTML=all.map(r=>{
           if(!r||!r.user) return '';
           const prim=(d.active&&r.rid===d.active.rid);
-          return '<span class="sb-pill" data-rid="'+r.rid+'" data-user="'+r.user+
+          /* v5.2-W190: Name und Kennung escapen — der Quellname kommt aus
+             der Datenbank, nicht aus dem Deck, und landet hier als HTML. */
+          return '<span class="sb-pill" data-rid="'+esc(r.rid)+'" data-user="'+esc(r.user)+
             '" style="cursor:pointer;'+(prim?'':'opacity:.75;')+
-            'margin-right:6px" title="Klick: Restream #'+r.rid+' stoppen">@'+
-            r.user+'</span>';
+            'margin-right:6px" title="Klick: Restream #'+esc(r.rid)+' stoppen">@'+
+            esc(r.user)+'</span>';
         }).join('\u00b7 ');
         src.title=all.length+' aktive Restreams';
         src.querySelectorAll('.sb-pill').forEach(p=>{

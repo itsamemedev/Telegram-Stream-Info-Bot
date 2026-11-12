@@ -64,6 +64,8 @@ SCHUTZ_EXAKT = {
     "DASHBOARD_PORT": _GRUND_ZUGANG, "DASHBOARD_TLS_CERT": _GRUND_ZUGANG,
     "DASHBOARD_TLS_KEY": _GRUND_ZUGANG, "DASHBOARD_WERKZEUG": _GRUND_ZUGANG,
     "WEB_HOST": _GRUND_ZUGANG, "TRUSTED_PROXIES": _GRUND_ZUGANG,
+    # v5.2-W190: welche Host-Namen als Tunnel gelten (DNS-Rebinding-Riegel).
+    "DASHBOARD_HOSTNAMEN": _GRUND_ZUGANG,
     # Der Dienstname steht in Neustart-Befehlen, die das Deck anzeigt.
     "SERVICE_NAME": _GRUND_BEFEHL,
 }

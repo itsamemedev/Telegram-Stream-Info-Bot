@@ -108,7 +108,10 @@ def api_kick_oauth_callback():
     pending = _cfg_get("kick.oauth_pending", None) or {}
     if not code or not pending:
         return _oauth_page(False, "Kein Code oder kein laufender Flow.")
-    if state != pending.get("state"):
+    # v5.2-W190 (SEC): zeitkonstant und mit Frist, wie bei Twitch/YouTube.
+    # Der Rueckruf steht ohne Anmeldung offen; ein `!=` auf das Geheimnis und
+    # ein Flow, der ewig offen bleibt, waren die beiden Abweichungen davon.
+    if not _nc_kickoauth.state_gueltig(state, pending, _time_mod.time()):
         return _oauth_page(False, "State stimmt nicht — Abbruch aus Sicherheitsgründen.")
     try:
         res = _c().run_async(_kick_oauth_exchange(code, pending), timeout=30)

@@ -9,6 +9,54 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.1.1] — 2026-11-12 · „Hausrecht"
+
+Sicherheits-Durchgang (W190). Jeder Befund mit Vertrag
+(`_test_v52_w190_sicherheit`) und Mutationsprobe: 24 von 24 gefangen. Eine
+entwischte zuerst — der leere OAuth-State fiel im Vertrag aus dem falschen
+Grund (fehlender Zeitstempel); der Fall ist nachgeschärft.
+
+### Sicherheit
+
+- **DNS-Rebinding gegen den SSH-Tunnel:** `_auth_guard` liess jede Anfrage von
+  Loopback ohne Token und PIN durch. Eine fremde Seite im Browser des
+  Betreibers konnte ihren eigenen Namen kurz auf `127.0.0.1` umbiegen; der
+  Browser hielt das danach für dieselbe Seite (`Sec-Fetch-Site: same-origin`,
+  also auch am CSRF-Riegel aus W178 vorbei) und gab ihr die Antworten zu
+  lesen — das ganze Deck samt Update, Einstellungen und Löschknöpfen.
+  `nc/clientip.host_ist_lokal` prüft jetzt den Host-Kopf; ein fremder Name
+  gilt als nicht lokal und braucht Token oder PIN. Eigene Namen für den
+  Tunnel: `DASHBOARD_HOSTNAMEN` (nicht aus dem Deck setzbar).
+- **PIN-Cookie verriet die PIN:** das Cookie war `HMAC(PIN, Zeit)` mit der
+  Zeit im Klartext. Aus einem einzigen Cookie ließ sich eine sechsstellige PIN
+  offline in unter zwei Sekunden finden, danach Cookies mit beliebigem
+  Zeitstempel fälschen. Schlüssel ist jetzt ein Zufallswert des Servers
+  (`.nc_sitzung.key`, 0600, `nc/sitzungsschluessel.py`), an die PIN gebunden.
+  Bestehende PIN-Sitzungen verfallen einmal.
+  Der Installer kopiert die Datei nicht mit (eigener Schlüssel je
+  Installation); Update-Funktion und Archiv fassen `*.key` ohnehin nie an.
+- **Offener Telegram-Modus:** ohne `ALLOWED_USER_IDS`/`ALLOWED_CHAT_IDS`
+  durfte jeder, der den Bot findet, `/logs` (Fehlerzeilen mit Pfaden und
+  Namen), `/diag`, `/cookies holen` und `/update jetzt`. Diese vier brauchen
+  jetzt eine Freischaltliste und sagen das; der Discord-Shim prüft selbst auf
+  Admin und bleibt unberührt.
+- **`/healthz`** ist ohne Anmeldung erreichbar und lieferte Commit-Stand,
+  Tunnel-Lage, Prozess- und Speicherzahlen — hinter dem Proxy des Installers
+  ins Internet. Fremde von außen sehen nur noch `ok`, `db`, `loops`, `brain`,
+  `lage`, `ts`; lokal und angemeldet bleibt alles.
+- **PIN-Sperre global:** fünf Fehlversuche je Adresse hielten niemanden mit
+  einem IPv6-Präfix auf. Zusätzlich sperren 30 Fehlversuche in zehn Minuten
+  die Anmeldung für alle (der SSH-Tunnel bleibt offen), einmal gemeldet.
+- **Kick-OAuth:** State zeitkonstant verglichen und mit 15 Minuten Frist,
+  wie bei Twitch und YouTube.
+- **Deck:** Restream-Quellnamen in den Sendeleisten-Pillen werden escaped.
+
+### Behoben
+
+- `tools/ikllama.sh`: `LLM_MODELL_SHA256` wird klein geschrieben (ein aus dem
+  Browser kopierter Großbuchstaben-Wert löschte das fertige Modell als
+  „Prüfsumme stimmt nicht") und vor dem Download auf Hex geprüft.
+
 ## [5.1.0] — 2026-11-11 · „Hellhörig"
 
 ### Lokales LLM: ik_llama.cpp mit Qwen3-14B-Uncensored (v5.1 W181)

@@ -951,7 +951,8 @@ Keine Pruefsumme von Hugging Face — nur Groesse und GGUF-Kennung geprueft (SHA
 LLM_MODELL_DATEI ist keine .gguf-Datei: %s	LLM_MODELL_DATEI is not a .gguf file: %s
 LLM_MODELL_DATEI ungueltig: %s	LLM_MODELL_DATEI invalid: %s
 LLM_MODELL_REPO ungueltig: %s (Form: besitzer/name)	LLM_MODELL_REPO invalid: %s (form: owner/name)
-LLM_MODELL_SHA256 ist kein SHA-256: %s	LLM_MODELL_SHA256 is not a SHA-256: %s
+LLM_MODELL_SHA256 ist kein SHA-256 (nur 0-9a-f): %s	LLM_MODELL_SHA256 is not a SHA-256 (only 0-9a-f): %s
+LLM_MODELL_SHA256 ist kein SHA-256 (64 Zeichen): %s	LLM_MODELL_SHA256 is not a SHA-256 (64 characters): %s
 Lade %s (%s MB) — ein Abbruch wird beim naechsten Aufruf fortgesetzt.	Downloading %s (%s MB) — an interruption is resumed on the next run.
 Lokales LLM ausgelassen (vorbereitet fuer Linux mit systemd und mindestens 12 GB RAM).	Local LLM skipped (prepared for Linux with systemd and at least 12 GB RAM).
 Lokales LLM nicht eingerichtet. Einrichten: sudo bash tools/ikllama.sh	Local LLM not set up. Set up: sudo bash tools/ikllama.sh

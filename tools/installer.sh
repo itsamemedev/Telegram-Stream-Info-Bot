@@ -1319,6 +1319,10 @@ elif [ -n "$QUELLE" ]; then
     '.git' '.venv' 'recordings' 'logs' '*.db' '.env'
     '__pycache__' '.pytest_cache' '.ruff_cache' '.mypy_cache' '.coverage'
     '*.zip' '*.pyc' 'AUSLIEFERUNG.json'
+    # v5.2-W190: der Sitzungsschluessel des Decks gehoert der Installation,
+    # in der er entstand. Mitkopiert teilten sich zwei Installationen ihn —
+    # ein Cookie der einen galte dann auch in der anderen.
+    '.nc_sitzung.key' '.nc_sitzung.key.kaputt'
   )
   if have rsync; then
     RS_ARGS=(); for m in "${AUS_KOPIE[@]}"; do RS_ARGS+=(--exclude "$m"); done

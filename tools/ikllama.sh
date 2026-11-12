@@ -159,7 +159,10 @@ wert(){
 MODELL_REPO="$(wert LLM_MODELL_REPO mradermacher/Qwen3-14B-Uncensored-GGUF)"
 MODELL_DATEI="$(wert LLM_MODELL_DATEI Qwen3-14B-Uncensored.Q4_K_M.gguf)"
 MODELL_QUANT="$(wert LLM_MODELL_QUANT Q4_K_M)"
-MODELL_SHA="$(wert LLM_MODELL_SHA256 "")"
+# v5.2-W190: klein geschrieben — sha256sum liefert Kleinbuchstaben, und ein
+# gross kopierter Wert aus dem Browser loeschte sonst das fertige Modell als
+# "Pruefsumme stimmt nicht".
+MODELL_SHA="$(wert LLM_MODELL_SHA256 "" | tr 'A-F' 'a-f')"
 MODELL_VERZ_E="$(wert LLM_MODELL_VERZ /opt/models)"
 THREADS="$(wert LLM_THREADS 4)"
 KONTEXT="$(wert LLM_KONTEXT 8192)"
@@ -198,8 +201,13 @@ case "$MODELL_DATEI" in
   *.gguf) ;;
   *) fehler "LLM_MODELL_DATEI ist keine .gguf-Datei: %s" "$MODELL_DATEI"; exit 2;;
 esac
-case "$MODELL_SHA" in ''|????????????????????????????????????????????????????????????????) ;;
-  *) fehler "LLM_MODELL_SHA256 ist kein SHA-256: %s" "$MODELL_SHA"; exit 2;; esac
+# v5.2-W190: 64 Hex-Zeichen, nicht 64 beliebige — ein Tippfehler fiel sonst
+# erst nach dem Download von 9 GB auf.
+case "$MODELL_SHA" in
+  '') ;;
+  *[!0-9a-f]*) fehler "LLM_MODELL_SHA256 ist kein SHA-256 (nur 0-9a-f): %s" "$MODELL_SHA"; exit 2;;
+  ????????????????????????????????????????????????????????????????) ;;
+  *) fehler "LLM_MODELL_SHA256 ist kein SHA-256 (64 Zeichen): %s" "$MODELL_SHA"; exit 2;; esac
 for _p in "$MODELL_VERZ_E" "$IK_DIR_E"; do
   case "$_p" in /*) ;; *) fehler "Pfad muss absolut sein: %s" "$_p"; exit 2;; esac
   case "$_p" in *[!A-Za-z0-9._/-]*) fehler "Pfad mit Sonderzeichen: %s" "$_p"; exit 2;; esac
