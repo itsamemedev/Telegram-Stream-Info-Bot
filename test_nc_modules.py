@@ -12192,7 +12192,8 @@ def _test_v42_w101_krypto_block_bleibt_stehen():
     # ── (5) DER BOT MELDET DIE TEILKONFIGURATION — gedrosselt und mit den
     # fehlenden Namen. Sie hatte bis W101 gar keinen Zustand: zwei von sechs
     # Wallets sahen im Log aus wie alle sechs.
-    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    # ANKER GEWANDERT (v5.6-W197): der Erzeuger liegt in nc/oeffentlichestats.py.
+    src = _io.open(_os.path.join(wurzel, "nc", "oeffentlichestats.py"), encoding="utf-8").read()
     i = src.index('stats["crypto"] = _nc_crypto.snapshot')
     rumpf = rumpf_ab(src, i)
     # Hier stand `'"crypto-teil"' in rumpf` — und die Mutationsprobe ist
@@ -19445,7 +19446,8 @@ def _test_v42_w99_leerer_spendenblock_sagt_warum():
                 _os.environ[n] = v
 
     # ── (3) DER SERVER MELDET DEN LEEREN FALL — mit den Namen im Text.
-    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    # ANKER GEWANDERT (v5.6-W197): der Erzeuger liegt in nc/oeffentlichestats.py.
+    src = _io.open(_os.path.join(wurzel, "nc", "oeffentlichestats.py"), encoding="utf-8").read()
     # rumpf_ab statt eines Fensters fester Laenge: CLAUDE.md nennt die feste
     # Zahl namentlich als Bruchstelle, und tools/vertragscheck.py sperrt neue.
     # Der erste Anlauf dieses Vertrags trug eines, und die Sperre hat es
@@ -29996,8 +29998,10 @@ def _test_v42_w164_alles_auf_einmal():
     # Liste deshalb NICHT benutzen. Seit W173 laeuft jede Anzeige ueber EINE
     # Abfrage in nc/spendenziel.py, die 'manual' ueber die Liste einschliesst —
     # also darf dort und auf der Website nichts zusaetzlich addiert werden.
+    # ANKER GEWANDERT (v5.6-W197): der Erzeuger liegt in nc/oeffentlichestats.py.
     src = open("bot.py", encoding="utf-8").read()
-    st = src[src.index("_ziel = _nc_spendenziel.stand(_conn)") - 400:]
+    _oe = open("nc/oeffentlichestats.py", encoding="utf-8").read()
+    st = _oe[_oe.index("_ziel = _nc_spendenziel.stand(_conn)") - 400:]
     st = st[:st.index("_pp = _nc_spendeninfo.paypal()")]
     assert "_manual_donations_total" not in st, "manuelle Spenden zaehlen auf der Website doppelt"
     zq = open("nc/spendenziel.py", encoding="utf-8").read()
@@ -31318,9 +31322,11 @@ def _test_v42_w172_spenden():
         and "ParseMode.HTML" in _ast.unparse(fn)
     dsrc = open("discordbot.py", encoding="utf-8").read()
     assert 'name="spenden"' in dsrc and 'to_thread(_nc_spendeninfo.text, "md"' in dsrc
-    # Website und /spenden lesen PayPal an EINER Stelle.
-    assert "_nc_spendeninfo.paypal()" in src and \
-        'os.getenv("DONATION_PAYPAL"' not in src, "zweite PayPal-Lesestelle in bot.py"
+    # Website und /spenden lesen PayPal an EINER Stelle. ANKER GEWANDERT
+    # (v5.6-W197): der Website-Erzeuger liegt in nc/oeffentlichestats.py.
+    _oe = open("nc/oeffentlichestats.py", encoding="utf-8").read()
+    assert "_nc_spendeninfo.paypal()" in _oe and \
+        'os.getenv("DONATION_PAYPAL"' not in src + _oe, "zweite PayPal-Lesestelle"
     ok("v4.2-W172: /spenden auf Telegram und Discord — PayPal, Krypto, Ziel, leer laut")
 
 
@@ -31397,7 +31403,12 @@ def _test_v42_w173_ein_spendenziel():
 
     # (5) Jede Anzeige liest dieselbe Rechnung — und keine rechnet mehr selbst.
     src = open("bot.py", encoding="utf-8").read()
-    baum = _ast.parse(src)
+    # ANKER GEWANDERT (v5.6-W197): der Website-Erzeuger liegt in
+    # nc/oeffentlichestats.py; der Monolith darf keinen zweiten haben.
+    assert not any(isinstance(n, _ast.FunctionDef)
+                   and "stats[\"donation\"]" in _ast.unparse(n).replace("'", '"')
+                   for n in _ast.parse(src).body), "zweiter Website-Erzeuger im Monolithen"
+    baum = _ast.parse(open("nc/oeffentlichestats.py", encoding="utf-8").read())
     ps = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
               and "stats[\"donation\"]" in _ast.unparse(n).replace("'", '"'))
     psq = _ast.unparse(ps)
@@ -36933,6 +36944,156 @@ def _test_v55_w196_azrael_an_qwen():
     ok("v5.5-W196: AZRAEL an Qwen — Vorrang, Reserve, Prompt-Cache, Persona vorn, kein stiller Wechsel")
 
 
+def _test_v56_w197_oeffentliche_stats():
+    """v5.6-W197 (Monolith): der Erzeuger von stats.json lebt in
+    nc/oeffentlichestats.py. Echt ausgefuehrt gegen die Testdatenbank: die
+    Fassung kommt per configure(), keine Aufnahme-Zahl wird oeffentlich, und
+    ein ausgefallener Teil meldet sich (vorher sechs stille Auffaenge — die
+    Website zeigte Nullen, das Log nichts)."""
+    import logging as _lg
+    import os as _os_w197
+    from nc import oeffentlichestats as O
+    gemeldet = []
+    alt = dict(O._KONF)
+    alt_fakten = O._nc_news.collect_facts
+    # nc.news braucht im Bot eigene Startwerte; hier zaehlt der Erzeuger.
+    O._nc_news.collect_facts = lambda: {"tracked": 3, "live_today_count": 1,
+                                        "platforms": ["Kick"], "agents_active": 0, "kg_facts": 0}
+    O.configure(version="9.9.9", loop_fehler=lambda n, e: gemeldet.append(n))
+    # Eigene Datenbank: die gemeinsame Testdatenbank ist im Gesamtlauf anders
+    # belegt als einzeln — ein Vertrag darf davon nicht abhaengen.
+    import contextlib as _ctl
+    import sqlite3 as _sq
+    _pfad = _os_w197.path.join(_ph.verzeichnis(), "oeff.db")
+    _c = _sq.connect(_pfad)
+    _c.execute("CREATE TABLE recording_attempts (username TEXT, started_at TEXT)")
+    _c.execute("CREATE TABLE kick_mod_log (ts TEXT, kind TEXT)")
+    from datetime import datetime as _dt, timezone as _tz
+    _jetzt = _dt.now(_tz.utc).isoformat()
+    _c.executemany("INSERT INTO recording_attempts VALUES (?,?)", [("a", _jetzt), ("b", _jetzt)])
+    _c.executemany("INSERT INTO kick_mod_log VALUES (?,?)", [(_jetzt, "warn"), (_jetzt, "chat")])
+    _c.commit(); _c.close()
+
+    @_ctl.contextmanager
+    def _eigene_db():
+        k = _sq.connect(_pfad)
+        k.row_factory = _sq.Row
+        try:
+            yield k
+        finally:
+            k.close()
+    alt_db0 = O.db_conn
+    O.db_conn = _eigene_db
+    try:
+        st = O.public_stats()
+        assert st["version"] == "9.9.9", "die Fassung kommt nicht per configure()"
+        assert len(st["live_7d"]) == 7 and st["live_7d"][-1]["live"] == 2, st["live_7d"]
+        assert st["moderation_7d"] == 2 and st["mod_7d"][-1]["n"] == 1, \
+            ("Moderations-Serie zaehlt falsch (nur timeout/ban/flag/delete/warn)", st["mod_7d"])
+        for k in st:
+            assert "recording" not in k and "aufnahm" not in k.lower(), \
+                "Aufnahme-Zahl in den oeffentlichen Stats: " + k
+
+        class _Fang(_lg.Handler):
+            def __init__(self):
+                super().__init__()
+                self.zeilen = []
+
+            def emit(self, r):
+                self.zeilen.append(r.getMessage())
+        fang = _Fang()
+        _lg.getLogger("TikTokBot").addHandler(fang)
+        alt_db = O.db_conn
+
+        def _kaputt():
+            raise RuntimeError("database is locked")
+        O.db_conn = _kaputt
+        from nc import meldetakt as _mt
+        _mt.zuruecksetzen("oeffentliche-stats")
+        try:
+            st2 = O.public_stats()
+        finally:
+            O.db_conn = alt_db
+            _lg.getLogger("TikTokBot").removeHandler(fang)
+        assert st2["live_7d"] == [] and st2["moderation_7d"] == 0, st2
+        assert "spendenziel-website" in gemeldet, "Spendenziel-Ausfall geht nicht an die Schleifen-Meldung"
+        assert any("Teil live_7d fiel aus" in z and "database is locked" in z
+                   for z in fang.zeilen), ("Teilausfall still", fang.zeilen)
+    finally:
+        O.db_conn = alt_db0
+        O._KONF.clear(); O._KONF.update(alt)
+        O._nc_news.collect_facts = alt_fakten
+    b = open("bot.py", encoding="utf-8").read()
+    assert "def _public_stats(" not in b, "zweiter Erzeuger im Monolithen"
+    assert "_nc_oeffstats.configure(version=BOT_VERSION" in b
+    ok("v5.6-w197: stats.json-Erzeuger aus bot.py geloest — Fassung per configure, Teilausfaelle laut")
+
+
+def _test_v56_w197_tagesbericht():
+    """v5.6-W197 (Monolith): der Tagesbericht lebt in nc/tagesbericht.py. Echt
+    gebaut gegen die Testdatenbank, die beiden Lagen kommen als FUNKTIONEN per
+    configure() — ein Wert waere beim Start eingefroren und meldete fuer immer
+    den Plattenstand von damals."""
+    import contextlib as _ctl
+    import os as _os_tb
+    import sqlite3 as _sq
+    from nc import tagesbericht as T
+    alt = dict(T._KONF)
+    stand = {"pct": 50}
+    # Eigene Datenbank — die gemeinsame ist im Gesamtlauf anders belegt.
+    _pfad = _os_tb.path.join(_ph.verzeichnis(), "tag.db")
+    _c = _sq.connect(_pfad)
+    _c.execute("CREATE TABLE trackings (paused INTEGER, last_live INTEGER, recording INTEGER)")
+    _c.execute("CREATE TABLE recordings (username TEXT, created_at TEXT)")
+    _c.execute("CREATE TABLE recording_attempts (started_at TEXT, outcome TEXT)")
+    from datetime import datetime as _dt, timezone as _tz
+    _j = _dt.now(_tz.utc).isoformat()
+    _c.executemany("INSERT INTO trackings VALUES (?,?,?)", [(0, 1, 1), (1, 0, 0), (0, 0, 0)])
+    _c.executemany("INSERT INTO recordings VALUES (?,?)", [("anna", _j), ("anna", _j), ("bo", _j)])
+    _c.executemany("INSERT INTO recording_attempts VALUES (?,?)",
+                   [(_j, "ok"), (_j, "early_disconnect"), (_j, "stall_killed_partial"), (_j, "x")])
+    _c.commit(); _c.close()
+
+    @_ctl.contextmanager
+    def _eigene_db():
+        k = _sq.connect(_pfad)
+        k.row_factory = _sq.Row
+        try:
+            yield k
+        finally:
+            k.close()
+    alt_db = T.db_conn
+    T.db_conn = _eigene_db
+    T.configure(storage=lambda: {"disk": {"total_bytes": 100, "used_bytes": stand["pct"]},
+                                 "recordings_dir": {"total_bytes": 5 * 1024 * 1024},
+                                 "retention_days": 14},
+                cookies=lambda: {"status": "warning", "headline": "2 Cookie(s) abgelaufen"})
+    try:
+        t1 = T.bauen()
+        stand["pct"] = 91
+        t2 = T.bauen()
+    finally:
+        T._KONF.clear(); T._KONF.update(alt)
+    assert "3 Trackings (1 live, 1 aufnehmend, 1 pausiert)" in t1, t1
+    assert "4 Versuche · 50% Erfolg · 1 early-disconnects" in t1 and "1. @anna — 2 Aufnahmen" in t1, t1
+    assert "DAILY SUMMARY" in t1 and "Disk: 50% belegt" in t1 and "Recordings: 5 MB" in t1, t1
+    assert "Disk: 91% belegt ⚠️" in t2, "Lage eingefroren statt je Aufruf gelesen: " + t2
+    assert "⚠️ 2 Cookie(s) abgelaufen" in t1 and "nach 14 Tagen" in t1, t1
+    T._KONF.update(storage=T._nicht_konfiguriert)
+    try:
+        T.bauen()
+        raise AssertionError("ohne configure() still gebaut")
+    except RuntimeError as e:
+        assert "configure" in str(e)
+    finally:
+        T._KONF.clear(); T._KONF.update(alt)
+        T.db_conn = alt_db
+    b = open("bot.py", encoding="utf-8").read()
+    assert "def _build_daily_summary(" not in b, "zweiter Tagesbericht im Monolithen"
+    assert "_nc_tagesbericht.configure(storage=get_storage_stats, cookies=get_cookie_health)" in b
+    ok("v5.6-w197: Tagesbericht aus bot.py geloest — Lagen je Aufruf, ohne configure() laut")
+
+
 def _test_v56_w197_ki_sql():
     """v5.6-W197 (Bughunt): die KI-Abfrage (/api/ai/query) unter beiden Backends.
 
@@ -37718,6 +37879,8 @@ def main():
     _test_v56_w197_ki_sql()
     _test_v56_w197_arbeiter_startsperre()
     _test_v56_w197_keine_ausnahme_auf_vorrat()
+    _test_v56_w197_oeffentliche_stats()
+    _test_v56_w197_tagesbericht()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()

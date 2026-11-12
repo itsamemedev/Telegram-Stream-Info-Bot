@@ -3190,12 +3190,13 @@ def test_v40_news_no_recordings():
     # in nc/news.py, _public_stats blieb im Bot — der Vertrag prueft jetzt beide
     # Dateien statt einer. Geloescht wird keine Zusicherung.
     nsrc=open("nc/news.py", encoding="utf-8").read()
-    bsrc=open("bot.py").read()
     # collect_facts/_public_stats duerfen KEINE Aufnahme-Zahlen exponieren. (Die
     # interne Prometheus-Metrik nightcrawler_recordings_total ist NICHT oeffentlich
     # und zaehlt nicht — geprueft wird der News-/Stats-Fakten-Pfad.)
     _nf = nsrc[nsrc.find("def collect_facts"):nsrc.find("async def phrase(")]
-    _ps = bsrc[bsrc.find("def _public_stats"):bsrc.find("def _stats_output_path")]
+    # ANKER GEWANDERT (v5.6-W197): der Erzeuger liegt in nc/oeffentlichestats.py.
+    _ps = open("nc/oeffentlichestats.py", encoding="utf-8").read()
+    _ps = _ps[_ps.find("def public_stats"):]
     assert _nf and _ps, "Fakten-Segmente nicht gefunden — Anker gebrochen"
     for _seg in (_nf, _ps):
         assert "recordings_7d" not in _seg and "recordings_total" not in _seg, "Aufnahme-Zahl im oeffentlichen Fakten-Pfad"
@@ -3216,7 +3217,10 @@ def test_v40_website():
     # v4.1-W26: der Erzeuger bleibt im Monolithen (er haengt am laufenden
     # Bot), die ROUTE ist nach nc/routes/auskunft.py gewandert. Der Vertrag
     # ist unveraendert: es gibt beides, und die Route reicht den Erzeuger durch.
-    assert "def _public_stats(" in src and "def _stats_write(" in src
+    # ANKER GEWANDERT (v5.6-W197): der Erzeuger ist nach nc/oeffentlichestats.py
+    # gewandert; der Monolith haelt den Namen und schreibt die Datei.
+    assert "_public_stats = _nc_oeffstats.public_stats" in src and "def _stats_write(" in src
+    assert "def public_stats(" in open("nc/oeffentlichestats.py", encoding="utf-8").read()
     _ausk_ps = open("nc/routes/auskunft.py", encoding="utf-8").read()
     assert '"/api/public/stats"' in _ausk_ps, "keine /api/public/stats-Route"
     assert '_nc_routes_auskunft.HAKEN["oeffentlich"]["fn"] = _public_stats' in src, \
@@ -3236,9 +3240,11 @@ def test_v40_wave2():
     assert 'os.getenv("STATS_PUBLIC"' in src, "Stats-Loop nicht self-gated"
     assert '_spawn(_stats_loop()' in src, "Stats-Loop wird nicht gespawnt"
     # angereicherte, aufnahmefreie Metriken.
+    # ANKER GEWANDERT (v5.6-W197): die Kennzahlen rechnet nc/oeffentlichestats.py.
+    _oe = open("nc/oeffentlichestats.py", encoding="utf-8").read()
     for k in ("total_live_7d", "peak_live", "moderation_7d"):
-        assert k in src, "Metrik fehlt: " + k
-    assert "kick_mod_log WHERE ts" in src, "Moderations-Kennzahl nicht aus dem Mod-Log"
+        assert k in _oe, "Metrik fehlt: " + k
+    assert "kick_mod_log WHERE ts" in _oe, "Moderations-Kennzahl nicht aus dem Mod-Log"
     ok("v4.0-w2: Stats-Loop (immer an) + angereicherte aufnahmefreie Metriken")
 
     # News erwähnt NIE Aufnahmen (Prompt-Verbot) + Tages-Live-Report.
@@ -3306,8 +3312,8 @@ def test_v40_modfeed():
 
 def test_v40_w4_website():
     """v4.0-W4: vollständige 12-Agenten-Flotte (live) + zweiter Chart + reichere Stats."""
-    src = open("bot.py").read()
-    # _public_stats: live-Agentenliste + mod_7d-Serie.
+    src = open("nc/oeffentlichestats.py", encoding="utf-8").read()   # ANKER GEWANDERT (v5.6-W197)
+    # public_stats: live-Agentenliste + mod_7d-Serie.
     assert 'stats["agents"]' in src and 'stats["agents_total"]' in src, "keine Live-Agentenliste in stats"
     assert 'stats["mod_7d"]' in src, "keine Moderations-7-Tage-Serie"
     assert "b.agents.status()" in src or "_b.agents.status()" in src, "Agentenliste nicht aus dem Brain"
@@ -3976,7 +3982,9 @@ def test_v40_w19_warn_first():
     assert '_mod._escalation_decide(f"tw:{user}")[0] == "warn"' in src, "Twitch verwarnt nicht"
     assert '_modlog("warn", "auto-mod-twitch"' in src
     # Verwarnungen tauchen im Moderations-Feed auf.
-    assert "'timeout','ban','flag','delete','warn'" in src, "Feed zeigt Verwarnungen nicht"
+    # ANKER GEWANDERT (v5.6-W197): die Feed-Serie rechnet nc/oeffentlichestats.py.
+    assert "'timeout','ban','flag','delete','warn'" in open(
+        "nc/oeffentlichestats.py", encoding="utf-8").read(), "Feed zeigt Verwarnungen nicht"
     dash = open("templates/dashboard.html").read()
     assert "'Verwarnung'" in dash, "Feed beschriftet Verwarnungen nicht"
     ok("v4.0-w19: Kick + Twitch verwarnen zuerst, Feed zeigt es an")
@@ -7052,7 +7060,7 @@ def test_v40_w74_fleet_status_honest():
        agents_known (True nur bei echter Fleet-Liste); die Website behauptet ohne
        bekannte Flotte kein „0", sondern „Status nicht verfügbar", und markiert Karten
        nur bei bekanntem Zustand als inaktiv."""
-    src = open("bot.py").read()
+    src = open("nc/oeffentlichestats.py", encoding="utf-8").read()   # ANKER GEWANDERT (v5.6-W197)
     assert 'stats["agents_known"]' in src, "agents_known nicht in _public_stats"
     # Flag hängt an einer echten Fleet-Liste, nicht hart True.
     _seg = src[src.find('stats["agents_known"] = False'):src.find('stats["agents_total"] = len(stats["agents"])') + 60]
@@ -7662,17 +7670,20 @@ def test_v40_w92_usage_and_donation():
     assert cl.parse_usage({"usage": {"input_tokens": 5, "output_tokens": 7}}) == (5, 7)
 
     # Backend liefert usage + donation in den öffentlichen Stats
-    src = open("bot.py").read()
-    assert 'stats["usage"] = _nc_usage.snapshot()' in src, "usage nicht in _public_stats"
+    # ANKER GEWANDERT (v5.6-W197): der Erzeuger liegt in nc/oeffentlichestats.py,
+    # der Metering-Wrapper bleibt im Monolithen.
+    _oe = open("nc/oeffentlichestats.py", encoding="utf-8").read()
+    assert 'stats["usage"] = _nc_usage.snapshot()' in _oe, "usage nicht in _public_stats"
     # ANKER GEWANDERT (v4.2-W173): Ziel und Stand rechnet nc/spendenziel.py.
-    assert '"goal_eur"' in src and '"paypal"' in src and "_nc_spendenziel.stand(" in src \
+    assert '"goal_eur"' in _oe and '"paypal"' in _oe and "_nc_spendenziel.stand(" in _oe \
         and "DONATION_GOAL_EUR" in open("nc/spendenziel.py", encoding="utf-8").read(), \
         "Spendenblock fehlt"
     # ANKER GEWANDERT (v4.2-W172, nicht der Vertrag): die PayPal-Vorgabe steht
     # jetzt in nc/spendeninfo.py — eine Quelle fuer Website, Deck und /spenden.
-    assert "_nc_spendeninfo.paypal()" in src and \
+    assert "_nc_spendeninfo.paypal()" in _oe and \
         'paypal@voice4you.org' in open("nc/spendeninfo.py", encoding="utf-8").read(), \
         "PayPal-Standardadresse fehlt"
+    src = open("bot.py").read()
     assert "_nc_claude.chat_sync = _claude_chat_sync_metered" in src, "Metering-Wrapper nicht installiert"
 
     # Website: 3D-Canvas + Spendenpanel + Rendering
@@ -7759,7 +7770,7 @@ def test_v40_w94_crypto_donations():
         _os.environ.pop(_env, None)
 
     # der Explorer wird SERVER-seitig aufgerufen — nicht im Browser
-    src = open("bot.py").read()
+    src = open("nc/oeffentlichestats.py", encoding="utf-8").read()   # ANKER GEWANDERT (v5.6-W197)
     assert 'stats["crypto"] = _nc_crypto.snapshot(fetch_live=True)' in src, "crypto nicht in _public_stats"
     h = open("website/lafap_index.html", encoding="utf-8").read()
     assert "blockstream" not in h, "Explorer darf nicht im Browser aufgerufen werden"
