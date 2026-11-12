@@ -578,6 +578,18 @@ def _py_strings(pfad):
             continue
         f = n.func
         name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+        # v5.4-W195: ein ausdrueckliches t("...") ist Benutzertext, egal wohin
+        # es danach fliesst. Gesammelt wurde es nur, wenn es WOERTLICH in
+        # einer Senke stand — `weg = t("…")` und spaeter send_message(weg)
+        # fiel durch. Gemessen: 17 markierte Texte in bot.py und
+        # discordbot.py, die in der englischen Oberflaeche immer deutsch
+        # waren (44 mit den f-String-Bruchstuecken, die hier bewusst nicht
+        # zaehlen). Dieselbe Regel wie _bp_strings fuer die Blueprints.
+        # Nur ein festes Literal: ein f-String ist erst zur Laufzeit ein
+        # Schluessel, seine Bruchstuecke im Katalog waeren wertlos.
+        if (name in ("t", "_t") and n.args and isinstance(n.args[0], ast.Constant)
+                and isinstance(n.args[0].value, str)):
+            _aus_knoten(n.args[0], deutsch_noetig=False)
         treffer = name in _SENKEN
         for arg in (n.args if treffer else []):
             _aus_knoten(arg)

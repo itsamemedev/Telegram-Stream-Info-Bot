@@ -749,6 +749,11 @@ _nc_einst.in_umgebung_laden(os.environ, env_pfad=os.path.join(_EINST_DIR, ".env"
 # Direkt nach den Einstellungen, damit SPEICHER_ARENEN aus .env und Deck gilt.
 from nc import heapzaum as _nc_heap
 _nc_heap.deckeln()
+# v5.4-W195: die venv des Bots vor den PATH — sonst lief das yt-dlp aus dem
+# Systempaket (beim Betreiber acht Monate alt), obwohl die Kommentare in
+# Installer und update.sh das Gegenteil behaupteten (nc/werkzeugpfad.py).
+from nc import werkzeugpfad as _nc_werkzeugpfad
+_nc_werkzeugpfad.voranstellen()
 
 BOT_TOKEN          = os.getenv("BOT_TOKEN", "").strip()
 WEB_HOST           = os.getenv("WEB_HOST", "127.0.0.1")          # C8
@@ -2891,6 +2896,22 @@ def _offline_ergebnis(username):
     return "offline", None
 
 
+async def _live_ohne_stream(username, data, live_room, session, cookies):
+    """TikTok meldet status=2, aber ohne stream_data — als live melden (info=None),
+    der Recorder loest die URL selbst auf.
+
+    v5.4-W195 als eigener Schritt: die Zeile lief ungedrosselt (beim Betreiber
+    am 12.11. bis zu drei gleiche je Sekunde fuer EINEN Nutzer) und geht jetzt
+    durch denselben Kanal wie die anderen live-ohne-URL-Zeilen (W103); dazu
+    einmal je Raum die Frage, WARUM (nc/raumsperre.py: 18+ = Code 4003110).
+    Im Resolver haette das ihn ueber die 200er-Stufe gehoben."""
+    _ohne_url_melden(username, "webcast", "webcast-api @%s: status=live ohne "
+                     "Stream-URL → live (Recorder löst auf)", username)
+    await _raumsperre_fragen(username, data, live_room, session, cookies)
+    _abo_probe_dump(username, data, reason="live-ohne-stream (gated?)")
+    return "live", None
+
+
 async def _raumsperre_fragen(username, data, live_room, session, cookies):
     """v5.4-W195: einmal je Raum (nc.raumsperre.RUHE_S) bei webcast/room/info
     nachfragen, warum ein Raum live ist, aber keine Adresse hergibt.
@@ -3072,15 +3093,7 @@ async def _resolve_via_webcast_api_v2(username, session):
         #                 Live-User fälschlich offline gemeldet UND die HTML/yt-dlp-
         #                 Fallbacks greifen nicht (laufen nur bei 'unknown'). → unknown.
         if status == 2:
-            # v5.4-W195: lief ungedrosselt — beim Betreiber am 12.11. bis zu drei
-            # gleiche Zeilen je Sekunde fuer EINEN Nutzer. Jetzt derselbe Kanal
-            # wie die anderen live-ohne-URL-Zeilen (W103), und einmal je Raum
-            # die Frage, WARUM (nc/raumsperre.py: 18+ = Code 4003110).
-            _ohne_url_melden(username, "webcast", "webcast-api @%s: status=live ohne "
-                             "Stream-URL → live (Recorder löst auf)", username)
-            await _raumsperre_fragen(username, data, live_room, session, cookies)
-            _abo_probe_dump(username, data, reason="live-ohne-stream (gated?)")
-            return "live", None
+            return await _live_ohne_stream(username, data, live_room, session, cookies)
         _resolver_stumm(username, "kein_stream_data")
         return "unknown", None
 
@@ -21302,6 +21315,7 @@ def _sparen_lage():
     """v5.2-W193: die Dauer-Arbeiter und geteilten Dienste in einem Feld —
     ob sie laufen und wie oft doch der alte Einzelweg noetig war."""
     return {"ytdlp": _nc_ytdlpdienst.lage(), "piper": _nc_piperdienst.lage(),
+            "ytdlp_programm": _nc_werkzeugpfad.lage(),     # v5.4-W195
             "overlay_browser": _nc_ovbrowser.lage(),
             "whisper": {"geladen": _nc_whisper.geladen(),
                         "entladen": _nc_whisper.MODELL.get("entladen", 0),
@@ -26076,6 +26090,7 @@ async def run_bot():
     _spawn(_laufstand_loop(), name="laufstand")           # v4.2-W104: Update eingespielt, aber nicht wirksam?
     _spawn(_cookie_bezug_loop(), name="cookie-bezug")    # v4.2-W107: Cookies holen, ohne Telegram-Chat
     _spawn(_tunnel_wacht_loop(), name="tunnel-wacht")     # v4.2-W105: traegt der Egress (Polen-VPS)?
+    _spawn(_werkzeug_wacht_loop(), name="werkzeug-wacht")  # v5.4-W195: yt-dlp alt / ohne curl_cffi?
     _spawn(_aufnahme_chat_dienst(), name="chat-nachtrag")   # v4.2-W163/W167: Chat in die Aufnahme, nach dem Upload
     _spawn(_sign_health_loop(), name="sign-health")       # F103: EulerStream-Sign-Key-Health
     _spawn(_marketing_loop(), name="marketing")           # B162: Cross-Promo (self-gated, Default aus)
@@ -26866,6 +26881,39 @@ async def _cookie_bezug_runde():
                       "seit %.0f h" % ((_time_mod.time() - zuletzt) / 3600),
                       b.get("error"), b.get("abhilfe") or "",
                       _nc_meldetakt.zusatz(weg))
+
+
+async def _werkzeug_wacht_loop():
+    """v5.4-W195: welches yt-dlp laeuft, wie alt, kann es einen Browser nachahmen?
+
+    Alle 12 Stunden, und gemeldet wird der WECHSEL: ein ERROR, wenn ein Befund
+    auftaucht oder sich aendert, eine INFO, wenn er verschwindet. Beim
+    Betreiber war ein acht Monate altes yt-dlp der Grund fuer „not currently
+    live" bei jedem Live — und nichts im Log sagte es."""
+    await asyncio.sleep(60)
+    vorher = None
+    while True:
+        try:
+            lage = await asyncio.to_thread(_nc_werkzeugpfad.pruefen)
+        except Exception as e:
+            _loop_fehler("werkzeug-wacht", e)
+        else:
+            if vorher is None:
+                log.info("yt-dlp: %s, Fassung %s%s", lage["pfad"] or "—", lage["fassung"] or "?",
+                         " (venv vorangestellt: %s)" % lage["vorangestellt"]
+                         if lage["vorangestellt"] else "")
+            if lage["grund"] and lage["grund"] != vorher:
+                log.error("TikTok-Werkzeuge: %s", lage["grund"])
+            elif vorher and not lage["grund"]:
+                log.info("TikTok-Werkzeuge wieder in Ordnung (yt-dlp %s).", lage["fassung"])
+            vorher = lage["grund"]
+        # Beat in Scheiben wie beim Tunnel-Waechter (W105): ein Schlaf ueber
+        # WATCHDOG_STALL_S am Stueck waere ein Watchdog-Fehlalarm.
+        rest = 12 * 3600
+        while rest > 0:
+            _hb("werkzeug-wacht")
+            await asyncio.sleep(min(120, rest))
+            rest -= 120
 
 
 async def _tunnel_wacht_loop():

@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.3.1"
-CODENAME = "Leichtgewicht"
+VERSION = "5.4.0"
+CODENAME = "Schlüsselbund"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.4.0",
+        "date": "2026-11",
+        "title": "Schlüsselbund",
+        # Nebenversion: Cookies vom Telefon, 18+-Erkennung, frisches yt-dlp (W195).
+        "highlights": [
+            "Cookies vom Telefon: Header-String aus Cookie-Editor, Datei waehlen im Deck oder als Telegram-Dokument mit /cookies — ein gemeinsamer Weg, unter der Schreibsperre, mit 0600",
+            "18+-Lives beim Namen: TikTok-Code 4003110 wird erkannt und mit Abhilfe gemeldet, statt „Abo oder Sitzung/IP“ zu raten",
+            "Die Cookie-Anzeige sagt, wenn nur Gast-Tokens hinterlegt sind — dann bleiben 18+- und Abo-Lives zu",
+            "Der Bot benutzt das yt-dlp und streamlink seiner venv (wie immer sie heisst) und meldet Alter und fehlendes curl_cffi; update.sh haelt beide frisch",
+            "Reconnects loesen „live ohne Adresse“ nicht mehr mehrmals je Sekunde neu auf, und die Zeile dazu ist gedrosselt",
+            "17 als Benutzertext markierte Telegram- und Discord-Texte fehlten im Uebersetzungskatalog und erschienen auf Englisch und Spanisch deutsch — jetzt erfasst und uebersetzt",
+        ],
+    },
     {
         "version": "5.3.1",
         "date": "2026-11",

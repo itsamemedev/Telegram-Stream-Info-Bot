@@ -320,6 +320,19 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
+## 🆕 Novedades en v5.4
+
+**“Llavero”** — para que la grabación y el restream lleguen a la dirección del stream:
+
+- **Cookies desde el móvil:** exportación de Cookie-Editor en JSON, Netscape
+  **o** cadena de cabecera; pégala en el panel o **elige un archivo**, o envía
+  el archivo por Telegram con el texto `/cookies` (el mensaje se borra después).
+  Chrome para Android no puede exportar; Firefox para Android con Cookie-Editor sí.
+- **Directos +18 con su nombre:** se reconoce el código 4003110 de TikTok — el
+  aviso dice que falta una cuenta con sesión iniciada y edad verificada.
+- **El yt-dlp correcto:** el bot pone su venv al principio del PATH, avisa de la
+  antigüedad y de curl_cffi ausente, y `update.sh` mantiene yt-dlp y streamlink al día.
+
 ## 🆕 Novedades en v5.1
 
 **“Oído fino”** — LLM local y los hallazgos del registro de producción del 11/11:
@@ -359,7 +372,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.3.1** — “Peso ligero” (2026.11) |
+| Versión actual | **5.4.0** — “Llavero” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |

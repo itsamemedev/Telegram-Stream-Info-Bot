@@ -319,6 +319,15 @@ if nc_braucht_root && [ "$(id -u)" -ne 0 ]; then
   if have sudo; then SUDO="sudo"; else SUDO="-"; fi
 fi
 
+# v5.4-W195: die virtuelle Umgebung heisst nicht ueberall .venv. Installationen
+# von vor dem Installer tragen venv/ — beim Betreiber am 12.11. so. Bis dahin
+# meldete dieses Skript dort „Keine virtuelle Umgebung" und haette eine zweite,
+# leere .venv angelegt, die der Dienst nie benutzt.
+NC_VENV="$ZIEL/.venv"
+for _v in "$ZIEL/.venv" "$ZIEL/venv"; do
+  [ -x "$_v/bin/python" ] && { NC_VENV="$_v"; break; }
+done
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Systemwerkzeuge
 # ═══════════════════════════════════════════════════════════════════════════
@@ -333,9 +342,10 @@ if [ "$W_SYSTEM" = 1 ]; then
   erklaere "Programme, keine Bibliotheken: ffmpeg nimmt auf und sendet, streamlink und yt-dlp loesen die TikTok-Quelle auf, sqlite3 ist die Kommandozeile zur Datenbank. Vorhandene werden nicht angefasst."
   for w in $WERKZEUGE; do
     # Ein yt-dlp/streamlink im venv zaehlt: der Bot ruft sie von dort, weil
-    # .venv/bin im PATH des Dienstes vorn steht.
-    if have "$w" || [ -x "$ZIEL/.venv/bin/$w" ]; then
-      _wo="$(command -v "$w" 2>/dev/null || printf '%s' "$ZIEL/.venv/bin/$w")"
+    # die venv im PATH des Bots vorn steht (seit v5.4-W195 setzt er das
+    # selbst, nc/werkzeugpfad.py — vorher stand es nur in diesem Kommentar).
+    if have "$w" || [ -x "$NC_VENV/bin/$w" ]; then
+      _wo="$(command -v "$w" 2>/dev/null || printf '%s' "$NC_VENV/bin/$w")"
       gut "%s: %s" "$w" "$_wo"
       continue
     fi
@@ -378,7 +388,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 # Python-Pakete
 # ═══════════════════════════════════════════════════════════════════════════
-VPY="$ZIEL/.venv/bin/python"
+VPY="$NC_VENV/bin/python"
 REQ="$ZIEL/requirements.txt"
 PY_FEHLT=""          # Anforderungen (name+spec), die fehlen oder zu alt sind
 PY_VENV_NEU=0
@@ -458,7 +468,7 @@ if [ "$W_PYTHON" = 1 ]; then
   kopf "Python-Pakete"
   [ -r "$REQ" ] || { fehler "requirements.txt fehlt in %s" "$ZIEL"; exit 2; }
   if [ ! -x "$VPY" ]; then
-    warn "Keine virtuelle Umgebung unter %s/.venv." "$ZIEL"
+    warn "Keine virtuelle Umgebung unter %s (weder .venv noch venv)." "$ZIEL"
     PY_VENV_NEU=1
     BASIS_PY="$(finde_python || true)"
     if [ -z "$BASIS_PY" ]; then
@@ -611,9 +621,36 @@ esac
 # --python-deps, und `--mariadb --system` haette die Zeile in den Plan
 # geschrieben und nie ausgefuehrt (Codex, PR #191).
 
+# v5.4-W195: TikTok-Werkzeuge in der venv — nur mit Grund in den Plan, sonst
+# meldete --check auf jeder Installation „es fehlt etwas". Geprueft wird
+# ohne Netz: das Datum steckt in der yt-dlp-Fassung (JJJJ.MM.TT).
+Z_TT=0; TT_GRUND=""
+if [ "$W_PYTHON" = 1 ] && [ -x "$VPY" ]; then
+  TT_GRUND="$("$VPY" - 2>/dev/null <<'PY'
+import datetime, importlib.util
+g = []
+try:
+    import yt_dlp.version as v
+    alter = (datetime.date.today() - datetime.date(*map(int, v.__version__.split(".")[:3]))).days
+    if alter > 30:
+        g.append("yt-dlp %s ist %d Tage alt" % (v.__version__, alter))
+except (ImportError, ValueError, TypeError):
+    g.append("yt-dlp fehlt in der venv")
+if importlib.util.find_spec("curl_cffi") is None:
+    g.append("curl_cffi fehlt (yt-dlp kann keinen Browser nachahmen)")
+if importlib.util.find_spec("streamlink") is None:
+    g.append("streamlink fehlt in der venv")
+print("; ".join(g))
+PY
+)"
+  [ "$UPGRADE" = 1 ] && [ -z "$TT_GRUND" ] && TT_GRUND="--upgrade"
+  [ -n "$TT_GRUND" ] && Z_TT=1
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════
 kopf "Plan"
 PLAN=0
+[ "$Z_TT" = 1 ] && { PLAN=1; info "TikTok-Werkzeuge aktualisieren: %s" "$TT_GRUND"; }
 if [ -n "$SYS_PAKETE" ]; then
   PLAN=1
   if [ "$SUDO" = "-" ]; then
@@ -625,7 +662,7 @@ if [ -n "$SYS_PAKETE" ]; then
   fi
 fi
 [ -n "$SYS_OHNE" ] && { warn "Selbst bereitstellen:%s" "$SYS_OHNE"; BEFUND=1; }
-[ "$PY_VENV_NEU" = 1 ] && { PLAN=1; info "Virtuelle Umgebung anlegen: %s/.venv" "$ZIEL"; }
+[ "$PY_VENV_NEU" = 1 ] && { PLAN=1; info "Virtuelle Umgebung anlegen: %s" "$NC_VENV"; }
 if [ "$PY_VENV_NEU" = 1 ]; then
   info "Danach: alle Pflichtpakete aus requirements.txt"
 elif [ -n "$PY_FEHLT" ]; then
@@ -675,7 +712,7 @@ fi
 if [ "$W_PYTHON" = 1 ] || [ -n "$PIP_STATT" ]; then
   if [ "$PY_VENV_NEU" = 1 ]; then
     if [ "$NC_MODUS" != "gefuehrt" ] || [ "$TROCKEN" = 1 ] || frage_ja "Virtuelle Umgebung anlegen und Pakete installieren?" J; then
-      lauf "$BASIS_PY" -m venv "$ZIEL/.venv" || { fehler "venv liess sich nicht anlegen."; exit 1; }
+      lauf "$BASIS_PY" -m venv "$NC_VENV" || { fehler "venv liess sich nicht anlegen."; exit 1; }
       lauf "$VPY" -m pip install -r "$REQ" || BEFUND=1
     fi
   elif [ -n "$PY_FEHLT" ] || [ "$UPGRADE" = 1 ]; then
@@ -703,6 +740,20 @@ if [ "$W_PYTHON" = 1 ] || [ -n "$PIP_STATT" ]; then
     else
       warn "Ohne .venv kein pip-Weg fuer:%s" "$PIP_STATT"; BEFUND=1
     fi
+  fi
+fi
+
+# v5.4-W195: yt-dlp und streamlink altern in Wochen, nicht in Jahren — TikTok
+# aendert seine Seiten, die Extraktoren ziehen nach. Der Schritt oben fasst
+# „vorhandene" Werkzeuge nicht an; beim Betreiber lief deshalb ein yt-dlp aus
+# dem apt-Paket vom Maerz, und jedes Live hiess „not currently live". Die
+# Fassung mit curl_cffi (pin-curl-cffi): ohne sie kann yt-dlp keinen Browser
+# nachahmen, und TikTok antwortet mit der Sperrseite.
+if [ "$Z_TT" = 1 ]; then
+  kopf "TikTok-Werkzeuge"
+  erklaere "yt-dlp und streamlink werden in der virtuellen Umgebung auf den neuesten Stand gebracht. Der Bot benutzt diese Fassungen vor denen des Systems."
+  if [ "$NC_MODUS" != "gefuehrt" ] || [ "$TROCKEN" = 1 ] || frage_ja "yt-dlp und streamlink jetzt aktualisieren?" J; then
+    lauf "$VPY" -m pip install --upgrade "yt-dlp[default,pin-curl-cffi]" streamlink || BEFUND=1
   fi
 fi
 
@@ -743,7 +794,7 @@ fi
 # andere Umgebung installieren.
 kopf "Nachpruefung"
 for w in $SYS_FEHLT; do
-  if have "$w" || [ -x "$ZIEL/.venv/bin/$w" ]; then gut "%s: jetzt vorhanden" "$w"
+  if have "$w" || [ -x "$NC_VENV/bin/$w" ]; then gut "%s: jetzt vorhanden" "$w"
   else warn "%s fehlt weiterhin." "$w"; BEFUND=1; fi
 done
 if [ "$W_PYTHON" = 1 ] && [ -x "$VPY" ]; then

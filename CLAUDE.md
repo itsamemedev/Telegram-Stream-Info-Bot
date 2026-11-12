@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **28.642 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **28.785 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 379 Routen (34 in `bot.py`, 345 in
-`nc/routes/`), 67 Slash-Commands, 663 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 67 Slash-Commands, 667 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  207 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  209 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           39 Flask-Blueprints mit 345 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog
@@ -276,7 +276,7 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **483**, und wie bei
+`tools/blindstellen.py` misst diese Klasse, Bestand **494**, und wie bei
 W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
 Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
 „dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
@@ -299,6 +299,14 @@ Und die eine aus v5.3.1 in `nc/overlaybrowser.py`: `_gruppe_lebend()` → `[]`
 ohne `/proc` heisst „kein Linux, nichts zu warten", und der stille
 `continue` daneben (der einzige neue stille `except`) ist ein Prozess, der
 zwischen `listdir` und `open` endet — genau der Zustand, auf den gewartet wird.
+Und die elf aus v5.4-W195: `nc/cookies._header_paare()` → `[]` heisst „kein
+Header-String", und der Parser probiert das naechste Format (dreimal);
+`nc/raumsperre.text()` → `""` heisst „kein Befund" (zweimal); in
+`nc/werkzeugpfad.py` heissen `voranstellen()` → `""` „nichts voranzustellen",
+`alter_tage()` → `None` „keine Datumsfassung", `nachahmen_aus()` → `None` „keine
+Tabelle in der Ausgabe" und `befund()` → `""` „alles in Ordnung" (sechsmal).
+Jeder echte Fehler dort geht durch: ein haengendes yt-dlp an die Schleife
+(`_loop_fehler`), ein fehlender Login als Grund mit Namen an Deck und Telegram.
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
 pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —
@@ -1197,6 +1205,17 @@ seit v5.3-W193 als eigene Prozesse mit Zeilenprotokoll (`nc/ytdlpdienst.py`,
 bleiben, und einen Thread beendet man nicht. Jeder Arbeiter hat einen
 Einzelaufruf als Rückweg, und der yt-dlp-Arbeiter läuft nur bei gleicher
 Fassung wie das Programm im PATH — sonst hätte `yt-dlp -U` keine Wirkung.
+
+**Ein Kommentar über die Umgebung ist kein Beweis über die Umgebung.**
+Installer und `update.sh` schrieben, `.venv/bin` stehe im PATH des Dienstes
+vorn. Die Unit setzt keinen PATH, `bot.py` hat ihn nie angefasst, und beim
+Betreiber hieß die venv `venv/` — es lief ein acht Monate altes yt-dlp aus dem
+apt-Paket, und jedes Live hieß „not currently live" (v5.4-W195). Seither stellt
+`nc/werkzeugpfad.py` das Verzeichnis von `sys.executable` vor, und eine
+Schleife meldet Alter und fehlendes curl_cffi. Dieselbe Welle: der Bot liest
+`tiktok_cookies.txt` (fest in `bot.py`), die erste Messung am Server ging gegen
+ein liegengebliebenes `cookies.txt`. **Vor jeder Messung am Server nachsehen,
+welche Datei und welches Programm der Dienst wirklich benutzt.**
 
 **Ein Schema, das nur SQLite gesehen hat, ist für MariaDB ungeprüft.**
 `DB_BACKEND=mariadb` stand seit v4.0 in der Doku, und kein Start hätte es

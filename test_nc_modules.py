@@ -12549,9 +12549,22 @@ def _test_v42_w103_cache_greift_bei_gleichzeitigen_aufrufern():
     # ── (4) force_fresh UMGEHT, SCHREIBT ABER WEITER. Der Reconnect-Pfad
     # braucht eine frische URL (B138) — der naechste normale Aufrufer soll
     # trotzdem vom Ergebnis profitieren.
+    # ANKER GEWANDERT (v5.4-W195): die Attrappe war `{}` — „live OHNE
+    # Adresse". Die Aussage hier gilt der toten ADRESSE (B138), also traegt
+    # der Eintrag jetzt eine; der Fall ohne Adresse steht unter (4b).
+    _url = {"flv_url": "https://pull-f5.tiktokcdn.com/stage/stream.flv?expire=9"}
+    C.setzen(cache, "neu", "live", _url, beginn + dauer, ttl)
     assert C.holen(cache, "neu", beginn + dauer + 1.0, force_fresh=True) is None
     assert C.holen(cache, "neu", beginn + dauer + 1.0) is not None, \
         "force_fresh hat den Eintrag geloescht statt ihn zu ueberspringen"
+    # ── (4b) v5.4-W195: ein Eintrag „live ohne Adresse" hat keine tote Adresse
+    # — force_fresh bekaeme innerhalb der TTL dieselbe Antwort und kostete je
+    # Reconnect eine TikTok-Anfrage (beim Betreiber bis zu drei je Sekunde).
+    C.setzen(cache, "leer", "live", None, beginn + dauer, ttl)
+    assert C.holen(cache, "leer", beginn + dauer + 1.0, force_fresh=True) == ("live", None), \
+        "force_fresh loest live-ohne-Adresse innerhalb der TTL neu auf"
+    assert C.holen(cache, "leer", beginn + dauer + ttl + 1, force_fresh=True) is None, \
+        "ein abgelaufener Eintrag ohne Adresse darf nicht weiter gelten"
 
     # ── (5) AUFRAEUMEN ERST AB EINER GROESSE, und nur Abgelaufenes.
     gross = {str(i): (50.0, "live", None) for i in range(60)}
@@ -13565,10 +13578,15 @@ def _test_v42_w51_live_ohne_url():
     # achtzehn Minuten fuer EINEN Nutzer, bei 40 Trackings unlesbar. Geprueft
     # wird deshalb die Aussage (drei unterscheidbare Ausgaenge, gedrosselt)
     # statt der Schreibweise `log.info`.
-    assert bot.count("_ohne_url_melden(") == 4, \
-        ("alle drei Ausgaenge des Nachschlags muessen gemeldet werden (plus "
-         "die Definition) — sonst kann niemand sagen, welcher Weg wirklich "
-         "eine URL bringt: %d gefunden" % bot.count("_ohne_url_melden("))
+    # ANKER GEWANDERT (v5.4-W195): gezaehlt wurde in ganz bot.py. Seither ruft
+    # auch der webcast-Zweig „live ohne stream_data" (_live_ohne_stream) und die
+    # Raumsperre-Probe den Kanal — beide liegen AUSSERHALB des Nachschlags. Die
+    # Aussage betrifft die drei Ausgaenge DES Nachschlags, also wird dort gezaehlt.
+    _nachschlag = rumpf_ab(bot, bot.index("async def _url_nachschlag("))
+    assert _nachschlag.count("_ohne_url_melden(") == 3, \
+        ("alle drei Ausgaenge des Nachschlags muessen gemeldet werden — sonst "
+         "kann niemand sagen, welcher Weg wirklich eine URL bringt: %d gefunden"
+         % _nachschlag.count("_ohne_url_melden("))
     assert "HTML-Weg liefert die " in bot, "der HTML-Erfolg fehlt"
     assert "yt-dlp liefert die " in bot, "der yt-dlp-Erfolg fehlt"
     assert "weder HTML noch yt-dlp " in bot, "der Misserfolg fehlt"
@@ -36450,6 +36468,254 @@ def _test_v53_w194_browser_gruppe():
     ok("v5.3.1: Overlay-beenden() wartet auf die ganze Prozessgruppe")
 
 
+def _test_v54_w195_cookies_vom_telefon():
+    """v5.4-W195: Cookies kommen vom Telefon an — in jedem Format, auf einem Weg.
+
+    Der Betreiber am 12.11.: Export aus Firefox/Chrome fuer Android
+    funktioniert nicht. Gemessen: der Header-String von Cookie-Editor ergab 0
+    Cookies, das Deck nahm keine Datei, Telegram auch nicht, und die Deck-Route
+    schrieb an DATEI_SPERRE vorbei mit einer .new-Datei in den Rechten der umask."""
+    import ast as _ast
+    import os as _os
+    import stat as _stat
+    import threading as _thr
+    from nc import cookies as _ck
+    from nc import cookieholen as _ch
+
+    f = _ck._cookies_input_to_netscape
+    # (1) Header-String in allen Formen, die ein Telefon liefert.
+    for roh, n in (("sessionid=abc123; ttwid=1%7Cxyz; msToken=qq", 3),
+                   ("Cookie: sessionid=abc123; ttwid=1;", 2),
+                   ('sid_guard="x=y|1|2"; uid_tt=1', 2),
+                   ('{"sessionid": "a", "ttwid": "b"}', 2)):
+        text, anz = f(roh)
+        assert anz == n, (roh, anz)
+        assert "\tsessionid\tabc123" in text or anz != 3, text
+    text, _ = f('sid_guard="x=y|1|2"; uid_tt=1')
+    assert "\tsid_guard\tx=y|1|2" in text, "Anfuehrung um den Wert nicht abgenommen"
+    # (2) Was KEIN Header ist, darf nicht als einer durchgehen.
+    for roh in ("a=1 b=2 c", "kein cookie hier", "a b=1; c=2"):
+        assert f(roh)[1] == 0, roh
+    assert f(".tiktok.com TRUE / TRUE 1790000000 sessionid a=b")[1] == 1, \
+        "eine Netscape-Zeile mit Leerzeichen wurde als Header gelesen"
+    assert f("# Netscape HTTP Cookie File\n.tiktok.com\tTRUE\t/\tTRUE\t1790000000\tsessionid\tabc")[1] == 1
+    # (3) Firefox-JSON aus Cookie-Editor (storeId, partitionKey, session).
+    assert f('[{"name":"sessionid","value":"a","domain":".tiktok.com","storeId":"firefox-default",'
+             '"partitionKey":null,"session":true,"hostOnly":false}]')[1] == 1
+    assert _ck.hat_login({"sessionid_ss"}) and _ck.hat_login(["sessionid"])
+    assert not _ck.hat_login({"ttwid", "msToken", "tt_chain_token"})
+
+    # (4) Der eine Weg: uebernehmen().
+    d = _ph.verzeichnis()
+    datei = _os.path.join(d, "tiktok_cookies.txt")
+    alt = "# Netscape HTTP Cookie File\n.tiktok.com\tTRUE\t/\tTRUE\t0\tsessionid\talt\n"
+    with open(datei, "w") as fh:
+        fh.write(alt)
+    for roh, art in (("", "leer"), ("x" * (_ch.EINGABE_MAX + 1), "zu_gross"),
+                     ("[{", "json"), ("nichts", "keine"),
+                     ("ttwid=1; msToken=2; tt_chain_token=3", "kein_login")):
+        e = _ch.uebernehmen(roh, datei)
+        assert e["ok"] is False and e["art"] == art, (art, e)
+        assert open(datei).read() == alt, "Fehlschlag (%s) hat die alte Datei angefasst" % art
+    e = _ch.uebernehmen("ttwid=1; msToken=2", datei)
+    assert sorted(e["gefunden"]) == ["msToken", "ttwid"], \
+        "ohne Login muss gesagt werden, WAS exportiert wurde: %s" % e
+    e = _ch.uebernehmen("sessionid=neu123; ttwid=1", datei)
+    assert e["ok"] and e["anzahl"] == 2 and e["backup"] and e["auth_cookie"] == "sessionid", e
+    assert "\tsessionid\tneu123" in open(datei).read()
+    assert open(datei + ".bak").read() == alt
+    assert _stat.S_IMODE(_os.stat(datei).st_mode) == 0o600, "Login-Cookies fuer alle lesbar"
+    # ... unter DATEI_SPERRE: solange ein anderer Schreiber sie haelt, wartet er.
+    fertig = []
+    with _ck.DATEI_SPERRE:
+        t = _thr.Thread(target=lambda: fertig.append(_ch.uebernehmen("sessionid=x9; a=1", datei)))
+        t.start()
+        t.join(0.5)
+        assert not fertig, "uebernehmen schreibt an DATEI_SPERRE vorbei"
+    t.join(5)
+    assert fertig and fertig[0]["ok"]
+
+    # (5) Deck-Route und Telegram nehmen diesen Weg — und nur ihn.
+    baum = _ast.parse(open("nc/routes/settings.py", encoding="utf-8").read())
+    route = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+                 and n.name == "api_cookies_update")
+    rufe = {_ast.unparse(c.func) for c in _ast.walk(route) if isinstance(c, _ast.Call)}
+    assert "_nc_cookieholen.uebernehmen" in rufe, rufe
+    assert not {"os.replace", "shutil.copy2", "open"} & rufe, \
+        "die Route schreibt wieder selbst: %s" % ({"os.replace", "shutil.copy2", "open"} & rufe)
+    bot = open("bot.py", encoding="utf-8").read()
+    tg = rumpf_ab(bot, bot.index("async def cookies_datei_cmd("))
+    for teil in ("_betreiber_pruefen(update)", "_nc_cookieholen.uebernehmen",
+                 "await msg.delete()", "EINGABE_MAX"):
+        assert teil in tg, "Telegram-Weg ohne %s" % teil
+    assert 'filters.CaptionRegex(r"^/cookies\\b"), cookies_datei_cmd' in bot
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    feld = dash[dash.index('id="ck_datei"') - 120:dash.index('id="ck_datei"') + 120]
+    assert "accept=" not in feld, "accept= graut am Android-Dateiwaehler den Export aus"
+    assert "function cookieDateiLesen" in dash and "readAsText" in dash
+    assert "Chrome kann keine Cookies exportieren" in dash, "die ehrliche Anleitung fehlt"
+
+    # (6) Die Gesundheit nennt die Lage beim Namen: nur Gast-Tokens.
+    gast = _os.path.join(d, "gast.txt")
+    with open(gast, "w") as fh:
+        fh.write("# Netscape HTTP Cookie File\n"
+                 ".tiktok.com\tTRUE\t/\tTRUE\t0\tttwid\t1\n"
+                 ".tiktok.com\tTRUE\t/\tTRUE\t0\ttt_chain_token\t2\n")
+    alt_konf = dict(_ck._KONF)
+    alt_krit = _ck._KRITISCH
+    try:
+        _ck.configure(datei=gast, kritisch=("sessionid_ss", "sessionid", "sid_tt", "tt_chain_token"),
+                      autorefresh_info=dict, autofetch_info=dict)
+        _ck.CACHE.clear()
+        h = _ck.gesundheit()
+    finally:
+        _ck._KONF.clear()
+        _ck._KONF.update(alt_konf)
+        _ck._KRITISCH = alt_krit
+    assert h["status"] == "critical" and "Keine Anmeldung" in h["headline"] \
+        and "18+" in h["headline"], h["headline"]
+    ok("v5.4-W195: Cookies vom Telefon — jedes Format, ein Weg, unter der Sperre")
+
+
+def _test_v54_w195_ab18_und_werkzeuge():
+    """v5.4-W195: 18+ (4003110) beim Namen nennen; das yt-dlp, das wirklich laeuft.
+
+    Gemessen beim Betreiber: webcast/room/info -> status_code 4003110, yt-dlp
+    2026.03.17 aus /usr/bin, ohne curl_cffi — und die venv hiess venv/."""
+    import datetime as _dt
+    import os as _os
+    import subprocess as _sp
+    from nc import raumsperre as _rs
+    from nc import werkzeugpfad as _wp
+
+    # (1) Deutung.
+    assert _rs.deuten({"status_code": 4003110, "data": {"prompts": ""}}) == ("ab18", 4003110)
+    assert _rs.deuten({"status_code": 0, "data": {"stream_url": {"flv_pull_url": {}}}})[0] == "offen"
+    assert _rs.deuten({"status_code": 0, "data": {}})[0] == "ohne_adresse"
+    assert _rs.deuten({"status_code": 10011})[0] == "fehler"
+    for kaputt in (None, [], {}, {"status_code": "4003110"}):
+        assert _rs.deuten(kaputt)[0] == "unlesbar", kaputt
+    # (2) Einmal je Raum — und zwar sofort gestempelt (zwei gleichzeitige
+    # Aufloesungen fragten sonst beide, die Falle aus W103).
+    _rs._GEFRAGT.clear()
+    assert _rs.faellig("r1", 1000.0) and not _rs.faellig("r1", 1001.0)
+    assert _rs.faellig("r1", 1000.0 + _rs.RUHE_S + 1) and not _rs.faellig("", 5.0)
+    # (3) Der Satz: mit und ohne Anmeldung verschieden, mit Abhilfe.
+    _rs.merken("@Tavor", "r1", "ab18", 4003110)
+    ohne = _rs.text(_rs.lage("tavor"), hat_login=False)
+    mit = _rs.text(_rs.lage("tavor"), hat_login=True)
+    assert "4003110" in ohne and "kein sessionid" in ohne and "Abhilfe" in ohne, ohne
+    assert "altersbestaetigt" in mit and mit != ohne, mit
+    assert _rs.text(None, False) == "" and _rs.snapshot()["tavor"]["lage"] == "ab18"
+    _rs.vergessen("@tavor")
+    assert _rs.lage("tavor") is None
+    # ... und der Resolver fragt nur im Zweig „live ohne stream_data".
+    bot = open("bot.py", encoding="utf-8").read()
+    zweig = rumpf_ab(bot, bot.index("async def _live_ohne_stream("))
+    assert "await _raumsperre_fragen(" in zweig and "_ohne_url_melden(" in zweig
+    res = rumpf_ab(bot, bot.index("async def _resolve_via_webcast_api_v2("))
+    assert "return await _live_ohne_stream(" in res
+    assert 'log.info(f"webcast-api @{username}: status=live ohne Stream-URL' not in res, \
+        "die ungedrosselte Zeile ist zurueck"
+
+    # (4) Die venv vor den PATH — wie immer sie heisst.
+    d = _ph.verzeichnis()
+    vbin = _os.path.join(d, "venv", "bin")
+    _os.makedirs(vbin)
+    for w in ("python", "yt-dlp"):
+        p = _os.path.join(vbin, w)
+        open(p, "w").close()
+        _os.chmod(p, 0o755)
+    env = {"PATH": "/usr/local/bin:/usr/bin"}
+    assert _wp.voranstellen(env, _os.path.join(vbin, "python")) == vbin
+    assert env["PATH"].split(_os.pathsep)[0] == vbin
+    assert _wp.voranstellen(env, _os.path.join(vbin, "python")) == "", "doppelt vorangestellt"
+    assert env["PATH"].count(vbin) == 1
+    leer = _os.path.join(d, "leer", "bin")
+    _os.makedirs(leer)
+    env2 = {"PATH": "/usr/bin"}
+    assert _wp.voranstellen(env2, _os.path.join(leer, "python")) == "" and env2["PATH"] == "/usr/bin", \
+        "ohne yt-dlp/streamlink in der venv darf sich der PATH nicht aendern"
+    # (5) Alter und Nachahmen — an der Ausgabe des Betreibers.
+    h = _dt.date(2026, 11, 12)
+    assert _wp.alter_tage("2026.03.17", h) == 240 and _wp.alter_tage("2026.10.26.232", h) == 17
+    assert _wp.alter_tage("2026.02.30", h) is None and _wp.alter_tage("nightly", h) is None
+    beim_betreiber = ("[info] Available impersonate targets\nClient    OS   Source\n"
+                      "--------------------------------------------\n"
+                      "Chrome    -    curl_cffi>=0.11 (unavailable)\n"
+                      "Tor       -    curl_cffi>=0.11 (unavailable)\n")
+    assert _wp.nachahmen_aus(beim_betreiber) is False
+    assert _wp.nachahmen_aus(beim_betreiber.replace("Chrome    -    curl_cffi>=0.11 (unavailable)",
+                                                    "Chrome-131 Windows-10 curl_cffi")) is True
+    assert _wp.nachahmen_aus("Usage: yt-dlp ...") is None
+
+    def _lauf(cmd):
+        return (0, "2026.03.17\n") if cmd[-1] == "--version" else (0, beim_betreiber)
+    alt_which = _wp.shutil.which
+    _wp.shutil.which = lambda n: "/usr/bin/yt-dlp" if n == "yt-dlp" else None
+    try:
+        lage = _wp.pruefen(lauf=_lauf, heute=h)
+        assert lage["alter_tage"] == 240 and lage["nachahmen"] is False
+        assert "240 Tage alt" in lage["grund"] and "curl_cffi" in lage["grund"] \
+            and "tools/update.sh --python-deps" in lage["grund"], lage["grund"]
+        lage = _wp.pruefen(lauf=lambda c: (0, "2026.11.01\n") if c[-1] == "--version"
+                           else (0, beim_betreiber.replace("(unavailable)", "")), heute=h)
+        assert lage["grund"] == "", lage["grund"]
+        _wp.shutil.which = lambda n: None
+        assert _wp.pruefen(lauf=_lauf)["grund"] == "kein yt-dlp im PATH"
+
+        def _haengt(cmd):
+            raise _sp.TimeoutExpired(cmd, 30)
+        _wp.shutil.which = lambda n: "/usr/bin/yt-dlp"
+        try:
+            _wp.pruefen(lauf=_haengt)
+            raise AssertionError("ein haengendes yt-dlp wurde verschluckt")
+        except _sp.TimeoutExpired:
+            pass                        # geht durch zur Schleife -> _loop_fehler
+    finally:
+        _wp.shutil.which = alt_which
+    assert "_nc_werkzeugpfad.voranstellen()" in bot[:bot.index("BOT_TOKEN          =")], \
+        "die venv muss vor dem ersten shutil.which vorn stehen"
+    assert '_spawn(_werkzeug_wacht_loop(), name="werkzeug-wacht")' in bot
+
+    # (6) update.sh findet venv/ und plant die Werkzeuge nur MIT Grund.
+    ziel = _os.path.join(d, "inst")
+    _os.makedirs(_os.path.join(ziel, "venv", "bin"))
+    _os.symlink(_sys_exe(), _os.path.join(ziel, "venv", "bin", "python"))
+    with open(_os.path.join(ziel, "requirements.txt"), "w") as fh:
+        fh.write("")
+    r = _sp.run(["bash", "tools/update.sh", "--dir", ziel, "--check", "--python-deps",
+                 "--no-color", "-y"], capture_output=True, text=True, timeout=120)
+    aus = r.stdout + r.stderr
+    assert "Keine virtuelle Umgebung" not in aus, "venv/ nicht gefunden:\n" + aus[-600:]
+    assert "TikTok-Werkzeuge aktualisieren:" in aus, aus[-600:]
+    r = _sp.run(["bash", "tools/update.sh", "--dir", ziel, "--dry-run", "--python-deps",
+                 "--no-color", "-y"], capture_output=True, text=True, timeout=120)
+    assert '-m pip install --upgrade yt-dlp[default,pin-curl-cffi] streamlink' in r.stdout, r.stdout[-600:]
+    inst = open("tools/installer.sh", encoding="utf-8").read()
+    assert '"$VPY" -m pip install --upgrade "yt-dlp[default,pin-curl-cffi]" streamlink' in inst
+    assert "have yt-dlp     ||" not in inst, "der Installer laesst ein System-yt-dlp wieder stehen"
+
+    # (7) Nebenbefunde: der Extraktor sieht ausdrueckliche t("…") ueberall,
+    # und die Datei, die der Bot WIRKLICH liest, ist vor dem Updater geschuetzt.
+    import importlib.util as _iu
+    spec = _iu.spec_from_file_location("_i18n_x", "tools/i18n_extract.py")
+    x = _iu.module_from_spec(spec)
+    spec.loader.exec_module(x)
+    gef = x.sammeln()
+    assert "Die Nachricht mit der Datei ist gelöscht." in gef, \
+        "ein t(), das erst ueber eine Variable gesendet wird, fehlt im Katalog"
+    assert not any("Tracke @" == k.strip() for k in gef), "f-String-Bruchstueck im Katalog"
+    from nc import updater as _up
+    assert "tiktok_cookies.txt" in _up.PROTECTED_NAMES
+    ok("v5.4-W195: 18+ beim Namen, die venv vorn, yt-dlp mit Alter und curl_cffi")
+
+
+def _sys_exe():
+    import sys as _s
+    return _s.executable
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -36869,6 +37135,8 @@ def main():
     _test_v52_w193_sparen()
     _test_v53_w194_mariadb_vorgabe()
     _test_v53_w194_browser_gruppe()
+    _test_v54_w195_cookies_vom_telefon()
+    _test_v54_w195_ab18_und_werkzeuge()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()

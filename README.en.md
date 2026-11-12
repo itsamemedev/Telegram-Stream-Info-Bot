@@ -573,6 +573,19 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 
 ---
 
+## 🆕 New in v5.4
+
+**“Keyring”** — so recording and restream get at the stream address:
+
+- **Cookies from a phone:** Cookie-Editor export as JSON, Netscape **or**
+  header string; paste it in the deck or **choose a file**, or send the file
+  in Telegram with the caption `/cookies` (the message is deleted afterwards).
+  Chrome for Android cannot export; Firefox for Android with Cookie-Editor can.
+- **18+ lives named as such:** TikTok code 4003110 is recognised — the message
+  says a logged-in, age-verified account is missing.
+- **The right yt-dlp:** the bot puts its venv first on PATH, reports age and a
+  missing curl_cffi, and `update.sh` keeps yt-dlp and streamlink current.
+
 ## 🆕 New in v5.1
 
 **“Keen-eared”** — local LLM and the findings from the production log of 11 Nov:
@@ -690,7 +703,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **5.3.1** — “Lightweight” (2026.11) |
+| Current version | **5.4.0** — “Keyring” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |

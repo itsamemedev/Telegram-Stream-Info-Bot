@@ -9,6 +9,81 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.4.0] — 2026-11-12 · „Schlüsselbund" (W195)
+
+Der Betreiber am 12.11.: Aufnahmen und Restreams bekommen keine gültige
+Stream-Adresse, und der Cookie-Export aus Firefox oder Chrome für Android
+funktioniert nicht. Gemessen am Server, nicht geraten: `webcast/room/info`
+antwortete für @tavorbeerchen mit `status_code: 4003110`, `yt-dlp` war die
+Fassung 2026.03.17 aus `/usr/bin` ohne curl_cffi, und in der Cookie-Datei
+stand kein `sessionid` — nur die Gast-Tokens des Auto-Bezugs.
+Verträge `_test_v54_w195_cookies_vom_telefon` und
+`_test_v54_w195_ab18_und_werkzeuge`; 23 Mutationsproben, eine entwischte zuerst
+(siehe unten).
+
+### Behoben
+
+- **Header-String als Cookie-Eingabe.** `nc/cookies.py` nannte das Format seit
+  B63 im Modulkopf und konnte es nie: `sessionid=…; ttwid=…` ergab 0 Cookies.
+  Das ist der Export „Header String" von Cookie-Editor und das, was DevTools
+  unter „Cookie:" zeigen. Jetzt mit und ohne `Cookie:`, mit Anführung um den
+  Wert, streng genug, dass eine Netscape-Zeile mit Leerzeichen nicht als
+  Header durchgeht (RFC-6265-Namen, kein Leerraum im Wert). Dazu
+  `{"name": "wert"}` als JSON.
+- **Ein Weg für eingefügte und hochgeladene Cookies** (`nc.cookieholen.uebernehmen`).
+  Die Deck-Route hatte eine eigene Fassung des Schreibens: ohne `DATEI_SPERRE`
+  (die beiden anderen Schreiber halten sie) und mit einer `.new`-Datei in den
+  Rechten der umask — Login-Cookies kurz für alle lesbar. Jetzt 0600, unter
+  der Sperre, Login-Prüfung vor dem Schreiben; fehlt der Login, nennt die
+  Antwort die gefundenen Namen (meist `ttwid, msToken` — ein abgemeldeter Browser).
+- **Datei wählen im Deck, Datei an Telegram.** Der Browser liest die Datei und
+  schickt Text — kein neuer Upload-Pfad. Telegram: Dokument mit Beschriftung
+  `/cookies`, nur für Betreiber, die Nachricht wird danach gelöscht. Das
+  Dateifeld hat bewusst kein `accept=`: Android graut sonst den Export aus dem
+  Download-Ordner aus (`application/octet-stream`).
+- **18+-Lives beim Namen** (`nc/raumsperre.py`). `api-live/user/room` meldet
+  `status=2` ohne Daten, yt-dlp macht aus jedem Status außer 2 „not currently
+  live", und der Bot riet „Abo oder Sitzung/IP". Einmal je Raum (höchstens alle
+  10 min) fragt der Resolver jetzt `webcast/room/info`; 4003110 wird als 18+
+  gemeldet, mit Abhilfe je nachdem, ob ein Login hinterlegt ist.
+- **Cookie-Gesundheit:** statt „sessionid(_ss) fehlt" steht da, dass nur
+  Gast-Tokens hinterlegt sind und 18+- und Abo-Lives deshalb zu bleiben.
+- **Das yt-dlp der venv wird benutzt** (`nc/werkzeugpfad.py`). Installer und
+  `update.sh` schrieben, `.venv/bin` stehe im PATH des Dienstes vorn — die Unit
+  setzt keinen PATH, bot.py hat ihn nie angefasst, und beim Betreiber hieß die
+  venv `venv/`. Der Bot stellt jetzt das Verzeichnis seines Interpreters vor
+  den PATH (nur wenn dort yt-dlp oder streamlink liegt) und meldet alle 12 h
+  Fassung, Alter und ob yt-dlp einen Browser nachahmen kann; ein Befund geht
+  als ERROR mit Abhilfe ins Log und steht in `/healthz` (`sparen.ytdlp_programm`).
+- **update.sh findet `venv/`** und hätte dort bisher eine zweite, leere `.venv`
+  angelegt. Neuer Schritt „TikTok-Werkzeuge": `yt-dlp[default,pin-curl-cffi]`
+  und streamlink in die venv — nur mit Grund im Plan (älter als 30 Tage,
+  curl_cffi fehlt, streamlink fehlt), sonst meldete `--check` überall „es fehlt
+  etwas". Der Installer installiert beide jetzt immer in die venv.
+- **Reconnects lösen „live ohne Adresse" nicht mehr mehrfach je Sekunde auf.**
+  `force_fresh` umgeht den Cache, weil die alte ADRESSE tot ist; ein Eintrag
+  ohne Adresse hat keine. Beim Betreiber bis zu drei Auflösungen je Sekunde für
+  einen Nutzer. Die Zeile `webcast-api … live ohne Stream-URL` geht durch die
+  Drossel aus W103.
+- **17 Benutzertexte fehlten im Übersetzungskatalog.** Der Extraktor sammelte
+  ein `t("…")` nur, wenn es wörtlich in einer Sendefunktion stand — `weg =
+  t("…")` und später `send_message(weg)` fiel durch. Jetzt wie bei den
+  Blueprints jedes feste `t("…")`; f-String-Bruchstücke bewusst nicht.
+- `tiktok_cookies.txt` ist vor der Update-Funktion geschützt; geschützt war nur
+  `cookies.txt`, ein Name, den nichts schreibt.
+
+### Gegenprobe
+
+- 23 Mutationsproben. Entwischt ist zuerst `auth_pflicht=False` in
+  `uebernehmen()`: die Login-Prüfung davor liest dieselben normierten Zeilen
+  wie MozillaCookieJar, der zweite Riegel konnte nie greifen. Er ist weg —
+  zwei Riegel, von denen einer wirkt, sind eine falsche Gewissheit (W105).
+- Zwei Anker gewandert, nicht die Verträge: W51 zählte `_ohne_url_melden(` in
+  ganz bot.py statt im Nachschlag; W103 prüfte `force_fresh` an einem Eintrag
+  `{}` — „live ohne Adresse" — statt an einer toten Adresse.
+- Nicht gemessen: die Antwort von `webcast/room/info` mit gültigem Login eines
+  altersbestätigten Kontos. Das kann nur der Betreiber am Server prüfen.
+
 ## [5.3.1] — 2026-11-12 · „Leichtgewicht" (MariaDB-Vorgabe)
 
 Der Betreiber: MariaDB soll die Vorgabe für neue Installationen sein (W194).

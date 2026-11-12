@@ -402,7 +402,11 @@ def uebernehmen(roh: str, datei: str) -> dict:
         # da exportiert hat — meist die Gast-Tokens eines abgemeldeten Browsers.
         return {"ok": False, "art": "kein_login", "detail": "", "gefunden": namen[:20]}
     try:
-        n, backup = schreibe(datei, text, auth_pflicht=True)
+        # Ohne auth_pflicht: die Pruefung steht oben, an denselben normierten
+        # Zeilen, die MozillaCookieJar liest. Ein zweiter Riegel dahinter
+        # koennte nie greifen — die Mutationsprobe hat ihn entwischen lassen,
+        # und zwei Riegel, von denen einer wirkt, sind eine falsche Gewissheit.
+        n, backup = schreibe(datei, text)
     except Exception as e:
         return {"ok": False, "art": "schreiben", "detail": _nc_fehlertext.nach_aussen(e, "cookieholen.uebernehmen"),
                 "gefunden": namen[:20]}
