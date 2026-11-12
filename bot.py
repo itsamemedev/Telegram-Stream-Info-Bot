@@ -622,6 +622,8 @@ from nc import logschleuse as _nc_logschleuse  # v4.2-W97: Logging weg vom Event
 from nc import looplag as _nc_looplag  # v4.2-W117: Loop-Lag in ms, und wer ihn haelt
 from nc import gegendruck as _nc_gegendruck  # v4.2-W118: abregeln mit Ansage
 from nc import kindprozess as _nc_kind  # v4.2-W120: Kindprozess endet auf jedem Weg
+from nc import ytdlpdienst as _nc_ytdlpdienst  # v5.2-W193: yt-dlp ohne Kaltstart je Nachschlag
+from nc import piperdienst as _nc_piperdienst  # v5.2-W193: Piper mit geladener Stimme
 from nc import speicherpflege as _nc_pflege  # v4.2-W120: Maps, die nur wachsen
 from nc import betriebslage as _nc_lage  # v4.2-W121: Start-/Stoppzeit, degradiert vs. tot
 from nc import kennzahlen as _nc_kz  # v4.2-W122: Leistungs-Schnappschuss fuer /metrics und Log
@@ -1680,15 +1682,15 @@ if DB_BACKEND not in ("sqlite", "mariadb"):
 # fängt. Die existierenden 'except sqlite3.IntegrityError' Stellen werden auf
 # 'except DB_INTEGRITY_ERRORS' umgestellt.
 if DB_BACKEND == "mariadb":
-    try:
-        import pymysql as _pymysql_for_excs
-        DB_INTEGRITY_ERRORS = (_pymysql_for_excs.IntegrityError, sqlite3.IntegrityError)
-        DB_OPERATIONAL_ERRORS = (_pymysql_for_excs.OperationalError, sqlite3.OperationalError)
-    except ImportError:
-        print("[boot] FATAL: DB_BACKEND=mariadb gesetzt aber pymysql nicht installiert. "
-              "→ pip install pymysql", flush=True)
-        DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
-        DB_OPERATIONAL_ERRORS = (sqlite3.OperationalError,)
+    # v5.2-W193: die Klassen BEIDER Treiber (mysqlclient und PyMySQL) — der
+    # Pool nimmt mysqlclient, wenn es da ist, und dann wirft es seine eigenen.
+    from nc.dbwrap import treiber_fehler as _treiber_fehler
+    _integ, _oper = _treiber_fehler()
+    if not _integ:
+        print("[boot] FATAL: DB_BACKEND=mariadb gesetzt aber weder mysqlclient noch pymysql "
+              "installiert. → pip install pymysql", flush=True)
+    DB_INTEGRITY_ERRORS = _integ + (sqlite3.IntegrityError,)
+    DB_OPERATIONAL_ERRORS = _oper + (sqlite3.OperationalError,)
 else:
     DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
     DB_OPERATIONAL_ERRORS = (sqlite3.OperationalError,)
@@ -3149,6 +3151,11 @@ def _ytdlp_note_result(ok: bool):
                         f"→ pausiere yt-dlp-Fallback für {_YTDLP_COOLDOWN_SECS}s (rettet "
                         f"Durchsatz). Ursache meist IP-Block → Residential-Proxy nötig.")
 
+async def _ytdlp_einzeln(cmd, zeitlimit):
+    """Der bisherige Weg: ein yt-dlp je Aufruf (Ersatz fuer den Arbeiter)."""
+    return await _nc_kind.ausfuehren(cmd, zeitlimit, art="yt-dlp")
+
+
 async def _resolve_via_ytdlp(username: str):
     """Live-Detection via yt-dlp. yt-dlp erzeugt TikToks Anti-Bot-Signaturen
        (X-Bogus etc.) selbst — deshalb kommt es oft durch, wo der eigene
@@ -3189,7 +3196,9 @@ async def _resolve_via_ytdlp(username: str):
         # Abbruchkandidat im Bestand (Single-Flight-Fuehrer aus W119,
         # Herunterfahren) — vorher lief yt-dlp dann seine 20 s ungesehen weiter.
         try:
-            _rc, out, err = await _nc_kind.ausfuehren(cmd, 20, art="yt-dlp")
+            # v5.2-W193: ueber einen dauerhaften Arbeiter (nc/ytdlpdienst.py),
+            # 0,067 statt 0,83 CPU-s je Nachschlag; belegt/unbrauchbar -> wie bisher.
+            _rc, out, err = await _nc_ytdlpdienst.ausfuehren(cmd, 20, _ytdlp_einzeln)
         except asyncio.TimeoutError:
             _ytdlp_note_result(False)
             return "unknown", None
@@ -19068,6 +19077,7 @@ _faster_whisper_available = _nc_whisper.verfuegbar
 async def _whisper_get_model():
     """Lazy-Load des faster-whisper-Modells (blockierend → Executor). None bei Fehlen."""
     global _whisper_lock
+    _nc_whisper.benutzt(_time_mod.monotonic())       # v5.2-W193: fuer das Entladen nach Leerlauf
     if _nc_whisper.MODELL["obj"] is not None:
         return _nc_whisper.MODELL["obj"]
     if not _faster_whisper_available():
@@ -19142,7 +19152,7 @@ async def _whisper_transcribe(path):
         # v4.0-W76: nativen CTranslate2-Abschnitt markieren (Aufruf + Generator-
         # Konsum, wo die eigentliche Rechenarbeit läuft), damit kein ffmpeg-Fork
         # währenddessen im Loop-Thread einschlägt → kein Deadlock.
-        with _whisper_native_section():
+        with _nc_whisper.gebrauch(), _whisper_native_section():     # v5.2-W193
             segs, _info = model.transcribe(path, language=WHISPER_LANG, beam_size=WHISPER_BEAM,
                                            vad_filter=True,
                                            vad_parameters=dict(min_silence_duration_ms=WHISPER_MIN_SILENCE_MS))
@@ -19210,7 +19220,7 @@ async def _whisper_segments(path):
 
     def _run():
         out = []
-        with _whisper_native_section():
+        with _nc_whisper.gebrauch(), _whisper_native_section():     # v5.2-W193
             segs, _info = model.transcribe(path, language=WHISPER_LANG, beam_size=WHISPER_BEAM,
                                            vad_filter=True,
                                            vad_parameters=dict(min_silence_duration_ms=WHISPER_MIN_SILENCE_MS))
@@ -19344,7 +19354,17 @@ async def _start_chat_listener(username, chat_buf, flags=None):
             from websockets_proxy import websockets_proxy as _wsp
             ws_px = _wsp.Proxy.from_url(_pick_pull_proxy())
         except Exception as _pe:
-            log.debug("ws-proxy from_url fallback: %s", _pe)
+            # v5.2-W193: war log.debug. Der Rueckfall ist der Weg, der seit B78
+            # NICHT tunnelt — der Chat liefe dann ueber die Server-IP, waehrend
+            # Aufnahme und Resolver durch den Tunnel gehen. Das ist eine Lage,
+            # keine Kleinigkeit; einmal je Grund laut, mit Abhilfe.
+            _laut, _weg = _nc_meldetakt.melden("chat-wsproxy", type(_pe).__name__,
+                                               _time_mod.monotonic())
+            if _laut:
+                log.error("TikTok-Chat: Websocket-Proxy nicht nutzbar (%s: %s) — der Chat "
+                          "geht NICHT durch den Tunnel/Proxy, sondern ueber die Server-IP. "
+                          "Abhilfe: .venv/bin/pip install 'websockets_proxy>=0.1.3', dann "
+                          "Neustart.%s", type(_pe).__name__, _pe, _nc_meldetakt.zusatz(_weg))
             ws_px = px
     # F92c: Der Listener läuft über denselben Egress wie Recorder/Resolver —
     # Tunnel-Override (Polen-VPS) → RECORD_PROXY → Pool. Einmal pro User loggen,
@@ -21171,6 +21191,7 @@ def healthz():
                    speicher=_nc_pflege.groessen(_speicher_maps()),
                    heap=_nc_heap.lage(),                 # v5.2-W191
                    dbvorrat=_nc_dbwrap.vorrat_lage(),    # v5.2-W191
+                   sparen=_sparen_lage(),                # v5.2-W193
                    # v4.2-W121: wie lange bis zur ersten Pruefrunde (None =
                    # noch nicht bereit) und wie lange der letzte Stopp dauerte.
                    start_s=_nc_lage.ZUSTAND["bereit_s"],
@@ -21183,6 +21204,16 @@ def healthz():
     daten["lage"], daten["gruende"] = _nc_lage.bewerten(daten)
     daten = _healthz_fuer_aufrufer(daten)                 # v5.2-W190
     return jsonify(daten), (200 if ok else 503)
+
+
+def _sparen_lage():
+    """v5.2-W193: die Dauer-Arbeiter und geteilten Dienste in einem Feld —
+    ob sie laufen und wie oft doch der alte Einzelweg noetig war."""
+    return {"ytdlp": _nc_ytdlpdienst.lage(), "piper": _nc_piperdienst.lage(),
+            "overlay_browser": _nc_ovbrowser.lage(),
+            "whisper": {"geladen": _nc_whisper.geladen(),
+                        "entladen": _nc_whisper.MODELL.get("entladen", 0),
+                        "leerlauf_min": round(_nc_whisper.leerlauf_s() / 60, 1)}}
 
 
 # Was /healthz einem nicht angemeldeten Aufrufer von aussen zeigt (v5.2-W190).
@@ -21984,6 +22015,20 @@ async def _piper_say(text, rate=None, source_user=None):
     os.makedirs(_TTS_DIR, exist_ok=True)
     fn = f"az_{int(_time_mod.time()*1000)}_{_rnd.randint(100,999)}.wav"
     out = os.path.join(_TTS_DIR, fn)
+    # v5.2-W193: zuerst der dauerhafte Arbeiter (nc/piperdienst.py) — die
+    # Stimme bleibt geladen, statt je Satz Python, onnxruntime und das Modell
+    # neu hochzufahren. None heisst "nicht nutzbar": dann der Einzelaufruf.
+    _erg = await _nc_piperdienst.sprechen(mp, text, out, length)
+    if _erg is not None:
+        if _erg and os.path.exists(out):
+            _tts_cleanup()
+            await _restream_tts_enqueue_wav(out, source_user=source_user)
+            return f"/api/tts/{fn}"
+        _laut, _weg = _nc_meldetakt.melden("piper", "arbeiter", _time_mod.monotonic())
+        if _laut:
+            log.warning("Piper-TTS (Arbeiter) gescheitert: %s%s",
+                        _nc_piperdienst.lage()["grund"], _nc_meldetakt.zusatz(_weg))
+        return None
     cmd = [_nc_piper.bin_pfad(), "-m", mp, "-f", out, "--length-scale", str(length)]
     # mp ist absoluter .onnx-Pfad → Piper findet die .onnx.json daneben, kein --data-dir nötig
     proc = None
@@ -26383,8 +26428,20 @@ async def _heap_zurueckgeben():
     den RSS, und eine weitere Dauerschleife braeuchte ihren eigenen Waechter.
     malloc_trim laeuft im Thread — bei grossem Heap dauert es Millisekunden,
     und darauf wartet der Event-Loop nicht (W97)."""
-    takt = _nc_heap.takt_min()
     jetzt = _time_mod.monotonic()
+    # v5.2-W193: ein ungenutztes Whisper-Modell belegt 0,5–3 GB fuer nichts.
+    # Nach dem Entladen sofort zurueckgeben — sonst haelt glibc den Platz.
+    if _nc_whisper.entladen_wenn_leer(jetzt, _nc_whisper.leerlauf_s()):
+        import gc as _gc
+        _gc.collect()
+        _HEAP_TAKT["naechst"] = 0.0
+        _erg = await asyncio.to_thread(_nc_heap.zurueckgeben)
+        log.info("Whisper-Modell %s nach %d min Leerlauf entladen%s — der naechste "
+                 "Satz laedt es neu.", _nc_whisper.MODELL["name"],
+                 int(_nc_whisper.leerlauf_s() // 60),
+                 (" (RSS %.0f -> %.0f MB)" % (_erg["vorher_mb"], _erg["nachher_mb"]))
+                 if _erg.get("ok") else "")
+    takt = _nc_heap.takt_min()
     if takt <= 0 or jetzt < _HEAP_TAKT["naechst"]:
         return {"ok": False, "grund": "nicht faellig" if takt > 0 else "SPEICHER_TRIM_MIN=0"}
     _HEAP_TAKT["naechst"] = jetzt + takt * 60
@@ -27343,6 +27400,10 @@ async def _aufraeumen():
     # v4.2-W121: Hilfsprozesse (yt-dlp, Clips, Zerlegen …), deren Task der
     # Abbruch noch nicht erreicht hat — nc.kindprozess kennt sie alle.
     try:
+        await _nc_ytdlpdienst.alle_beenden()          # v5.2-W193
+        await _nc_piperdienst.beenden()               # v5.2-W193
+        from nc import httpsitzung as _nc_http_ende
+        await _nc_http_ende.schliessen()              # v5.2-W193
         n_kind = await _nc_kind.alle_beenden(term_s=3.0)
     except Exception as e:
         n_kind = 0

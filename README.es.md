@@ -355,7 +355,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.2.1** — “Fuego lento” (2026.11) |
+| Versión actual | **5.3.0** — “Peso ligero” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |

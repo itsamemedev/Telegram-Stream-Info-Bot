@@ -166,6 +166,10 @@ MODELL_SHA="$(wert LLM_MODELL_SHA256 "" | tr 'A-F' 'a-f')"
 MODELL_VERZ_E="$(wert LLM_MODELL_VERZ /opt/models)"
 THREADS="$(wert LLM_THREADS 4)"
 KONTEXT="$(wert LLM_KONTEXT 8192)"
+# v5.2-W193: KV-Cache quantisieren. Qwen3-14B: 40 Schichten x 8 KV-Koepfe x 128
+# x 2 Byte x (K+V) = 160 KiB je Token, bei 8192 Token Kontext 1,34 GB in f16,
+# mit q8_0 rund 0,71 GB. f16 = aus (wie bis v5.2.1).
+KV_CACHE="$(wert LLM_KV_CACHE q8_0)"
 IK_DIR_E="$(wert IK_LLAMA_DIR /opt/ik_llama.cpp)"
 IK_REPO="$(wert IK_LLAMA_REPO https://github.com/ikawrakow/ik_llama.cpp)"
 IK_REF="$(wert IK_LLAMA_REF main)"
@@ -203,6 +207,8 @@ case "$MODELL_DATEI" in
 esac
 # v5.2-W190: 64 Hex-Zeichen, nicht 64 beliebige — ein Tippfehler fiel sonst
 # erst nach dem Download von 9 GB auf.
+case "$KV_CACHE" in f16|q8_0|q4_0) ;;
+  *) fehler "LLM_KV_CACHE muss f16, q8_0 oder q4_0 sein: %s" "$KV_CACHE"; exit 2;; esac
 case "$MODELL_SHA" in
   '') ;;
   *[!0-9a-f]*) fehler "LLM_MODELL_SHA256 ist kein SHA-256 (nur 0-9a-f): %s" "$MODELL_SHA"; exit 2;;
@@ -317,8 +323,26 @@ alt_erkennen(){
 # abgeschossen, und -rtr legt das Modell vollstaendig in den Arbeitsspeicher.
 # In eine DATEI, nicht auf stdout: die Kommentare darin sind fuer systemd und
 # den, der die Unit liest — keine Ausgabe an den Betreiber im Dialog.
+# v5.2-W193: die Schalter fuer den quantisierten KV-Cache — nur, wenn das
+# gebaute llama-server sie kennt. ik_llama.cpp und llama.cpp schreiben
+# Flash-Attention verschieden (-fa gegen -fa on), und ein unbekannter Schalter
+# laesst den Dienst gar nicht erst starten. Gefragt wird das Programm selbst.
+kv_schalter(){
+  [ "$KV_CACHE" = "f16" ] && return 0
+  [ -x "$IK_BIN_E" ] || return 0
+  local _hilfe; _hilfe="$("$IK_BIN_E" --help 2>&1 || true)"
+  printf '%s' "$_hilfe" | grep -q -- '--cache-type-k' || return 0
+  printf '%s' "$_hilfe" | grep -q -- '--flash-attn' || return 0
+  if printf '%s' "$_hilfe" | grep -Eq -- '--flash-attn[^[:alnum:]]*[^\n]*(\[on|on\|off|<on)'; then
+    printf ' -fa on -ctk %s -ctv %s' "$KV_CACHE" "$KV_CACHE"
+  else
+    printf ' -fa -ctk %s -ctv %s' "$KV_CACHE" "$KV_CACHE"
+  fi
+}
+
 unit_text(){ # unit_text GROESSE_BYTES DATEI
   local _gb=$(( ($1 + 1073741823) / 1073741824 + 4 ))
+  local _kv; _kv="$(kv_schalter)"
   local _alias; _alias="$(printf '%s' "${MODELL_DATEI%.gguf}" | tr 'A-Z' 'a-z')"
   cat > "$2" <<UNIT
 $MARKE — erzeugt von tools/ikllama.sh (v5.1-W181).
@@ -329,13 +353,14 @@ $MARKE — erzeugt von tools/ikllama.sh (v5.1-W181).
 #   -rtr        Gewichte beim Laden in die verschraenkte Form umpacken (schneller auf CPU)
 #   --jinja     Chat-Vorlage aus dem Modell: nur damit wirkt enable_thinking=false
 #   KEIN --embeddings: der Schalter beschraenkt den Server auf Embeddings (W110)
+#   -ctk/-ctv   KV-Cache quantisiert (LLM_KV_CACHE, v5.2-W193), braucht -fa
 [Unit]
 Description=ik_llama.cpp Server (NIGHTCRAWLER Brain-LLM, ${MODELL_DATEI%.gguf})
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI -a $_alias --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup
+ExecStart=$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI -a $_alias --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup$_kv
 Nice=10
 CPUWeight=50
 MemoryMax=${_gb}G
@@ -681,7 +706,7 @@ fi
 # ── Dienst ───────────────────────────────────────────────────
 if [ "$NC_INIT" != "systemd" ]; then
   warn "Ohne systemd (gefunden: %s) wird kein Dienst eingerichtet." "$NC_INIT"
-  info "Von Hand starten: %s" "$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup"
+  info "Von Hand starten: %s" "$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup$(kv_schalter)"
   exit 0
 fi
 kopf "Dienst"
@@ -712,21 +737,35 @@ fi
 # /health abwarten: 503 heisst "Modell laedt" — mit -rtr und 9 GB dauert das
 # Minuten. 500 oder ein gestorbener Dienst ist ein Fehler, kein Warten.
 WARTEN="${NC_IK_WARTEN:-600}"
-info "Warte auf http://127.0.0.1:%s/health (bis %s s; das Modell laedt) …" "$PORT" "$WARTEN"
-_t=0; _code=""
-while :; do
-  _code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PORT/health" 2>/dev/null)"
-  [ "$_code" = "200" ] && break
-  if [ "$_code" = "500" ] || systemctl is-failed --quiet "$UNIT_NAME" 2>/dev/null; then
+warte_health(){ # -> 0 = 200, 1 = laeuft nicht an / keine Antwort (Grund in _code)
+  info "Warte auf http://127.0.0.1:%s/health (bis %s s; das Modell laedt) …" "$PORT" "$WARTEN"
+  local _t=0; _code=""
+  while :; do
+    _code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PORT/health" 2>/dev/null)"
+    [ "$_code" = "200" ] && return 0
+    if [ "$_code" = "500" ] || systemctl is-failed --quiet "$UNIT_NAME" 2>/dev/null; then
+      return 1
+    fi
+    [ "$_t" -ge "$WARTEN" ] && return 1
+    sleep 5; _t=$(( _t + 5 ))
+  done
+}
+if ! warte_health; then
+  # v5.2-W193: lief er mit quantisiertem KV-Cache nicht an, einmal ohne —
+  # ein Schalter, den diese Fassung anders versteht, darf die KI nicht abschalten.
+  if [ "$KV_CACHE" != "f16" ] && grep -q -- ' -ctk ' "$UNIT" 2>/dev/null; then
+    warn "%s startet mit quantisiertem KV-Cache nicht (HTTP %s) — schreibe die Unit ohne (LLM_KV_CACHE=f16) und versuche es erneut." "$UNIT_NAME" "${_code:-—}"
+    KV_CACHE=f16
+    _neu="$(mktemp)"; unit_text "$_groesse" "$_neu"
+    lauf install -m 644 "$_neu" "$UNIT" || { rm -f "$_neu"; fehler "Unit nicht schreibbar: %s" "${UNIT#"$W"}"; exit 1; }
+    rm -f "$_neu"
+    lauf systemctl daemon-reload || true
+    lauf systemctl restart "$UNIT_NAME" || true
+    warte_health || { fehler "%s laeuft auch ohne KV-Quantisierung nicht an (HTTP %s) — journalctl -u %s -n 50" "$UNIT_NAME" "${_code:-—}" "$UNIT_NAME"; exit 1; }
+  else
     fehler "%s laeuft nicht an (HTTP %s) — journalctl -u %s -n 50" "$UNIT_NAME" "${_code:-—}" "$UNIT_NAME"
     exit 1
   fi
-  [ "$_t" -ge "$WARTEN" ] && break
-  sleep 5; _t=$(( _t + 5 ))
-done
-if [ "$_code" != "200" ]; then
-  fehler "Nach %s s antwortet /health nicht mit 200 (zuletzt: %s) — journalctl -u %s -n 50" "$WARTEN" "${_code:-—}" "$UNIT_NAME"
-  exit 1
 fi
 gut "ik_llama.cpp antwortet auf 127.0.0.1:%s (%s)." "$PORT" "$MODELL_DATEI"
 # Ein Satz durch den Chat — /health gruen heisst noch nicht, dass der Chat

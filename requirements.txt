@@ -98,7 +98,10 @@ requests >= 2.33.0             # sync HTTP
 #   Sicherheitsgrenze (W134, pip-audit): 3 Kennungen, behoben in 2.33.0.
 httpx >= 0.27                  # HTTP/2-faehiger Client
 PySocks >= 1.7.1               # import socks — SOCKS-Proxy fuer den Scraper
-websockets_proxy >= 0.1.3      # WebSocket ueber Proxy (Kick-Chat)
+websockets_proxy >= 0.1.3      # TikTok-Chat ueber Proxy/Tunnel (B78)
+#   v5.2-W193 bewusst Pflicht: der Tunnel (Polen-VPS) wird zur Laufzeit im Deck
+#   gesetzt, nicht in der .env — ein Installer, der das Paket nur "mit Proxy"
+#   mitnaehme, saehe den Bedarf nie. Fehlt es, sagt der Bot es jetzt laut.
 
 # ── Konfiguration / Daten ────────────────────────────────────────────────
 python-dotenv >= 1.2.2         # import dotenv — .env laden
@@ -107,6 +110,12 @@ orjson >= 3.11.6               # schnelles JSON
 #   Sicherheitsgrenze (W134, pip-audit): 2 Kennungen, behoben in 3.11.6.
 PyMySQL >= 1.1.1               # [optional] import pymysql — nur bei DB_BACKEND=mariadb
 #   Sicherheitsgrenze (W134, pip-audit): 1 Kennung, behoben in 1.1.1.
+mysqlclient >= 2.2 ; sys_platform != "win32"   # [optional] import MySQLdb — C-Treiber fuer MariaDB
+#   v5.2-W193: 3-7x weniger CPU je Abfrage als PyMySQL (gemessen gegen MariaDB
+#   10.11). Braucht zum Bauen libmariadb-dev und einen Compiler, deshalb NIE im
+#   allgemeinen pip-Lauf: installer.sh und update.sh --mysqlclient richten es
+#   eigens ein, und fehlt es, nimmt nc/dbwrap.py PyMySQL. Grenze nachgesehen:
+#   2.2.0 traegt password=/database=/read_timeout=/cursorclass= und ping().
 redis >= 4.4.4                 # [optional] Cache
 #   Sicherheitsgrenze (W134, pip-audit): 2 Kennungen, behoben in 4.4.4.
 #   API-Zwang: `import redis.asyncio` (bot.py:3233). Nachgesehen: 4.1.0 hat

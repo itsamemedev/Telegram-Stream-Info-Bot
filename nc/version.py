@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.2.1"
-CODENAME = "Sparflamme"
+VERSION = "5.3.0"
+CODENAME = "Leichtgewicht"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.3.0",
+        "date": "2026-11",
+        "title": "Leichtgewicht",
+        # Nebenversion: zehn Bausteine getauscht oder geteilt (W193).
+        "highlights": [
+            "Ein Chromium fuer alle Restream-Overlays statt einer je Restream: drei Restreams 1076 -> 530 MB, jeder weitere kostet rund 25 statt 300 MB",
+            "yt-dlp und Piper laufen als dauerhafte Arbeiter: ein yt-dlp-Nachschlag 0,83 -> 0,067 CPU-Sekunden, Piper laedt die Stimme einmal statt je Satz — abschiessbar bei Haengern wie vorher",
+            "MariaDB mit dem C-Treiber mysqlclient (3-7x weniger CPU je Abfrage, PyMySQL bleibt Rueckweg) und eigenen Server-Einstellungen: kein DNS je Verbindung, Commit 329 -> 177 us",
+            "Whisper wird nach 15 Minuten ohne Sprache entladen und der Speicher zurueckgegeben; Discord laedt keine komplette Mitgliederliste mehr",
+            "ik_llama.cpp mit quantisiertem KV-Cache (rechnerisch 0,6 GB weniger), nur wenn das Programm die Schalter kennt — sonst automatisch ohne",
+            "Kick-API ueber eine geteilte Verbindung; ein Chat, der still am Tunnel vorbei liefe, meldet sich jetzt laut",
+        ],
+    },
     {
         "version": "5.2.1",
         "date": "2026-11",

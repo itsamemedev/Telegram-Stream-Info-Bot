@@ -654,6 +654,10 @@ f_pypakete(){
   # uvloop gibt es auf exotischen Plattformen nicht als fertiges Rad; es ist
   # reine Beschleunigung und darf fehlen.
   case "$ARCH" in x86_64|amd64|aarch64|arm64) ;; *) OPT_AUS="$OPT_AUS uvloop";; esac
+  # v5.2-W193: mysqlclient nie im allgemeinen pip-Lauf — es braucht Header und
+  # Compiler, und ein gescheiterter Bau risse alle anderen Pakete mit. Der
+  # MariaDB-Abschnitt richtet es eigens ein.
+  OPT_AUS="$OPT_AUS mysqlclient"
   pakete_nach_plan
   return 0
 }
@@ -1490,6 +1494,27 @@ if [ "$P_DB" = "mariadb" ]; then
        | ${SUDO:+$SUDO} "$MYSQL_CLI" 2>/dev/null; then
       gut "MariaDB eingerichtet (Datenbank und Nutzer 'nightcrawler')."
       merke "MariaDB: Nutzer nightcrawler, Passwort in .env (MARIADB_PASSWORD)"
+      # v5.2-W193: eigene Server-Einstellungen. skip_name_resolve ist hier
+      # sicher: nc_mariadb_sql hat die Konten eben auch fuer 127.0.0.1 angelegt.
+      _mk="$(nc_mariadb_konf_pfad)"
+      if [ -n "$_mk" ]; then
+        nc_mariadb_konf_text 1 "$ARBEIT/mariadb.cnf"
+        if schreibe_systemdatei "$_mk" "$ARBEIT/mariadb.cnf" && [ "$NC_INIT" = "systemd" ]; then
+          als_root systemctl restart mariadb || warn "MariaDB startete nach %s nicht neu — Datei pruefen." "$_mk"
+        fi
+      fi
+      # v5.2-W193: C-Treiber (3-7x weniger CPU je Abfrage). Scheitert der Bau,
+      # bleibt PyMySQL — kein Grund, die Installation abzubrechen.
+      _mp="$(nc_mysqlclient_pakete)"
+      if [ -n "$_mp" ] && [ "$SKIP_SYSTEM" = 0 ]; then
+        # shellcheck disable=SC2046  # Paketliste aus lib/system.sh, feste Woerter
+        als_root $(nc_installbefehl "$_mp") >/dev/null 2>&1 || true
+      fi
+      if "$VPY" -m pip install -q "mysqlclient>=2.2" >/dev/null 2>&1; then
+        gut "MariaDB-Treiber: mysqlclient (C)."
+      else
+        info "mysqlclient liess sich nicht bauen — der Bot nimmt PyMySQL. Spaeter: bash tools/update.sh --mysqlclient"
+      fi
     else
       warn "Datenbank liess sich nicht anlegen — DB_BACKEND steht auf mariadb; vor dem Start pruefen oder auf sqlite zuruecksetzen."
     fi

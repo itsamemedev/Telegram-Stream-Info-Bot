@@ -112,3 +112,29 @@ Zugriff 233 µs, davon drei unnötige Rundreisen: `ping` bei jedem Ausleihen,
 Leerlauf, lässt das `rollback` weg (rund 130 µs) und wiederholt die erste
 Anweisung einmal, wenn die Verbindung abgerissen ist — ein Server-Neustart
 kostet damit keinen Aufruf. Details: `docs/CHANGELOG.md`, Abschnitt 5.2.1.
+
+## Nachtrag 5.3.0 — Leichtgewicht
+
+Zehn Vorschläge, alle umgesetzt oder begründet zurückgenommen (W193). Jede
+Maßnahme ist per `.env` abschaltbar.
+
+| # | Maßnahme | Gemessen | Schalter |
+|---|---|---|---|
+| 1 | mysqlclient statt PyMySQL (PyMySQL bleibt Rückweg) | CPU je Zugriff 144 → 81 µs, 501 Zeilen 4181 → 1503 µs | `MARIADB_TREIBER` |
+| 2 | Ein Chromium, ein Tab je Restream | 3 Restreams 1076 → 530 MB PSS | `OVERLAY_BROWSER_TEILEN` |
+| 3 | Whisper nach Leerlauf entladen, nie während einer Transkription | Modell `medium` ~1,5 GB | `WHISPER_ENTLADEN_MIN` |
+| 4 | ik_llama.cpp: KV-Cache q8_0 (nur mit Schaltern, die `--help` nennt; startet der Dienst nicht, ohne) | gerechnet 1,34 → 0,71 GB bei 8192 Token | `LLM_KV_CACHE` |
+| 5 | Piper als Arbeiter, Stimme bleibt geladen | Kaltstart 0,5–0,6 CPU-s je Satz entfällt (Stimme nicht messbar: Hugging Face von hier gesperrt) | `PIPER_ARBEITER` |
+| 6 | yt-dlp als Arbeiter, nur bei gleicher Fassung wie im PATH | 0,83 → 0,067 CPU-s je Nachschlag | `YTDLP_ARBEITER` |
+| 7 | Discord ohne Mitgliederliste beim Start, 100 statt 1000 Nachrichten | je nach Gildengröße | `DISCORD_MITGLIEDER_LADEN`, `DISCORD_NACHRICHTEN_PUFFER` |
+| 8 | Kick-API über eine geteilte Sitzung | ein TLS-Aufbau statt zwei je Chat-Antwort | `HTTP_SITZUNG_TEILEN` |
+| 9 | MariaDB: `skip_name_resolve` (nur mit TCP-Konto), `innodb_flush_log_at_trx_commit=2` | INSERT+COMMIT 329 → 177 µs | `update.sh --mariadb-konf` |
+| 10 | Pakete entschlacken | — | — |
+
+**Zurückgenommen nach Prüfung:**
+- `requests` bleibt: Es trägt den SOCKS-Proxy-Test, und faster-whisper zieht es
+  ohnehin mit.
+- `websockets_proxy` bleibt Pflicht: Der Tunnel wird zur Laufzeit im Deck
+  gesetzt, ein Installer sähe den Bedarf nie. Stattdessen meldet sich der
+  stille Rückfall jetzt laut.
+- Redis und boto3 waren schon optional. Neu optional ist nur mysqlclient.

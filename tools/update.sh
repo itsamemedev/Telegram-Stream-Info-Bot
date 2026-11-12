@@ -8,6 +8,8 @@
 #     bash tools/update.sh --python-deps --optional --unattended
 #     bash tools/update.sh --mariadb        SQLite -> MariaDB umziehen (v4.2-W143)
 #     bash tools/update.sh --ik-llama       lokales LLM: llama.cpp -> ik_llama.cpp (v5.1-W181)
+#     bash tools/update.sh --mysqlclient    MariaDB: C-Treiber statt PyMySQL (v5.2-W193)
+#     bash tools/update.sh --mariadb-konf   MariaDB: eigene Server-Einstellungen (v5.2-W193)
 #     bash tools/update.sh --help           alle Schalter
 #
 # WARUM ES DAS GIBT
@@ -60,6 +62,7 @@ NUR_PRUEFEN=0
 TROCKEN=0
 UPGRADE=0
 W_SYSTEM=0; W_PYTHON=0; W_OPTIONAL=0; W_BEOBACHTUNG=""; W_MARIADB=0; W_IKLLAMA=0
+W_MYSQLC=0; W_MKONF=0
 ZIEL="$(cd "$SKRIPT/.." && pwd)"
 
 while [ $# -gt 0 ]; do
@@ -77,6 +80,8 @@ while [ $# -gt 0 ]; do
     --observability=grafana) W_BEOBACHTUNG="--grafana";;
     --mariadb)        W_MARIADB=1;;
     --ik-llama)       W_IKLLAMA=1;;
+    --mysqlclient)    W_MYSQLC=1;;
+    --mariadb-konf)   W_MKONF=1;;
     --ik-llama-neu)   W_IKLLAMA=2;;
     --dir)            ZIEL="${2:-}"; shift;;
     --dir=*)          ZIEL="${1#*=}";;
@@ -101,6 +106,8 @@ Was (ohne Auswahl: --system und --python-deps):
   --mariadb        Datenbank von SQLite nach MariaDB umziehen und .env umstellen
   --ik-llama       lokales LLM: altes llama.cpp entfernen, ik_llama.cpp mit Qwen3-14B-Uncensored
   --ik-llama-neu   wie --ik-llama, und ik_llama.cpp neu bauen
+  --mysqlclient    MariaDB: C-Treiber mysqlclient einrichten (PyMySQL bleibt Rueckweg)
+  --mariadb-konf   MariaDB: skip_name_resolve und Commit-fsync je Sekunde, Server neu starten
 
 Wie:
   --check          nur pruefen und berichten; Exitcode 1, wenn etwas fehlt
@@ -171,6 +178,53 @@ BEFUND=0     # 1, sobald nach allem noch etwas fehlt
 # bei Gleichstand um. Gestartet wird der Dienst danach IMMER wieder, auch
 # nach einem Abbruch: dann eben auf SQLite, unveraendert. Ein Umzug, der den
 # Bot gestoppt zuruecklaesst, waere schlimmer als keiner.
+# v5.2-W193: C-Treiber fuer MariaDB. Scheitert ein Schritt, bleibt PyMySQL —
+# deshalb ist das hier nie ein Grund, den Bot anzuhalten.
+mysqlclient_einrichten(){
+  local _s=(); [ -n "$SUDO" ] && [ "$SUDO" != "-" ] && _s=("$SUDO")
+  abschnitt "mysqlclient"
+  local _p; _p="$(nc_mysqlclient_pakete)"
+  if [ -n "$_p" ]; then
+    # shellcheck disable=SC2046  # Paketliste aus lib/system.sh, feste Woerter
+    lauf ${_s[@]+"${_s[@]}"} $(nc_installbefehl "$_p") \
+      || { warn "Bau-Pakete fuer mysqlclient liessen sich nicht installieren — PyMySQL bleibt."; return 1; }
+  else
+    info "Fuer %s sind die Bau-Pakete nicht hinterlegt — falls pip scheitert: MariaDB-C-Header und Compiler von Hand." "${NC_PKG:-?}"
+  fi
+  lauf "$VPY" -m pip install "mysqlclient>=2.2" \
+    || { warn "mysqlclient liess sich nicht bauen — PyMySQL bleibt (laeuft unveraendert)."; return 1; }
+  gut "mysqlclient eingerichtet — wirkt nach dem naechsten Neustart des Bots (MARIADB_TREIBER=auto)."
+}
+
+# v5.2-W193: eigene Server-Einstellungen. skip_name_resolve nur, wenn das Konto
+# des Bots auch fuer 127.0.0.1 existiert — sonst stuende er vor 1045/1130.
+mariadb_konf_schreiben(){
+  local _s=(); [ -n "$SUDO" ] && [ "$SUDO" != "-" ] && _s=("$SUDO")
+  local nu cli skip=1 _tmp
+  nu="$(env_wert MARIADB_USER)"; nu="${nu:-nightcrawler}"
+  cli="$(command -v mariadb || command -v mysql || printf 'mariadb')"
+  abschnitt "MariaDB-Einstellungen"
+  [ -n "$MKONF_PFAD" ] || { warn "Kein Konfigurationsverzeichnis gefunden."; return 1; }
+  if [ "$TROCKEN" = 0 ] && ! nc_mariadb_tcp_konto "$nu" ${_s[@]+"${_s[@]}"} "$cli"; then
+    warn "Nutzer %s hat kein Konto fuer 127.0.0.1 — skip_name_resolve bleibt aus (sonst verweigert MariaDB den Bot). Abhilfe: bash tools/update.sh --mariadb legt die Konten an." "$nu"
+    skip=0
+  fi
+  _tmp="$(mktemp)"; nc_mariadb_konf_text "$skip" "$_tmp"
+  if [ -f "$MKONF_PFAD" ] && cmp -s "$_tmp" "$MKONF_PFAD"; then
+    rm -f "$_tmp"; gut "Unveraendert: %s" "$MKONF_PFAD"; return 0
+  fi
+  lauf ${_s[@]+"${_s[@]}"} install -m 644 "$_tmp" "$MKONF_PFAD" \
+    || { rm -f "$_tmp"; warn "%s nicht schreibbar." "$MKONF_PFAD"; return 1; }
+  rm -f "$_tmp"
+  if have systemctl; then
+    lauf ${_s[@]+"${_s[@]}"} systemctl restart mariadb \
+      || { warn "MariaDB startete nicht neu — %s pruefen, notfalls loeschen und neu starten." "$MKONF_PFAD"; return 1; }
+  else
+    info "Kein systemd — MariaDB von Hand neu starten, damit %s wirkt." "$MKONF_PFAD"
+  fi
+  gut "MariaDB-Einstellungen geschrieben: %s" "$MKONF_PFAD"
+}
+
 mariadb_umzug(){
   local db nu host port pw cli rc=0 gestoppt=""
   db="$(env_wert MARIADB_DB)"; db="${db:-nightcrawler}"
@@ -381,6 +435,9 @@ abgleich_lesen(){ # -> setzt PY_FEHLT, gibt die Tabelle aus
   PY_FEHLT=""
   while IFS="$(printf '\t')" read -r status name ist spec art; do
     [ -n "$status" ] || continue
+    # v5.2-W193: mysqlclient braucht Header und Compiler — ein pip-Lauf ueber
+    # alle Pakete fiele daran ganz. Es hat einen eigenen Schritt (--mysqlclient).
+    [ "$(normiert "$name")" = "mysqlclient" ] && continue
     if [ "$art" = "optional" ] && [ "$W_OPTIONAL" = 0 ]; then
       grund="$(konfig_grund "$name")"
       [ -n "$grund" ] || continue
@@ -464,9 +521,38 @@ fi
 DB_JETZT="$(env_wert DB_BACKEND | tr 'A-Z' 'a-z')"
 SQ_PFAD="$(env_wert DB_PATH)"; SQ_PFAD="${SQ_PFAD:-tiktok_bot.db}"
 case "$SQ_PFAD" in /*) ;; *) SQ_PFAD="$ZIEL/$SQ_PFAD";; esac
+Z_MYSQLC=0; Z_MKONF=0
 if [ "$DB_JETZT" = "mariadb" ]; then
   gut "Datenbank: MariaDB"
   [ "$W_MARIADB" = 1 ] && info "DB_BACKEND steht schon auf mariadb — kein Umzug noetig."
+  # v5.2-W193: C-Treiber. Kein Befund fuer --check — PyMySQL laeuft.
+  if [ -x "$VPY" ] && "$VPY" -c 'import MySQLdb' 2>/dev/null; then
+    gut "MariaDB-Treiber: mysqlclient"
+  else
+    info "MariaDB-Treiber: PyMySQL (reines Python) — mysqlclient braucht rund ein Drittel der CPU je Abfrage."
+    if [ "$W_MYSQLC" = 1 ]; then Z_MYSQLC=1
+    elif [ "$NC_MODUS" = "express" ] && [ "$NUR_PRUEFEN" = 0 ]; then Z_MYSQLC=1
+    elif _fragen; then
+      erklaere "Baut den C-Treiber mysqlclient ins venv (Systempakete libmariadb-dev, pkg-config, Compiler). Der Bot nimmt ihn nach dem naechsten Neustart; scheitert der Bau, bleibt PyMySQL."
+      frage_ja "C-Treiber mysqlclient einrichten?" J && Z_MYSQLC=1
+    fi
+  fi
+  # v5.2-W193: Server-Einstellungen. Ein Neustart von MariaDB gehoert dem
+  # Betreiber — deshalb nie unbeaufsichtigt ohne Schalter.
+  MKONF_PFAD="$(nc_mariadb_konf_pfad)"
+  if [ -z "$MKONF_PFAD" ]; then
+    info "MariaDB-Einstellungen: kein bekanntes Konfigurationsverzeichnis (mariadb.conf.d/my.cnf.d) — uebersprungen."
+  elif [ -f "$MKONF_PFAD" ] && grep -q 'innodb_flush_log_at_trx_commit = 2' "$MKONF_PFAD"; then
+    gut "MariaDB-Einstellungen: %s" "$MKONF_PFAD"
+  else
+    info "MariaDB-Einstellungen: Werkseinstellung (Namens-Nachschlag je Verbindung, fsync je Commit)."
+    if [ "$W_MKONF" = 1 ]; then Z_MKONF=1
+    elif [ "$NC_MODUS" = "express" ] && [ "$NUR_PRUEFEN" = 0 ]; then Z_MKONF=1
+    elif _fragen; then
+      erklaere "Schreibt %s: kein DNS-Nachschlag je neuer Verbindung, und das Protokoll wird einmal je Sekunde statt je Commit auf die Platte gezwungen (wie SQLite mit synchronous=NORMAL; ein Stromausfall kostet hoechstens die letzte Sekunde). Danach startet MariaDB neu — der Bot verbindet sich von selbst wieder." "$MKONF_PFAD"
+      frage_ja "MariaDB-Einstellungen schreiben und MariaDB neu starten?" J && Z_MKONF=1
+    fi
+  fi
 elif [ ! -s "$SQ_PFAD" ]; then
   info "Datenbank: SQLite, noch ohne Datei — ein Umzug lohnt erst mit Daten."
 else
@@ -545,6 +631,8 @@ fi
 [ "$Z_PROM" = 1 ] && { PLAN=1; if [ "$Z_GRAF" = 1 ]; then info "Prometheus und Grafana einrichten"; else info "Prometheus einrichten"; fi; }
 [ "$Z_MARIA" = 1 ] && { PLAN=1; info "Datenbank umziehen: SQLite -> MariaDB (Server, Nutzer, Umzug, Nachzaehlen, .env)"; }
 [ "$Z_IK" = 1 ] && { PLAN=1; info "Lokales LLM: altes llama.cpp entfernen, ik_llama.cpp bauen, Qwen3-14B-Uncensored laden"; }
+[ "$Z_MYSQLC" = 1 ] && { PLAN=1; info "MariaDB: C-Treiber mysqlclient bauen (PyMySQL bleibt Rueckweg)"; }
+[ "$Z_MKONF" = 1 ] && { PLAN=1; info "MariaDB: Einstellungen schreiben und MariaDB neu starten"; }
 
 if [ "$PLAN" = 0 ]; then
   if [ "$BEFUND" = 0 ]; then gut "Nichts zu tun — alles vorhanden."
@@ -622,6 +710,8 @@ if [ "$Z_PROM" = 1 ]; then
     || { warn "Prometheus/Grafana: Einrichtung unvollstaendig (siehe oben)."; BEFUND=1; }
 fi
 [ "$Z_MARIA" = 1 ] && { mariadb_umzug || BEFUND=1; }
+[ "$Z_MYSQLC" = 1 ] && { mysqlclient_einrichten || BEFUND=1; }
+[ "$Z_MKONF" = 1 ] && { mariadb_konf_schreiben || BEFUND=1; }
 if [ "$Z_IK" = 1 ]; then
   # Die Rueckfrage ist oben gestellt (bzw. per Schalter beantwortet) — das
   # Werkzeug laeuft deshalb unbeaufsichtigt und fragt nicht ein zweites Mal.

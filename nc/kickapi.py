@@ -17,6 +17,8 @@ Fehlanzeige, gegen die die Route ueberhaupt gebaut wurde (v4.0-W10).
 import os
 import re
 
+from nc import httpsitzung as _nc_http
+
 
 class _Conf(dict):
     """Wirft laut statt einen nackten KeyError zu liefern — ein fehlender
@@ -217,9 +219,10 @@ async def user_token(session=None):
     if not (rt and cid and csec):
         return tok.get("access_token")
     import aiohttp
-    own = session is None
-    if own:
-        session = aiohttp.ClientSession()
+    own = False
+    if session is None:
+        # v5.2-W193: geteilte Sitzung statt je Aufruf eine neue (nc/httpsitzung.py)
+        session, own = _nc_http.sitzung()
     try:
         payload = _oauth.token_refresh_payload(cid, csec, rt)
         async with session.post(_oauth.TOKEN_URL, data=payload,
@@ -259,8 +262,8 @@ async def send_message(content, session=None):
     _time_mod = _conf["time_mod"]
     own = False
     if session is None:
-        session = aiohttp.ClientSession()
-        own = True
+        # v5.2-W193: geteilte Sitzung statt je Aufruf eine neue (nc/httpsitzung.py)
+        session, own = _nc_http.sitzung()
     try:
         tok, ist_user = await _schreib_token(session)
         if not tok:
@@ -341,8 +344,8 @@ async def channel_info(session=None):
     import aiohttp
     own = False
     if session is None:
-        session = aiohttp.ClientSession()
-        own = True
+        # v5.2-W193: geteilte Sitzung statt je Aufruf eine neue (nc/httpsitzung.py)
+        session, own = _nc_http.sitzung()
     try:
         tok = await app_token(session)
         if not tok:
@@ -387,8 +390,8 @@ async def update_channel(title=None, category_id=None, session=None):
     import aiohttp
     own = False
     if session is None:
-        session = aiohttp.ClientSession()
-        own = True
+        # v5.2-W193: geteilte Sitzung statt je Aufruf eine neue (nc/httpsitzung.py)
+        session, own = _nc_http.sitzung()
     try:
         tok, ist_user = await _schreib_token(session)
         if not tok:
@@ -432,8 +435,8 @@ async def search_category(query, session=None):
         return None, None
     own = False
     if session is None:
-        session = aiohttp.ClientSession()
-        own = True
+        # v5.2-W193: geteilte Sitzung statt je Aufruf eine neue (nc/httpsitzung.py)
+        session, own = _nc_http.sitzung()
     try:
         tok = await app_token(session)
         if not tok:

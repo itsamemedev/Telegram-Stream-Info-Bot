@@ -22243,9 +22243,14 @@ def _test_v42_w120_kein_warten_ohne_ende():
     fn = {n.name: n for n in _ast.walk(baum) if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
     # ANKER GEWANDERT (v4.2-W159): der Schnitt steht in _clip_schneiden,
     # clip_moment zaehlt nur noch den offenen Clip (Review #204).
-    for f in ("_resolve_via_ytdlp", "_shrink_for_discord", "_clip_schneiden", "_restream_tts_enqueue_wav"):
+    # ANKER GEWANDERT (v5.3-W193, nicht der Vertrag): _resolve_via_ytdlp geht
+    # ueber den yt-dlp-Arbeiter, dessen Einzelweg _ytdlp_einzeln ist — beide
+    # mit Zeitlimit (nc/ytdlpdienst.py beendet den Arbeiter bei Ablauf).
+    for f in ("_ytdlp_einzeln", "_shrink_for_discord", "_clip_schneiden", "_restream_tts_enqueue_wav"):
         u = _ast.unparse(fn[f])
         assert "create_subprocess_exec" not in u and "_nc_kind.ausfuehren(" in u, f
+    u = _ast.unparse(fn["_resolve_via_ytdlp"])
+    assert "create_subprocess_exec" not in u and "_nc_ytdlpdienst.ausfuehren(cmd, 20," in u
     ok("W120: kein communicate() ohne Zeitlimit; videoteil, tonspur, yt-dlp, Clip, "
        "Discord-Verkleinern und TTS starten ueber nc.kindprozess")
 
@@ -22964,8 +22969,10 @@ def _test_v42_w123_anforderungen():
     # Die Marke steht in requirements.txt — und genau die sechs Pakete, die
     # der Installer als abwaehlbar fuehrt, tragen sie.
     opt = sorted(t.split()[0] for t, o in A.zeilen("requirements.txt") if o)
+    # v5.3-W193: mysqlclient dazu — der Installer nimmt es nie in den
+    # allgemeinen pip-Lauf (OPT_AUS), sondern baut es im MariaDB-Abschnitt.
     assert opt == sorted(["discord.py", "PyMySQL", "redis", "faster-whisper", "boto3",
-                          "uvloop"]), opt
+                          "uvloop", "mysqlclient"]), opt
     ok("W123: anforderungen.py — ok/fehlt/alt/entfaellt, Marke [optional], kaputte Zeile = Fehler")
 
 
@@ -32981,8 +32988,11 @@ def _test_v42_w179_restream_lebenszyklus():
         beende(p)
         assert p.returncode is not None, "%s laesst einen <defunct> stehen" % beende.__qualname__
     ob = open("nc/overlaybrowser.py", encoding="utf-8").read()
-    be = _ast.unparse(next(n for n in _ast.walk(_ast.parse(ob))
-                           if getattr(n, "name", "") == "_beenden"))
+    # ANKER GEWANDERT (v5.3-W193, nicht der Vertrag): der Prozess gehoert jetzt
+    # der geteilten Verbindung — _Verbindung.beenden raeumt ihn ab.
+    vb = next(n for n in _ast.walk(_ast.parse(ob))
+              if isinstance(n, _ast.ClassDef) and n.name == "_Verbindung")
+    be = _ast.unparse(next(n for n in vb.body if getattr(n, "name", "") == "beenden"))
     assert be.count("p.wait(timeout=5)") == 2, "Overlay-Browser: kill() ohne wait()"
 
     # ── (5) FEEDER-THREAD IN open(fifo) WIRD GEWECKT.
@@ -35645,6 +35655,10 @@ def _test_v52_w192_mariadb_pool():
     alt_mod = {k: _sys.modules.get(k) for k in ("pymysql", "pymysql.cursors")}
     alt = (DW.DB_BACKEND, DW.DB_PATH, DW.get_pool(), DW.MARIADB_POOL_SIZE)
     alt_env = _os.environ.pop("MARIADB_PRUEFEN_NACH_S", None)
+    # v5.3-W193: die Attrappe IST PyMySQL — ohne Festlegung naehme der Pool
+    # auf einer Maschine mit mysqlclient den echten C-Treiber.
+    alt_treiber = _os.environ.get("MARIADB_TREIBER")
+    _os.environ["MARIADB_TREIBER"] = "pymysql"
     _sys.modules["pymysql"], _sys.modules["pymysql.cursors"] = fake, fake_c
     try:
         DW.set_pool(None)
@@ -35775,8 +35789,491 @@ def _test_v52_w192_mariadb_pool():
                 _sys.modules[k] = v
         if alt_env is not None:
             _os.environ["MARIADB_PRUEFEN_NACH_S"] = alt_env
+        if alt_treiber is None:
+            _os.environ.pop("MARIADB_TREIBER", None)
+        else:
+            _os.environ["MARIADB_TREIBER"] = alt_treiber
     ok("v5.2-W192: MariaDB-Pool — ping nur nach Leerlauf, kein rollback nach commit, "
        "Abriss ohne gescheiterten Aufruf, kein Slot-Leck")
+
+
+
+def _test_v52_w193_arbeiter():
+    """v5.2-W193: yt-dlp und Piper ueber dauerhafte Arbeitsprozesse.
+
+    Gemessen: yt-dlp-Nachschlag 0,83 -> 0,067 CPU-s (vollstaendige Extraktion
+    gegen einen lokalen HLS-Server), Piper 0,5-0,6 CPU-s Kaltstart je Satz
+    ohne Stimme. Geprueft wird mit nachgebauten yt_dlp/piper-Paketen — die
+    CI hat beide nicht —, und zwar die Riegel: gleiche Antwort wie der
+    Einzelaufruf, Zeitlimit beendet den Arbeiter, Ausfall -> Einzelaufruf,
+    Fassungsgleichheit mit dem Programm im PATH, Abnutzung, Abschalter."""
+    import ast as _ast
+    import asyncio as _aio
+    import json as _json
+    import os as _os
+    import wave as _wave
+    from nc import piperdienst as PD
+    from nc import ytdlpdienst as YD
+
+    d = _ph.verzeichnis()
+    fake = _os.path.join(d, "fake")
+    _os.makedirs(_os.path.join(fake, "yt_dlp"))
+    with open(_os.path.join(fake, "yt_dlp", "__init__.py"), "w") as f:
+        f.write(
+            "import json, os, sys, time\n"
+            "from . import version\n"
+            "def main(argv):\n"
+            "    if '--schlaf' in argv: time.sleep(5)\n"
+            "    if '--stirb' in argv: os._exit(1)\n"
+            "    if '--falsch' in argv:\n"
+            "        sys.stderr.write('ERROR: kaputt')\n"
+            "        sys.exit(2)\n"
+            "    print(json.dumps({'argv': argv, 'pid': os.getpid()}))\n"
+            "    sys.exit(0)\n")
+    with open(_os.path.join(fake, "yt_dlp", "version.py"), "w") as f:
+        f.write("__version__ = '2099.01.01'\n")
+    binpfad = _os.path.join(d, "yt-dlp")
+
+    def _bin(fassung, stand):
+        with open(binpfad, "w") as f:
+            f.write("#!/bin/sh\necho %s\n" % fassung)
+        _os.chmod(binpfad, 0o755)
+        _os.utime(binpfad, (stand, stand))       # anderer Stand -> neu gefragt
+    _bin("2099.01.01", 1000)
+    einzeln = []
+
+    async def _einzeln(cmd, z):
+        if cmd[1:] == ["--version"]:
+            p = await _aio.create_subprocess_exec(*cmd, stdout=_aio.subprocess.PIPE)
+            out, _ = await p.communicate()
+            return p.returncode, out, b""
+        einzeln.append(cmd)
+        return 0, b"ERSATZ", b""
+
+    alt_env = {k: _os.environ.get(k) for k in ("PYTHONPATH", "YTDLP_ARBEITER",
+                                             "YTDLP_ARBEITER_LAEUFE", "PIPER_ARBEITER")}
+    alt_args = (YD.PY_ARGS, PD.PY_ARGS)
+    _os.environ["PYTHONPATH"] = fake
+    YD.PY_ARGS = []
+    PD.PY_ARGS = []
+    YD._FASSUNG.clear()
+
+    async def _ytdlp():
+        a = [binpfad, "--no-warnings", "https://x/@a/live"]
+        rc, out, _err = await YD.ausfuehren(a, 20, _einzeln)
+        j = _json.loads(out)
+        assert rc == 0 and j["argv"] == a[1:], ("Antwort wie die Kommandozeile", j)
+        rc2, out2, _ = await YD.ausfuehren(a, 20, _einzeln)
+        assert _json.loads(out2)["pid"] == j["pid"], "kein dauerhafter Arbeiter"
+        assert YD.LAGE["gestartet"] == 1 and not einzeln
+        rc, _o, err = await YD.ausfuehren([binpfad, "--falsch"], 20, _einzeln)
+        assert rc == 2 and b"kaputt" in err, ("Fehler wie beim Einzelaufruf", rc, err)
+        # Zeitlimit: Arbeiter beendet, Fehler geht durch, der naechste startet neu
+        alt_proc = YD._ARBEITER[0].proc
+        try:
+            await YD.ausfuehren([binpfad, "--schlaf"], 1, _einzeln)
+            raise AssertionError("Zeitlimit verschluckt")
+        except _aio.TimeoutError:
+            pass
+        assert alt_proc.returncode is not None, "haengender Arbeiter lebt weiter"
+        await YD.ausfuehren(a, 20, _einzeln)
+        assert YD.LAGE["gestartet"] == 2
+        # Ausfall mitten im Aufruf -> Einzelaufruf
+        rc, out, _ = await YD.ausfuehren([binpfad, "--stirb"], 20, _einzeln)
+        assert out == b"ERSATZ" and len(einzeln) == 1, "Ausfall ohne Ersatzweg"
+        # Pipe zu (Schreiben scheitert): Arbeiter weg, Einzelaufruf
+        await YD.ausfuehren(a, 20, _einzeln)
+        kaputt = YD._ARBEITER[0]
+
+        def _zu(_b):
+            raise BrokenPipeError("Pipe zu")
+        kaputt.proc.stdin.write = _zu
+        n0 = len(einzeln)
+        assert (await YD.ausfuehren(a, 20, _einzeln))[1] == b"ERSATZ" and len(einzeln) == n0 + 1
+        assert kaputt not in YD._ARBEITER and "Pipe zu" in YD.LAGE["grund"]
+        # Abnutzung: nach N Laeufen neu
+        _os.environ["YTDLP_ARBEITER_LAEUFE"] = "2"
+        p1 = _json.loads((await YD.ausfuehren(a, 20, _einzeln))[1])["pid"]
+        p2 = _json.loads((await YD.ausfuehren(a, 20, _einzeln))[1])["pid"]
+        p3 = _json.loads((await YD.ausfuehren(a, 20, _einzeln))[1])["pid"]
+        assert p1 == p2 != p3, ("kein Neustart nach YTDLP_ARBEITER_LAEUFE", p1, p2, p3)
+        _os.environ.pop("YTDLP_ARBEITER_LAEUFE")
+        # Zwei gleichzeitig bei einem Arbeiter: der zweite nimmt den Einzelweg
+        _os.environ["YTDLP_ARBEITER"] = "1"
+        await YD.alle_beenden()
+        n0 = len(einzeln)
+        await _aio.gather(YD.ausfuehren([binpfad, "--schlaf"], 20, _einzeln),
+                          YD.ausfuehren(a, 20, _einzeln))
+        assert len(einzeln) == n0 + 1 and len(YD._ARBEITER) <= 1, "Wettlauf startet zu viele"
+        # Abschalter
+        _os.environ["YTDLP_ARBEITER"] = "0"
+        assert (await YD.ausfuehren(a, 20, _einzeln))[1] == b"ERSATZ"
+        _os.environ.pop("YTDLP_ARBEITER")
+        # Fassung: weicht das Programm im PATH ab, nie der Arbeiter
+        await YD.alle_beenden()
+        _bin("2100.12.31", 2000)
+        assert (await YD.ausfuehren(a, 20, _einzeln))[1] == b"ERSATZ"
+        assert "PATH" in YD.LAGE["grund"] and not YD._ARBEITER, YD.LAGE
+        await YD.alle_beenden()
+
+    # ── Piper
+    _os.makedirs(_os.path.join(fake, "piper"))
+    zaehl = _os.path.join(d, "geladen.txt")
+    with open(_os.path.join(fake, "piper", "__init__.py"), "w") as f:
+        f.write(
+            "import time\n"
+            "class SynthesisConfig:\n"
+            "    def __init__(self, length_scale=None): self.length_scale = length_scale\n"
+            "class PiperVoice:\n"
+            "    @staticmethod\n"
+            "    def load(m):\n"
+            "        open(%r, 'a').write(m + '\\n'); return PiperVoice()\n"
+            "    def synthesize_wav(self, text, wav, syn_config=None):\n"
+            "        if text == 'schlaf': time.sleep(5)\n"
+            "        if text == 'kaputt': raise ValueError('kaputt')\n"
+            "        wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(22050)\n"
+            "        wav.writeframes(b'\\0\\0' * int(100 * syn_config.length_scale))\n" % zaehl)
+    _os.makedirs(_os.path.join(fake, "piper_tts-9.9.dist-info"))
+    with open(_os.path.join(fake, "piper_tts-9.9.dist-info", "METADATA"), "w") as f:
+        f.write("Metadata-Version: 2.1\nName: piper-tts\nVersion: 9.9\n")
+
+    async def _piper():
+        w1, w2 = _os.path.join(d, "a.wav"), _os.path.join(d, "b.wav")
+        assert await PD.sprechen("/m/de.onnx", "Hallo", w1, 2.0) is True
+        assert await PD.sprechen("/m/de.onnx", "Welt", w2, 1.0) is True
+        with _wave.open(w1) as w:
+            assert w.getnframes() == 200, "length_scale nicht durchgereicht"
+        assert open(zaehl).read().count("/m/de.onnx") == 1, "Stimme je Satz neu geladen"
+        assert await PD.sprechen("/m/de.onnx", "kaputt", w1, 1.0) is False
+        assert "kaputt" in PD.lage()["grund"]
+        alt = PD._ZUSTAND["proc"]
+        assert await PD.sprechen("/m/de.onnx", "schlaf", w1, 1.0, zeitlimit=1) is False
+        assert alt.returncode is not None and PD.LAGE["zeitlimit"] == 1
+        assert await PD.sprechen("/m/de.onnx", "wieder", w1, 1.0) is True
+        # Belegt: ein zweiter Satz waehrend des ersten nimmt den Einzelaufruf,
+        # statt Anfrage und Antwort zweier Saetze zu vermischen.
+        e1, e2 = await _aio.gather(PD.sprechen("/m/de.onnx", "schlaf", w1, 1.0, zeitlimit=10),
+                                   PD.sprechen("/m/de.onnx", "zweiter", w2, 1.0))
+        assert e1 is True and e2 is None, (e1, e2)
+        _os.environ["PIPER_ARBEITER"] = "0"
+        assert await PD.sprechen("/m/de.onnx", "aus", w1, 1.0) is None
+        _os.environ.pop("PIPER_ARBEITER")
+        await PD.beenden()
+
+    try:
+        for k in ("aufrufe", "ersatz", "zeitlimit", "gestartet"):
+            YD.LAGE[k] = 0
+            PD.LAGE[k] = 0
+        _aio.run(_ytdlp())
+        _aio.run(_piper())
+        # Ohne passende piper-Fassung (kein synthesize_wav) -> None, Einzelaufruf
+        with open(_os.path.join(fake, "piper", "__init__.py"), "w") as f:
+            f.write("class PiperVoice: pass\nclass SynthesisConfig: pass\n")
+        assert _aio.run(PD.sprechen("/m/de.onnx", "x", _os.path.join(d, "c.wav"), 1.0)) is None
+        assert "startet nicht" in PD.lage()["grund"], PD.lage()
+    finally:
+        YD.PY_ARGS, PD.PY_ARGS = alt_args
+        for k, v in alt_env.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+        # Reste ohne Ereignisschleife abraeumen: die Prozesse gehoeren der
+        # Schleife des Laufs oben, die es nicht mehr gibt.
+        for a_ in list(YD._ARBEITER):
+            if a_.proc.returncode is None:
+                a_.proc.kill()
+        YD._ARBEITER.clear()
+        p_ = PD._ZUSTAND["proc"]
+        if p_ is not None and p_.returncode is None:
+            p_.kill()
+        PD._ZUSTAND["proc"] = None
+    assert YD.PY_ARGS == ["-I"] and PD.PY_ARGS == ["-I"], "Arbeiter nicht isoliert"
+    # Verdrahtung im Bot
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fns = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    rv = _ast.unparse(fns["_resolve_via_ytdlp"])
+    assert "_nc_ytdlpdienst.ausfuehren(cmd, 20, _ytdlp_einzeln)" in rv
+    assert "_nc_kind.ausfuehren" in _ast.unparse(fns["_ytdlp_einzeln"])
+    ps = _ast.unparse(fns["_piper_say"])
+    assert ps.index("_nc_piperdienst.sprechen(") < ps.index("create_subprocess_exec"), \
+        "Piper startet weiter je Satz neu"
+    ganz = _ast.unparse(baum)
+    assert "_nc_ytdlpdienst.alle_beenden()" in ganz and "_nc_piperdienst.beenden()" in ganz
+    ok("v5.2-W193: yt-dlp- und Piper-Arbeiter — gleiche Antwort, Zeitlimit, Ersatzweg, "
+       "Fassung, Abnutzung, Abschalter")
+
+
+def _test_v52_w193_sparen():
+    """v5.2-W193: geteilter Overlay-Browser, Whisper-Entladen, Discord ohne
+    Mitgliederliste, mysqlclient, geteilte HTTP-Sitzung, KV-Cache,
+    MariaDB-Einstellungen, lauter websockets_proxy-Rueckfall."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import sys as _sys
+    import types as _ty
+    from nc import dbwrap as DW
+    from nc import dcspar as DC
+    from nc import httpsitzung as HS
+    from nc import overlaybrowser as OB
+    from nc import whispercfg as WC
+
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fns = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    # ── (1) Overlay: ein Browser, mehrere Tabs
+    alt = _os.environ.pop("OVERLAY_BROWSER_TEILEN", None)
+    try:
+        assert OB.teilen()
+        _os.environ["OVERLAY_BROWSER_TEILEN"] = "0"
+        assert not OB.teilen()
+        _os.environ.pop("OVERLAY_BROWSER_TEILEN")
+        a = OB.Dauerbrowser("/x/chrome", "about:blank", "10,10")
+        b = OB.Dauerbrowser("/x/chrome", "about:blank", "10,10")
+        assert a._verbindung() is b._verbindung(), "jeder Restream bekommt wieder einen Browser"
+        _os.environ["OVERLAY_BROWSER_TEILEN"] = "0"
+        c = OB.Dauerbrowser("/x/chrome", "about:blank", "10,10")
+        assert c._verbindung() is not a._verbindung()
+        _os.environ.pop("OVERLAY_BROWSER_TEILEN")
+        binpath = next((p for p in (_sh.which("google-chrome"), _sh.which("chromium"),
+                                    _sh.which("chromium-browser")) if p), None)
+        if binpath:
+            seite = "data:text/html,<p style='color:white'>W193</p>"
+            t1 = OB.Dauerbrowser(binpath, seite, "320,240")
+            t2 = OB.Dauerbrowser(binpath, seite, "200,100")
+            try:
+                t1.starten(30)
+                t2.starten(30)
+                assert t1._proc.pid == t2._proc.pid, "zwei Restreams, zwei Browser"
+                p1, p2 = t1.schuss(), t2.schuss()
+                assert int.from_bytes(p1[16:20], "big") == 320, "Tab-Groesse vermischt"
+                assert int.from_bytes(p2[16:20], "big") == 200
+                assert OB.lage()["tabs"] >= 2 and OB.lage()["browser"] >= 1
+                t1.beenden()
+                assert t2.lebt() and t2.schuss()[:4] == b"\x89PNG", \
+                    "ein beendeter Restream nahm den Browser der anderen mit"
+                pid = t2._proc.pid
+            finally:
+                t1.beenden()
+                t2.beenden()
+            assert t2._proc is None or t2._proc.poll() is not None, \
+                "letzter Tab zu, Browser laeuft weiter"
+            try:
+                _os.kill(pid, 0)
+                lebt = True
+            except ProcessLookupError:
+                lebt = False
+            assert not lebt, "Browser-Prozess nach dem letzten Tab nicht beendet"
+        else:
+            print("  w193: kein Chromium — geteilter Browser nur ohne Lauf geprueft")
+    finally:
+        if alt is not None:
+            _os.environ["OVERLAY_BROWSER_TEILEN"] = alt
+
+    # ── (2) Whisper entladen
+    alt = dict(WC.MODELL)
+    alt_env = _os.environ.pop("WHISPER_ENTLADEN_MIN", None)
+    try:
+        assert WC.leerlauf_s() == 900
+        WC.MODELL.update(obj=object(), zuletzt=100.0, laufend=0, entladen=0)
+        assert not WC.entladen_wenn_leer(100.0 + 899, 900), "zu frueh entladen"
+        with WC.gebrauch():
+            WC.MODELL["zuletzt"] = 0.0
+            assert not WC.entladen_wenn_leer(10 ** 9, 900), \
+                "waehrend einer Transkription entladen — das naechste Laden verdoppelt den Speicher"
+        WC.MODELL["zuletzt"] = 100.0
+        assert WC.entladen_wenn_leer(100.0 + 900, 900) and WC.MODELL["obj"] is None
+        assert WC.MODELL["entladen"] == 1
+        _os.environ["WHISPER_ENTLADEN_MIN"] = "0"
+        WC.MODELL["obj"] = object()
+        assert not WC.entladen_wenn_leer(10 ** 9, WC.leerlauf_s()), "WHISPER_ENTLADEN_MIN=0 entlaedt"
+    finally:
+        WC.MODELL.clear()
+        WC.MODELL.update(alt)
+        if alt_env is not None:
+            _os.environ["WHISPER_ENTLADEN_MIN"] = alt_env
+        else:
+            _os.environ.pop("WHISPER_ENTLADEN_MIN", None)
+    hz = _ast.unparse(fns["_heap_zurueckgeben"])
+    assert hz.index("_nc_whisper.entladen_wenn_leer(") < hz.index("asyncio.to_thread(_nc_heap.zurueckgeben)")
+    assert "_nc_whisper.benutzt(" in _ast.unparse(fns["_whisper_get_model"])
+    for name in ("_whisper_transcribe", "_whisper_segments"):
+        assert "_nc_whisper.gebrauch()" in _ast.unparse(fns[name]), "%s ohne gebrauch()" % name
+
+    # ── (3) Discord
+    alt = {k: _os.environ.pop(k, None) for k in ("DISCORD_MITGLIEDER_LADEN", "DISCORD_NACHRICHTEN_PUFFER")}
+    try:
+        assert DC.client_optionen() == {"chunk_guilds_at_startup": False, "max_messages": 100}
+        _os.environ["DISCORD_NACHRICHTEN_PUFFER"] = "0"
+        _os.environ["DISCORD_MITGLIEDER_LADEN"] = "1"
+        assert DC.client_optionen() == {"chunk_guilds_at_startup": True, "max_messages": None}
+    finally:
+        for k, v in alt.items():
+            if v is not None:
+                _os.environ[k] = v
+            else:
+                _os.environ.pop(k, None)
+    assert DC.anzeige(_ty.SimpleNamespace(display_name="Ana"), 5) == "Ana"
+    assert DC.anzeige(None, 123) == "<@123>"
+    dsrc = open("discordbot.py", encoding="utf-8").read()
+    dbaum = _ast.parse(dsrc)
+    rufe = [c for c in _ast.walk(dbaum) if isinstance(c, _ast.Call)
+            and _ast.unparse(c.func) == "discord.Client"]
+    assert rufe and all("_nc_dcspar.client_optionen()" in _ast.unparse(c) for c in rufe)
+    lb = next(n for n in _ast.walk(dbaum) if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_c_leaderboard")
+    assert "discord.AllowedMentions.none()" in _ast.unparse(lb), "die Rangliste pingt zehn Leute an"
+
+    # ── (4) mysqlclient
+    alt_mod = {k: _sys.modules.get(k) for k in ("MySQLdb", "MySQLdb.cursors", "pymysql",
+                                               "pymysql.cursors")}
+    alt_env = _os.environ.pop("MARIADB_TREIBER", None)
+
+    class _IE(Exception):
+        pass
+
+    class _OE(Exception):
+        pass
+    fm = _ty.ModuleType("MySQLdb")
+    fm.IntegrityError, fm.OperationalError = _IE, _OE
+    fmc = _ty.ModuleType("MySQLdb.cursors")
+    fmc.DictCursor = "mc-dict"
+    fm.cursors = fmc
+    fp = _ty.ModuleType("pymysql")
+    fp.IntegrityError, fp.OperationalError = KeyError, LookupError
+    fpc = _ty.ModuleType("pymysql.cursors")
+    fpc.DictCursor = "py-dict"
+    fp.cursors = fpc
+    try:
+        import importlib.util as _iu
+        alt_find = _iu.find_spec
+        _iu.find_spec = lambda n, *a: object() if n in ("MySQLdb", "pymysql") else alt_find(n, *a)
+        _sys.modules.update({"MySQLdb": fm, "MySQLdb.cursors": fmc, "pymysql": fp,
+                             "pymysql.cursors": fpc})
+        assert DW._treiber_laden()[0] == "mysqlclient", "C-Treiber vorhanden, aber nicht genommen"
+        _os.environ["MARIADB_TREIBER"] = "pymysql"
+        assert DW._treiber_laden()[0] == "pymysql"
+        integ, oper = DW.treiber_fehler()
+        assert _IE in integ and KeyError in integ and _OE in oper, \
+            "IntegrityError des C-Treibers faengt niemand"
+        gepingt = []
+        k = _ty.SimpleNamespace(ping=lambda *a, **kw: gepingt.append((a, kw)))
+        DW._ping(_ty.SimpleNamespace(_treiber="mysqlclient"), k)
+        DW._ping(_ty.SimpleNamespace(_treiber="pymysql"), k)
+        assert gepingt == [((), {}), ((), {"reconnect": False})], gepingt
+    finally:
+        _iu.find_spec = alt_find
+        for kname, v in alt_mod.items():
+            if v is None:
+                _sys.modules.pop(kname, None)
+            else:
+                _sys.modules[kname] = v
+        if alt_env is not None:
+            _os.environ["MARIADB_TREIBER"] = alt_env
+        else:
+            _os.environ.pop("MARIADB_TREIBER", None)
+    db_zuw = [n for n in baum.body if isinstance(n, _ast.If)
+              and "DB_BACKEND == 'mariadb'" in _ast.unparse(n.test)]
+    assert db_zuw and "_treiber_fehler()" in _ast.unparse(db_zuw[0]), \
+        "DB_INTEGRITY_ERRORS kennt nur PyMySQL"
+    req = open("requirements.txt", encoding="utf-8").read()
+    assert "mysqlclient >= 2.2" in req
+    inst = open("tools/installer.sh", encoding="utf-8").read()
+    assert 'OPT_AUS="$OPT_AUS mysqlclient"' in inst, \
+        "mysqlclient im allgemeinen pip-Lauf — ein gescheiterter Bau risse alles mit"
+
+    # ── (5) geteilte HTTP-Sitzung
+    async def _http():
+        s1, e1 = HS.sitzung()
+        s2, e2 = HS.sitzung()
+        assert s1 is s2 and not e1 and not e2, "je Aufruf eine neue Sitzung"
+        await s1.close()
+        s3, _ = HS.sitzung()
+        assert s3 is not s1 and not s3.closed, "geschlossene Sitzung wiederverwendet"
+        _os.environ["HTTP_SITZUNG_TEILEN"] = "0"
+        s4, e4 = HS.sitzung()
+        assert e4 and s4 is not s3
+        await s4.close()
+        _os.environ.pop("HTTP_SITZUNG_TEILEN")
+        await HS.schliessen()
+        assert s3.closed
+    import importlib.util as _iu2
+    if _iu2.find_spec("aiohttp"):
+        _aio.run(_http())
+    else:
+        print("  w193: aiohttp fehlt — geteilte Sitzung nur statisch geprueft")
+    kb = _ast.parse(open("nc/kickapi.py", encoding="utf-8").read())
+    assert not [c for c in _ast.walk(kb) if isinstance(c, _ast.Call)
+                and _ast.unparse(c.func) == "aiohttp.ClientSession"], \
+        "nc/kickapi.py oeffnet wieder je Aufruf eine Sitzung"
+
+    # ── (6) ik_llama: KV-Cache nur mit Schaltern, die das Programm kennt
+    d = _ph.verzeichnis()
+    fkt = _sp.run(["sed", "-n", "/^kv_schalter(){/,/^}/p", "tools/ikllama.sh"],
+                  capture_output=True, text=True).stdout
+    assert fkt.strip(), "kv_schalter fehlt"
+    def _kv(hilfe, kv):
+        b = _os.path.join(d, "llama-server")
+        with open(b, "w") as f:
+            f.write("#!/bin/sh\ncat <<'H'\n%s\nH\n" % hilfe)
+        _os.chmod(b, 0o755)
+        return _sp.run(["bash", "-c", fkt + "\nkv_schalter"], capture_output=True, text=True,
+                       env=dict(_os.environ, IK_BIN_E=b, KV_CACHE=kv)).stdout
+    alt_ik = "  -fa,   --flash-attn   enable\n  -ctk, --cache-type-k TYPE"
+    neu_ik = "  -fa,   --flash-attn [on|off|auto]\n  -ctk, --cache-type-k TYPE"
+    assert _kv(alt_ik, "q8_0") == " -fa -ctk q8_0 -ctv q8_0"
+    assert _kv(neu_ik, "q8_0") == " -fa on -ctk q8_0 -ctv q8_0"
+    assert _kv(neu_ik, "f16") == "", "LLM_KV_CACHE=f16 quantisiert trotzdem"
+    assert _kv("  -ctk, --cache-type-k TYPE", "q8_0") == "", "ohne Flash-Attention kein V-Cache-Schalter"
+    ik = open("tools/ikllama.sh", encoding="utf-8").read()
+    assert "--no-warmup$_kv" in ik and "warte_health ||" in ik and "KV_CACHE=f16" in ik, \
+        "kein Rueckweg, wenn der Dienst mit KV-Schaltern nicht startet"
+    r = _sp.run(["bash", "tools/ikllama.sh", "--check"], capture_output=True, text=True,
+                timeout=120, env=dict(_os.environ, LLM_KV_CACHE="q9"))
+    assert r.returncode == 2 and "LLM_KV_CACHE" in r.stdout + r.stderr
+
+    # ── (7) MariaDB-Einstellungen
+    def _sh_(cmd, **env):
+        return _sp.run(["bash", "-c", ". tools/lib/system.sh; " + cmd], capture_output=True,
+                       text=True, env=dict(_os.environ, **env))
+    mit = _sh_("nc_mariadb_konf_text 1 /dev/stdout").stdout
+    ohne = _sh_("nc_mariadb_konf_text 0 /dev/stdout").stdout
+    def _werte(t):
+        return [z.strip() for z in t.splitlines() if z.strip() and not z.startswith(("#", "["))]
+    assert _werte(mit) == ["skip_name_resolve = 1", "innodb_flush_log_at_trx_commit = 2"], _werte(mit)
+    assert _werte(ohne) == ["innodb_flush_log_at_trx_commit = 2"], \
+        "skip_name_resolve trotz fehlendem TCP-Konto"
+    cli = _os.path.join(d, "mariadb")
+    for n, rc in (("1", 0), ("0", 1)):
+        with open(cli, "w") as f:
+            f.write("#!/bin/sh\ncat >/dev/null\necho %s\n" % n)
+        _os.chmod(cli, 0o755)
+        assert _sh_("nc_mariadb_tcp_konto bot " + cli).returncode == rc, \
+            "skip_name_resolve ohne TCP-Konto sperrt den Bot aus"
+    up = open("tools/update.sh", encoding="utf-8").read()
+    assert "--mysqlclient)" in up and "--mariadb-konf)" in up
+    assert 'nc_mariadb_tcp_konto "$nu"' in up and "skip=0" in up
+    assert '[ "$(normiert "$name")" = "mysqlclient" ] && continue' in up
+    assert inst.index('nc_mariadb_konf_text 1 "$ARBEIT/mariadb.cnf"') > \
+        inst.index('gut "MariaDB eingerichtet'), "Einstellungen vor dem Anlegen der Konten geschrieben"
+
+    # ── (8) websockets_proxy: der Rueckfall ist laut
+    chat = next(n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                and "from websockets_proxy import" in _ast.unparse(n))
+    hand = [h for h in _ast.walk(chat) if isinstance(h, _ast.ExceptHandler)
+            and "ws_px = px" in _ast.unparse(h)]
+    assert hand and "log.error(" in _ast.unparse(hand[0]), \
+        "der Chat faellt still auf den Weg zurueck, der nicht tunnelt"
+    assert "websockets_proxy >= 0.1.3" in req and "[optional]" not in \
+        [z for z in req.splitlines() if z.startswith("websockets_proxy")][0]
+
+    # ── (9) /healthz traegt die Lage
+    assert "sparen=_sparen_lage()" in _ast.unparse(fns["healthz"])
+    ok("v5.2-W193: geteilter Overlay-Browser, Whisper entladen, Discord ohne Mitgliederliste, "
+       "mysqlclient, geteilte HTTP-Sitzung, KV-Cache, MariaDB-Einstellungen")
 
 
 def main():
@@ -36194,6 +36691,8 @@ def main():
     _test_v52_w191_db_vorrat()
     _test_v52_w191_heapzaum()
     _test_v52_w192_mariadb_pool()
+    _test_v52_w193_arbeiter()
+    _test_v52_w193_sparen()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()

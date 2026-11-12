@@ -975,7 +975,6 @@ Modell: %s/%s	Model: %s/%s
 Modell: Teil-Download liegt vor (%s MB) — wird fortgesetzt.	Model: partial download present (%s MB) — will be resumed.
 Modell: noch nicht geladen	Model: not downloaded yet
 NIGHTCRAWLER — lokales LLM: ik_llama.cpp mit Qwen3-14B-Uncensored	NIGHTCRAWLER — local LLM: ik_llama.cpp with Qwen3-14B-Uncensored
-Nach %s s antwortet /health nicht mit 200 (zuletzt: %s) — journalctl -u %s -n 50	After %s s /health does not answer 200 (last: %s) — journalctl -u %s -n 50
 Nicht entfernbar: %s	Cannot remove: %s
 OFFEN: lokales LLM einrichten (sudo bash tools/ikllama.sh) — bis dahin antwortet die Cloud	OPEN: set up the local LLM (sudo bash tools/ikllama.sh) — until then the cloud answers
 Ohne systemd (gefunden: %s) wird kein Dienst eingerichtet.	Without systemd (found: %s) no service is set up.
@@ -1016,3 +1015,35 @@ ik_llama.cpp mit Qwen3-14B-Uncensored lokal einrichten (Download rund 9 GB)?	Set
 ik_llama.cpp: noch nicht gebaut	ik_llama.cpp: not built yet
 sudo bash tools/ikllama.sh [Schalter]	sudo bash tools/ikllama.sh [switches]
 Antwort von Hugging Face nicht lesbar — Groesse und Pruefsumme ungeprueft.	Answer from Hugging Face unreadable — size and checksum unchecked.
+%s laeuft auch ohne KV-Quantisierung nicht an (HTTP %s) — journalctl -u %s -n 50	%s does not start even without KV quantisation (HTTP %s) — journalctl -u %s -n 50
+%s nicht schreibbar.	%s is not writable.
+%s startet mit quantisiertem KV-Cache nicht (HTTP %s) — schreibe die Unit ohne (LLM_KV_CACHE=f16) und versuche es erneut.	%s does not start with a quantised KV cache (HTTP %s) — rewriting the unit without it (LLM_KV_CACHE=f16) and trying again.
+--mariadb-konf   MariaDB: skip_name_resolve und Commit-fsync je Sekunde, Server neu starten	--mariadb-konf   MariaDB: skip_name_resolve and commit fsync once per second, restart the server
+--mysqlclient    MariaDB: C-Treiber mysqlclient einrichten (PyMySQL bleibt Rueckweg)	--mysqlclient    MariaDB: set up the C driver mysqlclient (PyMySQL stays as fallback)
+Bau-Pakete fuer mysqlclient liessen sich nicht installieren — PyMySQL bleibt.	Build packages for mysqlclient could not be installed — PyMySQL stays.
+Baut den C-Treiber mysqlclient ins venv (Systempakete libmariadb-dev, pkg-config, Compiler). Der Bot nimmt ihn nach dem naechsten Neustart; scheitert der Bau, bleibt PyMySQL.	Builds the C driver mysqlclient into the venv (system packages libmariadb-dev, pkg-config, compiler). The bot uses it after the next restart; if the build fails, PyMySQL stays.
+C-Treiber mysqlclient einrichten?	Set up the C driver mysqlclient?
+Fuer %s sind die Bau-Pakete nicht hinterlegt — falls pip scheitert: MariaDB-C-Header und Compiler von Hand.	No build packages are known for %s — if pip fails: install the MariaDB C headers and a compiler by hand.
+Kein Konfigurationsverzeichnis gefunden.	No configuration directory found.
+Kein systemd — MariaDB von Hand neu starten, damit %s wirkt.	No systemd — restart MariaDB by hand so that %s takes effect.
+LLM_KV_CACHE muss f16, q8_0 oder q4_0 sein: %s	LLM_KV_CACHE must be f16, q8_0 or q4_0: %s
+MariaDB startete nach %s nicht neu — Datei pruefen.	MariaDB did not restart after %s — check the file.
+MariaDB startete nicht neu — %s pruefen, notfalls loeschen und neu starten.	MariaDB did not restart — check %s, delete it if necessary and restart.
+MariaDB-Einstellungen	MariaDB settings
+MariaDB-Einstellungen geschrieben: %s	MariaDB settings written: %s
+MariaDB-Einstellungen schreiben und MariaDB neu starten?	Write the MariaDB settings and restart MariaDB?
+MariaDB-Einstellungen: %s	MariaDB settings: %s
+MariaDB-Einstellungen: Werkseinstellung (Namens-Nachschlag je Verbindung, fsync je Commit).	MariaDB settings: factory defaults (name lookup per connection, fsync per commit).
+MariaDB-Einstellungen: kein bekanntes Konfigurationsverzeichnis (mariadb.conf.d/my.cnf.d) — uebersprungen.	MariaDB settings: no known configuration directory (mariadb.conf.d/my.cnf.d) — skipped.
+MariaDB-Treiber: PyMySQL (reines Python) — mysqlclient braucht rund ein Drittel der CPU je Abfrage.	MariaDB driver: PyMySQL (pure Python) — mysqlclient needs about a third of the CPU per query.
+MariaDB-Treiber: mysqlclient	MariaDB driver: mysqlclient
+MariaDB-Treiber: mysqlclient (C).	MariaDB driver: mysqlclient (C).
+MariaDB: C-Treiber mysqlclient bauen (PyMySQL bleibt Rueckweg)	MariaDB: build the C driver mysqlclient (PyMySQL stays as fallback)
+MariaDB: Einstellungen schreiben und MariaDB neu starten	MariaDB: write the settings and restart MariaDB
+Nutzer %s hat kein Konto fuer 127.0.0.1 — skip_name_resolve bleibt aus (sonst verweigert MariaDB den Bot). Abhilfe: bash tools/update.sh --mariadb legt die Konten an.	User %s has no account for 127.0.0.1 — skip_name_resolve stays off (otherwise MariaDB would refuse the bot). Fix: bash tools/update.sh --mariadb creates the accounts.
+Schreibt %s: kein DNS-Nachschlag je neuer Verbindung, und das Protokoll wird einmal je Sekunde statt je Commit auf die Platte gezwungen (wie SQLite mit synchronous=NORMAL; ein Stromausfall kostet hoechstens die letzte Sekunde). Danach startet MariaDB neu — der Bot verbindet sich von selbst wieder.	Writes %s: no DNS lookup per new connection, and the log is forced to disk once per second instead of per commit (like SQLite with synchronous=NORMAL; a power failure costs at most the last second). MariaDB restarts afterwards — the bot reconnects on its own.
+Unveraendert: %s	Unchanged: %s
+mysqlclient	mysqlclient
+mysqlclient eingerichtet — wirkt nach dem naechsten Neustart des Bots (MARIADB_TREIBER=auto).	mysqlclient set up — takes effect after the next bot restart (MARIADB_TREIBER=auto).
+mysqlclient liess sich nicht bauen — PyMySQL bleibt (laeuft unveraendert).	mysqlclient could not be built — PyMySQL stays (runs unchanged).
+mysqlclient liess sich nicht bauen — der Bot nimmt PyMySQL. Spaeter: bash tools/update.sh --mysqlclient	mysqlclient could not be built — the bot uses PyMySQL. Later: bash tools/update.sh --mysqlclient

@@ -9,6 +9,76 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.3.0] — 2026-11-12 · „Leichtgewicht"
+
+Zehn Bausteine getauscht, geteilt oder schlanker eingestellt (W193), jeder
+gemessen, einzeln abschaltbar und mit Vertrag (`_test_v52_w193_arbeiter`,
+`_test_v52_w193_sparen`). 29 von 29 Mutationsproben gefangen; zwei
+entwischten zuerst (Pipe-Abriss beim yt-dlp-Arbeiter, Belegt-Riegel beim
+Piper-Arbeiter) und haben Vertragsfälle bekommen. Übersicht und Messungen:
+[`KONZEPT_SPARFLAMME.md`](KONZEPT_SPARFLAMME.md#nachtrag-530--leichtgewicht).
+
+### Geändert
+
+- **Overlay: ein Chromium für alle Restreams** (`nc/overlaybrowser.py`). Ein
+  Dauerbrowser belegte rund 400 MB in 14 Prozessen — je Restream. Jetzt ein
+  Browser, jeder Restream ein Tab mit eigener Größe und Sitzung. Gemessen
+  (720×1280): 1/2/3 Restreams 482/508/530 MB statt 484/785/1076 MB. Absturz
+  und Hänger beenden den Browser für alle Tabs, der nächste Schuss startet
+  ihn nach der Ruhezeit neu; der letzte Tab beendet ihn ganz.
+  `OVERLAY_BROWSER_TEILEN=0` = einer je Restream wie bisher.
+- **yt-dlp als dauerhafter Arbeiter** (`nc/ytdlpdienst.py`,
+  `nc/ytdlparbeiter.py`): dieselben Argumente, dieselbe Antwort (rc, stdout,
+  stderr) wie die Kommandozeile. Gemessen mit vollständiger Extraktion: 0,83 →
+  0,067 CPU-s je Nachschlag. Zeitlimit beendet den Arbeiter; belegt,
+  gestorben oder Pipe zu → Einzelaufruf. Nur bei gleicher Fassung wie das
+  yt-dlp im PATH (sonst hätte `yt-dlp -U` keine Wirkung), Neustart nach 200
+  Aufrufen. `YTDLP_ARBEITER=0` schaltet ab.
+- **Piper als dauerhafter Arbeiter** (`nc/piperdienst.py`,
+  `nc/piperarbeiter.py`): Stimme bleibt geladen (höchstens drei), statt je
+  Satz Python, onnxruntime (0,5–0,6 CPU-s) und das Modell neu zu laden.
+  `PIPER_ARBEITER=0` schaltet ab.
+- **MariaDB mit mysqlclient** (`nc/dbwrap.py`): der C-Treiber, wenn
+  installiert, sonst PyMySQL (`MARIADB_TREIBER=auto|mysqlclient|pymysql`).
+  Gemessen je `db_conn()` samt Hülle: 144 → 81 µs CPU, 501 Zeilen 4181 →
+  1503 µs. `DB_INTEGRITY_ERRORS` kennt die Ausnahmen beider Treiber — mit nur
+  den PyMySQL-Klassen liefe jedes `except` auf einen doppelten Schlüssel ins
+  Leere. Installer und `update.sh --mysqlclient` bauen es eigens (nie im
+  allgemeinen pip-Lauf: ein gescheiterter Bau risse alle Pakete mit).
+- **MariaDB-Einstellungen** (`tools/lib/system.sh`, Installer, `update.sh
+  --mariadb-konf`): `skip_name_resolve` (nur wenn das Konto des Bots auch für
+  127.0.0.1 existiert — sonst „Access denied", gemessen) und
+  `innodb_flush_log_at_trx_commit=2` (wie SQLite mit synchronous=NORMAL).
+  INSERT+COMMIT 329 → 177 µs.
+- **Whisper nach Leerlauf entladen** (`WHISPER_ENTLADEN_MIN`, Vorgabe 15):
+  danach `malloc_trim`. Nie während einer Transkription — eine lange
+  Archiv-Transkription hielte ihr Modell fest, und der nächste Satz lüde ein
+  zweites.
+- **Discord ohne Mitgliederliste** (`nc/dcspar.py`): keine vollständige
+  Gilde beim Verbinden, 100 statt 1000 Nachrichten im Speicher; die
+  Rangliste zeigt Unbekannte als Erwähnung, ohne zu pingen.
+- **ik_llama.cpp mit quantisiertem KV-Cache** (`LLM_KV_CACHE`, Vorgabe q8_0):
+  rechnerisch 1,34 → 0,71 GB bei 8192 Token. Nur mit Schaltern, die das
+  gebaute `llama-server --help` nennt (`-fa` bzw. `-fa on`); startet der
+  Dienst damit nicht, schreibt das Skript die Unit ohne und versucht es
+  erneut.
+- **Kick-API über eine geteilte Sitzung** (`nc/httpsitzung.py`): je
+  AZRAEL-Antwort ein TLS-Aufbau statt zwei.
+- `/healthz` → `sparen`: Arbeiter, geteilter Browser, Whisper.
+
+### Behoben
+
+- Fehlt `websockets_proxy`, lief der TikTok-Chat **still** (`log.debug`) über
+  die Server-IP statt durch den Tunnel. Jetzt `log.error` mit Abhilfe.
+- Piper-Arbeiter: scheiterte die Synthese, verdeckte der Fehler beim
+  Schließen der WAV („# channels not specified") den eigentlichen Grund
+  (gefunden vom Vertrag).
+
+### Bewusst nicht
+
+- `requests` bleibt (SOCKS-Proxy-Test, kommt mit faster-whisper ohnehin),
+  `websockets_proxy` bleibt Pflicht (der Tunnel wird zur Laufzeit gesetzt).
+
 ## [5.2.1] — 2026-11-12 · „Sparflamme" (MariaDB)
 
 Der Betrieb läuft auf MariaDB (`DB_BACKEND=mariadb`). Der Verbindungsvorrat
