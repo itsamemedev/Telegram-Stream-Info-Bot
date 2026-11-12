@@ -40,6 +40,13 @@ Bereinigungs-Knopf, und dem Deck fehle seit 5.0.0 der MCP-Tab.
   (neue mtime) hebt sie sofort auf. Dazu: kein verwaister Arbeiter, wenn die
   Fassungsfrage scheitert, und eine unlesbare Piper-Antwort beendet den
   Arbeiter, statt bis `_piper_say` durchzuwerfen.
+- **Overlay-Browser: ein stummer Ladeversuch frass die ganze Startfrist.**
+  `_warten_bis_geladen` gab jedem `Runtime.evaluate` die volle Frist (30 s);
+  antwortete Chromium auf einen Versuch nicht (Kontext während der Navigation
+  neu, Maschine unter Last bei `nice 12`), blieb keine Zeit für einen zweiten —
+  „Seite nicht geladen: Runtime.evaluate: keine Antwort". So fiel der
+  W170-Vertrag in der CI (3.14), auch auf `main`. Jetzt drei Sekunden je
+  Versuch; eine verspätete Antwort verwirft `aufruf()` an der id.
 - **`--selfcheck` starb an der Diagnose einer unlesbaren Datenbank:** die
   Folgezeilen stehen mit Stufe `""` in der Liste, der Bericht machte
   `icon[level]` — `KeyError`, „Selfcheck crashte: ''", Exitcode 2, und die
@@ -91,9 +98,14 @@ durchsucht, das Deck in v4.6.11, v5.0.0 und HEAD gerendert und verglichen —
 Tab-Leiste und Panel-Überschriften identisch, keine JS-Fehler. Der stärkste
 Kandidat liegt außerhalb des Decks: die Weboberfläche von llama-server
 (Port 8080). Die Mainline-Oberfläche hat einen Einstellungsreiter „MCP"; seit
-dem Umstieg auf ik_llama.cpp (v5.1.0) startet der Dienst ohne
-`--webui llamacpp` und zeigt die alte Oberfläche ohne diesen Reiter. Nicht
-geändert, bis der Betreiber bestätigt, dass er das meint.
+dem Umstieg auf ik_llama.cpp (v5.1.0) startete der Dienst ohne
+`--webui llamacpp` und zeigte die alte Oberfläche ohne diesen Reiter. Der
+Betreiber hat am Server bestätigt, dass sein Build `--webui NAME` und
+`--webui-mcp-proxy` kennt: `tools/ikllama.sh` setzt jetzt `--webui llamacpp`
+(`LLM_WEBUI`, Vorgabe) und den CORS-Proxy für MCP-Server nur mit
+`LLM_WEBUI_MCP_PROXY=1` — beides nur, wenn das Programm den Schalter kennt.
+Wirkt nach `sudo bash tools/ikllama.sh` (schreibt die Unit neu) und Neustart
+von `llama-server`.
 
 ### Gegenprobe
 

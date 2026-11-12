@@ -18,6 +18,12 @@
 #               legt das Modell dafuer ganz in den RAM (daher MemoryMax).
 #   --jinja     Chat-Vorlage aus dem Modell; nur damit wirkt enable_thinking=false,
 #               das brain/llm.py mitschickt (Qwen3 denkt sonst vor jeder Antwort).
+#   --webui llamacpp  die Chat-Oberflaeche mit dem Reiter „MCP" (v5.6-W197);
+#               ohne Angabe zeigt ik_llama.cpp die alte ohne MCP. Steht hier
+#               NICHT in ExecStart: ein Build ohne den Schalter startete sonst
+#               nicht. tools/ikllama.sh setzt ihn, wenn das Programm ihn kennt
+#               (LLM_WEBUI), den CORS-Proxy fuer MCP-Server nur mit
+#               LLM_WEBUI_MCP_PROXY=1. Von Hand: ans Ende von ExecStart haengen.
 #   KEIN --embeddings: laut Server-Doku beschraenkt der Schalter den Server auf
 #               Embeddings; /health waere gruen, der Chat nicht (W110).
 #               Embeddings kommen von einem EIGENEN Server (BRAIN_EMBED_URL).

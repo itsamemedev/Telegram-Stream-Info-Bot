@@ -34,6 +34,7 @@ CHANGELOG = [
             "Cookie-Pruefung im System-Tab: Knopf „Bereinigen“ entfernt abgelaufene Cookies und die Domain-Varianten, die der Bot nicht sendet — mit Vorschau, Backup und ohne je die Anmeldung zu verlieren",
             "--selfcheck stirbt nicht mehr an der Diagnose einer unlesbaren Datenbank (KeyError im Bericht); der Selbsttest ist in benannte Abschnitte zerlegt",
             "Monolith: stats.json-Erzeuger und Tagesbericht nach nc/, tote Huellen und veraltete Patches entfernt, bot.py 28.831 → 27.954 Zeilen",
+            "llama-server zeigt wieder die Oberflaeche mit dem Reiter „MCP“ (--webui llamacpp, LLM_WEBUI); der CORS-Proxy fuer MCP-Server nur mit LLM_WEBUI_MCP_PROXY=1",
         ],
     },
     {

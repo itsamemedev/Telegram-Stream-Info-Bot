@@ -234,6 +234,7 @@ class _Verbindung:
             return antwort.get("result") or {}
 
 
+VERSUCH_S = 3.0                   # je Ladeversuch (v5.6-W197), nicht je Start
 _GETEILT = {}                     # (binpath, nice) -> _Verbindung
 _GETEILT_SPERRE = threading.Lock()
 
@@ -325,9 +326,19 @@ class Dauerbrowser:
         letzter = None
         while time.monotonic() < frist:
             try:
+                # v5.6-W197: jeder Versuch mit EIGENER kurzer Frist. Bis hierher
+                # bekam er die ganze Startfrist — antwortete Chromium auf einen
+                # Versuch nicht (Ausfuehrungskontext waehrend der Navigation
+                # neu, Maschine unter Last bei nice 12), frass dieser eine die
+                # 30 s, und ein zweiter Versuch fand nie statt: „Seite nicht
+                # geladen: Runtime.evaluate: keine Antwort" (W170-Vertrag in
+                # der CI, 3.14). Eine verspaetete Antwort auf den alten Versuch
+                # verwirft aufruf() an der id.
                 erg = v.aufruf("Runtime.evaluate",
                                {"expression": "document.readyState",
-                                "returnByValue": True}, frist=frist, sitzung=sitzung)
+                                "returnByValue": True},
+                               frist=min(frist, time.monotonic() + VERSUCH_S),
+                               sitzung=sitzung)
                 if (erg.get("result") or {}).get("value") == "complete":
                     return
             except OverlayBrowserFehler as e:

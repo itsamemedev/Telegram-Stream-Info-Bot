@@ -54,6 +54,8 @@ Ein zweiter Lauf auf fertigem Bestand tut nichts. Neu bauen:
 | `LLM_MODELL_VERZ` | `/opt/models` | |
 | `LLM_THREADS` | `4` | Aufnahmen haben Vorrang |
 | `LLM_THREADS_BATCH` | leer (= `LLM_THREADS`) | Threads nur fürs **Einlesen** des Prompts (`-tb`, v5.5). Gemessen mit `-t 4`: 7,8 Token/s Einlesen, 3,4 Token/s Erzeugen. Nur setzen, wenn Aufnahme und Restream die Kerne nicht brauchen — und vorher/nachher messen (Abschnitt 5) |
+| `LLM_WEBUI` | `llamacpp` | Chat-Oberfläche auf dem Port (`--webui`, v5.6): `llamacpp` ist die neue mit dem Reiter **„MCP“** in den Einstellungen, `auto` die alte von ik_llama.cpp ohne MCP, `none` keine. Gesetzt wird der Schalter nur, wenn das gebaute Programm ihn kennt |
+| `LLM_WEBUI_MCP_PROXY` | `0` | `1` = CORS-Proxy für MCP-Server der Oberfläche (`--webui-mcp-proxy`). Der Server ruft dann fremde Adressen ab — laut Programm nicht in nicht vertrauten Umgebungen. Er lauscht nur auf 127.0.0.1 (SSH-Tunnel); trotzdem bewusst anschalten. Wirkt erst nach `sudo bash tools/ikllama.sh` und Neustart des Dienstes |
 | `LLM_KV_CACHE` | `q8_0` | KV-Cache quantisiert (v5.3), `f16` = aus |
 | `LLM_KONTEXT` | `8192` | |
 | `IK_LLAMA_DIR` / `IK_LLAMA_REF` | `/opt/ik_llama.cpp` / `main` | |

@@ -35224,6 +35224,7 @@ def _test_v56_w197_cookie_bereinigen():
     als abgelaufen werfen; die Anmeldung verlieren; in der Vorschau
     schreiben; einen anderen Plan ausfuehren als den gezeigten; an der Sperre
     vorbei oder ohne Sicherung schreiben."""
+    import re as _re_w197
     import ast as _ast
     import json as _json
     import os as _os
@@ -35577,7 +35578,11 @@ const confirm=t=>{fragen.push(t); return ja;};
         url = "/api/cookies/bereinigen"
         assert aus["nein"]["posts"] == [[url, {"vorschau": True}]], aus["nein"]
         frage = aus["nein"]["fragen"][0]
-        assert "tt_chain_token" in frage and "www.tiktok.com" in frage, frage
+        # Als ganzes Wort, nicht als Teilstring: "www.tiktok.com" in frage
+        # hielte CodeQL fuer eine URL-Pruefung (py/incomplete-url-substring-
+        # sanitization) — und waere auch bei "www.tiktok.com.boese" wahr.
+        woerter = _re_w197.findall(r"[\w.-]+", frage)
+        assert "tt_chain_token" in woerter and "www.tiktok.com" in woerter, frage
         assert aus["nein"]["frei"], "nach Abbruch bleibt der Knopf gesperrt"
         assert aus["ja"]["posts"] == [[url, {"vorschau": True}], [url, {"stand": "s1"}]], aus["ja"]
         assert aus["ja"]["geladen"] == 1 and "tiktok_cookies.txt.bak" in aus["ja"]["msg"] \
@@ -37471,6 +37476,94 @@ def _test_v56_w197_tagesbericht():
     ok("v5.6-w197: Tagesbericht aus bot.py geloest — Lagen je Aufruf, ohne configure() laut")
 
 
+def _test_v56_w197_overlay_ladeversuch():
+    """v5.6-W197: ein unbeantworteter Ladeversuch frass die ganze Startfrist.
+
+    Der W170-Vertrag fiel in der CI (3.14) mit „Seite nicht geladen:
+    Runtime.evaluate: keine Antwort": jeder Versuch bekam die volle Frist, und
+    nach dem ersten ohne Antwort war keine Zeit fuer einen zweiten. Hier ohne
+    Chromium: die Attrappe beantwortet den ersten Versuch nicht und prueft,
+    dass er eine eigene, kurze Frist traegt."""
+    import time as _t
+    from types import SimpleNamespace as _NS
+    from nc import overlaybrowser as _ob
+    versuche = []
+
+    class _V:
+        def lebt(self):
+            return True
+
+        def aufruf(self, methode, params, frist, sitzung=None):
+            versuche.append(frist - _t.monotonic())
+            assert frist - _t.monotonic() <= _ob.VERSUCH_S + 0.5, \
+                "ein Ladeversuch traegt die ganze Startfrist (%.1f s)" % (frist - _t.monotonic())
+            if len(versuche) == 1:
+                raise _ob.OverlayBrowserFehler("Runtime.evaluate: keine Antwort")
+            return {"result": {"value": "complete"}}
+    t0 = _t.monotonic()
+    _ob.Dauerbrowser._warten_bis_geladen(_NS(url="http://x/overlay"), _V(), "s",
+                                         _t.monotonic() + 30)
+    assert len(versuche) == 2 and _t.monotonic() - t0 < 5, versuche
+    # Die Startfrist bleibt die Obergrenze: kurz vor ihrem Ende kein Versuch
+    # mit mehr Zeit, als sie noch hat.
+    versuche.clear()
+    try:
+        _ob.Dauerbrowser._warten_bis_geladen(_NS(url="http://x/overlay"), _V(), "s",
+                                             _t.monotonic() + 0.3)
+    except _ob.OverlayBrowserFehler:
+        pass
+    assert versuche and versuche[0] <= 0.35, versuche
+    ok("v5.6-w197: Overlay-Browser — jeder Ladeversuch mit eigener Frist, ein stummer frisst nicht den Start")
+
+
+def _test_v56_w197_llama_webui():
+    """v5.6-W197: der Reiter „MCP" der llama-server-Oberflaeche.
+
+    Der Betreiber: „seit 5.0.0 fehlt der MCP-Tab". Im Deck gab es keinen; es
+    war die Oberflaeche von llama-server. Mainline-llama.cpp (bis v5.0) zeigte
+    die neue mit MCP-Reiter, ik_llama.cpp (seit v5.1) ohne --webui die alte.
+    Am Server bestaetigt: `--webui NAME` (none|auto|llamacpp) und
+    `--webui-mcp-proxy` kennt sein Build. Geprueft: Schalter nur, wenn das
+    Programm sie kennt; der Proxy nur ausdruecklich; ungueltige Werte brechen ab."""
+    import os as _os
+    import subprocess as _sp
+    d = _ph.verzeichnis()
+    fkt = _sp.run(["sed", "-n", "/^webui_schalter(){/,/^}/p", "tools/ikllama.sh"],
+                  capture_output=True, text=True).stdout
+    assert fkt.strip(), "webui_schalter fehlt"
+    voll = ("         --webui NAME             controls which webui to server:\n"
+            "         --ui-mcp-proxy, --webui-mcp-proxy\n")
+
+    def _w(hilfe, webui, mcp):
+        b = _os.path.join(d, "llama-server")
+        with open(b, "w") as f:
+            f.write("#!/bin/sh\ncat <<'H'\n%s\nH\n" % hilfe)
+        _os.chmod(b, 0o755)
+        return _sp.run(["bash", "-c", fkt + "\nwebui_schalter"], capture_output=True, text=True,
+                       env=dict(_os.environ, IK_BIN_E=b, WEBUI=webui, WEBUI_MCP=mcp)).stdout
+    assert _w(voll, "llamacpp", "0") == " --webui llamacpp", "Vorgabe: die Oberflaeche mit MCP-Reiter"
+    assert _w(voll, "llamacpp", "1") == " --webui llamacpp --webui-mcp-proxy"
+    assert _w(voll, "auto", "0") == "", "auto ist die Vorgabe des Programms — kein Schalter"
+    assert _w(voll, "none", "1") == " --webui none", "ohne Oberflaeche kein Proxy"
+    assert _w("  -t N, --threads N", "llamacpp", "1") == "", \
+        "ein unbekannter Schalter liesse den Dienst nicht starten"
+    ik = open("tools/ikllama.sh", encoding="utf-8").read()
+    assert 'WEBUI="$(wert LLM_WEBUI llamacpp)"' in ik, "Vorgabe nicht llamacpp"
+    assert 'WEBUI_MCP="$(wert LLM_WEBUI_MCP_PROXY 0)"' in ik, "Proxy per Vorgabe an"
+    assert ik.count("$(webui_schalter)") == 2, "Unit und Von-Hand-Befehl muessen gleich sein"
+    for name, wert in (("LLM_WEBUI", "neu"), ("LLM_WEBUI_MCP_PROXY", "ja")):
+        r = _sp.run(["bash", "tools/ikllama.sh", "--check"], capture_output=True, text=True,
+                    timeout=120, env=dict(_os.environ, **{name: wert}))
+        assert r.returncode == 2 and name in r.stdout + r.stderr, (name, r.returncode)
+    # Die statische Vorlage traegt den Schalter NICHT in ExecStart — wer sie von
+    # Hand kopiert, haette auf einem Build ohne --webui einen Dienst, der nicht
+    # startet. Sie nennt ihn im Kommentar; setzen tut ihn das Werkzeug (W181).
+    unit = open("llama-server.service", encoding="utf-8").read()
+    assert "--webui" not in [z for z in unit.splitlines() if z.startswith("ExecStart=")][0]
+    assert "--webui llamacpp" in unit, "die Vorlage nennt den MCP-Reiter nicht"
+    ok("v5.6-w197: llama-server mit --webui llamacpp (MCP-Reiter), Proxy nur ausdruecklich")
+
+
 def _test_v56_w197_ki_sql():
     """v5.6-W197 (Bughunt): die KI-Abfrage (/api/ai/query) unter beiden Backends.
 
@@ -38258,6 +38351,8 @@ def main():
     _test_v56_w197_keine_ausnahme_auf_vorrat()
     _test_v56_w197_oeffentliche_stats()
     _test_v56_w197_tagesbericht()
+    _test_v56_w197_overlay_ladeversuch()
+    _test_v56_w197_llama_webui()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()
