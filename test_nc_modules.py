@@ -35251,7 +35251,10 @@ def _test_v52_w190_sicherheit():
     oeff = _ast.literal_eval(oeff.value)
     assert "ok" in oeff and not {"commit", "tunnel", "betrieb", "speicher", "procs",
                                  "kinder", "commit_quelle"} & set(oeff), oeff
-    hz = fns["healthz"]
+    # ANKER GEWANDERT (v5.2-W191, nicht der Vertrag): der Zweig steht seit dem
+    # Herausloesen in _healthz_fuer_aufrufer, healthz ruft ihn fuer jede Antwort.
+    assert "daten = _healthz_fuer_aufrufer(daten)" in _ast.unparse(fns["healthz"])
+    hz = fns["_healthz_fuer_aufrufer"]
     zweig = [n for n in _ast.walk(hz) if isinstance(n, _ast.If)
              and "_ist_lokal()" in _ast.unparse(n.test) and "_token_ok()" in _ast.unparse(n.test)]
     assert zweig and "_HEALTHZ_OEFFENTLICH" in _ast.unparse(zweig[0]), "/healthz zeigt Fremden alles"
@@ -35307,6 +35310,252 @@ def _test_v52_w190_sicherheit():
     assert "'" + SK.DATEINAME + "'" in liste, "der Installer kopiert den Sitzungsschluessel mit"
     ok("v5.2-W190: Host-Kopf gegen DNS-Rebinding, PIN-Cookie mit Serverschluessel, "
        "Betreiberbefehle im offenen Modus, /healthz knapp, Kick-State, globale PIN-Sperre")
+
+
+
+def _test_v52_w191_db_vorrat():
+    """v5.2-W191: SQLite-Verbindungen werden wiederverwendet — und nie dort,
+    wo eine frische Verbindung etwas anderes gesehen haette.
+
+    Gemessen: 180 us je frischer Verbindung (Oeffnen, fuenf PRAGMAs, Schema
+    einlesen), 2 us wiederverwendet; der 8-MB-Seiten-Cache wurde nie warm."""
+    import ast as _ast
+    import os as _os
+    import sqlite3 as _sq
+    import threading as _th
+    import time as _t
+    from nc import dbwrap as DW
+    from nc import dbrestore as DR
+
+    alt_pfad = DW.DB_PATH
+    alt_env = _os.environ.pop("DB_VORRAT", None)
+    d = _ph.verzeichnis()
+    a = _os.path.join(d, "a.db")
+    b = _os.path.join(d, "b.db")
+    try:
+        DW.vorrat_leeren()
+        DW.configure_db(db_path=a)
+        with DW.db_conn() as c:
+            c.execute("CREATE TABLE t (x INTEGER)")
+        # (1) Wiederverwendung: dieselbe Verbindung, Zaehler steigt
+        st0 = dict(DW._VORRAT_STAT)
+        with DW.db_conn() as c:
+            roh1 = c._conn
+            c.execute("INSERT INTO t VALUES (1)")
+        with DW.db_conn() as c:
+            assert c._conn is roh1, "keine Wiederverwendung"
+            assert c.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 1, "Commit verloren"
+        assert DW._VORRAT_STAT["wieder"] >= st0["wieder"] + 1
+        # (2) Nach dem with ist die Huelle tot — wie bisher
+        try:
+            c.execute("SELECT 1")
+            raise AssertionError("Zugriff nach dem with arbeitet still weiter")
+        except _sq.ProgrammingError:
+            pass
+        # (3) Verschachtelt: zwei verschiedene Verbindungen, getrennte Transaktionen
+        with DW.db_conn() as aussen:
+            aussen.execute("INSERT INTO t VALUES (2)")
+            with DW.db_conn() as innen:
+                assert innen._conn is not aussen._conn, "innere Transaktion committet die aeussere"
+            aussen.rollback()
+        with DW.db_conn() as c:
+            assert c.execute("SELECT COUNT(*) FROM t WHERE x=2").fetchone()[0] == 0
+        # (4) Nie mit offener Transaktion zurueck
+        roh = _sq.connect(a, check_same_thread=False)
+        roh.execute("INSERT INTO t VALUES (3)")
+        assert roh.in_transaction
+        assert DW._vorrat_ablegen(roh, (a, DW._kennung(a)))
+        assert not roh.in_transaction, "Verbindung mit offener Transaktion im Vorrat"
+        DW.vorrat_leeren()
+        with DW.db_conn() as c:
+            assert c.execute("SELECT COUNT(*) FROM t WHERE x=3").fetchone()[0] == 0
+        # (5) Nach einem Datenbankfehler wird nicht aufgehoben
+        DW.vorrat_leeren()
+        try:
+            with DW.db_conn() as c:
+                c.execute("SELECT * FROM gibt_es_nicht")
+        except _sq.OperationalError:
+            pass
+        assert not DW._VORRAT, "nach einem Datenbankfehler wieder ausgegeben"
+        # (6) Gedeckelt
+        _os.environ["DB_VORRAT"] = "4"
+        stapel = [DW.db_conn() for _ in range(7)]
+        for s in stapel:
+            s.__enter__()
+        for s in stapel:
+            s.__exit__(None, None, None)
+        assert len(DW._VORRAT) == 4, len(DW._VORRAT)
+        _os.environ["DB_VORRAT"] = "0"
+        DW.vorrat_leeren()
+        with DW.db_conn() as c:
+            pass
+        assert not DW._VORRAT, "DB_VORRAT=0 hebt trotzdem auf"
+        _os.environ.pop("DB_VORRAT")
+        # (7) Datei getauscht -> nicht wieder ausgeben, alte Verbindung nicht schliessen
+        with DW.db_conn() as c:
+            alt_roh = c._conn
+        neu = _os.path.join(d, "neu.db")
+        n = _sq.connect(neu)
+        n.execute("CREATE TABLE t (x INTEGER)")
+        n.execute("INSERT INTO t VALUES (42)")
+        n.commit()
+        n.close()
+        _os.replace(neu, a)
+        with DW.db_conn() as c:
+            assert c._conn is not alt_roh, "Vorrat haelt die getauschte Datei fest"
+            assert c.execute("SELECT x FROM t").fetchone()[0] == 42
+        assert alt_roh in DW._ABGELEGT, "verworfen statt abgelegt — close() loescht die neue WAL"
+        alt_roh.execute("SELECT 1")          # nicht geschlossen
+        # (8) Pfad gewechselt
+        with DW.db_conn() as c:
+            roh_a = c._conn
+        DW.configure_db(db_path=b)
+        with DW.db_conn() as c:
+            assert c._conn is not roh_a
+            c.execute("CREATE TABLE u (y INTEGER)")
+        # (8b) Pfad waehrend des with gewechselt: geschlossen, nicht aufgehoben
+        DW.vorrat_leeren()
+        DW._ABGELEGT.clear()
+        DW.configure_db(db_path=a)
+        with DW.db_conn() as c:
+            alt_a = c._conn
+            DW.configure_db(db_path=b)
+        assert not DW._VORRAT and alt_a not in DW._ABGELEGT, "Verbindung auf den alten Pfad aufgehoben"
+        try:
+            alt_a.execute("SELECT 1")
+            raise AssertionError("Verbindung auf den alten Pfad blieb offen")
+        except _sq.ProgrammingError:
+            pass
+        # (9) Threads: jede Verbindung nur bei einem zugleich
+        fehler = []
+
+        def _arbeit(k):
+            try:
+                for i in range(150):
+                    with DW.db_conn() as c:
+                        c.execute("INSERT INTO u VALUES (?)", (k * 1000 + i,))
+            except Exception as e:           # in den Vertrag melden
+                fehler.append(repr(e))
+        ts = [_th.Thread(target=_arbeit, args=(k,)) for k in range(8)]
+        for t_ in ts:
+            t_.start()
+        for t_ in ts:
+            t_.join()
+        assert not fehler, fehler[:2]
+        with DW.db_conn() as c:
+            assert c.execute("SELECT COUNT(*) FROM u").fetchone()[0] == 1200
+        # (10) Die Ersparnis — als Verhaeltnis, nicht als Zeitgrenze
+        def _dauer():
+            t0 = _t.perf_counter()
+            for _ in range(300):
+                with DW.db_conn() as c:
+                    c.execute("SELECT 1 FROM u LIMIT 1").fetchone()
+            return _t.perf_counter() - t0
+        _os.environ["DB_VORRAT"] = "0"
+        DW.vorrat_leeren()
+        ohne = _dauer()
+        _os.environ.pop("DB_VORRAT")
+        mit = _dauer()
+        assert mit * 3 < ohne, "Vorrat bringt nichts: %.4f s mit, %.4f s ohne" % (mit, ohne)
+        # (11) Wiederherstellung leert den Vorrat VOR dem Tausch
+        with DW.db_conn() as c:
+            pass
+        assert DW._VORRAT
+        ersatz = _os.path.join(d, "ersatz.db")
+        e_ = _sq.connect(ersatz)
+        e_.execute("CREATE TABLE u (y INTEGER)")
+        e_.commit()
+        e_.close()
+        ok_, _m, _w = DR.einsetzen(b, ersatz, stempel="t191")
+        assert ok_ and not DW._VORRAT, "einsetzen() laesst freie Verbindungen auf der alten Datei"
+        baum = _ast.parse(open("nc/dbrestore.py", encoding="utf-8").read())
+        fn = next(n_ for n_ in baum.body if isinstance(n_, _ast.FunctionDef) and n_.name == "einsetzen")
+        rufe = [_ast.unparse(c_.func) for c_ in _ast.walk(fn) if isinstance(c_, _ast.Call)]
+        assert rufe.index("_dbwrap.vorrat_leeren") < rufe.index("os.rename"), \
+            "der Vorrat wird erst nach dem Tausch geleert"
+        lage = DW.vorrat_lage()
+        assert {"neu", "wieder", "verworfen", "frei", "groesse"} <= set(lage), lage
+    finally:
+        DW.vorrat_leeren()
+        DW._ABGELEGT.clear()
+        DW.configure_db(db_path=alt_pfad)
+        if alt_env is None:
+            _os.environ.pop("DB_VORRAT", None)
+        else:
+            _os.environ["DB_VORRAT"] = alt_env
+    ok("v5.2-W191: DB-Vorrat — wiederverwendet, gedeckelt, nie ueber Tausch, Pfadwechsel, "
+       "offene Transaktion oder Datenbankfehler hinweg")
+
+
+def _test_v52_w191_heapzaum():
+    """v5.2-W191: glibc-Arenen gedeckelt, freier Heap periodisch zurueck.
+
+    Gemessen (8 Threads, fragmentierte Last): RSS nach dem Freigeben 861 MB
+    mit glibc-Vorgabe, 539 MB mit zwei Arenen; nach malloc_trim je ~105 MB."""
+    import ast as _ast
+    import os as _os
+    import subprocess as _sp
+    import sys as _sys
+    import types as _ty
+    from nc import heapzaum as H
+
+    alt = {k: _os.environ.pop(k, None) for k in ("SPEICHER_ARENEN", "SPEICHER_TRIM_MIN")}
+    try:
+        assert H.arenen_wunsch() == 2 and H.takt_min() == 10.0
+        _os.environ["SPEICHER_ARENEN"] = "0"
+        assert H.deckeln() is False and "SPEICHER_ARENEN=0" in H.LAGE["grund"]
+        _os.environ["SPEICHER_TRIM_MIN"] = "zehn"
+        assert H.takt_min() == 10.0 and "keine Zahl" in H.LAGE["grund"]
+        # Kein Linux: nichts tun, aber sagen warum
+        alt_sys, alt_libc = H.sys, dict(H._LIBC)
+        try:
+            H.sys = _ty.SimpleNamespace(platform="darwin")
+            H._LIBC.update(h=None, geprueft=False)
+            assert H.deckeln(2) is False and "kein Linux" in H.LAGE["grund"]
+            assert H.zurueckgeben()["ok"] is False
+        finally:
+            H.sys = alt_sys
+            H._LIBC.clear()
+            H._LIBC.update(alt_libc)
+        if _sys.platform.startswith("linux"):
+            H._LIBC.update(h=None, geprueft=False)
+            assert H.deckeln(2) is True and H.LAGE["arenen"] == 2
+            r = H.zurueckgeben()
+            assert r["ok"] and r["frei_mb"] >= 0 and r["nachher_mb"] > 0, r
+            # Die Wirkung, gemessen in einem eigenen Prozess (eigener Heap):
+            prog = (
+                "import threading,sys; sys.path.insert(0,'.')\n"
+                "from nc import heapzaum as H\n"
+                "behalten=[]\n"
+                "def arbeit():\n"
+                "    l=[bytearray(2000+i%3000) for i in range(15000)]\n"
+                "    behalten.extend(l[::64]); del l\n"
+                "ts=[threading.Thread(target=arbeit) for _ in range(8)]\n"
+                "[t.start() for t in ts]; [t.join() for t in ts]\n"
+                "r=H.zurueckgeben(); print(r['vorher_mb'], r['nachher_mb'])\n")
+            aus = _sp.run([_sys.executable, "-c", prog], capture_output=True, text=True,
+                          timeout=120).stdout.split()
+            vorher, nachher = float(aus[0]), float(aus[1])
+            assert nachher < vorher * 0.7, "malloc_trim gibt nichts zurueck: %s -> %s" % (vorher, nachher)
+    finally:
+        for k, v in alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+    # Verdrahtung im Bot — im Syntaxbaum
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    oben = [_ast.unparse(n) for n in baum.body]
+    i_einst = next(i for i, z in enumerate(oben) if z.startswith("_nc_einst.in_umgebung_laden("))
+    i_deckel = next(i for i, z in enumerate(oben) if z == "_nc_heap.deckeln()")
+    assert i_einst < i_deckel, "Arenen gedeckelt, bevor SPEICHER_ARENEN aus .env/Deck gilt"
+    fns = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    assert "await _heap_zurueckgeben()" in _ast.unparse(fns["_watchdog_loop"])
+    assert "asyncio.to_thread(_nc_heap.zurueckgeben)" in _ast.unparse(fns["_heap_zurueckgeben"]), \
+        "malloc_trim im Event-Loop"
+    hz = _ast.unparse(fns["healthz"])
+    assert "heap=_nc_heap.lage()" in hz and "dbvorrat=_nc_dbwrap.vorrat_lage()" in hz
+    ok("v5.2-W191: Heap — zwei Arenen, malloc_trim im Thread mit RSS-Messung, Lage in /healthz")
 
 
 def main():
@@ -35721,6 +35970,8 @@ def main():
     _test_v51_w180_whisper_speicher()
     _test_v51_w187_cookies_ohne_desktop()
     _test_v52_w190_sicherheit()
+    _test_v52_w191_db_vorrat()
+    _test_v52_w191_heapzaum()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()

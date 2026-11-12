@@ -741,6 +741,11 @@ load_dotenv()
 _EINST_DIR = os.path.dirname(os.path.abspath(__file__))
 _nc_einst.in_umgebung_laden(os.environ, env_pfad=os.path.join(_EINST_DIR, ".env"),
                             beispiel_pfad=os.path.join(_EINST_DIR, ".env.example"))
+# v5.2-W191: glibc-Arenen deckeln, solange erst wenige Threads laufen — jede
+# spaeter angelegte Arena behaelt freien Speicher fuer sich (nc/heapzaum.py).
+# Direkt nach den Einstellungen, damit SPEICHER_ARENEN aus .env und Deck gilt.
+from nc import heapzaum as _nc_heap
+_nc_heap.deckeln()
 
 BOT_TOKEN          = os.getenv("BOT_TOKEN", "").strip()
 WEB_HOST           = os.getenv("WEB_HOST", "127.0.0.1")          # C8
@@ -957,6 +962,7 @@ _nc_freeai.chat_sync = _freeai_chat_sync_metered
 # Modularisierung — über 100 Bot-Funktionen hingen ausschließlich an diesem
 # einen Symbol; jetzt sind sie frei von Bot-Globals. Die Konfiguration wird
 # unten per configure_db() injiziert (das Modul liest selbst KEINE Env).
+from nc import dbwrap as _nc_dbwrap           # v5.2-W191: Vorrat-Lage fuer /healthz
 from nc.dbwrap import (db_conn, configure_db, db_async,   # noqa: F401
                        DatenbankUnlesbar)                 # noqa: F401
 import concurrent.futures as _cf_thread   # v4.1-W29: Ein-Arbeiter-Executor
@@ -21163,6 +21169,8 @@ def healthz():
                    # langlebigen Maps — steigt etwas ueber Tage, ist es ein Leck.
                    kinder=_nc_kind.lage(),
                    speicher=_nc_pflege.groessen(_speicher_maps()),
+                   heap=_nc_heap.lage(),                 # v5.2-W191
+                   dbvorrat=_nc_dbwrap.vorrat_lage(),    # v5.2-W191
                    # v4.2-W121: wie lange bis zur ersten Pruefrunde (None =
                    # noch nicht bereit) und wie lange der letzte Stopp dauerte.
                    start_s=_nc_lage.ZUSTAND["bereit_s"],
@@ -21173,20 +21181,26 @@ def healthz():
     # Der HTTP-Code haengt weiter NUR an `ok`: UptimeRobot alarmiert auf
     # 503, und ein langsamer Bot ist kein toter.
     daten["lage"], daten["gruende"] = _nc_lage.bewerten(daten)
-    # v5.2-W190 (SEC): /healthz ist ohne Anmeldung erreichbar — hinter dem
-    # Proxy des Installers also aus dem Internet. Der Docstring sagt "nur
-    # ok/degraded", geliefert wurden aber Commit-Stand (verraet die Fassung
-    # samt bekannter Luecken), Tunnel-Lage, Prozess-, Speicher- und
-    # Pruefzahlen. Ein Waechter von aussen braucht den Statuscode; die
-    # Einzelheiten bekommt, wer lokal fragt oder angemeldet ist (Deck, motd,
-    # Prometheus auf demselben Rechner).
-    if not (_ist_lokal() or _token_ok() or _pin_ok()):
-        daten = {k: daten[k] for k in _HEALTHZ_OEFFENTLICH if k in daten}
+    daten = _healthz_fuer_aufrufer(daten)                 # v5.2-W190
     return jsonify(daten), (200 if ok else 503)
 
 
 # Was /healthz einem nicht angemeldeten Aufrufer von aussen zeigt (v5.2-W190).
 _HEALTHZ_OEFFENTLICH = ("ok", "db", "loops", "brain", "lage", "ts")
+
+
+def _healthz_fuer_aufrufer(daten):
+    """v5.2-W190 (SEC): /healthz ist ohne Anmeldung erreichbar — hinter dem
+    Proxy des Installers also aus dem Internet. Der Docstring sagte "nur
+    ok/degraded", geliefert wurden aber Commit-Stand (verraet die Fassung
+    samt bekannter Luecken), Tunnel-Lage, Prozess-, Speicher- und
+    Pruefzahlen. Ein Waechter von aussen braucht den Statuscode; die
+    Einzelheiten bekommt, wer lokal fragt oder angemeldet ist (Deck, motd,
+    Prometheus auf demselben Rechner). v5.2-W191 als eigener Schritt
+    herausgeloest (healthz lag sonst ueber der 100er-Stufe)."""
+    if not (_ist_lokal() or _token_ok() or _pin_ok()):
+        return {k: daten[k] for k in _HEALTHZ_OEFFENTLICH if k in daten}
+    return daten
 
 
 @dashboard_app.route("/api/debug/threads")
@@ -26359,6 +26373,28 @@ _RES_HISTORY = _collections.deque(maxlen=300)
 _RES_SAMPLE_STATE = {"last": 0.0, "leak_fd": False, "leak_rss": False}
 
 
+_HEAP_TAKT = {"naechst": 0.0}
+
+
+async def _heap_zurueckgeben():
+    """v5.2-W191: alle SPEICHER_TRIM_MIN Minuten freien Heap ans System geben.
+
+    Im Watchdog-Takt statt in einer eigenen Schleife: der misst direkt danach
+    den RSS, und eine weitere Dauerschleife braeuchte ihren eigenen Waechter.
+    malloc_trim laeuft im Thread — bei grossem Heap dauert es Millisekunden,
+    und darauf wartet der Event-Loop nicht (W97)."""
+    takt = _nc_heap.takt_min()
+    jetzt = _time_mod.monotonic()
+    if takt <= 0 or jetzt < _HEAP_TAKT["naechst"]:
+        return {"ok": False, "grund": "nicht faellig" if takt > 0 else "SPEICHER_TRIM_MIN=0"}
+    _HEAP_TAKT["naechst"] = jetzt + takt * 60
+    erg = await asyncio.to_thread(_nc_heap.zurueckgeben)
+    if erg.get("ok") and erg["frei_mb"] >= 50:
+        log.info("Speicher: %.0f MB freien Heap ans System zurueckgegeben (RSS %.0f -> %.0f MB).",
+                 erg["frei_mb"], erg["vorher_mb"], erg["nachher_mb"])
+    return erg
+
+
 async def _watchdog_loop():
     """F103: Überwacht Kern-Loops per Heartbeat. Meldet Stillstand als log.error
        (→ landet via F96 im Discord-Error-Channel) und triggert, wo möglich, ein
@@ -26422,6 +26458,9 @@ async def _watchdog_loop():
                     elif not _still and _rstate.get(u):
                         _rstate[u] = False
                         log.info("WATCHDOG: Live-React @%s reagiert wieder.", u)
+            # v5.2-W191: zuerst freien Heap zurueckgeben — die RSS-Messung
+            # unten sieht dann den Stand, der wirklich belegt ist.
+            await _heap_zurueckgeben()
             # v4.0-W38: proaktive Ressourcen-Frühwarnung. Die fd-/RSS-Zahlen lagen
             # bisher nur passiv im Dashboard — über Tage kletternde fds (Socket-Leak)
             # oder RSS (Speicher-Wachstum → OOM-Killer) hat niemand aktiv bemerkt.

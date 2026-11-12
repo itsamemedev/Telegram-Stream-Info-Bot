@@ -231,6 +231,11 @@ def einsetzen(live_db: str, neue_db: str, stempel: str = None):
     if not os.path.isfile(neue_db):
         return False, "%s gibt es nicht." % os.path.basename(neue_db), []
     stempel = stempel or datetime.now().strftime("%Y%m%d_%H%M%S")
+    # v5.2-W191: freie Verbindungen VOR dem Tausch schliessen. Ihr letztes
+    # close() loescht `<pfad>-wal` per Namen — nach dem Tausch die WAL der
+    # neuen Datei (nc/dbwrap.py, Vorrat).
+    from nc import dbwrap as _dbwrap
+    _dbwrap.vorrat_leeren()
     weggeraeumt = []
     for endung in ("",) + BEIWERK:
         quelle = live_db + endung
