@@ -36384,7 +36384,6 @@ def _test_v53_w194_browser_gruppe():
     Laeufen — zu selten fuer eine Mutationsprobe. Hier deterministisch."""
     import logging as _lg
     import os as _os
-    import tempfile as _tf
     from unittest import mock as _mock
     from nc import overlaybrowser as _ob
 
@@ -36425,33 +36424,29 @@ def _test_v53_w194_browser_gruppe():
 
     # (3) Der Leser: Gruppe stimmt, Zombie zaehlt nicht, fremde Gruppe nicht,
     # verschwundener Prozess nicht, kaputte Zeile nicht.
-    d = _tf.mkdtemp()
-    try:
-        for pid, zeile in (("11", "11 (chrome) S 1 4242 4242"),
-                           ("12", "12 (a) b) R 1 4242 4242"),     # ")" im Namen
-                           ("13", "13 (chrome) Z 1 4242 4242"),
-                           ("14", "14 (bash) S 1 99 99"),
-                           ("15", "kaputt")):
-            _os.makedirs(_os.path.join(d, pid))
-            with open(_os.path.join(d, pid, "stat"), "w") as f:
-                f.write(zeile)
-        _os.makedirs(_os.path.join(d, "16"))                      # ohne stat
-        _os.makedirs(_os.path.join(d, "self"))
-        echt_listdir, echt_open = _os.listdir, open
+    d = _ph.verzeichnis()
+    for pid, zeile in (("11", "11 (chrome) S 1 4242 4242"),
+                       ("12", "12 (a) b) R 1 4242 4242"),     # ")" im Namen
+                       ("13", "13 (chrome) Z 1 4242 4242"),
+                       ("14", "14 (bash) S 1 99 99"),
+                       ("15", "kaputt")):
+        _os.makedirs(_os.path.join(d, pid))
+        with open(_os.path.join(d, pid, "stat"), "w") as f:
+            f.write(zeile)
+    _os.makedirs(_os.path.join(d, "16"))                      # ohne stat
+    _os.makedirs(_os.path.join(d, "self"))
+    echt_listdir, echt_open = _os.listdir, open
 
-        def _ls(p):
-            return echt_listdir(d) if p == "/proc" else echt_listdir(p)
+    def _ls(p):
+        return echt_listdir(d) if p == "/proc" else echt_listdir(p)
 
-        def _op(p, *a, **k):
-            return echt_open(p.replace("/proc", d, 1) if p.startswith("/proc/") else p, *a, **k)
-        with _mock.patch.object(_ob.os, "listdir", _ls), \
-             _mock.patch("builtins.open", _op):
-            assert sorted(_ob._gruppe_lebend(4242)) == ["11", "12"], _ob._gruppe_lebend(4242)
-        with _mock.patch.object(_ob.os.path, "isdir", return_value=False):
-            assert _ob._gruppe_lebend(4242) == [], "ohne /proc (kein Linux) gibt es nichts zu warten"
-    finally:
-        import shutil as _sh
-        _sh.rmtree(d, ignore_errors=True)
+    def _op(p, *a, **k):
+        return echt_open(p.replace("/proc", d, 1) if p.startswith("/proc/") else p, *a, **k)
+    with _mock.patch.object(_ob.os, "listdir", _ls), \
+         _mock.patch("builtins.open", _op):
+        assert sorted(_ob._gruppe_lebend(4242)) == ["11", "12"], _ob._gruppe_lebend(4242)
+    with _mock.patch.object(_ob.os.path, "isdir", return_value=False):
+        assert _ob._gruppe_lebend(4242) == [], "ohne /proc (kein Linux) gibt es nichts zu warten"
     ok("v5.3.1: Overlay-beenden() wartet auf die ganze Prozessgruppe")
 
 
