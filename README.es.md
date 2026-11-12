@@ -320,6 +320,20 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
+## 🆕 Novedades en v5.5
+
+**“Voz”** — AZRAEL habla con su persona a través del Qwen3-14B local:
+
+- **Vinculado, no adivinado:** `AZRAEL_LLM=lokal` (por defecto si llama-server
+  está instalado) — sin Claude delante ni cambio silencioso a la nube. Si Qwen
+  no responde, AZRAEL calla y el registro dice por qué.
+- **La persona llega a todas partes:** Telegram, Discord y `!ask` no la recibían.
+  Ahora todos los caminos empiezan con la misma persona del panel.
+- **Más rápido en CPU:** caché de prompt con las partes fijas delante — la
+  persona se lee una vez, no en cada mensaje.
+- **Prioridad:** las conversaciones esperan el turno y adelantan a las
+  reacciones; la iniciativa propia se descarta si hay cola. `/healthz` muestra quién responde.
+
 ## 🆕 Novedades en v5.4
 
 **“Llavero”** — para que la grabación y el restream lleguen a la dirección del stream:
@@ -372,7 +386,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.4.0** — “Llavero” (2026.11) |
+| Versión actual | **5.5.0** — “Voz” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |

@@ -573,6 +573,20 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 
 ---
 
+## 🆕 New in v5.5
+
+**“Voice”** — AZRAEL speaks with its persona through the local Qwen3-14B:
+
+- **Bound, not guessed:** `AZRAEL_LLM=lokal` (default once llama-server is set
+  up) — no Claude in front, no silent switch to the cloud. If Qwen does not
+  answer, AZRAEL stays silent and the log says why.
+- **The persona arrives everywhere:** Telegram, Discord and `!ask` never got it.
+  All paths now start with the same persona from the deck.
+- **Faster on CPU:** prompt cache with the fixed parts first — the persona is
+  read once, not with every message.
+- **Priority:** conversations wait for the slot and overtake reactions;
+  self-initiated chatter is dropped when busy. `/healthz` shows who answers.
+
 ## 🆕 New in v5.4
 
 **“Keyring”** — so recording and restream get at the stream address:
@@ -703,7 +717,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **5.4.0** — “Keyring” (2026.11) |
+| Current version | **5.5.0** — “Voice” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |

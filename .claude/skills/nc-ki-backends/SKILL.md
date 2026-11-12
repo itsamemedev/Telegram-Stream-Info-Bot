@@ -144,6 +144,23 @@ Kettenausfall blind, weil jede Base einzeln nur „ging nicht" sagt.
 
 ## AZRAEL
 
+**Seit v5.5-W196 an das lokale Modell gebunden** (`AZRAEL_LLM`, `nc/kiwahl.py`).
+Jeder Persona-Aufruf geht durch `ai_chat(..., zweck=…)`. Der Zweck ergibt
+einen Vorrang (`gespraech` > `reaktion` > `nebenbei`), und bei `lokal` geht der
+Aufruf nur an Qwen (`_azrael_lokal`): kein Claude, kein stiller Rückfall in
+die Cloud. Wer einen neuen AZRAEL-Weg baut, gibt `zweck=` mit. Ohne das landet
+er in der allgemeinen Kette und spricht womöglich mit fremder Stimme. Zwei
+Regeln, gemessen begründet (7,8 Token/s beim Einlesen auf der Box):
+
+- **Persona zuerst, Wechselndes zuletzt.** llama-server nutzt aus dem Cache nur
+  den gleichen *Anfang* (`cache_prompt`). Alle Wege beginnen mit
+  `_azrael_persona_kern()`; Live-Zustand, Erinnerungen und Aufgabe stehen hinten.
+- **Nicht warten lassen, was niemand angefordert hat.** Eigeninitiative wartet
+  nie auf den Platz und bekommt die `BRAIN_LLM_RESERVE` nicht.
+
+`/healthz` → `sparen.azrael_ki` (wer antwortet) und `sparen.lokales_llm`
+(Zeiten, Cache-Anteil) beantworten „spricht AZRAEL wirklich mit Qwen?".
+
 Persona, Stimme und Reaktionsverhalten sind **Konfiguration**, kein Code:
 `.env`-Blöcke *AZRAEL: Persona*, *AZRAEL Stimme / TTS* und
 *LIVE-REACTION-ENGINE*. Verhaltensänderungen gehören dorthin, nicht in

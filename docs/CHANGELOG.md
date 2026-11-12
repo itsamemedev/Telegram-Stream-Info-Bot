@@ -9,6 +9,68 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.5.0] — 2026-11-12 · „Stimme" (W196)
+
+Der Betreiber: AZRAEL an Qwen3-14B-Uncensored binden, damit man mit der Persona
+kommuniziert, und das KI-Netz verbessern. Gemessen am Server (Qwen3-14B Q4_K_M,
+ik_llama.cpp, `-t 4`): **7,8 Token/s beim Einlesen, 3,4 Token/s beim
+Erzeugen.** AZRAELs Systemtext hat mehrere hundert Token — allein das Einlesen
+dauerte länger als die Zeitlimits (25 s Gespräch, 75 s Reaktion). Vertrag
+`_test_v55_w196_azrael_an_qwen`, 20 von 20 Mutationsproben gefangen (drei
+entwischten zuerst, siehe unten).
+
+### Befunde
+
+- **Die Persona fehlte.** `_azrael_system` — der Weg von Telegram, Discord,
+  `!ask`, Dead-Air und Hype — enthielt weder `AZRAEL_PERSONA` noch die im Deck
+  gesetzte Persona, nur Name und `AZRAEL_STYLE`. Nur die Live-Reaktion und die
+  Kick-Antwort kannten sie.
+- **AZRAEL landete meistens in der Cloud — still.** Claude ging vor, wenn ein
+  Schlüssel gesetzt war. Der lokale Platz (Concurrency 1) wies den zweiten
+  Aufrufer *sofort* ab, statt ihn warten zu lassen; bei 14B auf der CPU ist er
+  fast immer belegt. Das Stundenbudget (30) teilten sich Plauderei und
+  Gespräche. Der Wechsel stand im Chat-Pfad auf `log.debug` — `grep` im Journal
+  zählte beim Betreiber 0.
+- **Der Prompt-Cache konnte nicht greifen.** Kein `cache_prompt`, und der
+  wechselnde Systemzustand stand an dritter Stelle; llama-server nutzt nur den
+  gleichen *Anfang* wieder.
+
+### Geändert
+
+- **`AZRAEL_LLM`** (`lokal` / `auto` / `cloud`, `nc/kiwahl.py`). Vorgabe `lokal`,
+  wenn ein lokaler Server eingerichtet ist, sonst `auto` — `lokal` ohne Server
+  schaltete AZRAEL stumm (die Falle aus W110). Bei `lokal`: nur Qwen, kein
+  Claude, kein Rückfall; scheitert Qwen, schweigt AZRAEL und meldet gedrosselt
+  `AZRAEL schweigt (…)` mit Abhilfe.
+- **Ein Platz mit Vorrang** (`brain/llm._Vorrangslot`): Gespräch vor Reaktion
+  vor Eigeninitiative; Gespräche warten bis zur Hälfte ihres Zeitlimits,
+  Reaktionen ein Drittel, Eigeninitiative nie. Ohne Angabe wie bisher (Router,
+  `/ai`). Zeitlimits je Vorrang `AZRAEL_LOKAL_ZEIT_*` (180/90/60 s).
+- **Reserve** `BRAIN_LLM_RESERVE` (8): so viele Aufrufe der Stunde bleiben
+  Gesprächen und Reaktionen; Eigeninitiative bekommt sie nicht.
+- **Prompt-Cache:** `cache_prompt` in jeder lokalen Anfrage; `_azrael_system`
+  stellt Persona, Identität, Stil und Sicherheitsregel vor alles Wechselnde; alle
+  drei Wege beginnen mit `_azrael_persona_kern()` und teilen sich damit den
+  Anfang im Cache.
+- **Sichtbar:** `/healthz` → `sparen.azrael_ki` (Wahl, Zähler je Weg,
+  `lokal_anteil`, letzter Grund) und `sparen.lokales_llm` (Zeiten der letzten
+  Antwort aus `timings`, `gecacht`, `cache_anteil`, Budget, Platz). Die stillen
+  Rückfälle in `llm_chat` und `llm_chat_sync` (einer davon `except: pass`) sind
+  gedrosselte Warnungen.
+- **`LLM_THREADS_BATCH`** (`tools/ikllama.sh`): Threads nur fürs Einlesen
+  (`-tb`), Vorgabe leer = unverändert; gesetzt nur, wenn das Programm den
+  Schalter kennt.
+
+### Gegenprobe
+
+- Drei Mutationsproben entwischten zuerst — Befunde am Vertrag: die Reserve war
+  nur für Eigeninitiative und Gespräch geprüft (nicht für Reaktionen), die
+  Weiche in `_azrael_ki` gar nicht (nur, dass `_azrael_lokal` keine Cloud ruft),
+  und die Meldung nur „irgendwo" statt in jedem Fehlerzweig.
+- **Nicht gemessen:** wie viel der Prompt-Cache mit der echten Persona am Server
+  spart, und ob `-tb` dort hilft. Beides zeigt `/healthz` nach dem Update
+  (`lokales_llm.letzte`), siehe `docs/SETUP_LLAMACPP.md` Abschnitt 5.
+
 ## [5.4.0] — 2026-11-12 · „Schlüsselbund" (W195)
 
 Der Betreiber am 12.11.: Aufnahmen und Restreams bekommen keine gültige
