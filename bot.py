@@ -985,10 +985,8 @@ from nc import stats as _nc_stats          # v4.0-W117: get_stats + Status-Verte
 from nc.stats import get_per_user_stats, _collect_session_stats  # noqa: F401
 from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
 from nc import backupcfg as _nc_backup     # v4.1-W24: Sicherung, Aufbewahrung
-from nc import defensecfg as _nc_dcfg     # v4.1-W25: Abwehr-Einstellungen
 from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibweg
 from nc import geoip as _nc_geoip         # v4.1-W25: ip-api-Stapelabfrage
-from nc import bandbreite as _nc_band      # v4.1-W26: Aufnahme-Durchsatz
 from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
 from nc import dashauth as _nc_dashauth   # v4.1-W30: ist das Deck offen?
 from nc import webserver as _nc_webserver  # v4.2-W84: Server + Bindung
@@ -2449,21 +2447,9 @@ PREFER_H264 = os.getenv("PREFER_H264", "1").lower() in ("1", "true", "yes", "y")
 
 
 
-_HEVC_TOKENS = ("bytevc1", "hevc", "h265", "h.265", "hvc1", "hev1")
-
-def _is_hevc(vcodec: str) -> bool:
-    # v4.0-W29: verbatim nach nc/streamsel.py extrahiert (bitgenau geprüft).
-    return _nc_ss.is_hevc(vcodec)
-
-
 def _select_stream_from_data_section(data_section, prefer_h264: bool = True):
     # v4.0-W29: verbatim nach nc/streamsel.py extrahiert (bitgenau geprüft).
     return _nc_ss.select_stream_from_data_section(data_section, prefer_h264=prefer_h264)
-
-
-def _extract_urls_from_streamurl_node(node):
-    # v4.0-W29: verbatim nach nc/streamsel.py extrahiert; PREFER_H264 als Parameter.
-    return _nc_ss.extract_urls_from_streamurl_node(node, prefer_h264=PREFER_H264)
 
 
 def _find_stream_urls(obj, _depth: int = 0):
@@ -5227,7 +5213,6 @@ def compute_storage_forecast() -> dict:
     return _nc_storage.forecast(RECORDINGS_DIR)
 
 # ---------- X11: Live-Bandwidth-Monitor ----------
-_BANDWIDTH_SAMPLES = {}    # tracking_id -> [(monotonic_ts, file_size), ...]
 _NET_SAMPLE = {"ts": 0.0, "bytes": 0}
 
 
@@ -5252,11 +5237,6 @@ def _sample_net_throughput():
 # v4.1-W26: Haken fuer nc/routes/auskunft.py.
 _nc_routes_auskunft.HAKEN["netzdurchsatz"]["fn"] = _sample_net_throughput
 
-
-def sample_bandwidth_for_active() -> list:
-    # v4.1-W26: nach nc/bandbreite.py geloest. Die Messreihe liegt dort, damit
-    # es nur EINE Wahrheit ueber den Durchsatz einer Aufnahme gibt.
-    return _nc_band.messen()
 
 # ---------- X12: Heatmaps ----------
 
@@ -10780,7 +10760,7 @@ def _install_fast_json(app):
         return False
 
 
-_ORJSON_ON = _install_fast_json(dashboard_app)
+_install_fast_json(dashboard_app)
 # F21: Upload-Limit muss > ARCHIVE_MAX_UPLOAD_MB sein (multipart-Overhead).
 # Wenn das Archiv aus ist (ARCHIVE_DIR leer) bleibt's beim Default — wir setzen
 # trotzdem ein vernünftiges Limit damit keine Riesenrequests durchgehen.
@@ -11510,13 +11490,7 @@ def _conv_messages(conv_id):
 # nc.ctx-Eintraege waeren bei 24 von 25 belegten Plaetzen nicht bezahlbar.
 # Warum STALLS dort ein Register und alles andere ein Alias ist, steht im
 # Modul-Kopf.
-_BRAIN_HISTORY = _nc_brainstate.HISTORY
-_BRAIN_STREAM = _nc_brainstate.STREAM
 _BRAIN_LOCK = _nc_brainstate.LOCK
-_BRAIN_LAST_STATUS = _nc_brainstate.LAST_STATUS
-_brain_record = _nc_brainstate.record
-_brain_history_for = _nc_brainstate.history_for
-_brain_stream_recent = _nc_brainstate.stream_recent
 
 def _brain_growth_snapshot():
     """V37-BRAINVIZ: EIN Wachstums-Datenpunkt (Wissen/Vektoren/Nutzer). Wird
@@ -11798,7 +11772,6 @@ def _enrich_proxies_with_geo(proxies):
 # (und ein Hintergrund-Trigger) die Anonymität automatisch.
 _PROXY_ANON_CACHE = {}        # "ip:port" -> anon level
 _PROXY_ANON_LOCK = _threading_for_db.Lock()
-_PROXY_ANON_BG_RUNNING = [False]
 
 def _classify_pool_anonymity(proxies, max_workers=10):
     """Setzt p['anonymity'] für jeden Pool-Proxy (in-place). Cache-Hits sofort,
@@ -11844,26 +11817,6 @@ def _classify_pool_anonymity(proxies, max_workers=10):
     except Exception as e:
         log.debug(f"anonymity classify pool failed: {e}")
     return proxies
-
-
-def _classify_pool_anonymity_bg():
-    """Stößt die Anonymitäts-Klassifizierung im Hintergrund an (non-blocking,
-       nur EIN Lauf gleichzeitig, nur wenn unbekannte Proxies existieren)."""
-    if _PROXY_ANON_BG_RUNNING[0]:
-        return
-    with _PROXY_POOL_LOCK:
-        pool_ref = list(_PROXY_POOL)
-    if not any((not p.get("anonymity") or p.get("anonymity") == "unknown")
-               for p in pool_ref):
-        return
-    _PROXY_ANON_BG_RUNNING[0] = True
-
-    def _run():
-        try:
-            _classify_pool_anonymity(pool_ref)
-        finally:
-            _PROXY_ANON_BG_RUNNING[0] = False
-    threading.Thread(target=_run, daemon=True, name="proxy-anon").start()
 
 
 def _refresh_proxy_pool():
@@ -12630,16 +12583,6 @@ async def _news_loop():
 
 
 
-
-
-async def _kick_user_token(session=None):
-    """Gueltiger Kick-USER-Access-Token (channel:write) oder None.
-
-    v4.2-W12: der Koerper liegt in nc.kickapi.user_token — dieselbe Datei wie
-    die Aufrufe, die ihn brauchen. Der Name bleibt hier, weil sechs Stellen im
-    Bot ihn benutzen und ein Alias billiger ist als sechs Umschreibungen.
-    """
-    return await _nc_kickapi.user_token(session)
 
 
 
@@ -17530,7 +17473,6 @@ _learned_save = _nc_badwords.save_learned
 # Kontext-Eintrag erreicht. Es IST AZRAEL-Zustand, nur eben persistent.
 _nc_azrael.configure(recordings_dir=RECORDINGS_DIR)
 _streamer_personas_load = _nc_azrael.personas_load
-_streamer_personas_save = _nc_azrael.personas_save
 
 def _streamer_persona_get(username):
     if not username:
@@ -22664,13 +22606,6 @@ def _run_priv(args, timeout=6, sudo_first=False):
     return _nc_sysrun.run_priv(args, timeout=timeout, sudo_first=sudo_first)
 
 
-def _geo_lookup_ips(ips):
-    # v4.1-W25: nach nc/geoip.py geloest. Dort liegt der Cache mit genau EINEM
-    # Schreibweg — der Direktzugriff, der hier stand, ging an der Obergrenze
-    # vorbei und liess den Cache bei Angriffswellen unbegrenzt wachsen.
-    return _nc_geoip.lookup(ips, fehler_setzen=_nc_dcfg.geo_fehler_setzen)
-
-
 def _crowdsec_via_lapi():
     """v4.0-W18: Sperrliste ueber die CrowdSec-LAPI mit einem Bouncer-Schluessel.
        Braucht KEIN Root (der cscli-Weg schon — daher die sudoers-Regel). Gibt
@@ -22842,11 +22777,6 @@ def _crowdsec_status():
             "jails": list(by_origin.values()), "total_banned": total}
 
 
-# Alter Name bleibt als Verweis: zwei Aufrufer haengen daran, und ein stiller
-# Namenswechsel waere genau die Art Bruch, die wir gerade beheben.
-_fail2ban_status = _crowdsec_status
-
-
 def _parse_ssh_attacks(limit=300):
     """Aggregiert fehlgeschlagene SSH-Logins (Angriffe) pro IP aus auth.log/secure,
        Fallback journalctl bzw. sudo. Returns {ok, attacks:[{ip,count,last,users}], ...}."""
@@ -23015,7 +22945,6 @@ _discord_guild_filesize_bytes = _nc_dclimits.guild_filesize_bytes
 
 
 _discord_upload_limit_mb    = _nc_dclimits.aktuell_mb
-_discord_upload_limit_label = _nc_dclimits.aktuell_label
 DISCORD_TRACK_GROUP_ID = _env_int("DISCORD_TRACK_GROUP_ID", 0)     # group_id für Discord-/track (0 = Guild-ID; auf Telegram-Chat-ID setzen → geteilte Liste)
 DISCORD_VOICE_AI       = os.getenv("DISCORD_VOICE_AI", "1").strip().lower() in ("1","true","yes","on","y")  # /ai antwortet auch auf Sprachnachrichten (Whisper→KI)
 DISCORD_AUTOMOD        = os.getenv("DISCORD_AUTOMOD", "0").strip().lower() in ("1","true","yes","on","y")   # KI/Heuristik-Auto-Moderation

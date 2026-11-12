@@ -2331,9 +2331,16 @@ def _test_w26_auskunft_blueprint():
     # Wahrheiten ueber denselben Wert.
     b = open("bot.py", encoding="utf-8").read()
     for ruf in ("_nc_suche.universal_search(", "_nc_outcomes.get_outcome_breakdown(",
-                "_nc_band.messen()", "_nc_storage.forecast(",
-                "_nc_recdb.get_all_checks("):
+                "_nc_storage.forecast(", "_nc_recdb.get_all_checks("):
         assert ruf in b, "Monolith ruft %s nicht auf" % ruf
+    # v5.6-W197: "_nc_band.messen()" stand hier mit — erfuellt nur von
+    # sample_bandwidth_for_active(), einer Huelle, die nichts aufrief. Die
+    # Aussage dahinter (EINE Wahrheit) gilt strenger: nur der Blueprint misst,
+    # und der Monolith haelt keine eigene Messreihe.
+    _a = open("nc/routes/auskunft.py", encoding="utf-8").read()
+    assert "_nc_band.messen()" in _a or "bandbreite.messen()" in _a, \
+        "der Blueprint misst den Durchsatz nicht mehr ueber nc.bandbreite"
+    assert "_BANDWIDTH_SAMPLES" not in b, "zweite Messreihe im Monolithen"
 
     # (3) Der Radar-Zustand ist ein REGISTER, kein Haken: das ist geteilter
     # ZUSTAND, keine Faehigkeit. Und Register und nicht Alias, weil bot.py den

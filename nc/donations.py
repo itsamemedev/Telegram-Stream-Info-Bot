@@ -202,24 +202,6 @@ def fmt_eur(v) -> str:
         return "0,00 €"
 
 
-def source_allowed(conf: str, platform: str) -> bool:
-    """Darf ein Event dieser Plattform ins Overlay?
-
-    conf: "all" | "both" (= kick+tiktok, Altwert) | einzelne Plattform |
-          Komma-Liste ("kick,twitch"). Leer/unbekannt → nur kick (Altverhalten).
-    """
-    c = (conf or "kick").strip().lower()
-    p = (platform or "").strip().lower()
-    if not p:
-        return True                      # unmarkierte Alt-Events nicht blocken
-    if c in ("all", "*"):
-        return True
-    if c == "both":
-        return p in ("kick", "tiktok")
-    allowed = {x.strip() for x in c.split(",") if x.strip()}
-    return p in allowed
-
-
 def unknown_count(conn, days=30):
     """v4.0-W59 (conn-injiziert): Wie viele Spenden-Zeilen haben keine verwertbare
        Herkunft (Plattform leer/NULL) im Zeitfenster? Damit der Betreiber eine

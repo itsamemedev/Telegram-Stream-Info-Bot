@@ -17,7 +17,6 @@ from urllib.parse import urlencode
 
 AUTHORIZE_URL = "https://id.kick.com/oauth/authorize"
 TOKEN_URL = "https://id.kick.com/oauth/token"
-REVOKE_URL = "https://id.kick.com/oauth/revoke"
 # channel:write = Titel/Kategorie setzen; chat:write = als Nutzer schreiben.
 # W17: chat:write = im Chat schreiben (App-Token darf das NICHT -> HTTP 401);
 # moderation:ban = Timeouts/Banns; moderation:chat_message:manage = Nachrichten

@@ -5223,8 +5223,14 @@ def test_v40_w29_streamsel():
 
     src = open("bot.py").read()
     assert "from nc import streamsel as _nc_ss" in src, "Modul nicht importiert"
-    assert "_nc_ss.is_hevc(vcodec)" in src and "_nc_ss.select_stream_from_data_section(" in src
-    assert "_nc_ss.extract_urls_from_streamurl_node(node, prefer_h264=PREFER_H264)" in src
+    assert "_nc_ss.select_stream_from_data_section(" in src
+    # v5.6-W197: _is_hevc und _extract_urls_from_streamurl_node waren Huellen
+    # ohne einen einzigen Aufrufer und sind weg. Die Aussage dieses Vertrags
+    # ("keine Doppel-Logik") gilt damit strenger: der Monolith kennt weder
+    # eigene HEVC-Kennungen noch einen eigenen Knoten-Leser.
+    assert "_HEVC_TOKENS" not in src and "def _is_hevc" not in src, \
+        "HEVC-Erkennung wieder im Monolithen"
+    assert "def _extract_urls_from_streamurl_node" not in src
     assert "cands.sort(key=lambda" not in src, "alte Auswahl-Logik noch im Monolithen"
     ok("v4.0-w29: Bot delegiert den Resolver-Kern, keine Doppel-Logik")
 

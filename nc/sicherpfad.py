@@ -99,13 +99,3 @@ def sicher_join(basis, name, vorgabe="datei.bin"):
         raise ValueError("Pfad verlaesst das Verzeichnis: %r" % (name,))
     return ziel
 
-
-def pruefe_unter(basis, pfad, was="Pfad"):
-    """Wie `unter`, wirft aber statt False zurueckzugeben.
-
-    Fuer bestehende Pfade aus der Datenbank: die sind nicht vom Nutzer
-    gebaut, koennen aber aus einer aelteren, laxeren Version stammen.
-    """
-    if not unter(basis, pfad):
-        raise ValueError("%s liegt ausserhalb von %r: %r" % (was, basis, pfad))
-    return os.path.realpath(pfad)
