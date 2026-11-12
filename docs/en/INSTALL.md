@@ -85,15 +85,19 @@ python3 tools/gen_env_example.py
 
 ## Step 4 — database
 
-The database creates **itself** on first start — nothing to do. The default is
-SQLite; for MariaDB, in the `.env`:
+The database creates **itself** on first start — nothing to do. Since v5.3.1
+the installer sets up MariaDB for a **new** installation (server, database,
+user, C driver, settings); SQLite stays where data already lives in SQLite,
+without a package manager, or below 1 GB of RAM. An existing SQLite
+installation moves with `bash tools/update.sh --mariadb`. By hand, in the
+`.env`:
 
 ```ini
 DB_BACKEND=mariadb
-DB_HOST=127.0.0.1
-DB_NAME=nightcrawler
-DB_USER=nightcrawler
-DB_PASS=…
+MARIADB_HOST=127.0.0.1
+MARIADB_DB=nightcrawler
+MARIADB_USER=nightcrawler
+MARIADB_PASSWORD=…
 ```
 
 ---

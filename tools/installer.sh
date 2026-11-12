@@ -859,13 +859,37 @@ z_profil(){
 }
 
 P_DB="sqlite"
+DB_NEU=0          # 1 = dieser Lauf schaltet auf MariaDB um (Rueckfall moeglich)
+# v5.3-W194: MariaDB ist die Vorgabe fuer NEUE Installationen — der Betrieb
+# laeuft darauf (W192/W193 haben den Pfad gemessen und beschleunigt). Die
+# Vorgabe im Code (bot.py: DB_BACKEND=sqlite) bleibt bewusst: eine bestehende
+# SQLite-Installation ohne Eintrag stuende nach einem Update sonst vor einer
+# LEEREN MariaDB, und das saehe aus wie verlorene Daten (W143).
+# SQLite bleibt die Vorgabe, wo MariaDB nicht sicher einzurichten ist:
+#   * DB_BACKEND steht schon in der .env — die Wahl des Betreibers gilt,
+#   * in SQLite liegen schon Daten — der Umzug gehoert update.sh --mariadb
+#     (mit Nachzaehlen), nicht einem Installer-Lauf,
+#   * --skip-system bzw. kein Paketmanager/kein root — ohne Paketmanager kein
+#     Server,
+#   * unter 1 GB RAM — ein Datenbankdienst neben ffmpeg ist dort zu viel.
+db_vorgabe(){
+  local _b _sq
+  _b="$(env_get DB_BACKEND | tr 'A-Z' 'a-z')"
+  case "$_b" in mariadb|sqlite) printf '%s' "$_b"; return 0;; esac
+  _sq="$(env_get DB_PATH 2>/dev/null || true)"; _sq="${_sq:-tiktok_bot.db}"
+  case "$_sq" in /*) ;; *) _sq="$ZIEL/$_sq";; esac
+  if [ -s "$_sq" ] || [ "$SKIP_SYSTEM" = 1 ] || { [ "${RAM_MB:-0}" -gt 0 ] && [ "${RAM_MB:-0}" -lt 1024 ]; }; then
+    printf 'sqlite'
+  else
+    printf 'mariadb'
+  fi
+}
 f_datenbank(){
-  local vor="sqlite"
-  [ "$(env_get DB_BACKEND | tr 'A-Z' 'a-z')" = "mariadb" ] && vor="mariadb"
-  [ "$MODUS" = "gefuehrt" ] && erklaere "Datenbank: standardmaessig SQLite — eine Datei, kein Dienst, kein Passwort, und bis in den sechsstelligen Zeilenbereich schnell genug. MariaDB lohnt erst, wenn mehrere Rechner auf dieselben Daten sollen."
+  local vor; vor="$(db_vorgabe)"
+  [ "$MODUS" = "gefuehrt" ] && erklaere "Datenbank: Vorgabe ist MariaDB — ein eigener Server, auf dem der Betrieb laeuft und der mit dem C-Treiber am wenigsten CPU kostet. SQLite ist eine Datei ohne Dienst und Passwort; sie bleibt die Vorgabe, wo schon Daten in SQLite liegen, ohne Paketmanager oder unter 1 GB RAM."
   frage_wahl P_DB "Welche Datenbank?" "$vor" \
-    sqlite  "SQLite (eine Datei, empfohlen)" \
-    mariadb "MariaDB (lokaler Server, wird eingerichtet)"
+    sqlite  "SQLite (eine Datei, ohne Dienst)" \
+    mariadb "MariaDB (lokaler Server, empfohlen)"
   if [ "$P_DB" = "mariadb" ]; then
     local pw
     frage_geheimnis pw "Passwort fuer den Datenbank-Nutzer 'nightcrawler'" 1 24 0 "$(env_get MARIADB_PASSWORD)"
@@ -878,10 +902,12 @@ f_datenbank(){
     # update.sh --mariadb (tools/zu_mariadb.py).
     local _sq; _sq="$(env_get DB_PATH 2>/dev/null || true)"; _sq="${_sq:-tiktok_bot.db}"
     case "$_sq" in /*) ;; *) _sq="$ZIEL/$_sq";; esac
-    if [ "$vor" != "mariadb" ] && [ -s "$_sq" ]; then
+    DB_NEU=0
+    if [ "$(env_bisher DB_BACKEND | tr 'A-Z' 'a-z')" != "mariadb" ] && [ -s "$_sq" ]; then
       warn "In %s liegen schon Daten — DB_BACKEND bleibt vorerst auf sqlite." "$_sq"
       merke "MariaDB eingerichtet, Daten noch in SQLite. Umzug: bash tools/update.sh --mariadb"
     else
+      [ "$(env_bisher DB_BACKEND | tr 'A-Z' 'a-z')" != "mariadb" ] && DB_NEU=1
       env_set DB_BACKEND mariadb
     fi
     env_set MARIADB_HOST 127.0.0.1
@@ -897,6 +923,24 @@ f_datenbank(){
     env_zuruecksetzen DB_BACKEND
   fi
   return 0
+}
+# v5.3-W194: MariaDB war die Vorgabe, liess sich aber nicht einrichten. Hat
+# DIESER Lauf umgeschaltet, zurueck auf SQLite — sonst startete der Bot gegen
+# einen Server, den es nicht gibt (Exitcode 3 statt einer laufenden
+# Installation). War mariadb schon vorher gesetzt, bleibt es: dann liegen die
+# Daten dort, und SQLite waere eine leere Datenbank.
+db_rueckfall_sqlite(){
+  if [ "$DB_NEU" != 1 ]; then
+    warn "MariaDB liess sich nicht einrichten — DB_BACKEND steht schon vorher auf mariadb; vor dem Start pruefen."
+    return 0
+  fi
+  warn "MariaDB liess sich nicht einrichten — die Installation bleibt bei SQLite. Spaeter: bash tools/update.sh --mariadb"
+  : > "$PLAN_ENV"
+  env_set DB_BACKEND sqlite
+  ENV_BASIS="$ENVF"; env_bauen "$ENV_BASIS" "$ARBEIT/env.neu"
+  cat "$ARBEIT/env.neu" > "$ENVF"; chmod 600 "$ENVF"
+  P_DB="sqlite"
+  merke "Datenbank: SQLite (MariaDB liess sich nicht einrichten — bash tools/update.sh --mariadb)"
 }
 z_datenbank(){ if [ "$P_DB" = "mariadb" ]; then t 'MariaDB (lokal)'; else printf 'SQLite'; fi; }
 
@@ -1516,10 +1560,12 @@ if [ "$P_DB" = "mariadb" ]; then
         info "mysqlclient liess sich nicht bauen — der Bot nimmt PyMySQL. Spaeter: bash tools/update.sh --mysqlclient"
       fi
     else
-      warn "Datenbank liess sich nicht anlegen — DB_BACKEND steht auf mariadb; vor dem Start pruefen oder auf sqlite zuruecksetzen."
+      warn "Datenbank liess sich nicht anlegen."
+      db_rueckfall_sqlite
     fi
   else
-    warn "Kein MariaDB-Client gefunden — DB_BACKEND steht auf mariadb; vor dem Start pruefen oder auf sqlite zuruecksetzen."
+    warn "Kein MariaDB-Client gefunden."
+    db_rueckfall_sqlite
   fi
 fi
 

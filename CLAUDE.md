@@ -1166,9 +1166,14 @@ Konsolenzeile, nur leere Diagramme. Gefunden hat es das Messen im Browser
 mit Kontext (`header .bar`), und nach einem Umbau die Seite **mit echten
 Daten** rendern — ohne `stats.json` war der Fehler unsichtbar.
 
-**Der Betrieb läuft auf MariaDB** (`DB_BACKEND=mariadb`, seit 11/2026).
-Die Vorgabe im Code und im Installer ist weiter SQLite — aber wer am
-Datenbankpfad etwas verbessert, misst zuerst unter MariaDB. v5.2.0 hat das
+**Der Betrieb läuft auf MariaDB** (`DB_BACKEND=mariadb`, seit 11/2026), und
+seit v5.3.1 (W194) richtet der Installer sie bei **neuen** Installationen als
+Vorgabe ein. Die Vorgabe **im Code** (`bot.py`: `DB_BACKEND=sqlite`) bleibt
+bewusst: eine bestehende SQLite-Installation ohne Eintrag stünde nach einem
+Update sonst vor einer leeren MariaDB — das sah in W143 aus wie verlorene
+Daten. Umgestellt wird eine bestehende Installation nur durch `update.sh
+--mariadb` mit Nachzählen. Wer am Datenbankpfad etwas verbessert, misst
+zuerst unter MariaDB. v5.2.0 hat das
 nicht getan: der Verbindungsvorrat sparte unter SQLite 178 µs je Zugriff und
 unter MariaDB nichts, weil `db_conn()` dort einen eigenen Pool nimmt. Erst
 v5.2.1 (W192) hat den MariaDB-Pfad gemessen (233 → ~130 µs) — gegen einen

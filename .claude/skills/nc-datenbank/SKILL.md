@@ -7,7 +7,7 @@ description: SQL und Schema in NIGHTCRAWLER unter zwei Backends (SQLite und Mari
 
 ## Die Grundannahme
 
-Derselbe SQL-Text läuft gegen **SQLite** (Standard) und **MariaDB**
+Derselbe SQL-Text läuft gegen **MariaDB** (Betrieb und Installer-Vorgabe seit v5.3.1; im Code bleibt SQLite die Vorgabe) und **SQLite**
 (`DB_BACKEND=mariadb`, Pool über pymysql). Der gesamte Bot-Code ist
 backend-agnostisch geschrieben; die Anpassung macht `nc.sqlutil._translate_sql`
 auf dem MariaDB-Pfad. Wer SQL anfasst, muss wissen, wie **wenig** dieser Layer

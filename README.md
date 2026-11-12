@@ -248,10 +248,16 @@ OAuth: **[Twitch](docs/SETUP_TWITCH_OAUTH.md)** · **[YouTube](docs/SETUP_YT_OAU
 
 ## 🗄️ Datenbank
 
-| | SQLite (Vorgabe) | MariaDB |
+| | MariaDB (Vorgabe seit v5.3.1) | SQLite |
 |---|---|---|
-| **Wofür** | eine Datei, kein Dienst, bis in den sechsstelligen Zeilenbereich schnell | große Bestände, mehrere Rechner, eigene Sicherung |
-| **Einrichten** | nichts | `bash tools/update.sh --mariadb` |
+| **Wofür** | eigener Server, mit dem C-Treiber am wenigsten CPU je Abfrage, eigene Sicherung | eine Datei, kein Dienst — wo schon Daten in SQLite liegen, ohne Paketmanager oder unter 1 GB RAM |
+| **Einrichten** | neue Installation: der Installer; bestehende: `bash tools/update.sh --mariadb` | nichts |
+
+Der Installer richtet bei einer **neuen** Installation MariaDB ein — Server,
+Datenbank, Nutzer, C-Treiber und Einstellungen. Lässt sich der Server nicht
+einrichten, bleibt die Installation bei SQLite und sagt es. Eine **bestehende**
+SQLite-Installation wird nie still umgestellt: `update.sh` empfiehlt den Umzug
+und macht ihn nur auf Nachfrage oder mit `--mariadb`.
 
 **Der Umzug** (`--mariadb`, `tools/zu_mariadb.py`) installiert den Server, legt
 Datenbank und Nutzer an (Passwort nie in einer Befehlszeile), stoppt den Bot
@@ -722,7 +728,7 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.3.0** — „Leichtgewicht“ (2026.11) |
+| Aktuelle Version | **5.3.1** — „Leichtgewicht“ (2026.11) |
 | Flask-Routen | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
 | Fachmodule | 207 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |

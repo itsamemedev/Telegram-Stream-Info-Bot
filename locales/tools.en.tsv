@@ -60,7 +60,6 @@ Auf einem Raspberry Pi gilt: Aufnahme und EIN Restream-Ziel ohne Transcode sind 
 BOT_TOKEN gesetzt.	BOT_TOKEN set.
 CrowdSec fehlt in den Quellen — siehe docs/CROWDSEC.md.	CrowdSec is not in the package sources — see docs/en/CROWDSEC.md.
 Dashboard-Token: steht in .env (DASHBOARD_TOKEN)	Dashboard token: stored in .env (DASHBOARD_TOKEN)
-Datenbank: standardmaessig SQLite — eine Datei, kein Dienst, kein Passwort, und bis in den sechsstelligen Zeilenbereich schnell genug. MariaDB lohnt erst, wenn mehrere Rechner auf dieselben Daten sollen.	Database: SQLite by default — one file, no service, no password, and fast enough into the hundreds of thousands of rows. MariaDB only pays off once several machines need the same data.
 Deine Telegram-Nutzer-ID (mehrere per Komma, leer = keine Sperre)	Your Telegram user ID (several separated by commas, empty = no restriction)
 Der Dashboard-Token schuetzt den Zugriff von aussen (Aufruf einmal mit ?token=..., danach haelt ein Cookie). Loopback und SSH-Tunnel bleiben immer frei. Das ist ein frei waehlbares Geheimnis — hier ist Erzeugen die bessere Wahl als Ausdenken.	The dashboard token protects access from outside (call it once with ?token=..., after that a cookie holds). Loopback and SSH tunnels always stay open. This is a freely chosen secret — generating one is the better choice than inventing one.
 Dienst liess sich nicht aktivieren.	The service could not be enabled.
@@ -589,7 +588,6 @@ Autostart?	Autostart?
 Bericht	Report
 Bitte eine Zahl von 1 bis %s.	Please enter a number from 1 to %s.
 Das Dashboard ist die Weboberflaeche: Sendeleiste, Aufnahmen, Statistiken, Abwehr. Es bindet standardmaessig NUR auf 127.0.0.1 — also nicht im Netz erreichbar. Der sichere Zugang ist ein SSH-Tunnel; alles andere sperrt man ueber Token oder Firewall auf.	The dashboard is the web interface: broadcast bar, recordings, statistics, defence. By default it binds ONLY to 127.0.0.1 — so it is not reachable on the network. The safe way in is an SSH tunnel; anything else you unlock with a token or a firewall rule.
-Datenbank liess sich nicht anlegen — DB_BACKEND steht auf mariadb; vor dem Start pruefen oder auf sqlite zuruecksetzen.	The database could not be created — DB_BACKEND is set to mariadb; check before starting or set it back to sqlite.
 Der Weg in acht Schritten:	The way there, in eight steps:
 Dienst %s laeuft — Neustart noetig, damit Aenderungen wirken. Nicht automatisch: %s	Service %s is running — a restart is needed for changes to take effect. Not done automatically: %s
 Dienst %s laeuft — jetzt neu starten (laufende Aufnahmen werden sauber beendet)?	Service %s is running — restart now (running recordings are finished cleanly)?
@@ -598,11 +596,9 @@ Ein zweiter Lauf zeigt den Unterschied zur bestehenden Installation und aendert 
 Erst wird gefragt, dann zusammengefasst — jeder Punkt laesst sich dort noch aendern —, und erst danach wird etwas installiert oder geschrieben.	First come the questions, then a summary — every item can still be changed there — and only after that is anything installed or written.
 Fehlende Systempakete installieren?	Install missing system packages?
 Fragen	Questions
-Kein MariaDB-Client gefunden — DB_BACKEND steht auf mariadb; vor dem Start pruefen oder auf sqlite zuruecksetzen.	No MariaDB client found — DB_BACKEND is set to mariadb; check before starting or set it back to sqlite.
 Leistungsprofil?	Performance profile?
 Lokales LLM	Local LLM
 MariaDB (lokal)	MariaDB (local)
-MariaDB (lokaler Server, wird eingerichtet)	MariaDB (local server, will be set up)
 MariaDB-Server liess sich nicht installieren.	The MariaDB server could not be installed.
 Nummer zum Aendern, Enter = ausfuehren, a = abbrechen:	Number to change, Enter = run, a = abort:
 Paketmanager nicht erkannt (apt, dnf, pacman, zypper, apk, brew).	Package manager not recognised (apt, dnf, pacman, zypper, apk, brew).
@@ -611,7 +607,6 @@ Pflicht + optionale, ausgelassen:%s	required + optional, skipped:%s
 Python-Pakete vollstaendig — nichts zu installieren.	Python packages complete — nothing to install.
 Reverse-Proxy	Reverse proxy
 SICHERHEIT: Dashboard lauscht auf 0.0.0.0 — Firewall setzen: %s	SECURITY: dashboard listens on 0.0.0.0 — set a firewall: %s
-SQLite (eine Datei, empfohlen)	SQLite (a single file, recommended)
 Selbsttest und Autostart	Self-test and autostart
 So ausfuehren?	Run it like this?
 Totmann-Meldung	Dead-man alert
@@ -841,7 +836,6 @@ voller Restream — Kick, Twitch, YouTube, mit Overlay	full restream — Kick, T
 Bot-Dienst fuer den Umzug kurz stoppen?	Stop the bot service briefly for the move?
 DB_BACKEND steht schon auf mariadb — kein Umzug noetig.	DB_BACKEND is already mariadb — no move needed.
 Datenbank %s und Nutzer %s angelegt bzw. abgeglichen.	Database %s and user %s created or reconciled.
-Datenbank nach MariaDB umziehen?	Move the database to MariaDB?
 Datenbank umziehen: SQLite -> MariaDB (Server, Nutzer, Umzug, Nachzaehlen, .env)	Move database: SQLite -> MariaDB (server, user, move, recount, .env)
 Datenbank/Nutzer liessen sich nicht anlegen — Umzug abgebrochen, nichts veraendert.	Could not create database/user — move aborted, nothing changed.
 Datenbank: MariaDB	Database: MariaDB
@@ -852,7 +846,6 @@ Grafana dazu (Diagramme im Browser, nur ueber SSH-Tunnel)?	Add Grafana (charts i
 In %s liegen schon Daten — DB_BACKEND bleibt vorerst auf sqlite.	%s already holds data — DB_BACKEND stays on sqlite for now.
 MariaDB	MariaDB
 MariaDB eingerichtet, Daten noch in SQLite. Umzug: bash tools/update.sh --mariadb	MariaDB set up, data still in SQLite. Move: bash tools/update.sh --mariadb
-MariaDB lohnt, wenn die Datenbank gross wird oder mehrere Rechner darauf sollen. Der Umzug stoppt den Bot kurz, legt Server, Datenbank und Nutzer an, zieht jede Tabelle um, zaehlt nach und stellt erst dann die .env um. Die SQLite-Datei bleibt liegen — Rueckweg: DB_BACKEND=sqlite.	MariaDB pays off when the database grows large or several machines need it. The move stops the bot briefly, creates the server, database and user, moves every table, recounts and only then switches the .env. The SQLite file stays where it is — the way back is DB_BACKEND=sqlite.
 MariaDB-Server liess sich nicht installieren — Umzug abgebrochen, nichts veraendert.	Could not install the MariaDB server — move aborted, nothing changed.
 Optionale Pakete mitinstallieren?	Install the optional packages as well?
 Optionale Pakete nicht installiert:%s	Optional packages not installed:%s
@@ -1047,3 +1040,14 @@ mysqlclient	mysqlclient
 mysqlclient eingerichtet — wirkt nach dem naechsten Neustart des Bots (MARIADB_TREIBER=auto).	mysqlclient set up — takes effect after the next bot restart (MARIADB_TREIBER=auto).
 mysqlclient liess sich nicht bauen — PyMySQL bleibt (laeuft unveraendert).	mysqlclient could not be built — PyMySQL stays (runs unchanged).
 mysqlclient liess sich nicht bauen — der Bot nimmt PyMySQL. Spaeter: bash tools/update.sh --mysqlclient	mysqlclient could not be built — the bot uses PyMySQL. Later: bash tools/update.sh --mysqlclient
+Datenbank liess sich nicht anlegen.	The database could not be created.
+Datenbank nach MariaDB umziehen (empfohlen)?	Move the database to MariaDB (recommended)?
+Datenbank: SQLite (MariaDB liess sich nicht einrichten — bash tools/update.sh --mariadb)	Database: SQLite (MariaDB could not be set up — bash tools/update.sh --mariadb)
+Empfohlen: Umzug nach MariaDB — bash tools/update.sh --mariadb	Recommended: move to MariaDB — bash tools/update.sh --mariadb
+Kein MariaDB-Client gefunden.	No MariaDB client found.
+MariaDB (lokaler Server, empfohlen)	MariaDB (local server, recommended)
+SQLite (eine Datei, ohne Dienst)	SQLite (a single file, no service)
+Datenbank: Vorgabe ist MariaDB — ein eigener Server, auf dem der Betrieb laeuft und der mit dem C-Treiber am wenigsten CPU kostet. SQLite ist eine Datei ohne Dienst und Passwort; sie bleibt die Vorgabe, wo schon Daten in SQLite liegen, ohne Paketmanager oder unter 1 GB RAM.	Database: the default is MariaDB — its own server, which production runs on and which costs the least CPU with the C driver. SQLite is a single file without a service or password; it stays the default where data already lives in SQLite, without a package manager, or below 1 GB of RAM.
+MariaDB ist die Vorgabe fuer neue Installationen: ein eigener Server, der mit dem C-Treiber weniger CPU kostet. Der Umzug stoppt den Bot kurz, legt Server, Datenbank und Nutzer an, zieht jede Tabelle um, zaehlt nach und stellt erst dann die .env um. Die SQLite-Datei bleibt liegen — Rueckweg: DB_BACKEND=sqlite.	MariaDB is the default for new installations: its own server that costs less CPU with the C driver. The move stops the bot briefly, sets up server, database and user, moves every table, counts again and only then switches .env. The SQLite file stays — way back: DB_BACKEND=sqlite.
+MariaDB liess sich nicht einrichten — DB_BACKEND steht schon vorher auf mariadb; vor dem Start pruefen.	MariaDB could not be set up — DB_BACKEND was already set to mariadb before; check before starting.
+MariaDB liess sich nicht einrichten — die Installation bleibt bei SQLite. Spaeter: bash tools/update.sh --mariadb	MariaDB could not be set up — the installation stays on SQLite. Later: bash tools/update.sh --mariadb

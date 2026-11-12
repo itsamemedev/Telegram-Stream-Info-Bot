@@ -26845,7 +26845,11 @@ def _test_v42_w143_update_mariadb():
     inst = open("tools/installer.sh", encoding="utf-8").read()
     i = inst.index("f_datenbank(){")
     rumpf = inst[i:inst.index("\n}\n", i)]
-    assert '[ "$vor" != "mariadb" ] && [ -s "$_sq" ]' in rumpf, "Installer-Riegel fehlt"
+    # ANKER GEWANDERT (v5.3-W194, nicht der Vertrag): seit MariaDB die Vorgabe
+    # ist, vergleicht der Riegel gegen den STAND der .env, nicht gegen die
+    # Vorgabe — "vor" waere bei einer neuen Installation jetzt mariadb.
+    assert '[ "$(env_bisher DB_BACKEND | tr \'A-Z\' \'a-z\')" != "mariadb" ] && [ -s "$_sq" ]' in rumpf, \
+        "Installer-Riegel fehlt"
     assert "update.sh --mariadb" in rumpf
     assert "nc_mariadb_sql" in inst and "IDENTIFIED BY" not in inst, \
         "Installer baut das Nutzer-SQL wieder selbst"
@@ -36276,6 +36280,102 @@ def _test_v52_w193_sparen():
        "mysqlclient, geteilte HTTP-Sitzung, KV-Cache, MariaDB-Einstellungen")
 
 
+
+def _test_v53_w194_mariadb_vorgabe():
+    """v5.3-W194: MariaDB ist die Vorgabe fuer NEUE Installationen.
+
+    Der Betrieb laeuft darauf; der Installer richtet sie jetzt von sich aus
+    ein. Geprueft werden die Ausnahmen (SQLite bleibt, wo MariaDB nicht sicher
+    einzurichten ist), der Rueckfall, wenn der Server nicht kommt, und die
+    Grenze, die NICHT verschoben werden darf: die Vorgabe im Code."""
+    import ast as _ast
+    import os as _os
+    import re as _re
+    import subprocess as _sp
+
+    inst = open("tools/installer.sh", encoding="utf-8").read()
+
+    def _fn(name):
+        m = _re.search(r"^%s\(\)\{.*?^\}" % name, inst, _re.S | _re.M)
+        assert m, "%s fehlt im Installer" % name
+        return m.group(0)
+    d = _ph.verzeichnis()
+
+    def _vorgabe(db_backend="", daten=False, skip=0, ram=8000):
+        if daten:
+            with open(_os.path.join(d, "tiktok_bot.db"), "wb") as f:
+                f.write(b"SQLite format 3\0")
+        elif _os.path.exists(_os.path.join(d, "tiktok_bot.db")):
+            _os.remove(_os.path.join(d, "tiktok_bot.db"))
+        skript = ('env_get(){ [ "$1" = DB_BACKEND ] && printf "%%s" "%s"; return 0; }\n'
+                  '%s\nZIEL=%s; SKIP_SYSTEM=%d; RAM_MB=%d; db_vorgabe'
+                  % (db_backend, _fn("db_vorgabe"), d, skip, ram))
+        return _sp.run(["bash", "-c", skript], capture_output=True, text=True).stdout
+    assert _vorgabe() == "mariadb", "neue Installation bekommt nicht MariaDB"
+    assert _vorgabe(db_backend="sqlite") == "sqlite", "ausdrueckliche Wahl ueberstimmt"
+    assert _vorgabe(db_backend="mariadb") == "mariadb"
+    assert _vorgabe(daten=True) == "sqlite", \
+        "Daten in SQLite — der Installer schaltete auf eine leere MariaDB (W143)"
+    assert _vorgabe(skip=1) == "sqlite", "ohne Paketmanager kein Server"
+    assert _vorgabe(ram=700) == "sqlite", "unter 1 GB RAM kein Datenbankdienst"
+    assert _vorgabe(ram=0) == "mariadb", "unbekannter RAM ist kein Grund fuer SQLite"
+
+    # Rueckfall: nur, wenn DIESER Lauf umgeschaltet hat
+    envf = _os.path.join(d, ".env")
+
+    def _rueckfall(neu):
+        with open(envf, "w") as f:
+            f.write("DB_BACKEND=mariadb\n")
+        skript = ('warn(){ :; }; merke(){ :; }\n'
+                  'env_set(){ printf "%%s=%%s\\n" "$1" "$2" > "$ARBEIT/plan"; }\n'
+                  'env_bauen(){ cp "$ARBEIT/plan" "$2"; }\n'
+                  '%s\nARBEIT=%s; PLAN_ENV=%s/plan.env; ENVF=%s; DB_NEU=%d; P_DB=mariadb\n'
+                  'db_rueckfall_sqlite; printf "%%s" "$P_DB"'
+                  % (_fn("db_rueckfall_sqlite"), d, d, envf, neu))
+        p = _sp.run(["bash", "-c", skript], capture_output=True, text=True).stdout
+        return p, open(envf).read()
+    p_db, env = _rueckfall(1)
+    assert p_db == "sqlite" and "DB_BACKEND=sqlite" in env, \
+        "MariaDB nicht einrichtbar, und die .env zeigt trotzdem auf mariadb (Exitcode 3)"
+    p_db, env = _rueckfall(0)
+    assert p_db == "mariadb" and env == "DB_BACKEND=mariadb\n", \
+        "war mariadb schon gesetzt, liegen die Daten dort — kein Rueckfall auf leeres SQLite"
+    blk = inst[inst.index('if [ "$P_DB" = "mariadb" ]; then\n  abschnitt "Datenbank"'):]
+    blk = blk[:blk.index("# ── CrowdSec")]
+    assert blk.count("db_rueckfall_sqlite") == 2, "ein Fehlerweg ohne Rueckfall"
+    fd = _fn("f_datenbank")
+    assert 'vor="$(db_vorgabe)"' in fd
+    assert "DB_NEU=1" in fd and 'env_bisher DB_BACKEND' in fd
+
+    # update.sh: der Umzug ist empfohlen, aber nie unbeaufsichtigt ohne Schalter
+    up = open("tools/update.sh", encoding="utf-8").read()
+    assert 'frage_ja "Datenbank nach MariaDB umziehen (empfohlen)?" J' in up
+    i = up.index('frage_ja "Datenbank nach MariaDB umziehen (empfohlen)?"')
+    assert "elif _fragen; then" in up[up.rindex("if [ \"$W_MARIADB\" = 1 ]", 0, i):i], \
+        "der Umzug laeuft ohne Rueckfrage"
+
+    # Die Grenze: die Vorgabe IM CODE bleibt sqlite
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    vorgaben = [_ast.unparse(c.args[1]) for c in _ast.walk(baum) if isinstance(c, _ast.Call)
+                and _ast.unparse(c.func) == "os.getenv" and len(c.args) == 2
+                and _ast.unparse(c.args[0]) == "'DB_BACKEND'"]
+    assert vorgaben == ["'sqlite'"], \
+        "Code-Vorgabe geaendert: bestehende SQLite-Installationen stuenden vor leerer MariaDB"
+
+    # Die Anleitung nennt Variablen, die der Bot auch liest
+    gelesen = {_ast.unparse(c.args[0]).strip("'") for c in _ast.walk(baum)
+               if isinstance(c, _ast.Call) and _ast.unparse(c.func) == "os.getenv" and c.args}
+    for doc in ("docs/INSTALL.md", "docs/en/INSTALL.md"):
+        t = open(doc, encoding="utf-8").read()
+        block = t[t.index("DB_BACKEND=mariadb"):]
+        block = block[:block.index("```")]
+        namen = _re.findall(r"^([A-Z_]+)=", block, _re.M)
+        assert namen and not set(namen) - gelesen, \
+            "%s nennt Variablen, die niemand liest: %s" % (doc, sorted(set(namen) - gelesen))
+    ok("v5.3-W194: MariaDB als Installer-Vorgabe — Ausnahmen, Rueckfall, Code-Vorgabe bleibt, "
+       "Anleitung mit echten Variablen")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -36693,6 +36793,7 @@ def main():
     _test_v52_w192_mariadb_pool()
     _test_v52_w193_arbeiter()
     _test_v52_w193_sparen()
+    _test_v53_w194_mariadb_vorgabe()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()
