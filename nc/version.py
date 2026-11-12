@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.5.0"
-CODENAME = "Stimme"
+VERSION = "5.6.0"
+CODENAME = "Kehraus"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.6.0",
+        "date": "2026-11",
+        "title": "Kehraus",
+        # Nebenversion: Bughunt, Aufraeumen, Monolith-Abtrag, Cookie-Knopf (W197).
+        "highlights": [
+            "KI-Abfrage im Deck: Frist von 15 s unter SQLite und MariaDB, Zeilendeckel auch bei innerem LIMIT, und unter MariaDB ueberhaupt lauffaehig — vier von sechs Regel-Abfragen sprachen SQLite",
+            "yt-dlp- und Piper-Arbeiter starten nach einem Fehlstart nicht mehr bei jedem Aufruf neu (die Ersparnis kostete sonst doppelt); ein yt-dlp-Update hebt die Ruhezeit sofort auf",
+            "Cookie-Pruefung im System-Tab: Knopf „Bereinigen“ entfernt abgelaufene Cookies und die Domain-Varianten, die der Bot nicht sendet — mit Vorschau, Backup und ohne je die Anmeldung zu verlieren",
+            "--selfcheck stirbt nicht mehr an der Diagnose einer unlesbaren Datenbank (KeyError im Bericht); der Selbsttest ist in benannte Abschnitte zerlegt",
+            "Monolith: stats.json-Erzeuger und Tagesbericht nach nc/, tote Huellen und veraltete Patches entfernt, bot.py 28.831 → 27.954 Zeilen",
+        ],
+    },
     {
         "version": "5.5.0",
         "date": "2026-11",
