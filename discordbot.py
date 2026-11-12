@@ -819,7 +819,10 @@ async def _run_tg_handler(inter, fn, args_str=""):
         effective_user=types.SimpleNamespace(id=uid, first_name="discord",
                                              username="discord"),
         effective_chat=types.SimpleNamespace(id=_par_chat_id()),
-        effective_message=msg, message=msg, callback_query=None)
+        effective_message=msg, message=msg, callback_query=None,
+        # v5.2-W190: _is_admin ist oben schon geprueft; bot._betreiber_pruefen
+        # erkennt daran den Shim (die uid ist im offenen Modus 0).
+        nc_discord_admin=True)
     # application: der echte Telegram-Bot. /tiktok liest daraus den Scraper
     # (context.application.bot_data["scraper"]); ohne ihn starb der Handler
     # mit AttributeError, und der Shim meldete nur „Handler-Fehler".

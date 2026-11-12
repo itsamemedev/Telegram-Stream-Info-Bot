@@ -82,13 +82,55 @@ def ist_https(remote, koepfe, vertraut, tls_direkt=False, schema="") -> bool:
     return proto == "https"
 
 
-def ist_lokal(remote, koepfe, vertraut, loopback) -> bool:
+# v5.2-W190: Namen, unter denen der Tunnel das Deck erreicht. Alles andere im
+# Host-Kopf heisst: der Browser glaubt, er spreche mit einer FREMDEN Domain.
+_LOKALE_NAMEN = ("localhost", "ip6-localhost", "ip6-loopback")
+
+
+def _host_name(host) -> str:
+    """'localhost:3000' -> 'localhost', '[::1]:3000' -> '::1' (klein, ohne Punkt am Ende)."""
+    h = (host or "").strip().lower()
+    if h.startswith("["):
+        h = h[1:].split("]", 1)[0]
+    elif h.count(":") == 1:
+        h = h.split(":", 1)[0]
+    return h.rstrip(".")
+
+
+def host_ist_lokal(host, erlaubt=()) -> bool:
+    """Nennt der Host-Kopf diesen Rechner (oder einen ausdruecklich erlaubten Namen)?
+
+    v5.2-W190 (SEC, DNS-Rebinding): Der Tunnel-Zugang gilt ohne Token und PIN.
+    Eine fremde Seite, die der Betreiber im selben Browser offen hat, kann ihren
+    eigenen Namen kurz auf 127.0.0.1 umbiegen (DNS-Rebinding). Der Browser
+    haelt das danach fuer DIESELBE Seite — er schickt `Sec-Fetch-Site:
+    same-origin`, also greift auch nc/herkunft nicht, und er gibt ihr die
+    Antworten zu lesen. Erkennbar ist das allein am Host-Kopf: dort steht der
+    Name der fremden Seite, nicht localhost. Ein leerer Kopf (HTTP/1.0, Skripte)
+    ist kein Browser und bleibt lokal.
+    """
+    h = _host_name(host)
+    if not h:
+        return True
+    if h in _LOKALE_NAMEN or h.endswith(".localhost"):
+        return True
+    if h == "::1" or h.startswith("127."):
+        teile = h.split(".")
+        return h == "::1" or (len(teile) == 4 and all(t.isdigit() for t in teile))
+    return h in {_host_name(e) for e in erlaubt if (e or "").strip()}
+
+
+def ist_lokal(remote, koepfe, vertraut, loopback, host_erlaubt=None) -> bool:
     """Kommt die Anfrage wirklich vom Rechner selbst (SSH-Tunnel, curl)?
 
     koepfe: Mapping der Request-Kopfzeilen (request.headers).
+    host_erlaubt: zusaetzlich erlaubte Host-Namen (DASHBOARD_HOSTNAMEN). Ist es
+      nicht None, muss der Host-Kopf lokal sein (v5.2-W190, DNS-Rebinding).
     """
     remote = (remote or "").strip()
     if remote not in loopback:
+        return False
+    if host_erlaubt is not None and not host_ist_lokal(koepfe.get("Host") or "", host_erlaubt):
         return False
     weitergeleitet = any((koepfe.get(k) or "").strip() for k in WEITERLEITUNGS_KOEPFE)
     if not weitergeleitet:

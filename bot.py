@@ -5485,6 +5485,32 @@ def _is_authorized(update: Update) -> bool:
         return True
     return False
 
+async def _betreiber_pruefen(update) -> bool:
+    """v5.2-W190 (SEC): Befehle, die Betriebsinterna zeigen oder Code tauschen.
+
+    Im offenen Modus (weder ALLOWED_USER_IDS noch ALLOWED_CHAT_IDS) gilt
+    `_is_authorized` fuer JEDEN Telegram-Nutzer — der Bot ist ueber seinen
+    Namen auffindbar. /logs gab damit jedem Fremden die Fehlerzeilen samt
+    Pfaden und Nutzernamen, /diag die Ausstattung des Servers, /cookies holen
+    loeste einen Bezug aus und /update jetzt spielte Code ein. Diese Befehle
+    brauchen einen bekannten Betreiber: eine Freischaltliste oder den Discord-
+    Shim, der selbst schon auf Admin prueft. Antwort statt Schweigen, damit der
+    Betreiber auf einer frischen Installation weiss, was fehlt."""
+    if not _is_authorized(update):
+        return False                      # wie jeder Handler: zuerst die Freischaltung
+    if ALLOWED_USER_IDS or ALLOWED_CHAT_IDS or getattr(update, "nc_discord_admin", False):
+        return True
+    try:
+        await update.message.reply_text(_nc_i18n.t(
+            "🔒 Dieser Befehl braucht eine Freischaltliste. Ohne ALLOWED_USER_IDS "
+            "kann jeder, der den Bot findet, ihn bedienen — deshalb sind /update, "
+            "/logs, /diag und /cookies gesperrt. Eigene ID per @userinfobot, dann "
+            "ALLOWED_USER_IDS=DEINE_ID in die .env und Dienst neu starten."))
+    except Exception as e:
+        log.warning("Betreiber-Hinweis nicht zustellbar: %s", e)
+    return False
+
+
 def _can_stop_tracking(update: Update, chat_id: int, username: str) -> tuple:
     """F24: Darf der User dieses Tracking stoppen?
        1. Admin (in ALLOWED_USER_IDS) → ja
@@ -5872,7 +5898,7 @@ async def tracklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def diag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """F11: Selbst-Diagnose direkt aus Telegram. Zeigt was im Stack
        installiert/erreichbar ist und welcher Recorder aktiv wäre."""
-    if not _is_authorized(update): return
+    if not await _betreiber_pruefen(update): return
     msg = await update.message.reply_text(_nc_i18n.t("⏳ <i>Diagnose läuft…</i>"),
                                           parse_mode=ParseMode.HTML)
 
@@ -7347,7 +7373,7 @@ async def cookies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """F52: Zeigt den Cookie-Health-Status. Hilft bei 'Aufnahmen
        funktionieren plötzlich nicht mehr' — wenn die TikTok-Auth-Cookies
        abgelaufen sind, scheitern Resolves still und der User wundert sich."""
-    if not _is_authorized(update): return
+    if not await _betreiber_pruefen(update): return
 
     # v4.2-W10: '/cookies holen [browser]' beschafft sie selbst. Bewusst ein
     # Unterbefehl und kein 46. Slash-Command: der Bezug gehoert zum Cookie-
@@ -7571,7 +7597,7 @@ async def logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
        Usage: /logs [N]   (default 10, max 30)
        Praktisch für Remote-Diagnose ohne SSH — z.B. wenn der Bot in einer
        systemd-Unit läuft und man unterwegs ist."""
-    if not _is_authorized(update): return
+    if not await _betreiber_pruefen(update): return
     n = 10
     if context.args:
         try: n = max(1, min(30, int(context.args[0])))
@@ -10649,8 +10675,37 @@ def _ist_lokal():
     diesem Rechner. v4.2-W149: vorher genuegte remote_addr == 127.0.0.1, und
     hinter dem nginx des Installers war damit das ganze Deck ohne Anmeldung
     offen. Siehe nc/clientip.py."""
+    # v5.2-W190: der Host-Kopf muss lokal sein (DNS-Rebinding), sonst gilt
+    # die Anfrage als fremd und braucht Token oder PIN wie jede andere.
     return _nc_clientip.ist_lokal(request.remote_addr, request.headers,
-                                  TRUSTED_PROXIES, _LOOPBACK)
+                                  TRUSTED_PROXIES, _LOOPBACK,
+                                  host_erlaubt=_dashboard_hostnamen())
+
+
+def _dashboard_hostnamen():
+    """DASHBOARD_HOSTNAMEN: weitere Namen, unter denen der Tunnel das Deck
+    erreicht (Komma-Liste). Als Funktion gelesen, nicht als Konstante."""
+    return tuple(t.strip() for t in os.getenv("DASHBOARD_HOSTNAMEN", "").split(",")
+                 if t.strip())
+
+
+def _rebinding_melden():
+    """v5.2-W190: Anfrage von Loopback, aber mit fremdem Host-Kopf — laut sagen.
+
+    Zwei Lagen sehen hier gleich aus: eine fremde Seite per DNS-Rebinding, oder
+    der Betreiber erreicht den Tunnel unter einem eigenen Namen (/etc/hosts).
+    Beide bekommen 401/403; die Zeile nennt den Ausweg fuer den zweiten Fall."""
+    if (request.remote_addr or "").strip() not in _LOOPBACK:
+        return
+    if _nc_clientip.host_ist_lokal(request.headers.get("Host") or "", _dashboard_hostnamen()):
+        return
+    laut, weg = _nc_meldetakt.melden("deck-host", "fremd", _time_mod.monotonic())
+    if laut:
+        log.error("Deck: Anfrage ueber Loopback mit fremdem Host-Kopf %r abgewiesen — "
+                  "so sieht DNS-Rebinding einer fremden Seite im Browser aus. Wer das Deck "
+                  "selbst unter diesem Namen oeffnet: DASHBOARD_HOSTNAMEN=<name> in die "
+                  ".env.%s", (request.headers.get("Host") or "")[:80],
+                  _nc_meldetakt.zusatz(weg))
 
 
 def _token_ok():
@@ -10692,9 +10747,28 @@ def _pin_auth_value(ts=None):
     import hmac as _hmac
     import hashlib as _hl
     t = str(int(ts if ts is not None else _time_mod.time()))
-    sig = _hmac.new(DASHBOARD_PIN.encode(),
+    # v5.2-W190 (SEC): Schluessel ist nicht mehr die PIN allein — sonst verriet
+    # ein einziges Cookie die PIN per Offline-Probe. Siehe nc/sitzungsschluessel.
+    sig = _hmac.new(_pin_hmac_schluessel(),
                     ("nc-dashboard-pin|" + t).encode(), _hl.sha256).hexdigest()
     return t + "." + sig
+
+
+_SITZUNG_GEMELDET = {"fluechtig": False}
+
+
+def _pin_hmac_schluessel():
+    """Serverwert (Datei neben bot.py) + PIN -> HMAC-Schluessel des PIN-Cookies."""
+    from nc import sitzungsschluessel as _nc_sitzung
+    pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), _nc_sitzung.DATEINAME)
+    server, dauerhaft = _nc_sitzung.laden(pfad)
+    if not dauerhaft and not _SITZUNG_GEMELDET["fluechtig"]:
+        _SITZUNG_GEMELDET["fluechtig"] = True
+        log.error("Deck-Login: %s nicht les- oder anlegbar (%s) — der Sitzungsschluessel "
+                  "gilt nur bis zum Neustart, danach muss man sich neu anmelden. Abhilfe: "
+                  "Schreibrecht des Dienstnutzers auf das Programmverzeichnis.", pfad,
+                  _nc_sitzung.LAGE["grund"] or "unbekannt")
+    return _nc_sitzung.pin_schluessel(DASHBOARD_PIN, server)
 
 
 def _pin_ok():
@@ -10721,15 +10795,40 @@ def _pin_ok():
                                 _pin_auth_value(int(t_roh)).encode("utf-8"))
 
 
+# v5.2-W190 (SEC): die Sperre je IP allein haelt keinen Angreifer mit vielen
+# Adressen auf — ein IPv6-/64 sind 2^64 "verschiedene" Clients, je fuenf
+# Versuche. Eine zweite, globale Grenze zaehlt alle Fehlversuche zusammen. Den
+# Betreiber sperrt sie nicht aus: der SSH-Tunnel braucht keine PIN.
+_PIN_GLOBAL = _collections.deque()
+_PIN_GLOBAL_MAX = 30               # Fehlversuche aller Adressen ...
+_PIN_GLOBAL_FENSTER_S = 600        # ... in zehn Minuten
+
+
+def _pin_global_gesperrt(now):
+    while _PIN_GLOBAL and now - _PIN_GLOBAL[0] > _PIN_GLOBAL_FENSTER_S:
+        _PIN_GLOBAL.popleft()
+    return len(_PIN_GLOBAL) >= _PIN_GLOBAL_MAX
+
+
 def _pin_locked():
-    """True, wenn diese IP nach zu vielen Fehlversuchen gerade gesperrt ist."""
+    """True, wenn diese IP — oder nach einer Welle von Fehlversuchen alle —
+    gerade gesperrt ist."""
+    now = _time_mod.monotonic()
+    if _pin_global_gesperrt(now):
+        return True
     st = _PIN_FAILS.get(_client_ip())
-    return bool(st and st[1] > _time_mod.monotonic())
+    return bool(st and st[1] > now)
 
 
 def _pin_note_fail():
     ip = _client_ip()
     now = _time_mod.monotonic()
+    _PIN_GLOBAL.append(now)
+    if _pin_global_gesperrt(now) and len(_PIN_GLOBAL) == _PIN_GLOBAL_MAX:
+        log.error("Deck-Login: %d falsche PINs in %d Minuten von verschiedenen Adressen — "
+                  "Anmeldung fuer alle gesperrt, bis die Welle abklingt. Der SSH-Tunnel "
+                  "bleibt offen. Haelt das an: DASHBOARD_PIN laenger machen oder Token "
+                  "statt PIN.", _PIN_GLOBAL_MAX, _PIN_GLOBAL_FENSTER_S // 60)
     st = _PIN_FAILS.get(ip, [0, 0.0])
     st[0] += 1
     if st[0] >= _PIN_FAIL_MAX:
@@ -10778,6 +10877,7 @@ def _auth_guard():                                                    # C9 → F
         # das offene Deck ausdruecklich gewollt (DASHBOARD_OFFEN_ERLAUBEN=1).
         if _nc_dashauth.erlaubt_offen():
             return None
+        _rebinding_melden()
         return jsonify(ok=False, error=("Deck ohne DASHBOARD_TOKEN/DASHBOARD_PIN ist nur "
                                         "lokal erreichbar — ueber einen Proxy braucht es "
                                         "ein Geheimnis in der .env")), 403
@@ -10786,6 +10886,7 @@ def _auth_guard():                                                    # C9 → F
         return None
     if _token_ok() or _pin_ok():
         return None
+    _rebinding_melden()
     # Nicht autorisiert. Ist ein PIN gesetzt und will ein Browser HTML, führen wir
     # zur Login-Seite statt einen nackten 401 zu zeigen (auch in der PWA).
     if DASHBOARD_PIN and _wants_html():
@@ -21072,7 +21173,20 @@ def healthz():
     # Der HTTP-Code haengt weiter NUR an `ok`: UptimeRobot alarmiert auf
     # 503, und ein langsamer Bot ist kein toter.
     daten["lage"], daten["gruende"] = _nc_lage.bewerten(daten)
+    # v5.2-W190 (SEC): /healthz ist ohne Anmeldung erreichbar — hinter dem
+    # Proxy des Installers also aus dem Internet. Der Docstring sagt "nur
+    # ok/degraded", geliefert wurden aber Commit-Stand (verraet die Fassung
+    # samt bekannter Luecken), Tunnel-Lage, Prozess-, Speicher- und
+    # Pruefzahlen. Ein Waechter von aussen braucht den Statuscode; die
+    # Einzelheiten bekommt, wer lokal fragt oder angemeldet ist (Deck, motd,
+    # Prometheus auf demselben Rechner).
+    if not (_ist_lokal() or _token_ok() or _pin_ok()):
+        daten = {k: daten[k] for k in _HEALTHZ_OEFFENTLICH if k in daten}
     return jsonify(daten), (200 if ok else 503)
+
+
+# Was /healthz einem nicht angemeldeten Aufrufer von aussen zeigt (v5.2-W190).
+_HEALTHZ_OEFFENTLICH = ("ok", "db", "loops", "brain", "lage", "ts")
 
 
 @dashboard_app.route("/api/debug/threads")
@@ -25370,7 +25484,7 @@ async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Eingespielt wird nur nach ausdruecklichem "jetzt". Ein Update ersetzt
     Code unter einem laufenden Dienst — das passiert nicht als Nebenwirkung
     einer Statusabfrage."""
-    if not _is_authorized(update):
+    if not await _betreiber_pruefen(update):          # v5.2-W190
         return
     args = [a.lower() for a in (context.args or [])]
     mode = args[0] if args else ""

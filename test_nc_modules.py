@@ -35132,6 +35132,183 @@ def _test_v42_w156_lagebild_radar():
        "reduzierter Bewegung und im Kontrast-Thema")
 
 
+
+def _test_v52_w190_sicherheit():
+    """v5.2-W190: sechs Riegel aus dem Sicherheits-Durchgang.
+
+    (1) DNS-Rebinding: ein Host-Kopf, der nicht diesen Rechner nennt, ist
+        nicht "lokal" — auch wenn die Verbindung von 127.0.0.1 kommt.
+    (2) PIN-Cookie: der HMAC-Schluessel ist nicht mehr die PIN allein.
+    (3) Offener Telegram-Modus: /update, /logs, /diag, /cookies nur mit
+        Freischaltliste (oder ueber den Discord-Shim, der selbst prueft).
+    (4) /healthz: Fremde von aussen sehen nur ok/degradiert.
+    (5) Kick-OAuth: State zeitkonstant und mit Frist.
+    (6) PIN-Sperre zusaetzlich global, nicht nur je Adresse."""
+    import ast as _ast
+    import asyncio as _aio
+    import hashlib as _hl
+    import hmac as _hm
+    import os as _os
+    import stat as _st
+    import types as _ty
+    from nc import clientip as CI
+    from nc import kick_oauth as KO
+    from nc import sitzungsschluessel as SK
+
+    # ── (1) Host-Kopf
+    for h in ("localhost:3000", "LOCALHOST", "127.0.0.1:8050", "127.8.9.10",
+              "[::1]:3000", "::1", "", "deck.localhost:3000", "localhost."):
+        assert CI.host_ist_lokal(h), h
+    for h in ("evil.example:3000", "127.0.0.1.evil.example", "localhost.evil.example",
+              "127.1", "10.0.0.5:8050", "[2001:db8::1]:3000", "attacker.localhost.evil"):
+        assert not CI.host_ist_lokal(h), h
+    assert CI.host_ist_lokal("nc.lan:3000", ("nc.lan",))
+    assert not CI.host_ist_lokal("nc.lan:3000", ("andere.lan", ""))
+    lb = ("127.0.0.1", "::1")
+    assert CI.ist_lokal("127.0.0.1", {"Host": "localhost:3000"}, (), lb, host_erlaubt=())
+    assert not CI.ist_lokal("127.0.0.1", {"Host": "rebind.example:3000"}, (), lb,
+                            host_erlaubt=()), "DNS-Rebinding galt als Tunnel"
+    assert CI.ist_lokal("127.0.0.1", {"Host": "rebind.example"}, (), lb), \
+        "ohne host_erlaubt bleibt das alte Verhalten (Aufrufer ausserhalb des Decks)"
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fns = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    aufr = [c for c in _ast.walk(fns["_ist_lokal"]) if isinstance(c, _ast.Call)
+            and _ast.unparse(c.func) == "_nc_clientip.ist_lokal"]
+    assert aufr and any(k.arg == "host_erlaubt" for k in aufr[0].keywords), \
+        "_ist_lokal prueft den Host-Kopf nicht"
+    from nc import einstellungen as EI
+    assert "DASHBOARD_HOSTNAMEN" in EI.SCHUTZ_EXAKT, "die Ausnahmeliste darf nicht aus dem Deck kommen"
+
+    # ── (2) PIN-Cookie
+    d = _ph.verzeichnis()
+    pfad = _os.path.join(d, SK.DATEINAME)
+    SK._CACHE.clear()
+    k1, dauer = SK.laden(pfad)
+    assert dauer and len(k1) >= 32 and _os.path.isfile(pfad)
+    assert _st.S_IMODE(_os.stat(pfad).st_mode) == 0o600, oct(_os.stat(pfad).st_mode)
+    SK._CACHE.clear()
+    assert SK.laden(pfad)[0] == k1, "der Schluessel muss einen Neustart ueberleben"
+    with open(pfad, "w") as f:
+        f.write("kaputt")
+    SK._CACHE.clear()
+    k2, _ = SK.laden(pfad)
+    assert k2 != k1 and len(k2) >= 32 and _os.path.exists(pfad + ".kaputt")
+    SK._CACHE.clear()
+    k3, dauer3 = SK.laden(_os.path.join(d, "fehlt", "nicht", SK.DATEINAME))
+    assert not dauer3 and len(k3) >= 32, "unbeschreibbar -> fluechtig, aber nie leer"
+    assert SK.LAGE["grund"].startswith("FileNotFoundError"), "der Grund geht verloren"
+    assert SK.pin_schluessel("1234", k1) != SK.pin_schluessel("1235", k1)
+    assert SK.pin_schluessel("1234", k1) != SK.pin_schluessel("1234", k2)
+    # Die eigentliche Aussage: aus einem Cookie laesst sich die PIN nicht
+    # mehr offline erraten — der alte Schluessel (PIN allein) passt nicht.
+    t = "1700000000"
+    neu = _hm.new(SK.pin_schluessel("4711", k1), ("nc-dashboard-pin|" + t).encode(),
+                  _hl.sha256).hexdigest()
+    treffer = [p for p in ("%04d" % i for i in range(10000))
+               if _hm.new(p.encode(), ("nc-dashboard-pin|" + t).encode(),
+                          _hl.sha256).hexdigest() == neu]
+    assert not treffer, "Offline-Probe fand die PIN: %s" % treffer
+    hm_neu = [c for c in _ast.walk(fns["_pin_auth_value"]) if isinstance(c, _ast.Call)
+              and _ast.unparse(c.func) in ("_hmac.new", "hmac.new")]
+    assert hm_neu and _ast.unparse(hm_neu[0].args[0]) == "_pin_hmac_schluessel()", \
+        "das PIN-Cookie ist wieder mit der PIN allein signiert"
+
+    # ── (3) Offener Telegram-Modus — die echte Funktion, im eigenen Namensraum
+    quelle = _ast.unparse(fns["_betreiber_pruefen"])
+    antworten = []
+
+    class _Msg:
+        async def reply_text(self, t, **k):
+            antworten.append(t)
+
+    def _upd(**k):
+        return _ty.SimpleNamespace(message=_Msg(), **k)
+    ns = {"ALLOWED_USER_IDS": set(), "ALLOWED_CHAT_IDS": set(),
+          "_is_authorized": lambda u: True,
+          "_nc_i18n": _ty.SimpleNamespace(t=lambda s: s),
+          "log": _ty.SimpleNamespace(warning=lambda *a, **k: None)}
+    exec(compile(quelle, "bot.py:_betreiber_pruefen", "exec"), ns)
+    bp = ns["_betreiber_pruefen"]
+    assert _aio.run(bp(_upd())) is False, "offener Modus: Fremde lesen /logs"
+    assert antworten and "ALLOWED_USER_IDS" in antworten[-1], "ohne Hinweis bleibt der Betreiber ratlos"
+    assert _aio.run(bp(_upd(nc_discord_admin=True))) is True, "Discord-Shim prueft selbst"
+    ns["ALLOWED_USER_IDS"] = {42}
+    ns["_is_authorized"] = lambda u: u.effective_user.id == 42
+    assert _aio.run(bp(_upd(effective_user=_ty.SimpleNamespace(id=42)))) is True
+    assert _aio.run(bp(_upd(effective_user=_ty.SimpleNamespace(id=7)))) is False
+    for name in ("update_cmd", "logs_cmd", "diag", "cookies_cmd"):
+        aufrufe = [_ast.unparse(c.func) for c in _ast.walk(fns[name]) if isinstance(c, _ast.Call)]
+        assert "_betreiber_pruefen" in aufrufe, "%s fragt nur _is_authorized" % name
+    dc = _ast.parse(open("discordbot.py", encoding="utf-8").read())
+    shim = next(n for n in dc.body if isinstance(n, _ast.AsyncFunctionDef)
+                and n.name == "_run_tg_handler")
+    assert any(k.arg == "nc_discord_admin" for c in _ast.walk(shim) if isinstance(c, _ast.Call)
+               for k in c.keywords), "der Discord-Shim faellt im offenen Modus aus"
+
+    # ── (4) /healthz
+    oeff = next(n for n in baum.body if isinstance(n, _ast.Assign)
+                and any(getattr(t_, "id", "") == "_HEALTHZ_OEFFENTLICH" for t_ in n.targets))
+    oeff = _ast.literal_eval(oeff.value)
+    assert "ok" in oeff and not {"commit", "tunnel", "betrieb", "speicher", "procs",
+                                 "kinder", "commit_quelle"} & set(oeff), oeff
+    hz = fns["healthz"]
+    zweig = [n for n in _ast.walk(hz) if isinstance(n, _ast.If)
+             and "_ist_lokal()" in _ast.unparse(n.test) and "_token_ok()" in _ast.unparse(n.test)]
+    assert zweig and "_HEALTHZ_OEFFENTLICH" in _ast.unparse(zweig[0]), "/healthz zeigt Fremden alles"
+
+    # ── (5) Kick-OAuth-State
+    p = {"state": "abc123", "ts": 1000.0}
+    assert KO.state_gueltig("abc123", p, 1010.0)
+    assert not KO.state_gueltig("abc124", p, 1010.0)
+    assert not KO.state_gueltig("abc123", p, 1000.0 + KO.STATE_FRIST_S + 1), "Flow ohne Frist"
+    assert not KO.state_gueltig("abc123", {"state": "abc123"}, 1010.0)
+    assert not KO.state_gueltig("", {"state": "", "ts": 1000.0}, 1010.0), \
+        "ein leerer State darf nie passen (Flow nie begonnen)"
+    assert not KO.state_gueltig("äöü", p, 1010.0), "Nicht-ASCII darf nicht werfen"
+
+    # ── (6) globale PIN-Sperre — die echten Funktionen
+    import collections as _co
+    q = "\n".join(_ast.unparse(fns[n]) for n in ("_pin_global_gesperrt", "_pin_locked", "_pin_note_fail"))
+    uhr = [100.0]
+    fehler = []
+    ns = {"_PIN_GLOBAL": _co.deque(), "_PIN_GLOBAL_MAX": 30, "_PIN_GLOBAL_FENSTER_S": 600,
+          "_PIN_FAILS": {}, "_PIN_FAIL_MAX": 5, "_PIN_FAIL_LOCK_S": 60,
+          "_time_mod": _ty.SimpleNamespace(monotonic=lambda: uhr[0]),
+          "log": _ty.SimpleNamespace(error=lambda *a, **k: fehler.append(a))}
+    adr = iter(range(10 ** 6))
+    ns["_client_ip"] = lambda: "2001:db8::%x" % next(adr)
+    exec(compile(q, "bot.py:pin", "exec"), ns)
+    for _ in range(29):
+        ns["_pin_note_fail"]()
+    assert not ns["_pin_locked"](), "29 Fehlversuche reichen noch nicht"
+    ns["_pin_note_fail"]()
+    assert ns["_pin_locked"](), "wechselnde Adressen umgehen die Sperre"
+    assert len(fehler) == 1, "die Welle wird genau einmal gemeldet"
+    uhr[0] += 601
+    assert not ns["_pin_locked"](), "die Sperre klingt ab"
+    # ── (7) Deck: Restream-Pillen escapen den Quellnamen (kam roh ins HTML)
+    deck = open("templates/dashboard.html", encoding="utf-8").read()
+    i = deck.index("'<span class=\"sb-pill\" data-rid=")
+    stueck = deck[i:deck.index("</span>'", i)]
+    assert "'+r.user+" not in stueck.replace(" ", "") and stueck.count("esc(r.user)") == 2, stueck
+
+    # ── (8) ikllama.sh: SHA-256 als Hex, gross geschrieben gilt
+    import subprocess as _sp
+    def _ik(wert):
+        r = _sp.run(["bash", "tools/ikllama.sh", "--check"], capture_output=True, text=True,
+                    timeout=120, env=dict(_os.environ, LLM_MODELL_SHA256=wert))
+        return r.returncode, r.stdout + r.stderr
+    rc, aus = _ik("z" * 64)
+    assert rc == 2 and "0-9a-f" in aus, (rc, aus[-300:])
+    rc, aus = _ik("A" * 64)
+    assert "kein SHA-256" not in aus, "ein gross geschriebener SHA-256 wurde abgewiesen"
+    inst = open("tools/installer.sh", encoding="utf-8").read()
+    liste = inst[inst.index("AUS_KOPIE=("):inst.index(")", inst.index("AUS_KOPIE=("))]
+    assert "'" + SK.DATEINAME + "'" in liste, "der Installer kopiert den Sitzungsschluessel mit"
+    ok("v5.2-W190: Host-Kopf gegen DNS-Rebinding, PIN-Cookie mit Serverschluessel, "
+       "Betreiberbefehle im offenen Modus, /healthz knapp, Kick-State, globale PIN-Sperre")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -35543,6 +35720,7 @@ def main():
     _test_v51_w181_qwen3_denkt_nicht()
     _test_v51_w180_whisper_speicher()
     _test_v51_w187_cookies_ohne_desktop()
+    _test_v52_w190_sicherheit()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()

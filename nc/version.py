@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.1.0"
-CODENAME = "Hellhörig"
+VERSION = "5.1.1"
+CODENAME = "Hausrecht"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.1.1",
+        "date": "2026-11",
+        "title": "Hausrecht",
+        # Patch-Fassung: Sicherheits-Durchgang (W190).
+        "highlights": [
+            "DNS-Rebinding geschlossen: eine fremde Seite im Browser konnte ihren Namen auf 127.0.0.1 umbiegen und das Deck ueber den SSH-Tunnel ohne Anmeldung bedienen — der Tunnel gilt jetzt nur noch mit lokalem Host-Kopf (DASHBOARD_HOSTNAMEN fuer eigene Namen)",
+            "PIN-Cookie mit Serverschluessel: ein abgegriffenes Cookie verriet die PIN per Offline-Probe in Sekunden, danach liessen sich Sitzungen ohne Ablauf faelschen",
+            "Offener Telegram-Modus: ohne ALLOWED_USER_IDS konnte jeder Fremde /logs lesen, /diag abrufen, Cookies beziehen und /update ausloesen — diese vier brauchen jetzt eine Freischaltliste",
+            "/healthz zeigt Fremden von aussen nur noch ok/degradiert statt Commit-Stand, Tunnel-Lage und Prozesszahlen",
+            "PIN-Sperre zusaetzlich global (wechselnde IPv6-Adressen umgingen die Sperre je Adresse); Kick-OAuth-State zeitkonstant und mit Frist",
+            "Deck: Restream-Quellnamen werden escaped; ikllama.sh nimmt SHA-256 auch gross geschrieben und prueft vor dem 9-GB-Download auf Hex",
+        ],
+    },
     {
         "version": "5.1.0",
         "date": "2026-11",

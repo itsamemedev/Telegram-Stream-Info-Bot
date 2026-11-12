@@ -1702,6 +1702,7 @@
     "🔈 Ton wartet auf einen Klick": "🔈 El sonido espera un clic",
     "🔊 Ton ist an": "🔊 Sonido activado",
     "🔑 Claude-Anbindung": "🔑 Conexión con Claude",
+    "🔒 Dieser Befehl braucht eine Freischaltliste. Ohne ALLOWED_USER_IDS kann jeder, der den Bot findet, ihn bedienen — deshalb sind /update, /logs, /diag und /cookies gesperrt. Eigene ID per @userinfobot, dann ALLOWED_USER_IDS=DEINE_ID in die .env und Dienst neu starten.": "🔒 Este comando necesita una lista de autorizados. Sin ALLOWED_USER_IDS cualquiera que encuentre el bot puede manejarlo — por eso /update, /logs, /diag y /cookies están bloqueados. Obtén tu ID con @userinfobot, pon ALLOWED_USER_IDS=TU_ID en .env y reinicia el servicio.",
     "🔔 BENACHRICHTIGUNGEN": "🔔 NOTIFICACIONES",
     "🔕 Keine Live-Pings mehr für **@": "🔕 No más avisos de directo para **@",
     "🔴 läuft ·": "🔴 en marcha ·",
