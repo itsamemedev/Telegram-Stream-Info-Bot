@@ -1162,6 +1162,14 @@ Konsolenzeile, nur leere Diagramme. Gefunden hat es das Messen im Browser
 mit Kontext (`header .bar`), und nach einem Umbau die Seite **mit echten
 Daten** rendern — ohne `stats.json` war der Fehler unsichtbar.
 
+**Der Betrieb läuft auf MariaDB** (`DB_BACKEND=mariadb`, seit 11/2026).
+Die Vorgabe im Code und im Installer ist weiter SQLite — aber wer am
+Datenbankpfad etwas verbessert, misst zuerst unter MariaDB. v5.2.0 hat das
+nicht getan: der Verbindungsvorrat sparte unter SQLite 178 µs je Zugriff und
+unter MariaDB nichts, weil `db_conn()` dort einen eigenen Pool nimmt. Erst
+v5.2.1 (W192) hat den MariaDB-Pfad gemessen (233 → ~130 µs) — gegen einen
+echten Server, nicht gegen die Attrappe, die der Vertrag benutzt.
+
 **Ein Schema, das nur SQLite gesehen hat, ist für MariaDB ungeprüft.**
 `DB_BACKEND=mariadb` stand seit v4.0 in der Doku, und kein Start hätte es
 überstanden: `lines` und `trigger` sind in MariaDB reserviert (1064), neun
@@ -1224,7 +1232,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 605 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 606 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

@@ -14,6 +14,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time as _time
 
 from nc.sqlutil import _translate_sql
 
@@ -477,8 +478,12 @@ def vorrat_leeren():
 
 
 def vorrat_lage() -> dict:
-    """Fuer /healthz: wie oft neu geoeffnet, wie oft wiederverwendet."""
-    return dict(_VORRAT_STAT, frei=len(_VORRAT), groesse=vorrat_groesse(),
+    """Fuer /healthz: wie oft neu geoeffnet, wie oft wiederverwendet.
+    v5.2-W192: unter MariaDB der Pool dort — der SQLite-Vorrat ist dann leer
+    und seine Nullen saehen aus wie ein Vorrat, der nichts tut."""
+    if DB_BACKEND == "mariadb":
+        return dict(mariadb_lage(), backend="mariadb")
+    return dict(backend="sqlite", **_VORRAT_STAT, frei=len(_VORRAT), groesse=vorrat_groesse(),
                 abgelegt=len(_ABGELEGT))
 
 
@@ -574,20 +579,62 @@ class _MariaDBConnWrap:
     def __init__(self, conn):
         self._conn = conn
         self._cursor = None
+        # v5.2-W192: nach einem erfolgreichen commit() im __exit__ ist die
+        # Verbindung sauber — das rollback() in close() waere eine weitere
+        # Rundreise zum Server, die nichts mehr zurueckrollt.
+        self._sauber = False
 
     def execute(self, sql, params=()):
         # SQLite-Style: conn.execute → impliziter Cursor
-        cur = _MariaDBCursorWrap(self._conn.cursor())
-        cur.execute(sql, params)
-        return cur
+        def _lauf():
+            cur = _MariaDBCursorWrap(self._conn.cursor())
+            cur.execute(sql, params)
+            return cur
+        return self._erste_mit_wiederanlauf(_lauf)
 
     def executemany(self, sql, seq):
-        cur = _MariaDBCursorWrap(self._conn.cursor())
-        cur.executemany(sql, seq)
-        return cur
+        def _lauf():
+            cur = _MariaDBCursorWrap(self._conn.cursor())
+            cur.executemany(sql, seq)
+            return cur
+        return self._erste_mit_wiederanlauf(_lauf)
 
     def cursor(self):
+        self._conn._nc_ungeprueft = False      # ab hier kein Wiederanlauf
         return _MariaDBCursorWrap(self._conn.cursor())
+
+    def _erste_mit_wiederanlauf(self, lauf):
+        """v5.2-W192: die ERSTE Anweisung auf einer Verbindung, die ohne ping
+        ausgeliehen wurde, darf einen Abriss einmal ueberleben.
+
+        Ohne das kostete der gesparte ping nach jedem Server-Neustart genau
+        einen gescheiterten Aufruf (gegen MariaDB 10.11 gemessen: 2013 Lost
+        connection). Wiederholt wird nur die erste Anweisung: davor lief in
+        dieser Transaktion nichts, also geht nichts doppelt oder verloren."""
+        erst = getattr(self._conn, "_nc_ungeprueft", False)
+        self._conn._nc_ungeprueft = False
+        try:
+            return lauf()
+        except Exception as e:
+            if not (erst and _verbindung_verloren(e)):
+                raise
+            _mariadb_grund_melden(e)
+            _MARIADB_STAT["wiederangelaufen"] += 1
+            tot, self._conn = self._conn, None
+            try:
+                tot.close()
+            except Exception as e2:
+                _mariadb_grund_melden(e2)
+            _mariadb_pool_leeren()            # die freien haengen am selben Server
+            try:
+                self._conn = _mariadb_neue_verbindung(_MARIADB_POOL)
+            except Exception:
+                p = _MARIADB_POOL
+                if p is not None:             # Slot der toten Verbindung freigeben
+                    with p._lock:
+                        p._created = max(0, p._created - 1)
+                raise
+            return lauf()
 
     def commit(self):
         try: self._conn.commit()
@@ -612,9 +659,11 @@ class _MariaDBConnWrap:
         conn = self._conn
         self._conn = None
         try:
-            try: conn.rollback()
-            except Exception: pass
+            if not self._sauber:
+                try: conn.rollback()
+                except Exception: pass
             if _MARIADB_POOL is not None:
+                conn._nc_frei_seit = _time.monotonic()   # v5.2-W192, s. _mariadb_connect
                 try:
                     _MARIADB_POOL._q.put_nowait(conn)
                     return
@@ -637,16 +686,113 @@ class _MariaDBConnWrap:
         try:
             if exc_type is None:
                 self.commit()
+                self._sauber = True
             else:
                 self.rollback()
+        except Exception as e:
+            # Commit gescheitert: die Verbindung kann selbst der Grund sein.
+            if _verbindung_verloren(e):
+                self._verloren_abgeben()
+            raise
         finally:
+            if exc is not None and _verbindung_verloren(exc):
+                self._verloren_abgeben()
             self.close()
         return False    # do not suppress exception
+
+    def _verloren_abgeben(self):
+        """v5.2-W192: Verbindung weg (Server-Neustart, Netz) — NICHT zurueck in
+        den Pool. Und die freien gleich mit: sie haengen am selben toten Server,
+        und seit nicht mehr bei jedem Ausleihen gepingt wird, faende sonst jede
+        von ihnen den Abriss erst mit dem naechsten Aufrufer."""
+        conn, self._conn = self._conn, None
+        if conn is None:
+            return
+        try:
+            conn.close()
+        except Exception as e:
+            _mariadb_grund_melden(e)
+        _MARIADB_STAT["verloren"] += 1
+        p = _MARIADB_POOL
+        if p is not None:
+            with p._lock:
+                p._created = max(0, p._created - 1)
+            _mariadb_pool_leeren()
 
 
 # ------------------------------------------------------------------
 # db_conn + MariaDB-Pool (V37: aus bot.py hierher)
 # ------------------------------------------------------------------
+
+# ── v5.2-W192: MariaDB-Pool — Kennzahlen und Abriss ─────────────────────
+_MARIADB_STAT = {"erstellt": 0, "wieder": 0, "pings": 0, "pings_gespart": 0,
+                 "gewartet": 0, "erschoepft": 0, "verloren": 0, "wiederangelaufen": 0}
+# Fehlercodes fuer "Verbindung weg" (CR_SERVER_GONE_ERROR, CR_SERVER_LOST,
+# CR_CONN_HOST_ERROR, CR_SERVER_LOST_EXTENDED, ER_CONNECTION_KILLED u. a.).
+_VERLOREN_CODES = frozenset((2003, 2006, 2013, 2055, 1927, 4031))
+
+
+def _mariadb_grund_melden(e):
+    """Letzter Grund aus dem Pool (Ping gescheitert, close() auf toten Socket)
+    — steht in /healthz (mariadb_lage). dbwrap loggt hier nicht: es sitzt
+    unter dem Log-Pfad mancher Aufrufer, und ein Abriss trifft viele zugleich."""
+    _MARIADB_STAT["letzter_grund"] = "%s: %s" % (type(e).__name__, e)
+
+
+def _ping_nach_s() -> float:
+    """MARIADB_PRUEFEN_NACH_S: ab so viel Leerlauf wird vor dem Ausleihen gepingt
+    (Vorgabe 30; 0 = jedes Mal, wie vor W192). Als Funktion gelesen."""
+    roh = os.getenv("MARIADB_PRUEFEN_NACH_S", "30").strip()
+    return float(roh) if roh.replace(".", "", 1).isdigit() else 30.0
+
+
+def _verbindung_verloren(e) -> bool:
+    """Ist das ein Abriss der Verbindung (nicht ein Fehler der Abfrage)?"""
+    if type(e).__name__ == "InterfaceError":
+        return True                       # PyMySQL: "(0, '')" = Socket zu
+    code = e.args[0] if getattr(e, "args", None) else None
+    return isinstance(code, int) and code in _VERLOREN_CODES
+
+
+def _mariadb_pool_leeren():
+    """Alle freien Pool-Verbindungen schliessen (nach einem Abriss)."""
+    p = _MARIADB_POOL
+    n = 0
+    while p is not None:
+        try:
+            conn = p._q.get_nowait()
+        except Exception:
+            break                         # leer
+        try:
+            conn.close()
+        except Exception as e:
+            _mariadb_grund_melden(e)
+        with p._lock:
+            p._created = max(0, p._created - 1)
+        n += 1
+    return n
+
+
+def mariadb_lage() -> dict:
+    """Fuer /healthz: Groesse, belegt, frei und was der Pool getan hat."""
+    p = _MARIADB_POOL
+    frei = p._q.qsize() if p is not None else 0
+    erstellt = p._created if p is not None else 0
+    return dict(_MARIADB_STAT, groesse=MARIADB_POOL_SIZE, offen=erstellt,
+                frei=frei, belegt=max(0, erstellt - frei),
+                ping_nach_s=_ping_nach_s())
+
+
+def _mariadb_neue_verbindung(p):
+    """Eine frische PyMySQL-Verbindung mit den Einstellungen des Pools."""
+    return p._pymysql.connect(
+        host=MARIADB_HOST, port=MARIADB_PORT,
+        user=MARIADB_USER, password=MARIADB_PASSWORD,
+        database=MARIADB_DB, charset="utf8mb4",
+        autocommit=False,
+        cursorclass=p._DictCursor,
+        connect_timeout=10, read_timeout=30, write_timeout=30)
+
 
 def _mariadb_connect():
     """Holt eine Connection aus dem Pool. Bei Pool-Erschöpfung blockierend
@@ -678,18 +824,13 @@ def _mariadb_connect():
     p = get_pool()
 
     def _new_connection():
-        return p._pymysql.connect(
-            host=MARIADB_HOST, port=MARIADB_PORT,
-            user=MARIADB_USER, password=MARIADB_PASSWORD,
-            database=MARIADB_DB, charset="utf8mb4",
-            autocommit=False,
-            cursorclass=p._DictCursor,
-            connect_timeout=10, read_timeout=30, write_timeout=30)
+        return _mariadb_neue_verbindung(p)
 
     # Versuche eine bestehende zu kriegen
     conn = None
     try:
         conn = p._q.get_nowait()
+        _MARIADB_STAT["wieder"] += 1
     except Exception:
         # Keine idle — Slot reservieren oder warten
         slot_reserved = False
@@ -701,6 +842,7 @@ def _mariadb_connect():
             # B2: connect() OUTSIDE des Pool-Locks
             try:
                 conn = _new_connection()
+                _MARIADB_STAT["erstellt"] += 1
             except Exception:
                 # Connect fehlgeschlagen — Slot wieder freigeben sonst leakt's
                 with p._lock:
@@ -708,26 +850,42 @@ def _mariadb_connect():
                 raise
         else:
             # Pool voll — auf Rückgabe einer existierenden Conn warten
+            _MARIADB_STAT["gewartet"] += 1
             try:
                 conn = p._q.get(timeout=10)
             except Exception:
+                _MARIADB_STAT["erschoepft"] += 1
                 log.error(f"MariaDB connect: pool exhausted ({MARIADB_POOL_SIZE} "
                           f"connections all in use), waited 10s")
                 raise
 
-    # Connection-Liveness-Check (TCP kann zwischendurch droppen)
-    try:
-        conn.ping(reconnect=True)
-    except Exception:
-        try: conn.close()
-        except Exception: pass
+    # Connection-Liveness-Check (TCP kann zwischendurch droppen).
+    # v5.2-W192: nur nach Leerlauf. Vorher lief ping() bei JEDEM Ausleihen —
+    # gemessen 37 us je Zugriff auf localhost, ueber ein echtes Netz ein
+    # Vielfaches, und das fuer eine Verbindung, die Millisekunden vorher noch
+    # benutzt wurde. Eine frisch benutzte Verbindung, die trotzdem gerade
+    # abgerissen ist, faellt beim Gebrauch auf; __exit__ gibt sie dann ab und
+    # leert den Pool (_verloren_abgeben). ping(reconnect=True) ist in PyMySQL
+    # ausserdem abgekuendigt — ersetzt wird durch eine neue Verbindung.
+    frei_seit = getattr(conn, "_nc_frei_seit", None)
+    if frei_seit is None or _time.monotonic() - frei_seit >= _ping_nach_s():
+        _MARIADB_STAT["pings"] += 1
         try:
-            conn = _new_connection()
-        except Exception:
-            # Replacement fehlgeschlagen — Slot freigeben
-            with p._lock:
-                p._created -= 1
-            raise
+            conn.ping(reconnect=False)
+        except Exception as e:
+            _mariadb_grund_melden(e)
+            try: conn.close()
+            except Exception: pass
+            try:
+                conn = _new_connection()
+            except Exception:
+                # Replacement fehlgeschlagen — Slot freigeben
+                with p._lock:
+                    p._created -= 1
+                raise
+    else:
+        _MARIADB_STAT["pings_gespart"] += 1
+        conn._nc_ungeprueft = True             # s. _erste_mit_wiederanlauf
     return conn
 
 

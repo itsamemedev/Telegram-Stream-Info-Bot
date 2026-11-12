@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.2.0"
+VERSION = "5.2.1"
 CODENAME = "Sparflamme"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.2.1",
+        "date": "2026-11",
+        "title": "Sparflamme",
+        # Patch-Fassung: der MariaDB-Pfad (W192) — der Betrieb laeuft auf MariaDB.
+        "highlights": [
+            "MariaDB-Zugriff fast doppelt so schnell: 233 statt rund 130 Mikrosekunden je db_conn(), gemessen gegen MariaDB 10.11 — der Verbindungsvorrat aus 5.2.0 galt nur fuer SQLite",
+            "Kein ping mehr bei jedem Ausleihen (nur nach 30 s Leerlauf, MARIADB_PRUEFEN_NACH_S) und kein ueberfluessiges rollback nach einem erfolgreichen commit",
+            "Server-Neustart ohne gescheiterten Aufruf: die erste Anweisung auf einer abgerissenen Verbindung laeuft einmal neu an, tote Verbindungen fliegen aus dem Pool",
+            "Ein gescheiterter commit (Deadlock) rollt zurueck, bevor die Verbindung zurueck in den Pool geht; ein Abriss gibt seinen Slot frei",
+            "/healthz zeigt den MariaDB-Pool: offen, belegt, frei, gespart, gewartet, erschoepft, verloren — die Poolgroesse laesst sich jetzt an Zahlen beurteilen",
+        ],
+    },
     {
         "version": "5.2.0",
         "date": "2026-11",

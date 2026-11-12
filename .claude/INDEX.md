@@ -1209,7 +1209,7 @@ dbexport.py            db_export_sql, db_import_sql, export_summary, parse_heade
 dbgesundheit.py        messen
 dbrestore.py           archive, dump_aus_archiv, einsetzen, einspielen, vorbereiten
 dbwartung.py           faellig_in, letzter_lauf, merken, stand_datei
-dbwrap.py              class DatenbankUnlesbar, configure_db, datei_diagnose, db_async, db_conn, get_pool, set_pool, vorrat_groesse, vorrat_lage, vorrat_leeren
+dbwrap.py              class DatenbankUnlesbar, configure_db, datei_diagnose, db_async, db_conn, get_pool, mariadb_lage, set_pool, vorrat_groesse, vorrat_lage, vorrat_leeren
 ddlsafe.py             ddl, ist_schon_da
 defensecfg.py          bouncer_gesetzt, bouncer_key, geo_fehler, geo_fehler_setzen, lapi_host, lapi_port, lapi_url, server_lat, server_lon
 director.py            class LiveDirector, configure
