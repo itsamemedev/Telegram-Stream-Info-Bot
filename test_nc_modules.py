@@ -36376,6 +36376,85 @@ def _test_v53_w194_mariadb_vorgabe():
        "Anleitung mit echten Variablen")
 
 
+def _test_v53_w194_browser_gruppe():
+    """v5.3.1: Overlay-beenden() wartet, bis die Prozessgruppe wirklich leer ist.
+
+    SIGKILL an die Gruppe ist zugestellt, nicht vollzogen; p.wait() wartet nur
+    auf den Hauptprozess. Der W170-Vertrag fing das in der CI einmal von vier
+    Laeufen — zu selten fuer eine Mutationsprobe. Hier deterministisch."""
+    import logging as _lg
+    import os as _os
+    import tempfile as _tf
+    from unittest import mock as _mock
+    from nc import overlaybrowser as _ob
+
+    class _P:
+        pid = 4242
+        def wait(self, timeout=None):
+            return 0
+        def kill(self):
+            pass
+
+    def _verb():
+        v = _ob._Verbindung.__new__(_ob._Verbindung)
+        v._proc, v._w, v._r = _P(), None, None
+        return v
+
+    # (1) Die Gruppe verschwindet erst nach drei Blicken: beenden() wartet darauf.
+    folge = [["7"], ["7"], ["7"], []]
+    with _mock.patch.object(_ob.os, "killpg"), \
+         _mock.patch.object(_ob, "_gruppe_lebend", side_effect=lambda g: folge.pop(0)):
+        _verb().beenden()
+    assert folge == [], "beenden() kehrt zurueck, bevor die Gruppe leer ist: %s" % folge
+
+    # (2) Bleibt sie, gibt es nach der Frist eine Warnung mit den PIDs — kein Haengen.
+    gesehen = []
+    h = _lg.Handler()
+    h.emit = lambda r: gesehen.append(r.getMessage())
+    _ob.log.addHandler(h)
+    uhr = iter(range(0, 100))
+    try:
+        with _mock.patch.object(_ob.os, "killpg"), \
+             _mock.patch.object(_ob.time, "monotonic", side_effect=lambda: next(uhr)), \
+             _mock.patch.object(_ob.time, "sleep"), \
+             _mock.patch.object(_ob, "_gruppe_lebend", return_value=["8", "9"]):
+            _verb().beenden()
+    finally:
+        _ob.log.removeHandler(h)
+    assert any("Gruppe 4242" in m and "8,9" in m for m in gesehen), gesehen
+
+    # (3) Der Leser: Gruppe stimmt, Zombie zaehlt nicht, fremde Gruppe nicht,
+    # verschwundener Prozess nicht, kaputte Zeile nicht.
+    d = _tf.mkdtemp()
+    try:
+        for pid, zeile in (("11", "11 (chrome) S 1 4242 4242"),
+                           ("12", "12 (a) b) R 1 4242 4242"),     # ")" im Namen
+                           ("13", "13 (chrome) Z 1 4242 4242"),
+                           ("14", "14 (bash) S 1 99 99"),
+                           ("15", "kaputt")):
+            _os.makedirs(_os.path.join(d, pid))
+            with open(_os.path.join(d, pid, "stat"), "w") as f:
+                f.write(zeile)
+        _os.makedirs(_os.path.join(d, "16"))                      # ohne stat
+        _os.makedirs(_os.path.join(d, "self"))
+        echt_listdir, echt_open = _os.listdir, open
+
+        def _ls(p):
+            return echt_listdir(d) if p == "/proc" else echt_listdir(p)
+
+        def _op(p, *a, **k):
+            return echt_open(p.replace("/proc", d, 1) if p.startswith("/proc/") else p, *a, **k)
+        with _mock.patch.object(_ob.os, "listdir", _ls), \
+             _mock.patch("builtins.open", _op):
+            assert sorted(_ob._gruppe_lebend(4242)) == ["11", "12"], _ob._gruppe_lebend(4242)
+        with _mock.patch.object(_ob.os.path, "isdir", return_value=False):
+            assert _ob._gruppe_lebend(4242) == [], "ohne /proc (kein Linux) gibt es nichts zu warten"
+    finally:
+        import shutil as _sh
+        _sh.rmtree(d, ignore_errors=True)
+    ok("v5.3.1: Overlay-beenden() wartet auf die ganze Prozessgruppe")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -36794,6 +36873,7 @@ def main():
     _test_v52_w193_arbeiter()
     _test_v52_w193_sparen()
     _test_v53_w194_mariadb_vorgabe()
+    _test_v53_w194_browser_gruppe()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()

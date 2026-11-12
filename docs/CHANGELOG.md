@@ -38,6 +38,13 @@ Vertrag `_test_v53_w194_mariadb_vorgabe`, 11 von 11 Mutationsproben gefangen.
 
 ### Behoben
 
+- **Overlay-Browser: `beenden()` wartet auf die ganze Prozessgruppe.** SIGKILL
+  an die Gruppe ist zugestellt, nicht vollzogen; `p.wait()` wartet nur auf
+  den Hauptprozess. Zygote und Renderer standen danach kurz weiter in
+  `/proc` — der W170-Vertrag fing das in der CI (einer von vier Läufen).
+  Jetzt höchstens 2 s Warten auf lebende Gruppenmitglieder (Zombies zählen
+  nicht), danach eine Warnung mit den PIDs. Vertrag
+  `_test_v53_w194_browser_gruppe`, 4 von 4 Mutationsproben gefangen.
 - `docs/INSTALL.md` (de/en) nannte für MariaDB `DB_HOST`, `DB_NAME`,
   `DB_USER`, `DB_PASS` — Variablen, die der Bot nie gelesen hat; wer danach
   einrichtete, landete bei den Vorgaben (`localhost`, `tiktok_bot`, leeres

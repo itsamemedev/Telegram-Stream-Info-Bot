@@ -276,7 +276,7 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **482**, und wie bei
+`tools/blindstellen.py` misst diese Klasse, Bestand **483**, und wie bei
 W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
 Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
 „dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
@@ -295,6 +295,10 @@ Und die drei aus v5.2-W193: `return 0` am Ende von `nc/ytdlparbeiter.py` und
 `nc/piperarbeiter.py` ist das saubere Programmende bei EOF auf stdin, und
 `piperdienst.sprechen()` → `None` bei `PIPER_ARBEITER=0` heisst „vom Betreiber
 abgeschaltet, Einzelaufruf" — jeder andere Grund geht durch `_grund_melden`.
+Und die eine aus v5.3.1 in `nc/overlaybrowser.py`: `_gruppe_lebend()` → `[]`
+ohne `/proc` heisst „kein Linux, nichts zu warten", und der stille
+`continue` daneben (der einzige neue stille `except`) ist ein Prozess, der
+zwischen `listdir` und `open` endet — genau der Zustand, auf den gewartet wird.
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
 pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —
