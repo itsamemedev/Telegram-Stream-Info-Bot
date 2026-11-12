@@ -31748,7 +31748,9 @@ def _test_v42_w177_brain_verwoben():
                    and ((_ast.unparse(n.func).endswith("llm.chat"))
                         or (_ast.unparse(n.func).endswith("to_thread") and n.args
                             and _ast.unparse(n.args[0]).endswith("llm.chat")))]
-        assert len(stellen) == 3, [_ast.unparse(s)[:80] for s in stellen]
+        # ANKER GEWANDERT (v5.5-W196): vier Stellen — dazu kam _azrael_lokal.
+        # Die Aussage gilt unveraendert je Stelle (Schleife darunter).
+        assert len(stellen) == 4, [_ast.unparse(s)[:80] for s in stellen]
         for s in stellen:
             assert "['llamacpp']" in _ast.unparse(s), _ast.unparse(s)[:160]
 
