@@ -100,6 +100,62 @@ def _max_tokens() -> int:
     return env_int("BRAIN_LLM_MAX_TOKENS", 1024)
 
 
+def _reserve() -> int:
+    """v5.5-W196: so viele Aufrufe der Stunde bleiben Gespraechen vorbehalten.
+    Eigeninitiative (Vorrang „nebenbei") darf sie nicht verbrauchen — sonst
+    plaudert AZRAEL das Budget leer, und wer ihn anspricht, bekommt die Cloud."""
+    return max(0, env_int("BRAIN_LLM_RESERVE", 8))
+
+
+# v5.5-W196: Rang je Vorrang — kleiner kommt zuerst.
+RANG = {"gespraech": 0, "reaktion": 1, "nebenbei": 2}
+
+
+class _Vorrangslot:
+    """EIN Inferenz-Platz (Concurrency 1 bleibt), aber mit Warteschlange.
+
+    Bis W196 war der Platz ein Lock mit `acquire(blocking=False)`: wer kam,
+    waehrend Qwen rechnete, flog sofort raus und ging in die Cloud. Auf der
+    CPU rechnet ein 14B-Modell eine Antwort in zehn bis hundert Sekunden —
+    der Platz war also fast immer belegt, und AZRAEL sprach meistens mit
+    fremder Stimme. Jetzt darf ein Aufrufer bis `warten_s` warten, und frei
+    wird der Platz fuer den mit dem besten Rang, der gerade wartet: ein
+    Gespraech ueberholt eine Live-Reaktion, die ueberholt die Eigeninitiative.
+    Wer nicht warten will (warten_s=0), verhaelt sich wie vorher."""
+
+    def __init__(self):
+        self._bed = threading.Condition()
+        self._belegt = False
+        self._wartend: list[int] = []
+
+    def erwerben(self, rang: int, warten_s: float) -> bool:
+        frist = time.monotonic() + max(0.0, warten_s)
+        with self._bed:
+            self._wartend.append(rang)
+            try:
+                while self._belegt or min(self._wartend) < rang:
+                    rest = frist - time.monotonic()
+                    if rest <= 0:
+                        return False
+                    self._bed.wait(rest)
+                self._belegt = True
+                return True
+            finally:
+                self._wartend.remove(rang)
+                # Wer aufgibt, kann einen schlechter Gerangten blockiert haben,
+                # der nur auf IHN gewartet hat — also alle wecken.
+                self._bed.notify_all()
+
+    def freigeben(self):
+        with self._bed:
+            self._belegt = False
+            self._bed.notify_all()
+
+    def lage(self) -> dict:
+        with self._bed:
+            return {"belegt": self._belegt, "wartend": len(self._wartend)}
+
+
 def _ohne_denken_bitten(messages: list) -> list:
     """Qwen3s Schalter ``/no_think`` an die LETZTE Nutzernachricht haengen.
 
@@ -123,13 +179,15 @@ class BudgetExhausted(Exception):
 
 class LLMRuntime:
     def __init__(self):
-        # Concurrency 1: EIN Inferenz-Slot. threading.Lock statt Semaphore,
-        # non-blocking acquire → zweiter Aufrufer bekommt sofort busy.
-        self._slot = threading.Lock()
+        # Concurrency 1: EIN Inferenz-Slot. Seit v5.5-W196 mit Vorrang und
+        # Wartezeit (_Vorrangslot); ohne Angabe wie vorher sofort „belegt".
+        self._slot = _Vorrangslot()
+        self._zeiten: dict = {}           # v5.5-W196: timings der letzten lokalen Antwort
         self._calls: list[float] = []
         self._durs: list[float] = []      # V37: letzte Latenzen (ms)      # Timestamps fürs Stundenbudget
         self._stats = {"ok": 0, "errors": 0, "budget_denied": 0,
-                       "busy_denied": 0, "by_backend": {}}
+                       "busy_denied": 0, "by_backend": {},
+                       "reserve_denied": 0, "prompt_token": 0, "prompt_gecacht": 0}
         # B-M6-2: RLock, nicht Lock — stats() ruft unter gehaltenem Lock
         # budget() auf, das denselben Lock nimmt. Nicht-reentrant = Deadlock.
         self._stats_lock = threading.RLock()
@@ -139,7 +197,8 @@ class LLMRuntime:
 
     def chat(self, messages: list[dict], timeout: Optional[float] = None,
              max_tokens: Optional[int] = None,
-             backends: Optional[list] = None) -> dict:
+             backends: Optional[list] = None,
+             vorrang: Optional[str] = None, warten_s: float = 0.0) -> dict:
         """Eine Chat-Vervollständigung über die Backend-Kette.
 
         Rückgabe: {ok, text|error, backend, ms}. Wirft BudgetExhausted
@@ -159,25 +218,36 @@ class LLMRuntime:
         Antworten meldete der Router "Budget verbraucht", ohne dass ein
         einziges Mal lokal gerechnet worden war. Ist das Budget weg, faellt
         nur der llamacpp-Schritt aus; BudgetExhausted kommt erst, wenn
-        danach nichts mehr in der Kette steht."""
+        danach nichts mehr in der Kette steht.
+
+        v5.5-W196 `vorrang` (gespraech|reaktion|nebenbei) und `warten_s`: wer
+        einen Vorrang nennt, darf auf den Platz warten und wird nach Rang
+        bedient; „nebenbei" bekommt die letzten BRAIN_LLM_RESERVE Aufrufe der
+        Stunde nicht. Ohne Angabe: wie vorher (Rang „reaktion", kein Warten)."""
+        rang = RANG.get(vorrang or "reaktion", RANG["reaktion"])
         kette = self._chain()
         if backends is not None:
             kette = [x for x in kette if x in backends]
         budget_grund = None
         if "llamacpp" in kette:
             b = self.budget()
-            if b["remaining"] <= 0:
+            nebenbei = rang == RANG["nebenbei"]
+            if b["remaining"] <= 0 or (nebenbei and b["remaining"] <= _reserve()):
                 with self._stats_lock:
-                    self._stats["budget_denied"] += 1
+                    self._stats["reserve_denied" if b["remaining"] > 0
+                                else "budget_denied"] += 1
                 budget_grund = (f"LLM-Stundenbudget verbraucht "
-                                f"({b['used_h']}/{b['max_h']})")
+                                f"({b['used_h']}/{b['max_h']})" if b["remaining"] <= 0 else
+                                f"Reserve fuer Gespraeche ({b['remaining']} von {b['max_h']} "
+                                f"uebrig, BRAIN_LLM_RESERVE={_reserve()})")
                 kette = [x for x in kette if x != "llamacpp"]
                 if not kette:
                     raise BudgetExhausted(budget_grund)
-        if not self._slot.acquire(blocking=False):
+        if not self._slot.erwerben(rang, warten_s):
             with self._stats_lock:
                 self._stats["busy_denied"] += 1
-            raise BudgetExhausted("Inferenz-Slot belegt (Concurrency 1)")
+            raise BudgetExhausted("Inferenz-Slot belegt (Concurrency 1%s)"
+                                  % (", %.0f s gewartet" % warten_s if warten_s > 0 else ""))
         try:
             t0 = time.time()
             last_err = budget_grund or "kein Backend konfiguriert"
@@ -221,7 +291,7 @@ class LLMRuntime:
             return {"ok": False, "error": last_err, "backend": None,
                     "ms": round((time.time() - t0) * 1000, 1)}
         finally:
-            self._slot.release()
+            self._slot.freigeben()
 
     _HEALTH_TTL = 15.0
 
@@ -328,10 +398,16 @@ class LLMRuntime:
 
     def stats(self) -> dict:
         with self._stats_lock:
+            pt = self._stats["prompt_token"]
             return dict(self._stats, budget=self.budget(),
                         avg_ms=(round(sum(self._durs) / len(self._durs), 1)
                                 if self._durs else None),
-                        last_ms=(self._durs[-1] if self._durs else None))
+                        last_ms=(self._durs[-1] if self._durs else None),
+                        # v5.5-W196: was die letzte lokale Antwort gekostet hat
+                        letzte_zeiten=dict(self._zeiten), slot=self._slot.lage(),
+                        cache_anteil=(round(self._stats["prompt_gecacht"] / pt, 3)
+                                      if pt else None),
+                        reserve=_reserve())
 
     # -------------------------------------------------------- Backends
 
@@ -370,8 +446,13 @@ class LLMRuntime:
             # llama-server spricht die OpenAI-kompatible API — Vorteil:
             # jeder andere OpenAI-kompatible lokale Server (vllm, etc.)
             # funktioniert ohne Codeänderung über BRAIN_LLAMACPP_URL.
+            # v5.5-W196 cache_prompt: llama-server haelt den KV-Cache des
+            # letzten Prompts und liest nur den Teil neu ein, der sich
+            # unterscheidet. Gemessen beim Betreiber: 7,8 Token/s beim
+            # Einlesen — eine Persona von 600 Token kostete ohne das bei
+            # JEDER Nachricht rund 80 s, bevor das erste Wort kam.
             body = {"messages": messages, "max_tokens": max_tokens,
-                    "temperature": 0.3, "stream": False}
+                    "temperature": 0.3, "stream": False, "cache_prompt": True}
             if not _denken():
                 # v5.1-W181: zwei Riegel gegen den Qwen3-Denkmodus. Der erste
                 # wirkt ueber die Chat-Vorlage (ik_llama.cpp/llama.cpp mit
@@ -381,6 +462,7 @@ class LLMRuntime:
                 body["messages"] = _ohne_denken_bitten(messages)
             j = self._post(f"{_llamacpp_url()}/v1/chat/completions",
                            body, timeout)
+            self._zeiten_merken(j)
             roh = j["choices"][0]["message"].get("content")
             text = ohne_denkblock(roh)
             if not text:
@@ -392,6 +474,30 @@ class LLMRuntime:
                                    "BRAIN_LLM_DENKEN=0 lassen")
             return text
         raise ValueError(f"unbekanntes Backend: {backend}")
+
+    def _zeiten_merken(self, j: dict):
+        """Die Messung, die llama-server jeder Antwort beilegt (`timings`),
+        plus wie viele Prompt-Token aus dem Cache kamen. Ohne das waere die
+        Frage „hilft der Prompt-Cache?" am Server nur von Hand zu beantworten.
+
+        `usage.prompt_tokens` ist der ganze Prompt, `timings.prompt_n` der
+        Teil, der wirklich eingelesen wurde — die Differenz kam aus dem Cache.
+        Fehlt eines davon (anderer Server), bleibt `gecacht` None, nicht 0:
+        eine 0 hiesse „Cache wirkt nicht", und das waere eine Behauptung."""
+        t = j.get("timings") if isinstance(j.get("timings"), dict) else {}
+        u = j.get("usage") if isinstance(j.get("usage"), dict) else {}
+        gesamt, neu = u.get("prompt_tokens"), t.get("prompt_n")
+        gecacht = (gesamt - neu) if isinstance(gesamt, int) and isinstance(neu, int) else None
+        z = {"prompt_gesamt": gesamt, "prompt_neu": neu, "gecacht": gecacht,
+             "einlesen_ms": t.get("prompt_ms"), "erzeugen_n": t.get("predicted_n"),
+             "erzeugen_ms": t.get("predicted_ms"),
+             "einlesen_tps": t.get("prompt_per_second"),
+             "erzeugen_tps": t.get("predicted_per_second")}
+        with self._stats_lock:
+            self._zeiten = z
+            if isinstance(gesamt, int) and isinstance(gecacht, int):
+                self._stats["prompt_token"] += gesamt
+                self._stats["prompt_gecacht"] += max(0, gecacht)
 
     def _probe(self, backend: str) -> dict:
         url = f"{_llamacpp_url()}/health"

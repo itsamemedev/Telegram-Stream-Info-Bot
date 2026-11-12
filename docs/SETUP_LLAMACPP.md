@@ -53,6 +53,8 @@ Ein zweiter Lauf auf fertigem Bestand tut nichts. Neu bauen:
 | `LLM_MODELL_SHA256` | leer | leer = von Hugging Face; gesetzt = gegen diesen Wert |
 | `LLM_MODELL_VERZ` | `/opt/models` | |
 | `LLM_THREADS` | `4` | Aufnahmen haben Vorrang |
+| `LLM_THREADS_BATCH` | leer (= `LLM_THREADS`) | Threads nur fürs **Einlesen** des Prompts (`-tb`, v5.5). Gemessen mit `-t 4`: 7,8 Token/s Einlesen, 3,4 Token/s Erzeugen. Nur setzen, wenn Aufnahme und Restream die Kerne nicht brauchen — und vorher/nachher messen (Abschnitt 5) |
+| `LLM_KV_CACHE` | `q8_0` | KV-Cache quantisiert (v5.3), `f16` = aus |
 | `LLM_KONTEXT` | `8192` | |
 | `IK_LLAMA_DIR` / `IK_LLAMA_REF` | `/opt/ik_llama.cpp` / `main` | |
 | `BRAIN_LLAMACPP_URL` | `http://127.0.0.1:8080` | daraus der Port — derselbe wie vorher |
@@ -162,3 +164,29 @@ Im Brain-Panel steht in der Pille `IK_LLAMA.CPP` (lokal) bzw.
 
 Seit V37 spricht der Bot kein Ollama mehr. Läuft der Dienst noch:
 `systemctl disable --now ollama`.
+
+## 5. AZRAEL an das lokale Modell binden (v5.5)
+
+AZRAEL spricht seit v5.5 per Vorgabe **nur** über das lokale Modell, sobald
+ein lokaler Server eingerichtet ist — ohne Claude und ohne stillen Wechsel in
+die Cloud. Antwortet Qwen nicht, schweigt AZRAEL, und das Log sagt gedrosselt
+warum (`AZRAEL schweigt (…)`).
+
+| Variable | Vorgabe | Wofür |
+|---|---|---|
+| `AZRAEL_LLM` | `lokal` mit Server, sonst `auto` | `lokal` / `auto` (Claude → lokal → Cloud) / `cloud` |
+| `AZRAEL_LOKAL_ZEIT_GESPRAECH` | `180` | Sekunden für Telegram, Discord, `!ask`, Kick-Antwort — davon die Hälfte Warten auf den Platz |
+| `AZRAEL_LOKAL_ZEIT_REAKTION` | `90` | Live-Reaktion — ein Drittel Warten |
+| `AZRAEL_LOKAL_ZEIT_NEBENBEI` | `60` | Eigeninitiative (Dead-Air, Hype) — wartet nie, fällt bei Stau weg |
+| `BRAIN_LLM_RESERVE` | `8` | so viele Aufrufe je Stunde bleiben Gesprächen vorbehalten |
+
+Der Bot schickt `cache_prompt` mit, und alle drei Wege beginnen mit derselben
+Persona: llama-server liest sie einmal und danach aus dem Cache. Nachsehen, ob
+das wirkt — `/healthz` (lokal abfragen) trägt unter `sparen`:
+
+    curl -s http://127.0.0.1:8050/healthz | python3 -c 'import json,sys; s=json.load(sys.stdin)["sparen"]; print(json.dumps({k: s[k] for k in ("azrael_ki","lokales_llm")}, indent=1, ensure_ascii=False))'
+
+`azrael_ki.lokal_anteil` sagt, wie oft wirklich Qwen geantwortet hat,
+`lokales_llm.letzte` die Zeiten der letzten Antwort (Einlesen/Erzeugen, Token
+je Sekunde, `gecacht` = Prompt-Token aus dem Cache), `cache_anteil` den Anteil
+über alle Antworten.

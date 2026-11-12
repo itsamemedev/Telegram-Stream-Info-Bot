@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.4.0"
-CODENAME = "Schlüsselbund"
+VERSION = "5.5.0"
+CODENAME = "Stimme"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.5.0",
+        "date": "2026-11",
+        "title": "Stimme",
+        # Nebenversion: AZRAEL an das lokale Qwen gebunden (W196).
+        "highlights": [
+            "AZRAEL spricht mit Persona ueber das lokale Qwen3-14B — ohne Claude davor und ohne stillen Wechsel in die Cloud (AZRAEL_LLM, Vorgabe lokal mit Server)",
+            "Telegram, Discord und !ask bekamen die Persona gar nicht: jetzt beginnen alle Wege mit derselben, im Deck gesetzten Persona",
+            "Prompt-Cache: die Persona steht vorn und wird einmal eingelesen statt bei jeder Nachricht — bei 7,8 Token/s Einlesen der groesste Teil der Wartezeit",
+            "Ein Platz mit Vorrang statt Sofort-Abbruch: Gespraeche warten und ueberholen Reaktionen, Eigeninitiative faellt bei Stau weg und laesst Gespraechen eine Reserve im Stundenbudget",
+            "Sichtbar statt still: /healthz nennt, wer AZRAEL antwortet, die Zeiten der letzten Antwort und den Cache-Anteil; jeder Rueckfall in die Cloud steht im Log",
+        ],
+    },
     {
         "version": "5.4.0",
         "date": "2026-11",

@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **28.785 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **28.901 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 379 Routen (34 in `bot.py`, 345 in
-`nc/routes/`), 67 Slash-Commands, 667 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 67 Slash-Commands, 672 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -1217,6 +1217,15 @@ Schleife meldet Alter und fehlendes curl_cffi. Dieselbe Welle: der Bot liest
 ein liegengebliebenes `cookies.txt`. **Vor jeder Messung am Server nachsehen,
 welche Datei und welches Programm der Dienst wirklich benutzt.**
 
+**Ein Feature, das „bevorzugt" läuft, läuft vielleicht nie.** AZRAEL fragte
+seit W110 „lokal zuerst" — und landete trotzdem fast immer in der Cloud:
+Claude ging vor, der eine Rechenplatz wies jeden zweiten Aufrufer sofort ab,
+die Zeitlimits (25/75 s) lagen unter dem Einlesen der Persona (gemessen 7,8
+Token/s), und der Wechsel stand auf `log.debug`. Dazu fehlte die Persona im
+Hauptweg ganz. Seit v5.5-W196 entscheidet `AZRAEL_LLM`, und `/healthz` zählt,
+wer wirklich antwortet. **Wer eine Bevorzugung einbaut, zählt, wie oft sie
+greift — sonst ist sie eine Behauptung.**
+
 **Ein Schema, das nur SQLite gesehen hat, ist für MariaDB ungeprüft.**
 `DB_BACKEND=mariadb` stand seit v4.0 in der Doku, und kein Start hätte es
 überstanden: `lines` und `trigger` sind in MariaDB reserviert (1064), neun
@@ -1279,7 +1288,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 615 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 620 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das
