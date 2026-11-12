@@ -329,10 +329,11 @@ class _SQLiteConnWrap:
     Bei 200+ Aufrufstellen von 'with db_conn() as conn:' im Code blieben
     dadurch viele Connections offen bis zum GC statt deterministisch beim
     Verlassen des with-Blocks geschlossen zu werden."""
-    __slots__ = ("_conn",)
+    __slots__ = ("_conn", "_herkunft")
 
-    def __init__(self, conn):
+    def __init__(self, conn, herkunft=None):
         self._conn = conn
+        self._herkunft = herkunft        # (pfad, (dev, ino)) — v5.2-W191, Vorrat
 
     def __getattr__(self, name):
         # Alles was nicht explizit unten überschrieben ist, geht direkt
@@ -344,15 +345,141 @@ class _SQLiteConnWrap:
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        conn, self._conn = self._conn, _GESCHLOSSEN
         try:
             # sqlite3.Connection.__exit__ macht commit (kein exc) / rollback (exc)
-            self._conn.__exit__(exc_type, exc, tb)
+            conn.__exit__(exc_type, exc, tb)
         finally:
-            try:
-                self._conn.close()
-            except Exception:
-                pass   # bereits geschlossen oder anderweitig kaputt — kein Crash hier
+            # v5.2-W191: zurueck in den Vorrat statt schliessen — ausser nach
+            # einem Datenbankfehler (die Verbindung koennte selbst der Grund
+            # sein). Die Huelle zeigt ab jetzt auf _GESCHLOSSEN: ein Zugriff
+            # nach dem with wirft wie bisher, statt still auf einer Verbindung
+            # zu arbeiten, die inzwischen ein anderer Thread benutzt.
+            kaputt = exc_type is not None and issubclass(exc_type, sqlite3.DatabaseError)
+            if kaputt or not _vorrat_ablegen(conn, self._herkunft):
+                try:
+                    conn.close()
+                except Exception:
+                    pass   # bereits geschlossen oder anderweitig kaputt — kein Crash hier
         return False    # Exception nicht unterdrücken
+
+
+class _Geschlossen:
+    """Platzhalter nach dem with-Block: jeder Zugriff wirft wie eine
+    geschlossene sqlite3-Verbindung (ProgrammingError)."""
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+
+
+_GESCHLOSSEN = _Geschlossen()
+
+
+# ── v5.2-W191: Vorrat freier SQLite-Verbindungen ────────────────────────
+# Gedeckelt (DB_VORRAT, Vorgabe 4), prozess-global, LIFO. Jede Verbindung
+# traegt (pfad, (st_dev, st_ino)) der Datei, die sie geoeffnet hat. Passt
+# das beim Herausgeben nicht mehr — Datei getauscht, Pfad umkonfiguriert —,
+# wird sie NICHT wieder ausgegeben: sonst hielte der Vorrat die alte Datei am
+# Inode fest (die WAL-Falle aus W96, nur dauerhaft). Verworfene Verbindungen
+# werden abgelegt statt geschlossen: das letzte close() einer WAL-Datenbank
+# loescht `<pfad>-wal` per NAME — nach einem Tausch waere das die WAL der
+# NEUEN Datei.
+_VORRAT = []
+_VORRAT_LOCK = threading.Lock()
+_VORRAT_PID = {"pid": os.getpid()}
+_ABGELEGT = []                       # verworfen, nie geschlossen (s.o.)
+_ABGELEGT_MAX = 32
+_VORRAT_STAT = {"neu": 0, "wieder": 0, "verworfen": 0}
+
+
+def vorrat_groesse() -> int:
+    """DB_VORRAT: so viele freie Verbindungen werden aufgehoben (0 = aus).
+    Als Funktion gelesen, nicht als Konstante (CLAUDE.md, .env-Reihenfolge)."""
+    roh = os.getenv("DB_VORRAT", "4").strip()
+    return max(0, min(16, int(roh))) if roh.isdigit() else 4
+
+
+def _kennung(pfad):
+    """(st_dev, st_ino) der Datei oder None (gibt es nicht / nicht lesbar —
+    dann wird die Verbindung nicht aufgehoben, sondern geschlossen)."""
+    if not os.path.exists(pfad):
+        return None
+    st = os.stat(pfad)
+    return (st.st_dev, st.st_ino)
+
+
+def _vorrat_grund_melden(e):
+    """Letzter Grund, warum eine Verbindung nicht zurueck in den Vorrat kam —
+    steht in /healthz (vorrat_lage), denn hier wird nicht geloggt (dbwrap
+    sitzt unter dem Log-Pfad mancher Aufrufer)."""
+    _VORRAT_STAT["letzter_grund"] = "%s: %s" % (type(e).__name__, e)
+
+
+def _ablegen(conn):
+    if len(_ABGELEGT) < _ABGELEGT_MAX:
+        _ABGELEGT.append(conn)
+    else:
+        conn.close()
+    _VORRAT_STAT["verworfen"] += 1
+
+
+def _vorrat_nehmen():
+    """-> (conn, herkunft) aus dem Vorrat oder None."""
+    if not _VORRAT:
+        return None
+    with _VORRAT_LOCK:
+        if _VORRAT_PID["pid"] != os.getpid():
+            # Nach einem fork gehoeren die Verbindungen dem Elternprozess —
+            # weder benutzen noch schliessen, nur vergessen.
+            _VORRAT.clear()
+            _ABGELEGT.clear()
+            _VORRAT_PID["pid"] = os.getpid()
+            return None
+        jetzt = (DB_PATH, _kennung(DB_PATH))
+        while _VORRAT:
+            conn, herkunft = _VORRAT.pop()
+            if herkunft == jetzt and jetzt[1] is not None:
+                _VORRAT_STAT["wieder"] += 1
+                return conn, herkunft
+            _ablegen(conn)
+    return None
+
+
+def _vorrat_ablegen(conn, herkunft) -> bool:
+    """Saubere Verbindung zurueck in den Vorrat. -> False = selbst schliessen."""
+    if not herkunft or herkunft[1] is None or herkunft[0] != DB_PATH:
+        return False
+    try:
+        offen = conn.in_transaction      # wirft bei geschlossener Verbindung
+        if offen:
+            conn.rollback()
+    except sqlite3.Error as e:
+        _vorrat_grund_melden(e)
+        return False
+    with _VORRAT_LOCK:
+        if _VORRAT_PID["pid"] != os.getpid() or len(_VORRAT) >= vorrat_groesse():
+            return False
+        _VORRAT.append((conn, herkunft))
+    return True
+
+
+def vorrat_leeren():
+    """Alle freien Verbindungen schliessen — VOR einem Tausch der
+    Datenbankdatei (nc.dbrestore.einsetzen). Danach oeffnet jeder Zugriff
+    neu. -> wie viele."""
+    with _VORRAT_LOCK:
+        weg = list(_VORRAT)
+        _VORRAT.clear()
+    for conn, _h in weg:
+        conn.close()                 # vor dem Tausch: die WAL gehoert noch ihr
+    return len(weg)
+
+
+def vorrat_lage() -> dict:
+    """Fuer /healthz: wie oft neu geoeffnet, wie oft wiederverwendet."""
+    return dict(_VORRAT_STAT, frei=len(_VORRAT), groesse=vorrat_groesse(),
+                abgelegt=len(_ABGELEGT))
 
 
 from decimal import Decimal as _Decimal
@@ -619,6 +746,13 @@ def db_conn():
        bestehende Installationen ohne Änderung weiterlaufen."""
     if DB_BACKEND == "mariadb":
         return _MariaDBConnWrap(_mariadb_connect())
+    # v5.2-W191: zuerst aus dem Vorrat (siehe _vorrat_nehmen). Eine frische
+    # Verbindung kostete gemessen 180 us (Oeffnen, fuenf PRAGMAs, Schema
+    # einlesen), eine wiederverwendete 2 us — und der 8-MB-Seiten-Cache unten
+    # wurde mit jeder Verbindung verworfen, also nie warm.
+    _aus_vorrat = _vorrat_nehmen()
+    if _aus_vorrat is not None:
+        return _SQLiteConnWrap(*_aus_vorrat)
     # SQLite path (default)
     # B80-Fix: 'database is locked' unter Last (Whisper + Restream + Polling +
     # Dashboard gleichzeitig). Drei Ursachen behoben:
@@ -628,7 +762,10 @@ def db_conn():
     #  (c) journal_mode=WAL ist eine DAUERHAFTE Datei-Eigenschaft — es bei JEDER
     #      Connection zu setzen ist ein Schreibzugriff, der selbst blockieren kann.
     #      Jetzt nur EINMAL prozessweit (per Flag) statt ~208×/Tick.
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    # check_same_thread=False: eine Verbindung aus dem Vorrat bedient
+    # nacheinander verschiedene Threads (nie zwei zugleich — sie ist bis zum
+    # Ende des with-Blocks ausgeliehen).
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA busy_timeout=30000")    # 30s aktiv auf Locks warten
@@ -679,7 +816,8 @@ def db_conn():
     # Referenzen kann das zu offenen File-Handles auf die .db-Datei führen).
     # _SQLiteConnWrap schließt die Connection zusätzlich in __exit__,
     # analog zum bereits korrekten MariaDB-Pfad oben.
-    return _SQLiteConnWrap(conn)
+    _VORRAT_STAT["neu"] += 1
+    return _SQLiteConnWrap(conn, (DB_PATH, _kennung(DB_PATH)))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

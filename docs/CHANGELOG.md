@@ -9,6 +9,42 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.2.0] — 2026-11-12 · „Sparflamme"
+
+Stabilität und Ressourcen (W191). Erst gemessen, dann gebaut — Konzept und
+Messungen in [`KONZEPT_SPARFLAMME.md`](KONZEPT_SPARFLAMME.md). Verträge
+`_test_v52_w191_db_vorrat` und `_test_v52_w191_heapzaum`, 19 Mutationsproben
+gefangen (eine entwischte zuerst: der Pfad-Riegel beim Zurücklegen war
+ungedeckt — Vertragsfall ergänzt).
+
+### Geändert
+
+- **SQLite-Verbindungsvorrat** (`nc/dbwrap.py`): jedes `db_conn()` öffnete
+  eine neue Verbindung, setzte fünf PRAGMAs und las das Schema — gemessen
+  **180 µs**, wiederverwendet **2 µs**. Der 8-MB-Seiten-Cache wurde dabei mit
+  jeder Verbindung verworfen und nie warm. Jetzt bleiben bis zu `DB_VORRAT`
+  (Vorgabe 4) freie Verbindungen offen. Sicherungen: eine Verbindung merkt
+  sich Gerät und Inode ihrer Datei und wird nach einem Tausch nicht wieder
+  ausgegeben (sondern abgelegt — ihr `close()` löschte sonst die WAL der
+  neuen Datei); Pfadwechsel, offene Transaktion und Datenbankfehler schließen
+  sie; nach dem `with` wirft die Hülle wie bisher; verschachtelte Blöcke
+  bekommen getrennte Verbindungen; `nc/dbrestore.einsetzen` leert den Vorrat
+  vor dem Tausch. `DB_VORRAT=0` stellt das alte Verhalten her. MariaDB
+  unverändert.
+- **Heap ans System zurück** (`nc/heapzaum.py`): glibc legt für 21+ Threads
+  bis zu 64 Arenen an und behält freien Speicher darin. Beim Start
+  `mallopt(M_ARENA_MAX, 2)` (`SPEICHER_ARENEN`), im Watchdog-Takt alle
+  `SPEICHER_TRIM_MIN` (10) Minuten `malloc_trim(0)` im Thread, mit
+  RSS-Messung. Gemessen mit 8 Threads und fragmentierter Last: Rest-RSS
+  **861 MB** mit glibc-Vorgabe, **539 MB** mit zwei Arenen, nach dem Trim je
+  rund **105 MB**. Ohne glibc (macOS, musl) wird nichts getan und das gesagt.
+- `/healthz` (lokal/angemeldet) trägt `dbvorrat` und `heap`. Die
+  Sichtbarkeitsfilterung aus W190 steht als eigener Schritt
+  (`_healthz_fuer_aufrufer`) — `healthz` lag sonst über der 100er-Stufe.
+- Installer und `update.sh` unverändert — bewusst: kein `MALLOC_ARENA_MAX`
+  in der Unit, weil es `SPEICHER_ARENEN` stumm überstimmen würde; der
+  In-Prozess-Weg wirkt für Installer, ZIP und Update-Funktion gleich.
+
 ## [5.1.1] — 2026-11-12 · „Hausrecht"
 
 Sicherheits-Durchgang (W190). Jeder Befund mit Vertrag

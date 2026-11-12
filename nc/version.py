@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.1.1"
-CODENAME = "Hausrecht"
+VERSION = "5.2.0"
+CODENAME = "Sparflamme"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.2.0",
+        "date": "2026-11",
+        "title": "Sparflamme",
+        # Nebenversion: Stabilitaet und Ressourcen (W191), Konzept in
+        # docs/KONZEPT_SPARFLAMME.md.
+        "highlights": [
+            "SQLite-Verbindungen werden wiederverwendet: 2 statt 180 Mikrosekunden je Datenbankzugriff, und der 8-MB-Seiten-Cache wird endlich warm (DB_VORRAT, Vorgabe 4, 0 = aus)",
+            "Der Vorrat gibt nie eine Verbindung auf eine getauschte Datei, einen alten Pfad oder mit offener Transaktion heraus; die Wiederherstellung leert ihn vor dem Tausch",
+            "Speicher geht an das System zurueck: zwei glibc-Arenen statt bis zu 64 und alle zehn Minuten malloc_trim — gemessen 861 MB Rest-RSS nach einer Lastspitze statt rund 105 MB",
+            "/healthz zeigt beides: Vorrat (neu/wiederverwendet/verworfen) und Heap (zurueckgegebene MB)",
+            "Abschaltbar ohne Codeaenderung: DB_VORRAT=0, SPEICHER_ARENEN=0, SPEICHER_TRIM_MIN=0",
+        ],
+    },
     {
         "version": "5.1.1",
         "date": "2026-11",
