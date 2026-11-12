@@ -6206,14 +6206,29 @@ VIEW_LOADERS.system = async function(){
             <ol>
               <li>Im Browser bei <b>tiktok.com einloggen</b> (sonst fehlt der Auth-Cookie).</li>
               <li>Cookies mit einer Browser-Extension exportieren:
-                <span class="muted">"Get cookies.txt LOCALLY" (→ cookies.txt) <b>oder</b> "Cookie-Editor" (→ Export als JSON)</span></li>
-              <li>Den exportierten Text hier einfügen → Aktualisieren. Beide Formate werden automatisch erkannt.</li>
+                <span class="muted">"Cookie-Editor" (Export als JSON, Netscape <b>oder</b> Header String) oder "Get cookies.txt LOCALLY" (→ Datei)</span></li>
+              <li>Den exportierten Text hier einfügen <b>oder</b> die Datei wählen. Alle drei Formate werden automatisch erkannt.</li>
             </ol>
+            <!-- v5.4-W195: am Telefon scheiterte der Export still, und die
+                 Anleitung nannte nur Desktop-Extensions. Chrome fuer Android
+                 hat KEINE Extensions — das steht jetzt hier, statt dass der
+                 Betreiber danach sucht. -->
+            <div class="faint" style="font-size:11px;margin-top:6px">
+              <b>Am Android-Telefon:</b> Chrome kann keine Cookies exportieren (keine Extensions).
+              <b>Firefox für Android</b> mit dem Add-on <b>Cookie-Editor</b> kann es: tiktok.com öffnen,
+              einloggen, Cookie-Editor → Export → beliebiges Format, hier einfügen.
+              Für <b>18+-Lives</b> muss das Konto altersbestätigt sein — sonst antwortet TikTok mit 4003110.
+            </div>
           </div>
           <textarea id="ck_input" class="field ck-ta" rows="6" spellcheck="false"
-            placeholder="Cookies hier einfügen — Netscape (cookies.txt) ODER JSON-Array…"></textarea>
+            placeholder="Cookies hier einfügen — Netscape (cookies.txt), JSON oder Header-String (name=wert; …)"></textarea>
           <div class="ck-actions">
             <span class="btn cyan" onclick="updateCookies()">⟳ COOKIES AKTUALISIEREN</span>
+            <!-- Kein accept=: Android graut im Dateiwaehler alles aus, dessen
+                 MIME-Typ nicht passt — und ein Export aus dem Download-Ordner
+                 kommt oft als application/octet-stream. -->
+            <label class="btn" for="ck_datei">⤒ DATEI WÄHLEN</label>
+            <input type="file" id="ck_datei" style="display:none" onchange="cookieDateiLesen(this)">
             <span class="muted" id="ck_msg"></span>
           </div>
           <!-- v4.2-W10: Selbst beziehen. Der Gast-Weg holt die rotierenden
@@ -7196,6 +7211,20 @@ async function loadSystem(){
   $('#sy_cookies').innerHTML=ch||'<div class="empty">no data</div>';
 }
 
+// v5.4-W195: Datei im Browser lesen und denselben Weg nehmen wie der
+// eingefuegte Text. Der Server bekommt nur Text — kein neuer Upload-Pfad,
+// kein Dateiname aus fremder Hand.
+function cookieDateiLesen(inp){
+  const f=inp.files&&inp.files[0], msg=$('#ck_msg');
+  inp.value='';
+  if(!f) return;
+  if(f.size>2000000){ msg.textContent=T('Datei zu groß (>2 MB).'); msg.style.color='var(--amber)'; return; }
+  const r=new FileReader();
+  r.onload=()=>{ $('#ck_input').value=String(r.result||''); updateCookies(); };
+  r.onerror=()=>{ msg.textContent=T('Datei ließ sich nicht lesen.'); msg.style.color='var(--amber)'; };
+  r.readAsText(f);
+}
+
 async function updateCookies(){
   const ta=$('#ck_input'), msg=$('#ck_msg');
   const raw=(ta.value||'').trim();
@@ -7212,7 +7241,8 @@ async function updateCookies(){
       toast(T('Cookies aktualisiert (')+d.parsed+')');
       loadSystem();   // Status-Anzeige sofort neu laden
     } else {
-      msg.textContent='✗ '+((d&&d.error)||'Update fehlgeschlagen');
+      msg.textContent='✗ '+((d&&d.error)||'Update fehlgeschlagen')
+        +((d&&d.found&&d.found.length)?' · '+T('gefunden')+': '+d.found.join(', '):'');
       msg.style.color='var(--magenta)';
       toast('Cookie-Update fehlgeschlagen','err');
     }

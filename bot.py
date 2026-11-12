@@ -579,6 +579,7 @@ from nc import systemprobe as _nc_probe     # v4.1-W32: Redis-/Recorder-Sonden
 from nc import cookies as _nc_cookies_datei  # v4.1-W32: cookies.txt lesen
 from nc import overlaytext as _nc_ovtext  # v4.2-W22: die kleinen Sendebild-Textbausteine
 from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst beziehen
+from nc import raumsperre as _nc_raumsperre  # v5.4-W195: 18+ (4003110) statt Raten
 from nc import cookiebezug as _nc_cookiebezug  # v4.2-W107: Zeitplan des Auto-Bezugs
 from nc import ytdlpurl as _nc_ytdlpurl      # v4.2-W102: Stream-URL aus der yt-dlp-Auskunft
 from nc import livecache as _nc_livecache    # v4.2-W103: Kurzzeit-Cache der Live-Erkennung
@@ -2890,6 +2891,37 @@ def _offline_ergebnis(username):
     return "offline", None
 
 
+async def _raumsperre_fragen(username, data, live_room, session, cookies):
+    """v5.4-W195: einmal je Raum (nc.raumsperre.RUHE_S) bei webcast/room/info
+    nachfragen, warum ein Raum live ist, aber keine Adresse hergibt.
+
+    Nur dieser Endpunkt nennt den Grund (4003110 = 18+); api-live/user/room
+    sagt `status=2` und schweigt. Gemeldet wird beim Uebergang in eine neue
+    Lage, auf error, mit Abhilfe — und nur dann, sonst ist es Alltag."""
+    raum = str(_as_dict(_as_dict(data.get("data")).get("user")).get("roomId")
+               or live_room.get("roomId") or live_room.get("id_str") or "")
+    if not _nc_raumsperre.faellig(raum):
+        return
+    vorher = _nc_raumsperre.lage(username)
+    try:
+        async with session.get(_nc_raumsperre.URL, params={"aid": "1988", "room_id": raum},
+                               headers=dict(_LIVE_RESOLVER_HEADERS), cookies=cookies,
+                               proxy=get_random_proxy(),
+                               timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            antwort = await resp.json(content_type=None)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+        _ohne_url_melden(username, "raumsperre-netz", "raumsperre @%s: webcast/room/info "
+                         "nicht erreichbar (%s) — der Grund bleibt offen.", username,
+                         type(e).__name__)
+        return
+    art, code = _nc_raumsperre.deuten(antwort)
+    _nc_raumsperre.merken(username, raum, art, code)
+    satz = _nc_raumsperre.text(_nc_raumsperre.lage(username),
+                               _nc_cookies_datei.hat_login(_load_cookies_dict()))
+    if satz and (vorher or {}).get("lage") != art:
+        log.error("@%s ist live, aber verschlossen: %s", username, satz)
+
+
 async def _resolve_via_webcast_api_v2(username, session):
     """Returns (status, info_dict) — 'live'/'offline'/'unknown'.
        Erweiterte Version von _resolve_via_webcast_api die 'offline' explizit
@@ -3040,7 +3072,13 @@ async def _resolve_via_webcast_api_v2(username, session):
         #                 Live-User fälschlich offline gemeldet UND die HTML/yt-dlp-
         #                 Fallbacks greifen nicht (laufen nur bei 'unknown'). → unknown.
         if status == 2:
-            log.info(f"webcast-api @{username}: status=live ohne Stream-URL → live (Recorder löst auf)")
+            # v5.4-W195: lief ungedrosselt — beim Betreiber am 12.11. bis zu drei
+            # gleiche Zeilen je Sekunde fuer EINEN Nutzer. Jetzt derselbe Kanal
+            # wie die anderen live-ohne-URL-Zeilen (W103), und einmal je Raum
+            # die Frage, WARUM (nc/raumsperre.py: 18+ = Code 4003110).
+            _ohne_url_melden(username, "webcast", "webcast-api @%s: status=live ohne "
+                             "Stream-URL → live (Recorder löst auf)", username)
+            await _raumsperre_fragen(username, data, live_room, session, cookies)
             _abo_probe_dump(username, data, reason="live-ohne-stream (gated?)")
             return "live", None
         _resolver_stumm(username, "kein_stream_data")
@@ -7447,10 +7485,13 @@ async def cookies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     extra = ""
     if h["status"] in ("critical", "missing"):
-        extra = ("\n<i>→ TikTok-Cookies exportieren und nach <code>"
-                 f"{COOKIE_FILE}</code> kopieren.\n"
-                 "Empfohlene Tools: Cookie-Editor (Chrome/Firefox), "
-                 "Export als Netscape-Format.</i>")
+        # v5.4-W195: der Rat nannte nur Desktop-Werkzeuge und das Kopieren
+        # auf den Server. Vom Telefon aus ging beides nicht.
+        extra = ("\n<i>→ Eingeloggt exportieren (Cookie-Editor: JSON, Netscape oder "
+                 "Header String) und die Datei hier mit der Beschriftung "
+                 "<code>/cookies</code> senden — oder im Deck einfügen.\n"
+                 "Android: Chrome kann nicht exportieren; Firefox für Android mit "
+                 "Cookie-Editor schon. 18+-Lives brauchen ein altersbestätigtes Konto.</i>")
     elif h["status"] == "warning":
         extra = ("\n<i>→ Cookies bald erneuern um Probleme zu vermeiden.</i>")
     extra += "\n<i>→ <code>/cookies holen</code> holt die Anti-Bot-Tokens selbst " \
@@ -7458,6 +7499,52 @@ async def cookies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(_nc_i18n.t(f"<b>🍪 COOKIES</b>\n{body}{extra}"),
                                     parse_mode=ParseMode.HTML)
+
+
+async def cookies_datei_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v5.4-W195: eine Cookie-Datei als Telegram-Dokument mit Beschriftung /cookies.
+
+    Vom Telefon gab es bis dahin keinen Weg: das Deck nahm nur eingefuegten
+    Text, und eine exportierte Datei liegt am Telefon im Download-Ordner. Hier
+    laeuft sie durch DENSELBEN Weg wie das Deck (nc.cookieholen.uebernehmen).
+    Danach wird die Nachricht geloescht — im Chatverlauf haette sonst jeder
+    mit Zugriff auf das Telefon die Anmeldung des Kontos."""
+    if not await _betreiber_pruefen(update):
+        return
+    msg = update.message
+    doc = msg.document if msg else None
+    if doc is None:
+        return
+    if (doc.file_size or 0) > _nc_cookieholen.EINGABE_MAX:
+        await msg.reply_text(_nc_i18n.t("Datei zu groß (>2 MB)."))
+        return
+    roh = bytes(await (await doc.get_file()).download_as_bytearray())
+    erg = await asyncio.to_thread(_nc_cookieholen.uebernehmen,
+                                  roh.decode("utf-8", "replace"), COOKIE_FILE)
+    try:
+        await msg.delete()
+        weg = _nc_i18n.t("Die Nachricht mit der Datei ist gelöscht.")
+    except TelegramError as e:
+        weg = _nc_i18n.t("Die Nachricht mit der Datei bitte selbst löschen ({e}).").format(e=e)
+    if not erg["ok"]:
+        log.warning("Cookie-Datei per Telegram abgelehnt: %s %s (gefunden: %s)", erg["art"],
+                    erg["detail"], ", ".join(erg["gefunden"]) or "-")
+        text = {"kein_login": _nc_i18n.t("Kein Anmelde-Cookie (sessionid) in der Datei — im "
+                                          "Browser eingeloggt exportieren."),
+                "keine": _nc_i18n.t("Keine Cookies erkannt (erwartet: Netscape, JSON oder "
+                                     "Header-String)."),
+                }.get(erg["art"], erg["art"] + ": " + erg["detail"])
+        if erg["gefunden"]:
+            text += "\n" + _nc_i18n.t("gefunden") + ": " + ", ".join(erg["gefunden"])
+        await context.bot.send_message(msg.chat_id, "🍪 ✗ " + text + "\n" + weg)
+        return
+    _COOKIES_CACHE.pop("v", None)
+    h = await asyncio.to_thread(get_cookie_health)
+    log.info("Cookies per Telegram aktualisiert: %d Cookies, status=%s", erg["anzahl"],
+             h.get("status"))
+    await context.bot.send_message(
+        msg.chat_id, "🍪 ✓ " + _nc_i18n.t("{n} Cookies übernommen · Auth: {a} · Status: {s}").format(
+            n=erg["anzahl"], a=erg["auth_cookie"], s=h.get("status")) + "\n" + weg)
 
 
 async def _pause_resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE,
@@ -8809,6 +8896,7 @@ async def _handle_single_tracking(t, bot_app):
                 _sess_start = _LIVE_SESSION_START.pop(username, None)
                 _ACTIVE_TIER.pop(username, None)   # v37 W3: Tier-Sichtbarkeit aufräumen
                 _nc_geschuetzt.zuruecksetzen(username, laut=False)   # v4.2-W161: neues Live, neuer Raum
+                _nc_raumsperre.vergessen(username)                   # v5.4-W195: dito
                 _sess = await asyncio.to_thread(_collect_session_stats, username, _sess_start)
                 _spawn(_discord_post_user(username, f"⏹ **@{username}** ist offline — Stream beendet.",
                                           kind="offline", stats=_sess), name="disc-off")
@@ -9709,7 +9797,11 @@ def _rec_kategorie_melden(category, username):
                       "wieder. Abo-Erkennung: %s. %s", username, _g["folge"],
                       _g["ruhe_s"] // 60,
                       "Abo-Live" if _ABO_LIVE.get(_abo_key(username)) else "kein Abo erkannt",
-                      _nc_geschuetzt.ABHILFE)
+                      # v5.4-W195: steht der Grund fest (18+), ihn nennen statt
+                      # zwei Moeglichkeiten aufzuzaehlen.
+                      _nc_raumsperre.text(_nc_raumsperre.lage(username),
+                                          _nc_cookies_datei.hat_login(_load_cookies_dict()))
+                      or _nc_geschuetzt.ABHILFE)
     elif category == "forbidden_403":
         # v4.2-W107: abgelaufene Anti-Bot-Tokens sind eine der beiden
         # Ursachen eines 403 — frische kosten einen Gast-Aufruf. Der Zeitplan
@@ -25940,6 +26032,9 @@ async def run_bot():
     app.add_handler(MessageHandler(
         (filters.Document.ALL | filters.PHOTO) & filters.CaptionRegex(r"^/ai\b"),
         on_ai_media))
+    # v5.4-W195: Cookie-Datei mit Beschriftung /cookies (vom Telefon aus)
+    app.add_handler(MessageHandler(
+        filters.Document.ALL & filters.CaptionRegex(r"^/cookies\b"), cookies_datei_cmd))
     # F19: Reply-to-bot-message → AI-Follow-up
     app.add_handler(MessageHandler(
         filters.REPLY & filters.TEXT & ~filters.COMMAND,
