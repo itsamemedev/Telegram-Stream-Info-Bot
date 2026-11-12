@@ -19,12 +19,21 @@ import json
 import logging
 import os
 import sys
+import time
 
 log = logging.getLogger("TikTokBot")
 _SKRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "piperarbeiter.py")
 PY_ARGS = ["-I"]                  # isoliert, wie nc/ytdlpdienst.py
-LAGE = {"saetze": 0, "ersatz": 0, "zeitlimit": 0, "gestartet": 0, "grund": ""}
+LAGE = {"saetze": 0, "ersatz": 0, "zeitlimit": 0, "gestartet": 0, "grund": "",
+        "startsperre": 0}
 _ZUSTAND = {"proc": None, "belegt": False, "startend": False}
+# v5.6-W197: nach einem gescheiterten Start eine Ruhezeit — wie in
+# nc/ytdlpdienst.py. Liegt piper als eigenstaendiges Programm vor (die
+# C++-Fassung) und nicht als Python-Paket in der venv, kann der Arbeiter nie
+# starten; bis hierher versuchte es trotzdem JEDER Satz: Python hochfahren,
+# am Import scheitern, abschiessen, dann der Einzelaufruf.
+START_RUHE_S = 600.0
+_STARTSPERRE = {"bis": 0.0}
 
 
 def an() -> bool:
@@ -86,14 +95,20 @@ async def sprechen(modell, text, aus, laenge, zeitlimit=30.0):
     try:
         proc = _ZUSTAND["proc"]
         if proc is None or proc.returncode is not None:
+            if _STARTSPERRE["bis"] > time.monotonic():
+                LAGE["ersatz"] += 1
+                LAGE["startsperre"] += 1
+                return None             # Grund steht seit dem Fehlstart in LAGE
             _ZUSTAND["startend"] = True
             try:
                 proc = await _starten()
             finally:
                 _ZUSTAND["startend"] = False
             if proc is None:
+                _STARTSPERRE["bis"] = time.monotonic() + START_RUHE_S
                 LAGE["ersatz"] += 1
                 return None
+            _STARTSPERRE["bis"] = 0.0
         try:
             proc.stdin.write((json.dumps({"modell": modell, "text": text, "aus": aus,
                                           "laenge": laenge}) + "\n").encode())
@@ -114,7 +129,16 @@ async def sprechen(modell, text, aus, laenge, zeitlimit=30.0):
             _grund_melden("Arbeiter beendet sich mitten im Satz")
             LAGE["ersatz"] += 1
             return None
-        antwort = json.loads(zeile)
+        try:
+            antwort = json.loads(zeile)
+        except ValueError as e:
+            # v5.6-W197: eine unlesbare Zeile (z.B. eine Bibliothek, die auf
+            # stdout schreibt) warf bis hierher bis in _piper_say durch. Der
+            # Arbeiter ist danach aus dem Takt — beenden, Einzelaufruf.
+            await _beenden()
+            _grund_melden("Antwort des Arbeiters unlesbar: %s" % e)
+            LAGE["ersatz"] += 1
+            return None
         if not antwort.get("ok"):
             _grund_melden(str(antwort.get("fehler") or "?")[:200])
             return False

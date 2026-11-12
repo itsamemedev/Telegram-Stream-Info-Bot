@@ -40,10 +40,20 @@ _SKRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ytdlparbeite
 # yt_dlp.py, das jemand in den Aufnahmeordner legt, wird so nie geladen.
 PY_ARGS = ["-I"]
 _ZEILE_MAX = 64 * 1024 * 1024        # ein Live-JSON ist gross; Vorgabe 64 KiB reicht nicht
-LAGE = {"aufrufe": 0, "ersatz": 0, "zeitlimit": 0, "gestartet": 0, "grund": ""}
+LAGE = {"aufrufe": 0, "ersatz": 0, "zeitlimit": 0, "gestartet": 0, "grund": "",
+        "startsperre": 0}
 _ARBEITER = []                        # [_Arbeiter]
 _FASSUNG = {}                         # (binpfad, mtime) -> Fassung des Programms
 _STARTEND = {"n": 0}                  # Starts im Gange — sonst startet ein Wettlauf zu viele
+# v5.6-W197: nach einem gescheiterten Start (falsche Fassung, yt_dlp nicht
+# importierbar) eine Ruhezeit. Ohne sie startete JEDER Aufruf einen Arbeiter,
+# wartete auf das Laden von yt_dlp und schoss ihn wieder ab — bevor der
+# Einzelaufruf lief. Bei dauerhaft ungleicher Fassung (venv-Paket neben einem
+# yt-dlp aus apt oder einer Einzeldatei) kostete die Ersparnis damit doppelt.
+# Der Schluessel ist das Programm samt mtime: ein `yt-dlp -U` hebt die Sperre
+# sofort auf, statt die Ruhezeit abzuwarten.
+START_RUHE_S = 600.0
+_STARTSPERRE = {"bis": 0.0, "schluessel": None}
 
 
 def anzahl() -> int:
@@ -90,9 +100,15 @@ async def _beenden(a):
         await a.proc.wait()
 
 
+def _programm_schluessel(binpfad):
+    """(Pfad, mtime) des Programms; mtime None, wenn es gerade nicht da ist
+    (ein Update tauscht die Datei aus)."""
+    return (binpfad, os.path.getmtime(binpfad) if os.path.exists(binpfad) else None)
+
+
 async def _fassung_programm(binpfad, ausfuehren):
     """`yt-dlp --version` des Programms im PATH — einmal je Datei und Stand."""
-    schluessel = (binpfad, os.path.getmtime(binpfad))
+    schluessel = _programm_schluessel(binpfad)
     if schluessel not in _FASSUNG:
         rc, out, _err = await ausfuehren([binpfad, "--version"], 20)
         _FASSUNG[schluessel] = (out or b"").decode("utf-8", "ignore").strip() if rc == 0 else ""
@@ -115,7 +131,14 @@ async def _starten(binpfad, ausfuehren):
         await proc.wait()
         _grund_melden("Arbeiter startet nicht: %s" % (kopf.get("grund") or "keine Antwort"))
         return None
-    soll = await _fassung_programm(binpfad, ausfuehren)
+    try:
+        soll = await _fassung_programm(binpfad, ausfuehren)
+    except BaseException:
+        # Programm weg, Zeitlimit, Abbruch: der Arbeiter ist schon gestartet
+        # und gehoert noch niemandem — ohne das liefe er verwaist weiter.
+        proc.kill()
+        await proc.wait()
+        raise
     if soll != kopf.get("version"):
         proc.kill()
         await proc.wait()
@@ -138,13 +161,20 @@ async def _freier(binpfad, ausfuehren):
     if len(_ARBEITER) + _STARTEND["n"] >= anzahl():
         _grund_melden("alle Arbeiter belegt")
         return None
+    schluessel = _programm_schluessel(binpfad)
+    if _STARTSPERRE["bis"] > time.monotonic() and _STARTSPERRE["schluessel"] == schluessel:
+        LAGE["startsperre"] = LAGE.get("startsperre", 0) + 1
+        return None                     # Grund steht seit dem Fehlstart in LAGE
     _STARTEND["n"] += 1
     try:
         a = await _starten(binpfad, ausfuehren)
     finally:
         _STARTEND["n"] -= 1
-    if a is not None:
-        a.belegt = True                 # gehoert diesem Aufrufer, bevor ein anderer ihn sieht
+    if a is None:
+        _STARTSPERRE.update(bis=time.monotonic() + START_RUHE_S, schluessel=schluessel)
+        return None
+    _STARTSPERRE.update(bis=0.0, schluessel=None)
+    a.belegt = True                     # gehoert diesem Aufrufer, bevor ein anderer ihn sieht
     return a
 
 

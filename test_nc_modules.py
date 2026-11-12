@@ -36926,6 +36926,366 @@ def _test_v55_w196_azrael_an_qwen():
     ok("v5.5-W196: AZRAEL an Qwen — Vorrang, Reserve, Prompt-Cache, Persona vorn, kein stiller Wechsel")
 
 
+def _test_v56_w197_ki_sql():
+    """v5.6-W197 (Bughunt): die KI-Abfrage (/api/ai/query) unter beiden Backends.
+
+    Drei Befunde an derselben Stelle:
+      1. Keine Frist. Eine rekursive CTE ohne Abbruch oder ein Kreuzprodukt
+         lief, bis jemand den Dienst neu startete — und hielt unter SQLite
+         einen Lese-Schnappschuss, an dem der WAL-Checkpoint nicht vorbeikommt.
+      2. Kein Zeilendeckel, sobald irgendwo „limit" stand: das LIMIT einer
+         Unterabfrage begrenzt die aeussere Menge nicht.
+      3. SQLite-Dialekt unter MariaDB (dem Betrieb): `datetime('now', ...)` in
+         vier von sechs Regel-Abfragen und ein Prompt, der „SQLite-Experte"
+         verlangte — „FUNCTION datetime does not exist"."""
+    import sqlite3 as _sq
+    import time as _t
+    from datetime import datetime as _dt, timezone as _tz
+    from types import SimpleNamespace as _NS
+    from nc import sqlguard as g
+    from nc import sqlutil as su
+    import nc.routes.ai as AI
+
+    # ── 2: der Deckel gilt fuer die AEUSSERE Abfrage ─────────────────────
+    assert g.with_limit("SELECT 1 FROM t", 200) == "SELECT 1 FROM t LIMIT 200"
+    assert g.with_limit("SELECT 1 FROM t LIMIT 5", 200) == "SELECT 1 FROM t LIMIT 5"
+    assert g.with_limit("SELECT 1 FROM t LIMIT 900000", 200) == "SELECT 1 FROM t LIMIT 200"
+    assert g.with_limit("SELECT 1 FROM t limit 9000 offset 3", 200) == \
+        "SELECT 1 FROM t LIMIT 200 OFFSET 3"
+    assert g.with_limit("SELECT 1 FROM t LIMIT 10, 9000", 200) == "SELECT 1 FROM t LIMIT 10, 200"
+    innen = "SELECT * FROM t WHERE id IN (SELECT id FROM t LIMIT 5)"
+    assert g.with_limit(innen, 200) == innen + " LIMIT 200", \
+        "das LIMIT einer Unterabfrage hat den aeusseren Deckel abgeschaltet"
+    con = _sq.connect(":memory:")
+    con.execute("CREATE TABLE t (id INTEGER)")
+    con.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(500)])
+    n = len(con.execute(g.with_limit("SELECT a.id FROM t a WHERE a.id IN "
+                                     "(SELECT id FROM t LIMIT 400)", 50)).fetchall())
+    assert n == 50, ("echter Lauf: Deckel greift nicht", n)
+    ok("v5.6-w197: KI-SQL — LIMIT am Ende gedeckelt, inneres LIMIT schaltet den Deckel nicht ab")
+
+    # ── 1: Frist, echt gemessen ───────────────────────────────────────────
+    endlos = ("WITH RECURSIVE r(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM r "
+              "WHERE x < 20000000) SELECT count(*) FROM r")
+    con.set_progress_handler(g.abbruch_nach(0.3), 10000)
+    t0 = _t.monotonic()
+    try:
+        con.execute(endlos).fetchall()
+        raise AssertionError("endlose Abfrage lief ohne Frist zu Ende?")
+    except _sq.OperationalError as e:
+        assert g.frist_ueberschritten(e), ("Abbruch nicht als Frist erkannt", str(e))
+    assert _t.monotonic() - t0 < 5, "Frist greift nicht rechtzeitig"
+    con.close()
+    assert g.frist_ueberschritten(Exception(
+        "(1969, 'Query execution was interrupted (max_statement_time exceeded)')"))
+    assert not g.frist_ueberschritten(Exception("no such table: x"))
+    assert g.mariadb_mit_frist("SELECT 1", 15) == \
+        "SET STATEMENT max_statement_time=15 FOR SELECT 1", "Frist je Sitzung statt je Anweisung"
+    assert g.frist_unbekannt(Exception(
+        "(1064, \"You have an error ... near 'STATEMENT max_statement_time=15 FOR SELECT 1'\")"))
+    assert not g.frist_unbekannt(Exception("(1064, \"... near 'FORM recordings'\")"))
+
+    # _safe_select end-to-end unter SQLite: Frist und Deckel an der echten Route.
+    d = _ph.verzeichnis()
+    pfad = os.path.join(d, "ki.db")
+    c2 = _sq.connect(pfad)
+    c2.execute("CREATE TABLE recordings (id INTEGER, username TEXT, created_at TEXT)")
+    c2.executemany("INSERT INTO recordings VALUES (?,?,?)",
+                   [(i, "u%d" % (i % 7), "2026-11-%02dT10:00:00+00:00" % (1 + i % 28))
+                    for i in range(600)])
+    c2.commit()
+    c2.close()
+    alt_c, alt_frist = AI._c, g.FRIST_S
+    try:
+        AI._c = lambda: _NS(cfg={"DB_BACKEND": "sqlite", "DB_PATH": pfad,
+                                 "_B71_TABLES": ("recordings",)})
+        rows, err = AI._safe_select("SELECT * FROM recordings WHERE id IN "
+                                    "(SELECT id FROM recordings LIMIT 590)", limit=20)
+        assert err is None and len(rows) == 20, (err, rows and len(rows))
+        # Der zweite Riegel einzeln: erkennt with_limit eine Form nicht, gilt
+        # der Deckel trotzdem (fetchmany / [:limit]) — sonst waere er Zierde.
+        alt_wl = g.with_limit
+        g.with_limit = lambda sql, limit=200: sql
+        try:
+            rows, err = AI._safe_select("SELECT * FROM recordings", limit=7)
+            assert err is None and len(rows) == 7, ("Deckel haengt allein an with_limit", err)
+        finally:
+            g.with_limit = alt_wl
+        g.FRIST_S = 0.3
+        # Begrenzt statt endlos: ohne Frist laeuft sie gemessen einige Sekunden
+        # zu Ende und der Vertrag faellt — eine endlose haengte die Probe auf.
+        rows, err = AI._safe_select(
+            "WITH RECURSIVE r(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM r "
+            "WHERE x < 20000000) SELECT count(*) AS n FROM r "
+            "WHERE x NOT IN (SELECT id FROM recordings WHERE id < 0)")
+        assert rows is None and "abgebrochen" in (err or ""), ("keine Frist an der Route", err)
+
+        # ── MariaDB-Weg mit Attrappe: Frist je Anweisung, Rueckweg ohne Frist
+        gesehen = []
+
+        class _Cur:
+            def __init__(self, n):
+                self._n = n
+
+            def fetchall(self):
+                return [{"n": i} for i in range(self._n)]
+
+        class _Conn:
+            def __init__(self, fehler):
+                self._fehler = list(fehler)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, sql, params=()):
+                gesehen.append(sql)
+                if sql.startswith("SET STATEMENT") and self._fehler:
+                    raise Exception(self._fehler.pop(0))
+                return _Cur(500)
+
+            def rollback(self):
+                gesehen.append("ROLLBACK")
+
+        alt_db = AI.db_conn
+        import logging as _lg
+        AI._c = lambda: _NS(cfg={"DB_BACKEND": "mariadb", "DB_PATH": "",
+                                 "_B71_TABLES": ("recordings",)},
+                            log=_lg.getLogger("w197-test"))
+        try:
+            AI.db_conn = lambda: _Conn([])
+            rows, err = AI._safe_select("SELECT id AS n FROM recordings", limit=30)
+            assert err is None and len(rows) == 30, ("Deckel fehlt unter MariaDB", err)
+            g.with_limit = lambda sql, limit=200: sql
+            try:
+                assert len(AI._safe_select("SELECT id AS n FROM recordings", limit=9)[0]) == 9, \
+                    "MariaDB: Deckel haengt allein an with_limit"
+            finally:
+                g.with_limit = alt_wl
+            gesehen.clear()
+            AI.db_conn = lambda: _Conn([])
+            AI._safe_select("SELECT id AS n FROM recordings", limit=30)
+            assert any(s.startswith("SET STATEMENT max_statement_time=") and
+                       s.endswith("FROM recordings LIMIT 30") for s in gesehen), gesehen
+            assert "START TRANSACTION READ ONLY" in gesehen and gesehen[-1] == "ROLLBACK"
+            gesehen.clear()
+            AI.db_conn = lambda: _Conn(["(1064, \"... near 'STATEMENT max_statement_time=15"
+                                        " FOR SELECT'\")"])
+            rows, err = AI._safe_select("SELECT id AS n FROM recordings", limit=5)
+            assert err is None and len(rows) == 5, ("kein Rueckweg ohne Frist", err)
+            assert "SELECT id AS n FROM recordings LIMIT 5" in gesehen, gesehen
+            AI.db_conn = lambda: _Conn(["(1969, 'Query execution was interrupted "
+                                        "(max_statement_time exceeded)')"])
+            rows, err = AI._safe_select("SELECT id AS n FROM recordings")
+            assert rows is None and "abgebrochen" in err, err
+        finally:
+            AI.db_conn = alt_db
+    finally:
+        AI._c, g.FRIST_S = alt_c, alt_frist
+    ok("v5.6-w197: KI-SQL — Frist unter SQLite (Fortschritts-Handler) und MariaDB (je Anweisung), echt gemessen")
+
+    # ── 3: kein SQLite-Dialekt, der unter MariaDB nicht existiert ─────────
+    jetzt = _dt(2026, 11, 12, 15, 30, tzinfo=_tz.utc)
+    fragen = ("welcher streamer scheitert am häufigsten", "wie viele aufnahmen heute",
+              "wie viele aufnahmen", "erfolgsquote", "speicher", "aktiv", "längste")
+    for f in fragen:
+        sql = su._rule_based_sql(f, jetzt)
+        assert sql, f
+        for sqlite_only in ("datetime(", "date(", "julianday(", "strftime("):
+            assert sqlite_only not in sql.lower(), (f, sql)
+    assert "'2026-11-05T15:30:00'" in su._rule_based_sql(fragen[0], jetzt)
+    assert "'2026-11-12'" in su._rule_based_sql(fragen[1], jetzt)
+    # Dieselben Abfragen laufen wirklich — gegen die Testdatenbank oben.
+    c3 = _sq.connect(pfad)
+    n = c3.execute(su._rule_based_sql("wie viele aufnahmen", jetzt)).fetchone()[0]
+    c3.close()
+    assert 0 < n < 600, ("ISO-Literal filtert nicht", n)
+    q = open("nc/routes/ai.py", encoding="utf-8").read()
+    rumpf = rumpf_ab(q, q.index("def _nl_to_sql("))
+    assert '"Du bist ein SQLite-Experte' not in rumpf, "Prompt verlangt SQLite auch unter MariaDB"
+    assert 'cfg["DB_BACKEND"]' in rumpf and "_zeitfenster_literal(" in rumpf
+    ok("v5.6-w197: KI-SQL — Regel-Abfragen und Prompt ohne SQLite-Datumsfunktionen (MariaDB-tauglich)")
+
+
+def _test_v56_w197_arbeiter_startsperre():
+    """v5.6-W197 (Bughunt): die Dauer-Arbeiter aus W193 starteten nach einem
+    Fehlstart bei JEDEM Aufruf neu. Bei dauerhaft ungleicher yt-dlp-Fassung
+    (venv-Paket neben apt-Programm) oder einem Piper ohne Python-Paket (die
+    C++-Fassung) hiess das: Python hochfahren, laden, abschiessen — und danach
+    trotzdem der Einzelaufruf. Die Ersparnis kostete doppelt."""
+    import asyncio as _aio
+    import sys as _sys
+    from nc import piperdienst as PD
+    from nc import ytdlpdienst as YD
+
+    d = _ph.verzeichnis()
+    binpfad = os.path.join(d, "yt-dlp")
+    with open(binpfad, "w") as f:
+        f.write("#!/bin/sh\necho 1\n")
+    os.utime(binpfad, (1000, 1000))
+    starts = []
+
+    async def _fehlstart(_bin, _aus):
+        starts.append(_bin)
+        YD.LAGE["grund"] = "yt_dlp im Bot (1) ist nicht das yt-dlp im PATH (2)"
+        return None
+    einzeln = []
+
+    async def _einzeln(cmd, z):
+        einzeln.append(cmd)
+        return 0, b"ERSATZ", b""
+
+    alt = (YD._starten, dict(YD._STARTSPERRE), list(YD._ARBEITER), os.environ.get("YTDLP_ARBEITER"))
+    YD._starten = _fehlstart
+    YD._ARBEITER.clear()
+    YD._STARTSPERRE.update(bis=0.0, schluessel=None)
+    os.environ["YTDLP_ARBEITER"] = "2"
+
+    async def _yt():
+        for _ in range(5):
+            assert (await YD.ausfuehren([binpfad, "x"], 20, _einzeln))[1] == b"ERSATZ"
+        assert len(starts) == 1, ("Fehlstart wird bei jedem Aufruf wiederholt", len(starts))
+        assert len(einzeln) == 5 and "PATH" in YD.lage()["grund"]
+        os.utime(binpfad, (2000, 2000))           # yt-dlp -U: neuer Stand
+        await YD.ausfuehren([binpfad, "x"], 20, _einzeln)
+        assert len(starts) == 2, "ein Update des Programms hebt die Sperre nicht auf"
+        YD._STARTSPERRE["bis"] = 0.0              # Ruhezeit abgelaufen
+        await YD.ausfuehren([binpfad, "x"], 20, _einzeln)
+        assert len(starts) == 3, "nach der Ruhezeit kein neuer Versuch"
+    try:
+        _aio.run(_yt())
+    finally:
+        YD._starten = alt[0]
+        YD._STARTSPERRE.clear(); YD._STARTSPERRE.update(alt[1])
+        YD._ARBEITER[:] = alt[2]
+        if alt[3] is None:
+            os.environ.pop("YTDLP_ARBEITER", None)
+        else:
+            os.environ["YTDLP_ARBEITER"] = alt[3]
+
+    # Verschwindet das Programm zwischen which() und der Fassungsfrage, darf
+    # der schon gestartete Arbeiter nicht verwaist weiterlaufen.
+    kopf = os.path.join(d, "kopf.py")
+    with open(kopf, "w") as f:
+        f.write("import sys, json\nprint(json.dumps({'bereit': True, 'version': '1'}), "
+                "flush=True)\nsys.stdin.read()\n")
+    gestartet = []
+    echt = _aio.create_subprocess_exec
+
+    async def _merken(*a, **k):
+        p = await echt(*a, **k)
+        gestartet.append(p)
+        return p
+
+    async def _weg(cmd, z):
+        raise FileNotFoundError(cmd[0])
+
+    alt_skript, alt_args = YD._SKRIPT, YD.PY_ARGS
+    YD._SKRIPT, YD.PY_ARGS = kopf, []
+    _aio.create_subprocess_exec = _merken
+    try:
+        async def _verwaist():
+            try:
+                await YD._starten(os.path.join(d, "gibtsnicht"), _weg)
+                raise AssertionError("verschwundenes Programm verschluckt")
+            except FileNotFoundError:
+                pass
+            assert gestartet and gestartet[0].returncode is not None, \
+                "Arbeiter laeuft nach gescheiterter Fassungsfrage verwaist weiter"
+        _aio.run(_verwaist())
+    finally:
+        _aio.create_subprocess_exec = echt
+        YD._SKRIPT, YD.PY_ARGS = alt_skript, alt_args
+    ok("v5.6-w197: yt-dlp-Arbeiter — Fehlstart sperrt 10 min (Update hebt auf), kein verwaister Arbeiter")
+
+    # ── Piper ────────────────────────────────────────────────────────────
+    pstarts = []
+
+    async def _pfehl():
+        pstarts.append(1)
+        PD.LAGE["grund"] = "Arbeiter startet nicht: No module named 'piper'"
+        return None
+    altp = (PD._starten, dict(PD._STARTSPERRE), PD._ZUSTAND["proc"], os.environ.get("PIPER_ARBEITER"))
+    PD._starten = _pfehl
+    PD._ZUSTAND["proc"] = None
+    PD._STARTSPERRE["bis"] = 0.0
+    os.environ.pop("PIPER_ARBEITER", None)
+
+    class _Proc:
+        returncode = None
+
+        def __init__(self, zeile):
+            self._zeile = zeile
+            self.stdin = self
+            self.stdout = self
+
+        def write(self, _b):
+            pass
+
+        async def drain(self):
+            pass
+
+        async def readline(self):
+            return self._zeile
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    async def _pi():
+        for _ in range(4):
+            assert await PD.sprechen("/m.onnx", "x", os.path.join(d, "a.wav"), 1.0) is None
+        assert len(pstarts) == 1, ("Piper-Fehlstart je Satz wiederholt", len(pstarts))
+        PD._STARTSPERRE["bis"] = 0.0
+        await PD.sprechen("/m.onnx", "x", os.path.join(d, "a.wav"), 1.0)
+        assert len(pstarts) == 2
+        # Unlesbare Antwort: Arbeiter beenden, Einzelaufruf — keine Ausnahme bis _piper_say.
+        p = _Proc(b"onnxruntime: Warnung auf stdout\n")
+        PD._ZUSTAND["proc"] = p
+        assert await PD.sprechen("/m.onnx", "x", os.path.join(d, "a.wav"), 1.0) is None
+        assert p.returncode is not None and PD._ZUSTAND["proc"] is None
+        assert "unlesbar" in PD.lage()["grund"]
+    try:
+        _aio.run(_pi())
+    finally:
+        PD._starten = altp[0]
+        PD._STARTSPERRE.clear(); PD._STARTSPERRE.update(altp[1])
+        PD._ZUSTAND["proc"] = altp[2]
+        if altp[3] is not None:
+            os.environ["PIPER_ARBEITER"] = altp[3]
+    del _sys
+    ok("v5.6-w197: Piper-Arbeiter — Fehlstart sperrt 10 min, unlesbare Antwort beendet statt zu werfen")
+
+
+def _test_v56_w197_keine_ausnahme_auf_vorrat():
+    """v5.6-W197 (Security): "/api/yt/oauth/callback" stand in der Anmelde- und
+    in der Herkunfts-Ausnahme, ohne dass es die Route je gab. Wer dort spaeter
+    etwas anlegt, haette es ohne Anmeldung. Jede Ausnahme muss eine Route haben."""
+    import ast as _ast
+    from nc import herkunft as H
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    exakt = None
+    for k in baum.body:
+        if isinstance(k, _ast.Assign) and any(getattr(t, "id", "") == "_AUTH_EXEMPT_EXACT"
+                                              for t in k.targets):
+            exakt = _ast.literal_eval(k.value)
+    assert exakt, "_AUTH_EXEMPT_EXACT nicht gefunden"
+    routen = set()
+    for datei in ["bot.py"] + sorted(os.path.join("nc/routes", n) for n in os.listdir("nc/routes")
+                                     if n.endswith(".py")):
+        for m in re.finditer(r"""\.route\(\s*["']([^"']+)["']""",
+                             open(datei, encoding="utf-8").read()):
+            routen.add(m.group(1))
+    for pfad in tuple(exakt) + tuple(H.AUSNAHMEN):
+        assert pfad in routen, "Ausnahme ohne Route: " + pfad
+    ok("v5.6-w197: jede Anmelde-/Herkunfts-Ausnahme hat eine Route (keine Luecke auf Vorrat)")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -37348,6 +37708,9 @@ def main():
     _test_v54_w195_cookies_vom_telefon()
     _test_v54_w195_ab18_und_werkzeuge()
     _test_v55_w196_azrael_an_qwen()
+    _test_v56_w197_ki_sql()
+    _test_v56_w197_arbeiter_startsperre()
+    _test_v56_w197_keine_ausnahme_auf_vorrat()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()

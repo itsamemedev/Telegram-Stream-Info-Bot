@@ -63,6 +63,7 @@
     "AZRAEL-Agentenflotte": "AZRAEL agent fleet",
     "AZRAEL-Audio": "AZRAEL audio",
     "Abdeckung": "Coverage",
+    "Abfrage nach %d s abgebrochen — zu aufwendig. Enger fragen (Zeitraum, Nutzer).": "Query aborted after %d s — too expensive. Ask more narrowly (time range, user).",
     "Abgewiesen: Die Anfrage kam nicht vom Deck selbst (fremde Seite im Browser).": "Rejected: the request did not come from the deck itself (another page in the browser).",
     "Abo-Erkennung ist aus (ABO_STREAM_MODE=0).": "Subscription detection is off (ABO_STREAM_MODE=0).",
     "Abo-Lives": "Subscription lives",

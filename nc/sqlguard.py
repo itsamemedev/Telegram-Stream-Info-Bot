@@ -69,6 +69,77 @@ def check_readonly(sql, tables=()):
     return s, None
 
 
+# v5.6-W197: ein LIMIT am ENDE der Abfrage — nur das begrenzt die aeussere
+# Ergebnismenge. Erwartet das normalisierte SQL aus check_readonly (keine
+# Kommentare, kein Semikolon, Whitespace zu einem Leerzeichen).
+_LIMIT_ENDE = re.compile(r"\blimit (\d+)(?: ?(,|offset) ?(\d+))?$", re.I)
+
+# Wie lange die KI-Abfrage rechnen darf, bevor die Datenbank sie abbricht.
+FRIST_S = 15
+
+
 def with_limit(sql, limit=200):
-    """Erzwingt ein LIMIT, falls keines gesetzt ist."""
-    return sql if re.search(r"\blimit\b", sql, re.I) else f"{sql} LIMIT {int(limit)}"
+    """Hoechstens `limit` Zeilen fuer die AEUSSERE Abfrage.
+
+    v5.6-W197: bis hierher genuegte das Wort „limit" IRGENDWO, damit gar
+    nichts angehaengt wurde. `SELECT * FROM chat_messages WHERE id IN (SELECT
+    id FROM chat_messages LIMIT 5)` holte damit die ganze Tabelle — das LIMIT
+    der Unterabfrage begrenzt die aeussere Menge nicht. Und ein `LIMIT 1000000`
+    am Ende ging unveraendert durch. Jetzt zaehlt nur ein LIMIT am Ende, und
+    sein Wert wird auf `limit` gedeckelt."""
+    n = int(limit)
+    s = sql.rstrip()
+    m = _LIMIT_ENDE.search(s)
+    if not m:
+        return f"{s} LIMIT {n}"
+    a, trenn, b = m.group(1), (m.group(2) or "").lower(), m.group(3)
+    if trenn == ",":                    # LIMIT versatz, anzahl (MySQL/SQLite)
+        neu = f"LIMIT {a}, {min(int(b), n)}"
+    elif trenn == "offset":
+        neu = f"LIMIT {min(int(a), n)} OFFSET {b}"
+    else:
+        neu = f"LIMIT {min(int(a), n)}"
+    return s[:m.start()] + neu
+
+
+def abbruch_nach(frist_s, uhr=None):
+    """Fortschritts-Handler fuer sqlite3.Connection.set_progress_handler:
+    liefert ab der Frist 1, und SQLite bricht mit „interrupted" ab.
+
+    v5.6-W197: die KI-Abfrage hatte keine Frist. Eine rekursive CTE ohne
+    Abbruch oder ein Kreuzprodukt zweier grosser Tabellen lief, bis jemand den
+    Dienst neu startete — und hielt dabei einen Lese-Schnappschuss, an dem der
+    WAL-Checkpoint nicht vorbeikommt: `-wal` waechst, solange sie laeuft."""
+    import time as _time
+    uhr = uhr or _time.monotonic
+    ende = uhr() + float(frist_s)
+
+    def _handler():
+        return 1 if uhr() > ende else 0
+    return _handler
+
+
+def mariadb_mit_frist(sql, frist_s=FRIST_S):
+    """Dieselbe Frist unter MariaDB — je Anweisung, nicht je Sitzung.
+
+    `SET SESSION max_statement_time` bliebe an der Verbindung haengen, und die
+    geht zurueck in den Pool: die naechste Wartungsabfrage auf derselben
+    Verbindung wuerde nach 15 s abgebrochen. `SET STATEMENT ... FOR` gilt nur
+    fuer diese eine Abfrage (MariaDB ab 10.1.2)."""
+    return "SET STATEMENT max_statement_time=%d FOR %s" % (int(frist_s), sql)
+
+
+def frist_unbekannt(e) -> bool:
+    """Kennt der Server `SET STATEMENT max_statement_time` nicht (MySQL statt
+    MariaDB)? Dann laeuft die Abfrage ohne Frist, und der Aufrufer sagt das."""
+    t = str(e)
+    return ("near 'STATEMENT max_statement_time" in t
+            or "Unknown system variable 'max_statement_time'" in t)
+
+
+def frist_ueberschritten(e) -> bool:
+    """Hat die Datenbank die Abfrage wegen der Frist abgebrochen?
+    SQLite: „interrupted" (Fortschritts-Handler). MariaDB: Fehler 1969
+    „Query execution was interrupted (max_statement_time exceeded)"."""
+    t = str(e).lower()
+    return t == "interrupted" or "max_statement_time exceeded" in t

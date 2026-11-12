@@ -63,6 +63,7 @@
     "AZRAEL-Agentenflotte": "Flota de agentes AZRAEL",
     "AZRAEL-Audio": "Audio de AZRAEL",
     "Abdeckung": "Cobertura",
+    "Abfrage nach %d s abgebrochen — zu aufwendig. Enger fragen (Zeitraum, Nutzer).": "Consulta cancelada tras %d s — demasiado costosa. Pregunta de forma más concreta (periodo, usuario).",
     "Abgewiesen: Die Anfrage kam nicht vom Deck selbst (fremde Seite im Browser).": "Rechazado: la solicitud no vino del propio panel (otra página en el navegador).",
     "Abo-Erkennung ist aus (ABO_STREAM_MODE=0).": "La detección de suscripciones está desactivada (ABO_STREAM_MODE=0).",
     "Abo-Lives": "Directos para suscriptores",

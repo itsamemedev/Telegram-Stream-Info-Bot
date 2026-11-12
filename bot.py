@@ -10857,7 +10857,7 @@ _AUTH_EXEMPT_PREFIXES = ("/api/public/", "/fonts/")
 _AUTH_EXEMPT_READ = ("/overlay", "/api/overlay/state")
 _AUTH_EXEMPT_EXACT = ("/healthz",
                       "/api/kick/oauth/callback", "/api/twitch/oauth/callback",
-                      "/api/youtube/oauth/callback", "/api/yt/oauth/callback")
+                      "/api/youtube/oauth/callback")   # v5.6-W197: /api/yt/... gab es nie
 
 
 def _client_ip():
@@ -22439,7 +22439,7 @@ _B71_TABLES = ("trackings", "recordings", "recording_attempts", "tracking_priori
                "tracking_tags", "tracking_collections", "profile_snapshots",
                "event_log", "learned_params", "evolution_proposals", "archive")
 
-_B71_SCHEMA_DOC = """Tabellen (SQLite):
+_B71_SCHEMA_DOC = """Tabellen:
 trackings(id, group_id, username, created_at, last_live, recording, paused)
 recordings(id, username, filepath, created_at, file_size, duration_secs, starred, rating, label)
 recording_attempts(id, tracking_id, username, recorder, started_at, ended_at, duration_secs, returncode, file_size, outcome)
