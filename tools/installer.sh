@@ -1486,10 +1486,19 @@ if [ -n "${_fehlt// /}" ]; then
     exit 1
   fi
 fi
-# streamlink/yt-dlp aus den Systemquellen sind oft zu alt fuer TikTok. Im venv
-# sind sie immer aktuell und haben Vorrang, weil .venv/bin frueher im PATH steht.
-have streamlink || [ -x "$VENV/bin/streamlink" ] || "$VPY" -m pip install streamlink || warn "streamlink liess sich nicht nachinstallieren."
-have yt-dlp     || [ -x "$VENV/bin/yt-dlp" ]     || "$VPY" -m pip install yt-dlp     || warn "yt-dlp liess sich nicht nachinstallieren."
+# streamlink/yt-dlp aus den Systemquellen sind oft zu alt fuer TikTok. v5.4-W195:
+# IMMER in die venv, nicht nur wenn das System keines hat — bis dahin blieb ein
+# vorhandenes apt-yt-dlp im Einsatz (beim Betreiber acht Monate alt). Vorrang
+# hat die venv, weil der Bot ihr bin-Verzeichnis selbst vor den PATH stellt
+# (nc/werkzeugpfad.py); die Unit setzt keinen PATH. Mit curl_cffi, sonst kann
+# yt-dlp keinen Browser nachahmen und TikTok liefert die Sperrseite.
+# Nur mit Grund (nc_tt_grund), sonst waere der zweite Lauf nicht idempotent.
+_tt="$(nc_tt_grund "$VPY")"
+if [ -n "$_tt" ]; then
+  info "TikTok-Werkzeuge aktualisieren: %s" "$_tt"
+  "$VPY" -m pip install --upgrade "yt-dlp[default,pin-curl-cffi]" streamlink \
+    || warn "yt-dlp/streamlink liessen sich nicht in die venv installieren — es bleiben die des Systems."
+fi
 gut "Python-Pakete stehen."
 
 # ═══════════════════════════════════════════════════════════════════════════

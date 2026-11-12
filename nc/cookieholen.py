@@ -33,13 +33,14 @@ und in jedem Backup; sie ist kein Abladeplatz für fremde Sitzungen.
 import os
 import shutil
 import subprocess
+import json
 import time as _time
 import urllib.request
 from http.cookiejar import CookieJar, MozillaCookieJar
 
 from nc import fehlertext as _nc_fehlertext
 from nc.cookies import (DATEI_SPERRE, _cookies_input_to_netscape,
-                        _dedupe_cookie_text)
+                        _dedupe_cookie_text, hat_login)
 from nc.tiktokheaders import HEADERS as _TT_HEADERS
 
 # Die Seiten, die beim ersten Aufruf die Anti-Bot-Tokens setzen. Zwei, weil
@@ -361,6 +362,56 @@ def schreibe(datei: str, netscape_text: str, auth_pflicht=False):
                 os.remove(tmp)
             except OSError:
                 pass
+
+
+EINGABE_MAX = 2_000_000
+
+
+def uebernehmen(roh: str, datei: str) -> dict:
+    """v5.4-W195: EIN Weg fuer eingefuegte und hochgeladene Cookies — Deck,
+    Telegram-Dokument, egal welches Format.
+
+    Bis dahin hatte die Deck-Route eine eigene Fassung von schreibe(): ohne
+    DATEI_SPERRE (die beiden anderen Schreiber halten sie) und mit einer
+    .new-Datei in den Rechten der umask — Login-Cookies fuer einen Moment
+    fuer alle lesbar. Zwei Wege fuer dieselbe Datei sind einer zu viel.
+
+    -> {"ok": True, "anzahl", "doppelt", "backup", "auth_cookie"}
+     | {"ok": False, "art": leer|zu_gross|json|format|keine|kein_login|schreiben,
+        "detail": str, "gefunden": [Namen]}
+    Bei jedem Fehlschlag bleibt die alte Datei, wie sie war."""
+    roh = (roh or "").strip()
+    if not roh:
+        return {"ok": False, "art": "leer", "detail": "", "gefunden": []}
+    if len(roh) > EINGABE_MAX:
+        return {"ok": False, "art": "zu_gross", "detail": str(len(roh)), "gefunden": []}
+    try:
+        text, anzahl = _cookies_input_to_netscape(roh)
+    except json.JSONDecodeError as e:
+        return {"ok": False, "art": "json", "detail": _nc_fehlertext.nach_aussen(e, "cookieholen.uebernehmen"), "gefunden": []}
+    except (ValueError, TypeError, AttributeError) as e:
+        return {"ok": False, "art": "format", "detail": _nc_fehlertext.nach_aussen(e, "cookieholen.uebernehmen"), "gefunden": []}
+    if anzahl == 0:
+        return {"ok": False, "art": "keine", "detail": "", "gefunden": []}
+    text, doppelt = _dedupe_cookie_text(text)
+    namen = sorted({z.split("\t")[5] for z in text.splitlines()
+                    if z and not z.startswith("#") and z.count("\t") >= 6})
+    if not hat_login(namen):
+        # Vor dem Schreiben pruefen, nicht erst in schreibe(): sonst steht im
+        # Fehler nur „kein Auth-Cookie", und der Betreiber sieht nicht, WAS er
+        # da exportiert hat — meist die Gast-Tokens eines abgemeldeten Browsers.
+        return {"ok": False, "art": "kein_login", "detail": "", "gefunden": namen[:20]}
+    try:
+        # Ohne auth_pflicht: die Pruefung steht oben, an denselben normierten
+        # Zeilen, die MozillaCookieJar liest. Ein zweiter Riegel dahinter
+        # koennte nie greifen — die Mutationsprobe hat ihn entwischen lassen,
+        # und zwei Riegel, von denen einer wirkt, sind eine falsche Gewissheit.
+        n, backup = schreibe(datei, text)
+    except Exception as e:
+        return {"ok": False, "art": "schreiben", "detail": _nc_fehlertext.nach_aussen(e, "cookieholen.uebernehmen"),
+                "gefunden": namen[:20]}
+    return {"ok": True, "anzahl": n, "doppelt": doppelt, "backup": backup,
+            "auth_cookie": "sessionid_ss" if "sessionid_ss" in namen else "sessionid"}
 
 
 # Was zu tun ist, wenn der Bezug scheitert — je Weg. Ein Grund ohne Abhilfe

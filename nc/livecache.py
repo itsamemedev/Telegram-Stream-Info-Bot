@@ -75,11 +75,21 @@ def holen(cache, username, jetzt, force_fresh=False):
     # „kein Treffer" ist hier kein Misserfolg, sondern der Normalfall. Melden
     # tut der Aufrufer, dieses Modul loggt nicht.
     treffer = None
-    if not force_fresh:
-        eintrag = cache.get(username)
-        if frisch(eintrag, jetzt):
-            treffer = (eintrag[1], eintrag[2])
+    eintrag = cache.get(username)
+    if frisch(eintrag, jetzt) and (not force_fresh or _ohne_adresse(eintrag)):
+        # v5.4-W195: force_fresh will eine NEUE Adresse, weil die alte am
+        # Restream gestorben ist. Ein Eintrag „live ohne Adresse" hat keine,
+        # die tot sein koennte — eine frische Aufloesung innerhalb der TTL
+        # bringt dieselbe Antwort und kostet je Aufruf eine TikTok-Anfrage.
+        # Beim Betreiber am 12.11.: drei Reconnect-Pfade, bis zu drei
+        # Aufloesungen je Sekunde fuer EINEN Nutzer.
+        treffer = (eintrag[1], eintrag[2])
     return treffer
+
+
+def _ohne_adresse(eintrag) -> bool:
+    """„live" ohne irgendeine Stream-Adresse in der Nutzlast?"""
+    return eintrag[1] == "live" and not _livefolge.hat_stream_url(eintrag[2])
 
 
 def setzen(cache, username, status, info, jetzt, ttl) -> bool:
@@ -127,6 +137,8 @@ def aufraeumen(cache, jetzt, ab_groesse=50):
 # Schleife faellt, beendet sich, und dann prueft niemand mehr.
 
 import asyncio as _asyncio
+
+from nc import livefolge as _livefolge
 import threading as _threading
 
 # Zaehler fuer /healthz. Unter der Sperre, weil /healthz im Flask-Thread liest.

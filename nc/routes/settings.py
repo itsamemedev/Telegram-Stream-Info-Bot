@@ -9,19 +9,17 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 from datetime import datetime, timezone
 import json
 import os
-import shutil
 from flask import Blueprint, Response, jsonify, request
 
 from nc import fehlertext as _nc_fehlertext
 
 from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
-from http.cookiejar import MozillaCookieJar
 from typing import Optional
 import time as _time_mod
 from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
-from nc.cookies import _cookies_input_to_netscape, _dedupe_cookie_text
 from nc import cookiebezug as _nc_cookiebezug
+from nc import cookieholen as _nc_cookieholen
 from nc.dbexport import db_export_sql as _dbx_export, db_import_sql as _dbx_import, export_summary as _dbx_summary
 from nc import dbrestore as _nc_dbrest   # v4.2-W96: Sicherung im Deck einsetzen
 from nc import sicherpfad as _nc_sicherpfad
@@ -80,115 +78,52 @@ def api_cookies_health():
 def api_cookies_update():
     """B63: Cookies aktualisieren ohne SSH/Datei-Editing.
 
-       Body: {"cookies": "<text>"} — der Inhalt ist entweder das Netscape-
-       Format (Extension 'Get cookies.txt LOCALLY') ODER ein JSON-Array
-       (Extension 'Cookie-Editor' / 'EditThisCookie'). Format wird automatisch
-       erkannt.
+       Body: {"cookies": "<text>"} — Netscape (cookies.txt), JSON-Array
+       (Cookie-Editor / EditThisCookie) oder seit v5.4-W195 ein Header-String
+       (`sessionid=…; ttwid=…`, Cookie-Editor „Header String", DevTools). Das
+       Deck schickt hierher auch den Inhalt einer hochgeladenen Datei — der
+       Browser liest sie, der Server bekommt nur Text.
 
-       Ablauf (defensiv — alte Cookies gehen NIE kaputt):
-         1. Input nach Netscape konvertieren.
-         2. In <COOKIE_FILE>.new schreiben und mit MozillaCookieJar validieren.
-         3. Prüfen dass ein Auth-Cookie (sessionid_ss/sessionid) drin ist —
-            sonst Abbruch (User war im Browser nicht eingeloggt). Alte Datei
-            bleibt unangetastet.
-         4. Alte Datei nach <COOKIE_FILE>.bak sichern.
-         5. Atomar ersetzen (os.replace) + Cache leeren → sofort live.
-
-       Keine Zusatz-Software auf dem Server nötig.
+       Ablauf und Riegel stehen in nc.cookieholen.uebernehmen(), denselben,
+       den das Telegram-Dokument nimmt: konvertieren, Doppelte bereinigen,
+       Login-Cookie verlangen, .tmp mit 0600 schreiben und LADEN, Backup,
+       atomar tauschen — unter DATEI_SPERRE. Die alte Datei bleibt bei jedem
+       Fehlschlag unangetastet.
     """
     payload = request.get_json(silent=True) or {}
-    raw = (payload.get("cookies") or "").strip()
-    if not raw:
-        return jsonify(ok=False, error=_t("Keine Cookie-Daten übergeben.")), 400
-    if len(raw) > 2_000_000:
-        return jsonify(ok=False, error=_t("Eingabe zu groß (>2 MB).")), 400
-
-    # 1) Konvertieren
-    try:
-        netscape, n_parsed = _cookies_input_to_netscape(raw)
-    except json.JSONDecodeError as e:
-        return jsonify(ok=False, error=f"JSON nicht lesbar: {_fehler_text(e, 'api_cookies_update')}"), 400
-    except Exception as e:
-        return jsonify(ok=False, error=f"Cookies nicht verarbeitbar: {_fehler_text(e, 'api_cookies_update')}"), 400
-    if n_parsed == 0:
-        return jsonify(ok=False,
-                       error=_t("Keine gültigen Cookies erkannt. Erwartet wird das "
-                                "Netscape-Format (cookies.txt) oder ein JSON-Array.")), 400
-    # 1b) Doppelte Namen (z.B. msToken unter mehreren Domains) automatisch
-    #     bereinigen → verhindert die 'mehrfach unter verschiedenen Domains'-Warnung.
-    try:
-        netscape, n_dupes = _dedupe_cookie_text(netscape)
-    except Exception:
-        n_dupes = 0
-
-    # 2) Temp schreiben + validieren
-    tmp = _c().cfg["COOKIE_FILE"] + ".new"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(netscape)
-        cj = MozillaCookieJar(tmp)
-        cj.load(ignore_discard=True, ignore_expires=True)
-        names = {c.name for c in cj}
-    except Exception as e:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        return jsonify(ok=False, error=f"Validierung fehlgeschlagen: {_fehler_text(e, 'api_cookies_update')}"), 400
-
-    # 3) Auth-Cookie verlangen — sonst nicht überschreiben
-    if "sessionid_ss" not in names and "sessionid" not in names:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        return jsonify(
-            ok=False,
-            error=_t("Kein Auth-Cookie (sessionid_ss/sessionid) gefunden. Bist du im "
-                     "Browser bei TikTok eingeloggt? Update abgebrochen — die alten "
-                     "Cookies bleiben erhalten."),
-            parsed=n_parsed,
-            found=sorted(names)[:20],
-        ), 400
-
-    # 4) Backup
-    backed_up = False
-    if os.path.exists(_c().cfg["COOKIE_FILE"]):
-        try:
-            shutil.copy2(_c().cfg["COOKIE_FILE"], _c().cfg["COOKIE_FILE"] + ".bak")
-            backed_up = True
-        except Exception as e:
-            log.warning(f"Cookie-Backup fehlgeschlagen (fahre fort): {e}")
-
-    # 5) Atomar ersetzen
-    try:
-        os.replace(tmp, _c().cfg["COOKIE_FILE"])
-    except Exception as e:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        return jsonify(ok=False, error=f"Schreiben fehlgeschlagen: {_fehler_text(e, 'api_cookies_update')}"), 500
+    datei = _c().cfg["COOKIE_FILE"]
+    erg = _nc_cookieholen.uebernehmen(payload.get("cookies") or "", datei)
+    if not erg["ok"]:
+        art = erg["art"]
+        if art == "leer":
+            fehler = _t("Keine Cookie-Daten übergeben.")
+        elif art == "zu_gross":
+            fehler = _t("Eingabe zu groß (>2 MB).")
+        elif art == "json":
+            fehler = "JSON nicht lesbar: " + erg["detail"]
+        elif art == "format":
+            fehler = "Cookies nicht verarbeitbar: " + erg["detail"]
+        elif art == "keine":
+            fehler = _t("Keine gültigen Cookies erkannt. Erwartet wird das Netscape-Format "
+                        "(cookies.txt), ein JSON-Array oder ein Header-String "
+                        "(name=wert; name2=wert2).")
+        elif art == "kein_login":
+            fehler = _t("Kein Auth-Cookie (sessionid_ss/sessionid) gefunden. Bist du im "
+                        "Browser bei TikTok eingeloggt? Update abgebrochen — die alten "
+                        "Cookies bleiben erhalten.")
+        else:
+            fehler = "Schreiben fehlgeschlagen: " + erg["detail"]
+        return jsonify(ok=False, error=fehler, found=erg.get("gefunden") or []), \
+            (500 if art == "schreiben" else 400)
 
     # Cache invalidieren → _load_cookies_dict() lädt beim nächsten Zugriff neu
-    try:
-        _c().cfg["_COOKIES_CACHE"].pop("v", None)
-    except Exception:
-        pass
-
+    _c().cfg["_COOKIES_CACHE"].pop("v", None)
     health = _c().get_cookie_health()
-    try:
-        log.info(
-            f"Cookies via Dashboard aktualisiert: {n_parsed} Cookies geschrieben, "
-            f"status={health.get('status')}, critical_present={health.get('critical_present')}, "
-            f"backup={'ja' if backed_up else 'nein'}"
-        )
-    except Exception:
-        pass
-    return jsonify(ok=True, parsed=n_parsed, backed_up=backed_up,
-                   deduped=n_dupes,
-                   auth_cookie=("sessionid_ss" if "sessionid_ss" in names else "sessionid"),
-                   health=health)
+    log.info("Cookies via Dashboard aktualisiert: %d Cookies geschrieben, status=%s, "
+             "critical_present=%s, backup=%s", erg["anzahl"], health.get("status"),
+             health.get("critical_present"), "ja" if erg["backup"] else "nein")
+    return jsonify(ok=True, parsed=erg["anzahl"], backed_up=erg["backup"],
+                   deduped=erg["doppelt"], auth_cookie=erg["auth_cookie"], health=health)
 
 
 @bp.route("/api/cookies/fetch", methods=["POST"])

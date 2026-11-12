@@ -80,6 +80,9 @@ PROTECTED_PREFIXES = (
 PROTECTED_NAMES = (
     ".env", ".env.local", ".env.production",
     "config.json", "app_config.json", "cookies.txt", "cookies.json",
+    # v5.4-W195: die Datei, die der Bot WIRKLICH liest (bot.py COOKIE_FILE).
+    # Geschuetzt war nur „cookies.txt" — ein Name, den nichts schreibt.
+    "tiktok_cookies.txt",
     STATE_FILE,
     # Der News-Agent schreibt diese Datei im Betrieb. Kaeme sie aus dem
     # Archiv zurueck, waere die Website schlagartig wieder auf dem Stand

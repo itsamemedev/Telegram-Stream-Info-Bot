@@ -101,10 +101,9 @@ launchctl load fehlgeschlagen.	launchctl load failed.
 launchd-Eintrag geladen.	launchd entry loaded.
 macOS hat kein systemd. Das Gegenstueck heisst launchd: eine Datei in ~/Library/LaunchAgents, die den Bot beim Anmelden startet und neu startet, wenn er stirbt.	macOS has no systemd. Its counterpart is launchd: a file in ~/Library/LaunchAgents that starts the bot at login and restarts it when it dies.
 pip liess sich nicht aktualisieren — weiter mit der vorhandenen Fassung.	pip could not be upgraded — continuing with the existing version.
-streamlink liess sich nicht nachinstallieren.	streamlink could not be installed afterwards.
 systemctl daemon-reload fehlgeschlagen.	systemctl daemon-reload failed.
 tiktok_cookies.txt ist vorhanden.	tiktok_cookies.txt is present.
-yt-dlp liess sich nicht nachinstallieren.	yt-dlp could not be installed afterwards.
+yt-dlp/streamlink liessen sich nicht in die venv installieren — es bleiben die des Systems.	yt-dlp/streamlink could not be installed into the venv — the system ones stay in use.
 
 # --- tools/install.bat (v4.2-W8) ---------------------------------------
 # Der Windows-Installer hatte bis hierher gar keine Sprachschicht. Er
@@ -523,7 +522,7 @@ Es fehlt etwas (siehe Plan). Ohne --check wird es installiert.	Something is miss
 Exitcodes: 0 vollstaendig · 1 es fehlt etwas · 2 Aufruffehler	Exit codes: 0 complete · 1 something is missing · 2 usage error
 Installation: %s	Installation: %s
 Kein Python >= 3.12 gefunden — erst tools/installer.sh laufen lassen.	No Python >= 3.12 found — run tools/installer.sh first.
-Keine virtuelle Umgebung unter %s/.venv.	No virtual environment at %s/.venv.
+Keine virtuelle Umgebung unter %s (weder .venv noch venv).	No virtual environment at %s (neither .venv nor venv).
 Mindestens ein Systempaket liess sich nicht installieren.	At least one system package could not be installed.
 NIGHTCRAWLER — Nachinstallation und Abgleich	NIGHTCRAWLER — post-install and reconciliation
 Nachpruefung	Verification
@@ -555,7 +554,11 @@ Trockenlauf — Befehle werden gezeigt, nicht ausgefuehrt.	Dry run — commands 
 Unbekannter Paketmanager: %s (apt dnf pacman zypper apk brew)	Unknown package manager: %s (apt dnf pacman zypper apk brew)
 Verzeichnis gibt es nicht: %s	Directory does not exist: %s
 Virtuelle Umgebung anlegen und Pakete installieren?	Create the virtual environment and install packages?
-Virtuelle Umgebung anlegen: %s/.venv	Create virtual environment: %s/.venv
+Virtuelle Umgebung anlegen: %s	Create virtual environment: %s
+TikTok-Werkzeuge	TikTok tools
+TikTok-Werkzeuge aktualisieren: %s	Update TikTok tools: %s
+yt-dlp und streamlink jetzt aktualisieren?	Update yt-dlp and streamlink now?
+yt-dlp und streamlink werden in der virtuellen Umgebung auf den neuesten Stand gebracht. Der Bot benutzt diese Fassungen vor denen des Systems.	yt-dlp and streamlink are brought up to date in the virtual environment. The bot uses these versions ahead of the system ones.
 Was (ohne Auswahl: --system und --python-deps):	What (without a selection: --system and --python-deps):
 Wie:	How:
 Wird angelegt mit %s	Will be created with %s

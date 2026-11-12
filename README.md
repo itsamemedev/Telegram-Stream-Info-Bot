@@ -120,8 +120,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 28.642 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
-    BOT -->|configure| NC["nc/ — 207 Fachmodule<br/>39 Blueprints"]:::lib
+    BOT["bot.py<br/>Monolith · 28.785 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT -->|configure| NC["nc/ — 209 Fachmodule<br/>39 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
     BOT --> DB[("SQLite oder MariaDB<br/>+ Einstellungen")]:::db
@@ -557,8 +557,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 28.642 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 379 Routen und 663 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 28.785 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 379 Routen und 667 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -574,6 +574,20 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 ```
 
 ---
+
+## 🆕 Neu in v5.4
+
+**„Schlüsselbund“** — damit Aufnahme und Restream an die Stream-Adresse kommen:
+
+- **Cookies vom Telefon:** Cookie-Editor-Export als JSON, Netscape **oder**
+  Header-String; im Deck einfügen oder **Datei wählen**, oder die Datei in
+  Telegram mit der Beschriftung `/cookies` senden (die Nachricht wird danach
+  gelöscht). Chrome für Android kann nicht exportieren, Firefox für Android
+  mit Cookie-Editor schon.
+- **18+-Lives beim Namen:** TikTok-Code 4003110 wird erkannt — die Meldung
+  sagt, dass ein eingeloggtes, altersbestätigtes Konto fehlt.
+- **Das richtige yt-dlp:** der Bot stellt seine venv vor den PATH, meldet
+  Alter und fehlendes curl_cffi, `update.sh` hält yt-dlp und streamlink frisch.
 
 ## 🆕 Neu in v5.3
 
@@ -728,10 +742,10 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.3.1** — „Leichtgewicht“ (2026.11) |
+| Aktuelle Version | **5.4.0** — „Schlüsselbund“ (2026.11) |
 | Flask-Routen | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
-| Fachmodule | 207 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 209 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 16 |
 | Konfigurationsvariablen | ~615 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |

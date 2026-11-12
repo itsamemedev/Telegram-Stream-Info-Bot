@@ -76,6 +76,50 @@ def _feld_zeile(felder) -> str:
     return "\t".join([domain, sub, path, secure, str(expiry), name, wert])
 
 
+_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")   # RFC 6265 token
+
+
+def _header_paare(s: str):
+    """Ist `s` ein Cookie-Header? -> [(name, wert), ...] oder [].
+
+    Streng, weil der Irrtum teuer ist: eine Netscape-Datei, die hier faelschlich
+    als Header durchginge, wuerde zu einem einzigen kaputten Cookie. Also:
+    eine Zeile (Zeilenumbrueche am Rand zaehlen nicht), kein Tab, jedes durch
+    `;` getrennte Stueck ist `name=wert`, und jeder Name ist ein RFC-6265-Token.
+    `Cookie:` davor (aus DevTools kopiert) wird abgenommen."""
+    s = s.strip()
+    if s[:7].lower() == "cookie:":
+        s = s[7:].strip()
+    if not s or "\t" in s or "\n" in s or "\r" in s or "=" not in s:
+        return []
+    paare = []
+    for stueck in s.split(";"):
+        stueck = stueck.strip()
+        if not stueck:
+            continue                      # `a=1; ; b=2` und ein `;` am Ende
+        name, gleich, wert = stueck.partition("=")
+        name = name.strip()
+        if not gleich or not _NAME_RE.match(name):
+            return []
+        wert = wert.strip()
+        if len(wert) >= 2 and wert[0] == wert[-1] == '"':
+            wert = wert[1:-1]             # RFC 6265 erlaubt den Wert in Anfuehrung
+        if any(z.isspace() for z in wert):
+            return []                     # kein cookie-octet: Fliesstext, kein Header
+        paare.append((name, wert))
+    return paare
+
+
+LOGIN_NAMEN = ("sessionid_ss", "sessionid")
+
+
+def hat_login(namen) -> bool:
+    """Steht ein Anmelde-Cookie in dieser Namensmenge? Dieselbe Regel wie die
+    Import-Pruefung und gesundheit() — an einer Stelle, damit die drei nicht
+    auseinanderlaufen."""
+    return bool(set(namen) & set(LOGIN_NAMEN))
+
+
 def _cookies_input_to_netscape(raw: str):
     """B63: Konvertiert beliebigen Cookie-Input nach Netscape-Format (das was
        MozillaCookieJar / yt-dlp lesen). Akzeptiert zwei Formate:
@@ -107,9 +151,29 @@ def _cookies_input_to_netscape(raw: str):
     if not s:
         return _KOPF + "\n", 0
 
+    # ── Format 3: Header-String (v5.4-W195) ─────────────────────────────────
+    # `sessionid=…; ttwid=…` — der Export „Header String" von Cookie-Editor,
+    # das, was DevTools unter „Cookie:" zeigen, und der einzige Weg, der auf
+    # Android ohne Datei auskommt. Der Modulkopf nannte das Format seit B63,
+    # die Funktion konnte es nie: gemessen 0 erkannte Cookies.
+    paare = _header_paare(s)
+    if paare:
+        out = [_KOPF, "# Aus einem Header-String uebernommen (ohne Ablaufdaten)", ""]
+        for name, wert in paare:
+            # Ablauf 0 = Sitzungs-Cookie: ein Header traegt keine Ablaufzeit,
+            # und eine erfundene waere eine falsche Auskunft im Deck.
+            out.append(_feld_zeile([".tiktok.com", "", "/", "TRUE", 0, name, wert]))
+        return "\n".join(out) + "\n", len(paare)
+
     # ── Format 1: JSON (Cookie-Editor / EditThisCookie) ──────────────────────
     if s[:1] in ("[", "{"):
         data = json.loads(s)
+        if isinstance(data, dict) and data and all(
+                isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
+            # v5.4-W195: {"sessionid": "…", "ttwid": "…"} — was eine
+            # Konsolen-Zeile wie Object.fromEntries(...) liefert. Ohne das
+            # fiel die Eingabe in den Zweig darunter und ergab 0 Cookies.
+            data = [{"name": k, "value": v} for k, v in data.items()]
         if isinstance(data, dict):
             # manche Tools wrappen: {"cookies":[...]} oder {"data":[...]}
             data = data.get("cookies") or data.get("data") or []
@@ -610,9 +674,14 @@ def gesundheit() -> dict:
     if not critical_present:
         status = "critical"
         headline = "Keine kritischen Auth-Cookies vorhanden"
-    elif "sessionid_ss" not in present_names and "sessionid" not in present_names:
+    elif not hat_login(present_names):
         status = "critical"
-        headline = "Auth-Cookie sessionid(_ss) fehlt"
+        # v5.4-W195: „sessionid(_ss) fehlt" sagte nicht, was das heisst. Beim
+        # Betreiber standen nur die Gast-Tokens des Auto-Bezugs in der Datei,
+        # und jedes 18+-Live blieb zu (TikTok 4003110).
+        headline = ("Keine Anmeldung in der Cookie-Datei (kein sessionid, nur "
+                    + ", ".join(sorted(present_names)[:4])
+                    + ") — 18+- und Abo-Lives bleiben zu. Eingeloggt neu exportieren.")
     elif expired:
         status = "warning"
         headline = f"{len(expired)} Cookie(s) abgelaufen"
