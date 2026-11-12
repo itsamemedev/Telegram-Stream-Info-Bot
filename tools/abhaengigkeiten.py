@@ -42,6 +42,7 @@ WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Importname -> pip-Name. Nur was sich unterscheidet steht hier.
 PIPNAME = {"dotenv": "python-dotenv", "discord": "discord.py",
            "socks": "PySocks", "pymysql": "PyMySQL", "PIL": "Pillow",
+           "MySQLdb": "mysqlclient",
            "telegram": "python-telegram-bot", "faster_whisper": "faster-whisper"}
 
 # Liegt im Archiv unter nc/_vendor/ — nie ueber pip.

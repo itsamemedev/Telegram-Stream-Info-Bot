@@ -325,6 +325,59 @@ nc_mariadb_sql(){
   printf 'FLUSH PRIVILEGES;\n'
 }
 
+# ── v5.2-W193: MariaDB-Feinschliff (Installer und update.sh) ──────────────
+# nc_mysqlclient_pakete [Paketmanager] -> Systempakete zum Bauen von mysqlclient
+# Nur, was nachgesehen ist (Ubuntu 24.04: libmariadb-dev 1:10.11). Fuer andere
+# Manager steht hier nichts — ein geratener Name scheitert erst beim
+# Installieren, und PyMySQL bleibt dann ohnehin der Treiber (W127-Regel).
+nc_mysqlclient_pakete(){
+  case "${1:-$NC_PKG}" in
+    apt) printf 'libmariadb-dev pkg-config build-essential python3-dev';;
+    *)   printf '';;
+  esac
+}
+
+# nc_mariadb_konf_pfad -> Pfad der eigenen Konfigurationsdatei (leer = kein
+# bekanntes Verzeichnis). Debian/Ubuntu lesen mariadb.conf.d, RHEL my.cnf.d.
+nc_mariadb_konf_pfad(){
+  for _d in /etc/mysql/mariadb.conf.d /etc/my.cnf.d; do
+    [ -d "${W:-}$_d" ] && { printf '%s/90-nightcrawler.cnf' "$_d"; return 0; }
+  done
+  printf ''
+}
+
+# nc_mariadb_konf_text SKIP DATEI -> schreibt die Datei. SKIP=1: skip_name_resolve.
+# Ohne Konto fuer 127.0.0.1 (von Hand angelegt, nur @'localhost') faende der
+# Bot sich damit vor "Access denied" (1045, gemessen gegen MariaDB 10.11) —
+# der Aufrufer prueft das vorher (nc_mariadb_tcp_konto) und gibt dann 0.
+nc_mariadb_konf_text(){
+  _skip=""
+  [ "${1:-1}" = 1 ] && _skip="skip_name_resolve = 1"
+  cat > "$2" <<KONF
+# NIGHTCRAWLER (v5.2-W193) — geschrieben von tools/installer.sh bzw.
+# tools/update.sh --mariadb-konf; der naechste Lauf gleicht sie an.
+[mysqld]
+# skip_name_resolve: kein Namens-Nachschlag je neuer Verbindung — kostet
+# einen DNS-Rundgang und haengt, wenn DNS haengt. Die Konten des Bots stehen
+# auf localhost, 127.0.0.1 und ::1 (nc_mariadb_sql).
+$_skip
+# Wie SQLite mit synchronous=NORMAL: das Protokoll wird je Commit
+# geschrieben, aber nur einmal je Sekunde auf die Platte gezwungen. Ein
+# Absturz von MariaDB verliert nichts, ein Stromausfall hoechstens die letzte
+# Sekunde — und die Platte bekommt keinen fsync je Commit mehr.
+innodb_flush_log_at_trx_commit = 2
+KONF
+}
+
+# nc_mariadb_tcp_konto NUTZER CLI... -> 0, wenn NUTZER ein Konto fuer
+# 127.0.0.1, ::1 oder % hat (dann ist skip_name_resolve sicher).
+nc_mariadb_tcp_konto(){
+  _nu="$(printf '%s' "$1" | sed "s/'/''/g")"; shift
+  _n="$(printf "SELECT COUNT(*) FROM mysql.user WHERE User='%s' AND Host IN ('127.0.0.1','::1','%%');\n" "$_nu" \
+        | "$@" -N 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$_n" ] && [ "$_n" != "0" ]
+}
+
 # nc_dienst_finden -> NC_DIENST: Name der Bot-Unit (nightcrawler | tiktok-bot) oder leer
 # Dieselben zwei Namen wie im Installer; die Doku nennt tiktok-bot, der
 # Installer legt nightcrawler an.

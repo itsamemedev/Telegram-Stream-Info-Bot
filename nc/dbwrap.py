@@ -783,6 +783,64 @@ def mariadb_lage() -> dict:
                 ping_nach_s=_ping_nach_s())
 
 
+def treiber_wunsch() -> str:
+    """MARIADB_TREIBER: auto (Vorgabe) | mysqlclient | pymysql. Als Funktion gelesen.
+    MARIADB_* ist aus dem Deck nicht setzbar (nc/einstellungen, Datenbank-Bootstrap)."""
+    w = os.getenv("MARIADB_TREIBER", "auto").strip().lower()
+    return w if w in ("auto", "mysqlclient", "pymysql") else "auto"
+
+
+def _treiber_laden():
+    """-> (name, modul, DictCursor). v5.2-W193.
+
+    mysqlclient ist die C-Bibliothek von MariaDB/MySQL hinter derselben
+    DB-API wie PyMySQL. Gegen MariaDB 10.11 gemessen, CPU im Bot je Abfrage:
+    Einzelzeile 89 -> 30 us, 500 Zeilen 1863 -> 269 us. Dazu gibt es den GIL
+    frei, solange es auf den Server wartet — PyMySQL rechnet das Protokoll in
+    Python und haelt ihn. PyMySQL bleibt der Rueckweg: mysqlclient braucht
+    zum Bauen libmariadb-dev und einen Compiler, und fehlt es, laeuft alles
+    wie vorher."""
+    wunsch = treiber_wunsch()
+    if wunsch in ("auto", "mysqlclient"):
+        try:
+            import MySQLdb
+            import MySQLdb.cursors
+            return "mysqlclient", MySQLdb, MySQLdb.cursors.DictCursor
+        except ImportError as e:
+            if wunsch == "mysqlclient":
+                log.error("MARIADB_TREIBER=mysqlclient, aber nicht installiert (%s) — "
+                          "nehme PyMySQL. Abhilfe: bash tools/update.sh --mysqlclient", e)
+    import pymysql
+    from pymysql.cursors import DictCursor
+    return "pymysql", pymysql, DictCursor
+
+
+def treiber_fehler():
+    """-> (IntegrityError-Klassen, OperationalError-Klassen) ALLER vorhandenen
+    Treiber. bot.py faengt damit doppelte Schluessel und Sperren ab; mit nur
+    den PyMySQL-Klassen liefe unter mysqlclient jedes `except
+    DB_INTEGRITY_ERRORS` ins Leere (eigene Ausnahmeklassen je Treiber)."""
+    import importlib
+    import importlib.util
+    integ, oper = [], []
+    for name in ("MySQLdb", "pymysql"):
+        if importlib.util.find_spec(name) is None:
+            continue                      # dieser Treiber ist nicht da — der andere genuegt
+        mod = importlib.import_module(name)
+        integ.append(mod.IntegrityError)
+        oper.append(mod.OperationalError)
+    return tuple(integ), tuple(oper)
+
+
+def _ping(p, conn):
+    """Verbindung pruefen, ohne still neu zu verbinden. PyMySQL verbindet bei
+    ping() ab Werk neu (abgekuendigt); mysqlclient kennt das Schluesselwort nicht."""
+    if getattr(p, "_treiber", "pymysql") == "pymysql":
+        conn.ping(reconnect=False)
+    else:
+        conn.ping()
+
+
 def _mariadb_neue_verbindung(p):
     """Eine frische PyMySQL-Verbindung mit den Einstellungen des Pools."""
     return p._pymysql.connect(
@@ -811,15 +869,14 @@ def _mariadb_connect():
         # B1: Doppelte Initialisierung verhindern
         with _MARIADB_POOL_INIT_LOCK:
             if get_pool() is None:
-                import pymysql
-                from pymysql.cursors import DictCursor
                 import queue
                 p = type('Pool', (), {})()
                 p._q = queue.Queue(maxsize=MARIADB_POOL_SIZE)
                 p._lock = threading.Lock()
                 p._created = 0
-                p._pymysql = pymysql
-                p._DictCursor = DictCursor
+                # v5.2-W193: mysqlclient (C) wenn vorhanden, sonst PyMySQL.
+                p._treiber, p._pymysql, p._DictCursor = _treiber_laden()
+                _MARIADB_STAT["treiber"] = p._treiber
                 set_pool(p)
     p = get_pool()
 
@@ -871,7 +928,7 @@ def _mariadb_connect():
     if frei_seit is None or _time.monotonic() - frei_seit >= _ping_nach_s():
         _MARIADB_STAT["pings"] += 1
         try:
-            conn.ping(reconnect=False)
+            _ping(p, conn)
         except Exception as e:
             _mariadb_grund_melden(e)
             try: conn.close()

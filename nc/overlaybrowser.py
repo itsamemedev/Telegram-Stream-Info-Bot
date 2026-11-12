@@ -80,52 +80,55 @@ def browser_cmd(binpath, nice=None):
     return cmd
 
 
-class Dauerbrowser:
-    """Ein headless Chromium mit EINER Seite, aus der Bilder geholt werden."""
+def teilen() -> bool:
+    """OVERLAY_BROWSER_TEILEN (Vorgabe 1): ein Chromium fuer alle Restreams.
 
-    def __init__(self, binpath, url, groesse, nice=None):
+    v5.2-W193. Gemessen (Chromium 14x, headless): ein Dauerbrowser belegt rund
+    400 MB PSS in 14 Prozessen — je Restream. Ein weiterer Tab im selben
+    Browser braucht nur einen weiteren Renderer. 0 = ein Browser je Restream
+    wie bis W192 (Rueckweg, falls ein Tab den anderen stoert). Als Funktion
+    gelesen, nicht als Konstante."""
+    return os.getenv("OVERLAY_BROWSER_TEILEN", "1").strip().lower() not in (
+        "0", "false", "nein", "no", "aus", "off")
+
+
+class _Verbindung:
+    """Ein Chromium-Prozess und seine Steuer-Pipe. Mehrere Tabs teilen sie;
+    jeder Aufruf laeuft unter `sperre` (RLock), Antworten kommen nach id."""
+
+    def __init__(self, binpath, nice=None):
         self.binpath = binpath
-        self.url = url
-        self.groesse = groesse
         self.nice = nice
         self._proc = None
         self._w = self._r = None
         self._puffer = b""
         self._id = 0
-        self._sitzung = None
-        self._sperre = threading.Lock()
-        self._letzter_start = 0.0
-        self.starts = 0
+        self.sperre = threading.RLock()
+        self.generation = 0          # zaehlt Starts: ein Tab erkennt daran den Neustart
+        self.letzter_start = 0.0
+        self.tabs = set()
 
-    # ── Lebenszyklus ──────────────────────────────────────────────────
     def lebt(self):
         return self._proc is not None and self._proc.poll() is None
 
-    def starten(self, timeout=20.0):
-        with self._sperre:
-            self._starten(timeout)
-
-    def _starten(self, timeout):
-        self._beenden()
-        self._letzter_start = time.monotonic()
-        breite, hoehe = _groesse(self.groesse)
+    def starten(self):
+        self.beenden()
+        self.letzter_start = time.monotonic()
         r_zu, w_zu = os.pipe()     # wir -> Chromium (dort fd 3)
         r_von, w_von = os.pipe()   # Chromium -> wir (dort fd 4)
 
         def _fds():
-            # Erst weit nach oben kopieren, dann auf 3/4 legen: die Pipes
-            # koennen selbst auf 3 oder 4 liegen, wenn der Bot dort nichts
-            # offen hat, und ein direktes dup2(r_zu, 3) ueberschriebe dann
-            # ein w_von, das zufaellig auf 3 liegt.
+            # Nach dem fork, vor dem exec: die Pipe-Enden auf 3 und 4 legen.
+            # Erst wegkopieren — liegt r_zu zufaellig schon auf 4, wuerde das
+            # zweite dup2 es ueberschreiben.
             a = fcntl.fcntl(r_zu, fcntl.F_DUPFD, 10)
             b = fcntl.fcntl(w_von, fcntl.F_DUPFD, 10)
             os.dup2(a, 3)
             os.dup2(b, 4)
 
         try:
-            # start_new_session: Chromium forkt Zygote und Renderer. Beim
-            # Beenden geht das Signal an die ganze Gruppe — sonst bleiben
-            # Renderer als Waisen liegen und rechnen weiter.
+            # Eigene Prozessgruppe: beenden() trifft mit killpg auch Zygote
+            # und Renderer, die sonst als Waisen weiterliefen.
             self._proc = subprocess.Popen(
                 browser_cmd(self.binpath, self.nice), pass_fds=(r_zu, w_von, 3, 4),
                 preexec_fn=_fds, start_new_session=True,
@@ -139,50 +142,9 @@ class Dauerbrowser:
         os.close(w_von)
         self._w, self._r = w_zu, r_von
         self._puffer = b""
-        self.starts += 1
-        frist = time.monotonic() + timeout
-        ziel = self._aufruf("Target.createTarget", {"url": "about:blank"},
-                            frist=frist)["targetId"]
-        self._sitzung = self._aufruf(
-            "Target.attachToTarget", {"targetId": ziel, "flatten": True},
-            frist=frist)["sessionId"]
-        # Transparenter Hintergrund — dasselbe wie
-        # --default-background-color=00000000 beim Einzelschuss; ohne das
-        # deckt das Overlay das Quellbild weiss ab.
-        self._aufruf("Emulation.setDefaultBackgroundColorOverride",
-                     {"color": {"r": 0, "g": 0, "b": 0, "a": 0}}, frist=frist)
-        self._aufruf("Emulation.setDeviceMetricsOverride",
-                     {"width": breite, "height": hoehe,
-                      "deviceScaleFactor": 1, "mobile": False}, frist=frist)
-        self._aufruf("Page.navigate", {"url": self.url}, frist=frist)
-        self._warten_bis_geladen(frist)
-
-    def _warten_bis_geladen(self, frist):
-        # Page.navigate antwortet, bevor die neue Seite steht. Ein Bild in
-        # dieser Luecke scheitert mit „Not attached to an active page" —
-        # gemessen beim Neustart nach einem Absturz, wo der erste Schuss
-        # direkt folgt. Ein Neustart, der zuverlaessig mit Fehler endet, waere
-        # ein Neustart je NEUSTART_RUHE_S und nie ein Bild.
-        letzter = None
-        while time.monotonic() < frist:
-            try:
-                erg = self._aufruf("Runtime.evaluate",
-                                   {"expression": "document.readyState",
-                                    "returnByValue": True}, frist=frist)
-                if (erg.get("result") or {}).get("value") == "complete":
-                    return
-            except OverlayBrowserFehler as e:
-                if self._proc is None or self._proc.poll() is not None:
-                    raise
-                letzter = e
-            time.sleep(0.1)
-        raise OverlayBrowserFehler("Seite nicht geladen: %s" % (letzter or self.url))
+        self.generation += 1
 
     def beenden(self):
-        with self._sperre:
-            self._beenden()
-
-    def _beenden(self):
         p, self._proc = self._proc, None
         for fd in (self._w, self._r):
             if fd is not None:
@@ -191,7 +153,6 @@ class Dauerbrowser:
                 except OSError:
                     pass   # Aufraeumen: schon zu ist so gut wie zu
         self._w = self._r = None
-        self._sitzung = None
         if p is None:
             return
         try:
@@ -201,7 +162,6 @@ class Dauerbrowser:
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            # v4.2-W179: kill() ohne wait() liess einen <defunct> stehen.
             p.kill()
             try:
                 p.wait(timeout=5)
@@ -209,37 +169,14 @@ class Dauerbrowser:
                 log.warning("Overlay-Browser: pid %s nach SIGKILL nicht beendet "
                             "— bleibt als Zombie, bis er endet.", p.pid)
 
-    # ── Bild ──────────────────────────────────────────────────────────
-    def schuss(self, timeout=15.0):
-        """PNG-Bytes des aktuellen Overlays. Startet einen gestorbenen Browser
-        neu, aber hoechstens alle NEUSTART_RUHE_S. Wirft OverlayBrowserFehler."""
-        with self._sperre:
-            if not self.lebt():
-                rest = NEUSTART_RUHE_S - (time.monotonic() - self._letzter_start)
-                if self.starts and rest > 0:
-                    raise OverlayBrowserFehler(
-                        "Chromium gestorben (rc %s), Neustart in %.0f s"
-                        % (self._proc.returncode if self._proc else "?", rest))
-                self._starten(timeout)
-            try:
-                erg = self._aufruf("Page.captureScreenshot", {"format": "png"},
-                                   frist=time.monotonic() + timeout)
-            except OverlayBrowserFehler:
-                # Ein Browser, der nicht antwortet, wird nicht wieder gesund —
-                # beenden, damit der naechste Takt neu startet statt wieder
-                # 15 s zu warten.
-                self._beenden()
-                raise
-            return base64.b64decode(erg.get("data") or "")
-
-    # ── Protokoll ─────────────────────────────────────────────────────
-    def _aufruf(self, methode, params, frist):
+    def aufruf(self, methode, params, frist, sitzung=None):
         if self._w is None:
             raise OverlayBrowserFehler("Browser nicht gestartet")
         self._id += 1
         nachricht = {"id": self._id, "method": methode, "params": params}
-        if self._sitzung and not methode.startswith("Target."):
-            nachricht["sessionId"] = self._sitzung
+        # Target.* geht an den Browser selbst, alles andere an die Seite.
+        if sitzung and not methode.startswith("Target."):
+            nachricht["sessionId"] = sitzung
         try:
             os.write(self._w, json.dumps(nachricht).encode() + b"\0")
         except OSError as e:
@@ -258,10 +195,154 @@ class Dauerbrowser:
                 self._puffer += stueck
             roh, self._puffer = self._puffer.split(b"\0", 1)
             antwort = json.loads(roh)
-            # Ereignisse (ohne id) und fremde Antworten ueberspringen.
             if antwort.get("id") != self._id:
-                continue
+                continue            # Ereignis oder Antwort eines anderen Tabs
             if "error" in antwort:
                 raise OverlayBrowserFehler("%s: %s" % (
                     methode, antwort["error"].get("message", antwort["error"])))
             return antwort.get("result") or {}
+
+
+_GETEILT = {}                     # (binpath, nice) -> _Verbindung
+_GETEILT_SPERRE = threading.Lock()
+
+
+def _verbindung_fuer(binpath, nice):
+    """Die geteilte Verbindung fuer diesen Browser — oder eine eigene."""
+    if not teilen():
+        return _Verbindung(binpath, nice)
+    with _GETEILT_SPERRE:
+        v = _GETEILT.get((binpath, nice))
+        if v is None:
+            v = _GETEILT[(binpath, nice)] = _Verbindung(binpath, nice)
+        return v
+
+
+def lage() -> dict:
+    """Fuer /healthz: wie viele Browser fuer wie viele Tabs laufen."""
+    with _GETEILT_SPERRE:
+        vs = list(_GETEILT.values())
+    return {"teilen": teilen(), "browser": sum(1 for v in vs if v.lebt()),
+            "tabs": sum(len(v.tabs) for v in vs)}
+
+
+class Dauerbrowser:
+    """Ein Overlay-Tab in einem headless Chromium, aus dem Bilder geholt werden.
+
+    v5.2-W193: der Chromium dahinter ist geteilt (teilen()); dieser Tab hat
+    seine eigene Seite, Groesse und Sitzung. Die oeffentliche Schnittstelle ist
+    dieselbe wie bis W192 — starten(), schuss(), beenden(), lebt(), starts."""
+
+    def __init__(self, binpath, url, groesse, nice=None):
+        self.binpath = binpath
+        self.url = url
+        self.groesse = groesse
+        self.nice = nice
+        self._v = None
+        self._ziel = None
+        self._sitzung = None
+        self._gen = -1
+        self.starts = 0
+
+    @property
+    def _proc(self):
+        """Der Chromium-Prozess hinter diesem Tab (fuer Diagnose und Vertrag)."""
+        return self._v._proc if self._v is not None else None
+
+    def _verbindung(self):
+        if self._v is None:
+            self._v = _verbindung_fuer(self.binpath, self.nice)
+        return self._v
+
+    def lebt(self):
+        v = self._v
+        return (v is not None and v.lebt() and self._sitzung is not None
+                and self._gen == v.generation)
+
+    def starten(self, timeout=20.0):
+        v = self._verbindung()
+        with v.sperre:
+            self._starten(timeout)
+
+    def _starten(self, timeout):
+        v = self._verbindung()
+        breite, hoehe = _groesse(self.groesse)
+        frist = time.monotonic() + timeout
+        if not v.lebt():
+            v.starten()
+        v.tabs.add(self)
+        self._sitzung = None
+        self.starts += 1
+        ziel = v.aufruf("Target.createTarget", {"url": "about:blank"},
+                        frist=frist)["targetId"]
+        self._ziel = ziel
+        sitzung = v.aufruf("Target.attachToTarget", {"targetId": ziel, "flatten": True},
+                           frist=frist)["sessionId"]
+        # Transparenter Hintergrund: ohne das deckt das Overlay-Bild das
+        # Quellbild weiss ab.
+        v.aufruf("Emulation.setDefaultBackgroundColorOverride",
+                 {"color": {"r": 0, "g": 0, "b": 0, "a": 0}}, frist=frist, sitzung=sitzung)
+        v.aufruf("Emulation.setDeviceMetricsOverride",
+                 {"width": breite, "height": hoehe,
+                  "deviceScaleFactor": 1, "mobile": False}, frist=frist, sitzung=sitzung)
+        v.aufruf("Page.navigate", {"url": self.url}, frist=frist, sitzung=sitzung)
+        self._warten_bis_geladen(v, sitzung, frist)
+        self._sitzung = sitzung
+        self._gen = v.generation
+
+    def _warten_bis_geladen(self, v, sitzung, frist):
+        letzter = None
+        while time.monotonic() < frist:
+            try:
+                erg = v.aufruf("Runtime.evaluate",
+                               {"expression": "document.readyState",
+                                "returnByValue": True}, frist=frist, sitzung=sitzung)
+                if (erg.get("result") or {}).get("value") == "complete":
+                    return
+            except OverlayBrowserFehler as e:
+                if not v.lebt():
+                    raise
+                letzter = e
+            time.sleep(0.1)
+        raise OverlayBrowserFehler("Seite nicht geladen: %s" % (letzter or self.url))
+
+    def beenden(self):
+        """Den Tab schliessen; war er der letzte, den ganzen Browser."""
+        v = self._v
+        if v is None:
+            return
+        with v.sperre:
+            v.tabs.discard(self)
+            if self._ziel and v.lebt() and v.tabs and self._gen == v.generation:
+                try:
+                    v.aufruf("Target.closeTarget", {"targetId": self._ziel},
+                             frist=time.monotonic() + 5)
+                except OverlayBrowserFehler as e:
+                    log.warning("Overlay-Browser: Tab liess sich nicht schliessen (%s) "
+                                "— er belegt Speicher bis zum naechsten Neustart.", e)
+            self._ziel = self._sitzung = None
+            if not v.tabs:
+                v.beenden()
+
+    def schuss(self, timeout=15.0):
+        """PNG-Bytes des aktuellen Overlays. Startet einen gestorbenen Browser
+        neu, aber hoechstens alle NEUSTART_RUHE_S. Wirft OverlayBrowserFehler."""
+        v = self._verbindung()
+        with v.sperre:
+            if not self.lebt():
+                if not v.lebt():
+                    rest = NEUSTART_RUHE_S - (time.monotonic() - v.letzter_start)
+                    if self.starts and rest > 0:
+                        raise OverlayBrowserFehler(
+                            "Chromium gestorben (rc %s), Neustart in %.0f s"
+                            % (v._proc.returncode if v._proc else "?", rest))
+                self._starten(timeout)
+            try:
+                erg = v.aufruf("Page.captureScreenshot", {"format": "png"},
+                               frist=time.monotonic() + timeout, sitzung=self._sitzung)
+            except OverlayBrowserFehler:
+                # Ein haengender Browser haengt fuer alle Tabs — beenden, sonst
+                # wartet jeder Takt jedes Restreams wieder 15 s auf nichts.
+                v.beenden()
+                raise
+            return base64.b64decode(erg.get("data") or "")

@@ -24,11 +24,61 @@ Objekt stehen laesst, benutzt weiter das alte Modell und sieht den neuen Namen
 im Dashboard. Das waere schlimmer als gar kein Umschalten.
 """
 
+import contextlib
 import logging
+import os
 import re
+import threading
+import time
 
 # Register: Name UND geladenes Objekt. Beide werden neu gebunden.
-MODELL = {"name": "base", "obj": None}
+# v5.2-W193: "zuletzt" = monotonic der letzten Anforderung (fuer das Entladen).
+MODELL = {"name": "base", "obj": None, "zuletzt": 0.0, "entladen": 0, "laufend": 0}
+_GEBRAUCH_SPERRE = threading.Lock()
+
+
+@contextlib.contextmanager
+def gebrauch():
+    """Um jede Transkription legen (im Thread). Solange eine laeuft, wird nicht
+    entladen: eine lange Archiv-Transkription hielte ihr Modell fest, und der
+    naechste Live-Satz luede ein ZWEITES — doppelter Speicher statt weniger."""
+    with _GEBRAUCH_SPERRE:
+        MODELL["laufend"] += 1
+    try:
+        yield
+    finally:
+        with _GEBRAUCH_SPERRE:
+            MODELL["laufend"] -= 1
+        MODELL["zuletzt"] = time.monotonic()
+
+
+def benutzt(jetzt) -> None:
+    """Bei jeder Anforderung des Modells aufrufen."""
+    MODELL["zuletzt"] = float(jetzt)
+
+
+def leerlauf_s() -> float:
+    """WHISPER_ENTLADEN_MIN (Vorgabe 15; 0 = nie) in Sekunden. Als Funktion gelesen.
+
+    v5.2-W193: das Modell blieb nach dem ersten Satz fuer immer geladen —
+    `medium` belegt rund 1,5 GB, und der Sprung am 11.11. (W180) auf 4,5 GB RSS
+    war genau so ein Modell, das danach nie wieder ging."""
+    roh = os.getenv("WHISPER_ENTLADEN_MIN", "15").strip()
+    return max(0.0, float(roh)) * 60 if roh.replace(".", "", 1).isdigit() else 900.0
+
+
+def entladen_wenn_leer(jetzt, leerlauf) -> bool:
+    """Modell verwerfen, wenn es `leerlauf` s nicht angefordert wurde. -> True = verworfen.
+
+    Sicher auch waehrend einer laufenden Transkription: die haelt ihr Modell
+    selbst als lokale Variable, freigegeben wird es erst nach ihrem Ende."""
+    if MODELL["obj"] is None or leerlauf <= 0 or MODELL["laufend"] > 0:
+        return False
+    if float(jetzt) - MODELL["zuletzt"] < leerlauf:
+        return False
+    MODELL["obj"] = None
+    MODELL["entladen"] += 1
+    return True
 
 # Die Auswahl im Dashboard. Kein Zwang — ein eigener Name wird akzeptiert,
 # faster-whisper laedt auch Modelle, die hier nicht stehen.

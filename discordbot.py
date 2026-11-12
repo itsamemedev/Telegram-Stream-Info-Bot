@@ -36,6 +36,7 @@ import types
 from datetime import datetime, timedelta, timezone
 
 import nc.community as _community
+from nc import dcspar as _nc_dcspar            # v5.2-W193: Discord ohne volle Mitgliederliste
 from nc import azraelstate as _nc_azrael
 from nc import badwords as _nc_badwords
 from nc import brainstate as _nc_brainstate
@@ -1253,10 +1254,13 @@ def _reg_community_setup(tree):
                 await inter.response.send_message(_nc_i18n.t("Noch keine XP-Daten."), ephemeral=True); return
             lines = []
             for i, r in enumerate(rows, 1):
-                m = inter.guild.get_member(r["user_id"])
-                nm = m.display_name if m else f"User {r['user_id']}"
+                # v5.2-W193: ohne Mitgliederliste im RAM. Ein Nutzer, den der
+                # Speicher kennt, steht mit Namen; sonst als Erwaehnung, die
+                # Discord selbst als Namen anzeigt — ohne Ping (s.u.).
+                nm = _nc_dcspar.anzeige(inter.guild.get_member(r["user_id"]), r["user_id"])
                 lines.append(f"`{i:2}.` **{nm}** — Lvl {_nc_rang.xp_zu_level(r['xp'])} ({r['xp']} XP)")
-            await inter.response.send_message(_nc_i18n.t("🏆 **Leaderboard**\n" + "\n".join(lines)))
+            await inter.response.send_message(_nc_i18n.t("🏆 **Leaderboard**\n" + "\n".join(lines)),
+                                              allowed_mentions=discord.AllowedMentions.none())
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
@@ -2095,7 +2099,12 @@ async def _discord_run_once():
     except Exception:
         pass
 
-    client = discord.Client(intents=intents)
+    # v5.2-W193: keine komplette Mitgliederliste beim Start und ein kleiner
+    # Nachrichtenspeicher. Mit dem members-Intent laedt discord.py sonst jede
+    # Gilde vollstaendig in den RAM (chunk_guilds_at_startup) und haelt 1000
+    # Nachrichten vor — gelesen werden Mitglieder an genau einer Stelle (der
+    # Rangliste, die ohne Liste auskommt), Nachrichten nur ueber raw-Ereignisse.
+    client = discord.Client(intents=intents, **_nc_dcspar.client_optionen())
     tree = app_commands.CommandTree(client)
     # v4.2-W77: Sitzungs-Zwischenspeicher zuruecksetzen. Vorher entstanden sie
     # hier neu, weil sie Closure-Variablen waren; die Wirkung ist dieselbe.
