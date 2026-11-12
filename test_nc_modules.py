@@ -35558,6 +35558,227 @@ def _test_v52_w191_heapzaum():
     ok("v5.2-W191: Heap — zwei Arenen, malloc_trim im Thread mit RSS-Messung, Lage in /healthz")
 
 
+
+def _test_v52_w192_mariadb_pool():
+    """v5.2-W192: der MariaDB-Pool spart drei Rundreisen je Zugriff — und
+    ueberlebt einen Server-Neustart trotzdem ohne gescheiterten Aufruf.
+
+    Gegen MariaDB 10.11 gemessen: db_conn() + eine Abfrage 233 us, davon
+    ping 37, commit 40 und ein ueberfluessiges rollback 41. Danach ~130 us.
+    Ein Abriss (KILL aller Verbindungen) kostete nach dem ersten Entwurf genau
+    einen Aufruf (2013); mit dem Wiederanlauf der ersten Anweisung keinen."""
+    import os as _os
+    import sys as _sys
+    import time as _t
+    import types as _ty
+    from nc import dbwrap as DW
+
+    class OperationalError(Exception):
+        pass
+
+    class InterfaceError(Exception):
+        pass
+
+    zaehler = {"connect": 0}
+
+    class _Cur:
+        def __init__(self, k):
+            self.k = k
+            self.lastrowid = None
+            self.rowcount = 1
+            self.description = None
+
+        def execute(self, sql, params=()):
+            if self.k.tot:
+                raise OperationalError(2013, "Lost connection to MySQL server during query")
+            self.k.anweisungen.append(sql)
+
+        def executemany(self, sql, seq):
+            self.execute(sql)
+
+        def fetchone(self):
+            return {"x": 1}
+
+        def fetchall(self):
+            return [{"x": 1}]
+
+        def close(self):
+            pass
+
+    class _Conn:
+        def __init__(self):
+            zaehler["connect"] += 1
+            self.tot = False
+            self.zu = False
+            self.n = {"ping": 0, "commit": 0, "rollback": 0}
+            self.anweisungen = []
+
+        def cursor(self):
+            return _Cur(self)
+
+        def ping(self, reconnect=False):
+            assert reconnect is False, "ping(reconnect=True) ist in PyMySQL abgekuendigt"
+            self.n["ping"] += 1
+            if self.tot:
+                raise OperationalError(2006, "MySQL server has gone away")
+
+        def commit(self):
+            if self.tot:
+                raise OperationalError(2013, "Lost connection")
+            if getattr(self, "deadlock", False):
+                self.deadlock = False
+                raise OperationalError(1213, "Deadlock found when trying to get lock")
+            self.n["commit"] += 1
+
+        def rollback(self):
+            self.n["rollback"] += 1
+
+        def close(self):
+            self.zu = True
+
+    fake = _ty.ModuleType("pymysql")
+    fake.connect = lambda **k: _Conn()
+    fake.cursors = _ty.SimpleNamespace(DictCursor=object)
+    fake.err = _ty.SimpleNamespace(OperationalError=OperationalError, InterfaceError=InterfaceError)
+    fake_c = _ty.ModuleType("pymysql.cursors")
+    fake_c.DictCursor = object
+    alt_mod = {k: _sys.modules.get(k) for k in ("pymysql", "pymysql.cursors")}
+    alt = (DW.DB_BACKEND, DW.DB_PATH, DW.get_pool(), DW.MARIADB_POOL_SIZE)
+    alt_env = _os.environ.pop("MARIADB_PRUEFEN_NACH_S", None)
+    _sys.modules["pymysql"], _sys.modules["pymysql.cursors"] = fake, fake_c
+    try:
+        DW.set_pool(None)
+        DW.configure_db(backend="mariadb", mariadb={"pool_size": 10})
+        st = DW._MARIADB_STAT
+        for k in list(st):
+            if isinstance(st[k], int):
+                st[k] = 0
+
+        def _pool():
+            return DW.get_pool()
+
+        def _konsistent():
+            p = _pool()
+            assert p._created == p._q.qsize(), \
+                "Slot-Zaehler %d, frei %d — ein Slot leckt" % (p._created, p._q.qsize())
+
+        # (1) Wiederverwendung ohne ping, ohne rollback nach commit
+        with DW.db_conn() as c:
+            c.execute("SELECT 1").fetchone()
+            k1 = c._conn
+        with DW.db_conn() as c:
+            assert c._conn is k1, "keine Wiederverwendung"
+            c.execute("SELECT 2").fetchone()
+        assert k1.n["ping"] == 1, ("nur die frische Verbindung wird gepingt", k1.n)
+        assert k1.n["commit"] == 2 and k1.n["rollback"] == 0, \
+            ("rollback nach erfolgreichem commit ist eine Rundreise ohne Wirkung", k1.n)
+        assert st["pings_gespart"] == 1
+        _konsistent()
+        # (2) Fehler im Block: rollback, Verbindung bleibt im Pool
+        try:
+            with DW.db_conn() as c:
+                c.execute("SELECT 3")
+                raise ValueError("Aufrufer")
+        except ValueError:
+            pass
+        assert k1.n["rollback"] >= 1 and not k1.zu
+        _konsistent()
+        # (3) Leerlauf -> ping; MARIADB_PRUEFEN_NACH_S=0 -> immer ping
+        k1._nc_frei_seit = _t.monotonic() - 100
+        vor = k1.n["ping"]
+        with DW.db_conn() as c:
+            c.execute("SELECT 4")
+        assert k1.n["ping"] == vor + 1, "nach Leerlauf wird nicht gepingt"
+        _os.environ["MARIADB_PRUEFEN_NACH_S"] = "0"
+        with DW.db_conn() as c:
+            c.execute("SELECT 5")
+        assert k1.n["ping"] == vor + 2
+        _os.environ.pop("MARIADB_PRUEFEN_NACH_S")
+        # (4) ping scheitert -> neue Verbindung, kein Slot verloren
+        k1._nc_frei_seit = _t.monotonic() - 100
+        k1.tot = True
+        with DW.db_conn() as c:
+            assert c._conn is not k1 and k1.zu
+            c.execute("SELECT 6")
+            k2 = c._conn
+        _konsistent()
+        # (5) Abriss bei der ERSTEN Anweisung ohne ping: Wiederanlauf, kein Fehler
+        with DW.db_conn() as c:          # zweite Verbindung in den Pool
+            with DW.db_conn() as c2:
+                k3 = c2._conn
+        k2.tot = True
+        k3.tot = True
+        with DW.db_conn() as c:
+            r = c.execute("SELECT 7").fetchone()
+            assert r is not None and c._conn not in (k2, k3)
+        assert st["wiederangelaufen"] == 1, st
+        assert k2.zu and k3.zu, "die freie Verbindung am toten Server blieb im Pool"
+        _konsistent()
+        # (6) Abriss bei der ZWEITEN Anweisung: kein Wiederanlauf (es lief schon
+        # etwas), die Verbindung kommt nicht zurueck, der Slot wird frei
+        try:
+            with DW.db_conn() as c:
+                c.execute("INSERT x")
+                c._conn.tot = True
+                kx = c._conn
+                c.execute("INSERT y")
+            raise AssertionError("die zweite Anweisung wurde still wiederholt")
+        except OperationalError:
+            pass
+        assert kx.zu and st["verloren"] >= 1
+        assert kx not in list(_pool()._q.queue), "tote Verbindung zurueck im Pool"
+        _konsistent()
+        # (7) commit scheitert am Abriss: nicht zurueck, Fehler geht durch
+        try:
+            with DW.db_conn() as c:
+                c.execute("UPDATE z")
+                c._conn.tot = True
+                ky = c._conn
+            raise AssertionError("gescheiterter commit verschluckt")
+        except OperationalError:
+            pass
+        assert ky.zu and ky not in list(_pool()._q.queue)
+        _konsistent()
+        # (7b) commit scheitert OHNE Abriss (Deadlock): zurueckrollen, dann zurueck
+        with DW.db_conn() as c:
+            kd = c._conn
+        kd.deadlock = True
+        vor_rb = kd.n["rollback"]
+        try:
+            with DW.db_conn() as c:
+                assert c._conn is kd
+                c.execute("UPDATE d")
+            raise AssertionError("gescheiterter commit verschluckt")
+        except OperationalError:
+            pass
+        assert kd.n["rollback"] == vor_rb + 1, \
+            "nach gescheitertem commit ohne rollback zurueck in den Pool (offene Transaktion)"
+        assert not kd.zu and kd in list(_pool()._q.queue)
+        _konsistent()
+        # (8) Abfragefehler (kein Abriss) wirft und verwirft den Pool nicht
+        class _SyntaxFehler(Exception):
+            pass
+        assert not DW._verbindung_verloren(_SyntaxFehler(1064, "syntax"))
+        assert DW._verbindung_verloren(InterfaceError(0, ""))
+        assert DW._verbindung_verloren(OperationalError(2006, "gone away"))
+        lage = DW.vorrat_lage()
+        assert lage["backend"] == "mariadb" and {"pings_gespart", "verloren", "belegt",
+                                                 "erschoepft"} <= set(lage), lage
+    finally:
+        DW.set_pool(None)
+        DW.configure_db(backend=alt[0], db_path=alt[1], mariadb={"pool_size": alt[3]})
+        DW.set_pool(alt[2])
+        for k, v in alt_mod.items():
+            if v is None:
+                _sys.modules.pop(k, None)
+            else:
+                _sys.modules[k] = v
+        if alt_env is not None:
+            _os.environ["MARIADB_PRUEFEN_NACH_S"] = alt_env
+    ok("v5.2-W192: MariaDB-Pool — ping nur nach Leerlauf, kein rollback nach commit, "
+       "Abriss ohne gescheiterten Aufruf, kein Slot-Leck")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -35972,6 +36193,7 @@ def main():
     _test_v52_w190_sicherheit()
     _test_v52_w191_db_vorrat()
     _test_v52_w191_heapzaum()
+    _test_v52_w192_mariadb_pool()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()

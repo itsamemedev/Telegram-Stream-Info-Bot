@@ -9,6 +9,43 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.2.1] — 2026-11-12 · „Sparflamme" (MariaDB)
+
+Der Betrieb läuft auf MariaDB (`DB_BACKEND=mariadb`). Der Verbindungsvorrat
+aus 5.2.0 greift nur unter SQLite — unter MariaDB hat 5.2.0 am Datenbankpfad
+nichts gespart. Diese Fassung holt das nach (W192). Gemessen gegen einen
+echten MariaDB-10.11-Server; Vertrag `_test_v52_w192_mariadb_pool` mit
+PyMySQL-Attrappe (die CI hat keinen Server), 14 von 14 Mutationsproben gefangen
+(eine entwischte zuerst: `_sauber` vor dem `commit` gesetzt ließ nach einem
+Deadlock die offene Transaktion im Pool — Vertragsfall ergänzt).
+
+### Geändert
+
+- **Drei Rundreisen weniger je Zugriff:** `db_conn()` + eine Abfrage kostete
+  **233 µs**, die Abfrage selbst 69 µs. Der Rest: `ping` bei jedem Ausleihen
+  (37 µs), `commit` (40 µs) und danach ein `rollback` (41 µs), das nach einem
+  erfolgreichen `commit` nichts mehr zurückrollt. Jetzt wird nur nach
+  Leerlauf gepingt (`MARIADB_PRUEFEN_NACH_S`, Vorgabe 30 s; 0 = wie vorher)
+  und das `rollback` entfällt nach erfolgreichem `commit`: rund **130 µs**.
+  Über ein echtes Netz zählt jede gesparte Rundreise ein Vielfaches.
+- **Server-Neustart ohne gescheiterten Aufruf:** ohne ping bei jedem
+  Ausleihen kostete ein Abriss im ersten Entwurf genau einen Aufruf (`2013
+  Lost connection`, gemessen per KILL aller Verbindungen). Scheitert die
+  ERSTE Anweisung auf einer ungepingten Verbindung an einem Abriss, wird neu
+  verbunden und sie einmal wiederholt — davor lief in der Transaktion
+  nichts. Gemessen danach: **0** gescheiterte Aufrufe.
+- Eine abgerissene Verbindung kommt nicht zurück in den Pool, ihr Slot wird
+  frei, und die übrigen freien Verbindungen (am selben toten Server) werden
+  mit verworfen. Ein gescheiterter `commit` ohne Abriss (Deadlock) rollt vor
+  der Rückgabe zurück.
+- `ping(reconnect=True)` ist in PyMySQL abgekündigt — ersetzt durch eine
+  neue Verbindung.
+- `/healthz` → `dbvorrat` zeigt unter MariaDB den Pool: `offen`, `belegt`,
+  `frei`, `pings_gespart`, `gewartet`, `erschoepft`, `verloren`,
+  `wiederangelaufen`. Vorher hätte dort der leere SQLite-Vorrat gestanden.
+  Die Poolgröße (10) bleibt — `gewartet`/`erschoepft` zeigen jetzt, ob sie
+  reicht, statt dass sie geraten wird.
+
 ## [5.2.0] — 2026-11-12 · „Sparflamme"
 
 Stabilität und Ressourcen (W191). Erst gemessen, dann gebaut — Konzept und

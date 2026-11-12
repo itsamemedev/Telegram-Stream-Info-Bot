@@ -83,7 +83,7 @@
 | **Dashboard** | 379 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · Umzug per `update.sh --mariadb` mit Nachzählen · zentrales Schema-Modul · Export-Werkzeug · Datenbank-Wächter |
-| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~605 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
+| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~606 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
 | **Beobachtung** | `/metrics` für Prometheus · Grafana-Dashboard mit jedem Messwert · 16 Alarmregeln mit Tests · Einrichtung per `tools/observability.sh` |
 
 </details>
@@ -204,7 +204,7 @@ löst nichts aus; ein Zeitplan zieht nie still eine Datenbank um.
 
 ## ⚙️ Einstellungen
 
-**Im Deck, Reiter „Einstellungen“.** Alle rund 605 Variablen aus `.env.example`
+**Im Deck, Reiter „Einstellungen“.** Alle rund 606 Variablen aus `.env.example`
 mit Gruppe, Vorgabe und Beschreibung, durchsuchbar. Je Zeile steht, woher der
 Wert kommt — *vom Deck gesetzt*, *aus der .env* oder *Vorgabe*. Gespeichert wird
 in der Datenbank (SQLite oder MariaDB); die Werte gelten beim nächsten Start
@@ -574,7 +574,11 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 **„Sparflamme“** — Stabilität und Ressourcen, erst gemessen, dann gebaut
 ([Konzept](docs/KONZEPT_SPARFLAMME.md)):
 
-- **Datenbankzugriff 2 statt 180 µs:** SQLite-Verbindungen werden
+- **MariaDB (v5.2.1):** 233 statt rund 130 µs je Zugriff — kein `ping` bei
+  jedem Ausleihen, kein `rollback` nach erfolgreichem `commit`. Ein
+  Server-Neustart kostet keinen einzigen gescheiterten Aufruf; der Pool steht
+  mit Kennzahlen in `/healthz`.
+- **SQLite:** 2 statt 180 µs je Zugriff — Verbindungen werden
   wiederverwendet (`DB_VORRAT`, Vorgabe 4), der Seiten-Cache wird warm. Nie
   über einen Dateitausch, Pfadwechsel oder eine offene Transaktion hinweg.
 - **Speicher geht zurück:** zwei glibc-Arenen statt bis zu 64 und alle zehn
@@ -700,12 +704,12 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.2.0** — „Sparflamme“ (2026.11) |
+| Aktuelle Version | **5.2.1** — „Sparflamme“ (2026.11) |
 | Flask-Routen | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
 | Fachmodule | 201 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 16 |
-| Konfigurationsvariablen | ~605 |
+| Konfigurationsvariablen | ~606 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |
 
 Nächster großer Schritt: `bot.py` weiter zerlegen — **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.

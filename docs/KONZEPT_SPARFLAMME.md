@@ -102,3 +102,13 @@ MariaDB bleibt unverändert (eigener Verbindungsaufbau, eigene Lebensdauer).
   Anweisungen.
 * Gemessen: `db_conn()`-Kosten vorher/nachher im Vertrag (nicht als
   Zeitgrenze, sondern als Verhältnis — Zeitgrenzen sind in der CI flatterhaft).
+
+## Nachtrag 5.2.1 — MariaDB
+
+Maßnahme A galt nur für SQLite; der Betrieb läuft auf MariaDB. Dort nimmt
+`db_conn()` einen eigenen Pool, und gemessen (MariaDB 10.11) kostete ein
+Zugriff 233 µs, davon drei unnötige Rundreisen: `ping` bei jedem Ausleihen,
+`commit`, und ein `rollback` nach erfolgreichem `commit`. 5.2.1 pingt nur nach
+Leerlauf, lässt das `rollback` weg (rund 130 µs) und wiederholt die erste
+Anweisung einmal, wenn die Verbindung abgerissen ist — ein Server-Neustart
+kostet damit keinen Aufruf. Details: `docs/CHANGELOG.md`, Abschnitt 5.2.1.
