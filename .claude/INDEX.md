@@ -43,7 +43,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  11145  GET              /sw.js                                           pwa_service_worker
 ```
 
-## Flask-Routen in Blueprints, nc/routes/ (345)
+## Flask-Routen in Blueprints, nc/routes/ (346)
 
 ```
    195  GET              /api/active-recordings                           api_active_recordings   [nc/routes/auskunft.py]
@@ -134,19 +134,20 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
     87  POST/DELETE      /api/collections/<int:cid>                       api_collection_modify   [nc/routes/collections.py]
    122  GET              /api/collections/<int:cid>/trackings             api_collection_trackings   [nc/routes/collections.py]
    443  GET              /api/community/stats                             api_community_stats   [nc/routes/auskunft.py]
-   374  POST             /api/config/restore                              api_config_restore   [nc/routes/settings.py]
-   359  GET              /api/config/snapshot                             api_config_snapshot   [nc/routes/settings.py]
-   179  GET              /api/cookies/age                                 api_cookies_age   [nc/routes/settings.py]
+   445  POST             /api/config/restore                              api_config_restore   [nc/routes/settings.py]
+   430  GET              /api/config/snapshot                             api_config_snapshot   [nc/routes/settings.py]
+   250  GET              /api/cookies/age                                 api_cookies_age   [nc/routes/settings.py]
+   185  POST             /api/cookies/bereinigen                          api_cookies_bereinigen   [nc/routes/settings.py]
    130  POST             /api/cookies/fetch                               api_cookies_fetch   [nc/routes/settings.py]
     71  GET              /api/cookies/health                              api_cookies_health   [nc/routes/settings.py]
     78  POST             /api/cookies/update                              api_cookies_update   [nc/routes/settings.py]
    497  GET              /api/data/export                                 api_data_export   [nc/routes/auskunft.py]
-   200  GET              /api/db/export                                   api_db_export   [nc/routes/settings.py]
-   227  POST             /api/db/import                                   api_db_import   [nc/routes/settings.py]
-   320  POST             /api/db/restore/apply                            api_db_restore_apply   [nc/routes/settings.py]
-   264  GET              /api/db/restore/list                             api_db_restore_list   [nc/routes/settings.py]
-   282  POST             /api/db/restore/prepare                          api_db_restore_prepare   [nc/routes/settings.py]
-   187  GET              /api/db/summary                                  api_db_summary   [nc/routes/settings.py]
+   271  GET              /api/db/export                                   api_db_export   [nc/routes/settings.py]
+   298  POST             /api/db/import                                   api_db_import   [nc/routes/settings.py]
+   391  POST             /api/db/restore/apply                            api_db_restore_apply   [nc/routes/settings.py]
+   335  GET              /api/db/restore/list                             api_db_restore_list   [nc/routes/settings.py]
+   353  POST             /api/db/restore/prepare                          api_db_restore_prepare   [nc/routes/settings.py]
+   258  GET              /api/db/summary                                  api_db_summary   [nc/routes/settings.py]
    164  GET              /api/defense/attacks                             api_defense_attacks   [nc/routes/abwehr.py]
    125  GET              /api/defense/crowdsec                            api_defense_crowdsec   [nc/routes/abwehr.py]
    146  GET              /api/defense/fail2ban                            api_defense_fail2ban   [nc/routes/abwehr.py]
@@ -304,9 +305,9 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
    388  GET              /api/restream/verify                             api_restream_verify   [nc/routes/restream.py]
    148  GET              /api/retention/preview                           api_retention_preview   [nc/routes/wartung.py]
    160  POST             /api/retention/run                               api_retention_run   [nc/routes/wartung.py]
-   415  POST             /api/schedule/add                                api_schedule_add   [nc/routes/settings.py]
-   405  GET              /api/schedule/list                               api_schedule_list   [nc/routes/settings.py]
-   440  POST             /api/schedule/remove                             api_schedule_remove   [nc/routes/settings.py]
+   486  POST             /api/schedule/add                                api_schedule_add   [nc/routes/settings.py]
+   476  GET              /api/schedule/list                               api_schedule_list   [nc/routes/settings.py]
+   511  POST             /api/schedule/remove                             api_schedule_remove   [nc/routes/settings.py]
     65  POST             /api/scheduler/add                               api_scheduler_add   [nc/routes/scheduler.py]
     86  POST             /api/scheduler/delete                            api_scheduler_delete   [nc/routes/scheduler.py]
     52  GET              /api/scheduler/list                              api_scheduler_list   [nc/routes/scheduler.py]
@@ -1205,8 +1206,8 @@ community.py           anzeigename, configure, darf_pingen, highlight_post, high
 confdrift.py           config_drift, extract_defaults, log_watchlist_drift
 convmap.py             messages
 cookiebezug.py         anstossen, configure, faellig, gast_hilft, holen, info, intervall_s, naechster_lauf
-cookieholen.py         aktualisiere, aus_browser, class KeinDesktop, configure, desktop_pruefen, hole_gastcookies, schreibe, uebernehmen, zusammenfuehren
-cookies.py             configure, gesundheit, hat_login, lade_jar, load_dict
+cookieholen.py         aktualisiere, aus_browser, bereinigen, class DateiGeaendert, class KeinDesktop, configure, desktop_pruefen, hole_gastcookies, schreibe, uebernehmen, zusammenfuehren
+cookies.py             abgelaufen, auswahl, configure, gesundheit, hat_login, kritisch, lade_jar, load_dict
 creatoragg.py          summarize
 crowdsec.py            base_url, decisions_url, explain_status, headers, parse_decisions
 crypto.py              addresses, erwartete_namen, fehlende_namen, gesetzte, snapshot

@@ -35211,6 +35211,383 @@ def _test_v42_w156_lagebild_radar():
 
 
 
+def _test_v56_w197_cookie_bereinigen():
+    """v5.6-W197: der Bereinigungs-Knopf im Cookie-Panel des System-Tabs.
+
+    Der Betreiber: „In der Cookie-/Auth-Pruefung im System-Tab fehlt der
+    Bereinigungs-Button." Das Deck schrieb seit dem Tiefenbughunt
+    „cookies.txt bereinigen" unter die Domain-Duplikate — Knopf und Route gab
+    es in keiner Fassung.
+
+    Gesichert wird, was der Knopf NICHT darf: auf eine andere Variante
+    bereinigen als die, die der Bot sendet; einen Sitzungs-Cookie (Ablauf 0)
+    als abgelaufen werfen; die Anmeldung verlieren; in der Vorschau
+    schreiben; einen anderen Plan ausfuehren als den gezeigten; an der Sperre
+    vorbei oder ohne Sicherung schreiben."""
+    import ast as _ast
+    import json as _json
+    import os as _os
+    import shutil as _sh
+    import stat as _stat
+    import subprocess as _sp
+    import threading as _thr
+    import time as _time
+    from flask import Flask
+    from nc import cookieholen as CH
+    from nc import cookies as CK
+    from nc import ctx as _ncctx
+    import nc.routes.settings as ST
+
+    jetzt = int(_time.time())
+    zuk, verg = jetzt + 30 * 86400, jetzt - 30 * 86400
+    krit = ("sessionid_ss", "sessionid", "sid_tt", "tt_chain_token", "ttwid", "msToken")
+    d = _ph.verzeichnis()
+
+    def _datei(name, zeilen):
+        pfad = _os.path.join(d, name)
+        with open(pfad, "w", encoding="utf-8") as fh:
+            fh.write("# Netscape HTTP Cookie File\n"
+                     + "".join("\t".join(map(str, z)) + "\n" for z in zeilen))
+        return pfad
+
+    def _bytes(pfad):
+        with open(pfad, "rb") as fh:
+            return fh.read()
+
+    class _Still:
+        def __getattr__(self, n):
+            return lambda *a, **k: None
+
+    def _lade(pfad):
+        CK.configure(datei=pfad)
+        CK.CACHE.clear()
+        return CK.load_dict()
+
+    # (0) Ablauf 0/None ist Sitzung, nicht abgelaufen.
+    assert not CK.abgelaufen(0, jetzt) and not CK.abgelaufen(None, jetzt)
+    assert CK.abgelaufen(jetzt - 1, jetzt) and not CK.abgelaufen(jetzt + 1, jetzt)
+
+    alt_konf, alt_krit = dict(CK._KONF), CK._KRITISCH
+    alt_ctx, alt_t = _ncctx._CTX, ST._t
+    try:
+        CK.configure(log=_Still(), kritisch=krit, autorefresh_info=dict,
+                     autofetch_info=dict, reparieren=lambda: False)
+
+        # (1) Der Hauptfall. Jede Zeile traegt eine Aussage.
+        haupt = [
+            (".tiktok.com", "TRUE", "/", "TRUE", 0, "ttwid", "TT"),            # Sitzung: bleibt
+            # Gleichstand (Rang 0, gleiche Expiry). In der DATEI steht .zz
+            # zuerst, im JAR .tiktok.com (die Domain kam mit ttwid zuerst).
+            (".zz.tiktok.com", "TRUE", "/", "TRUE", zuk, "msToken", "MS_ZZ"),
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "msToken", "MS_TT"),
+            # Rang schlaegt Expiry: die exakte Domain bleibt.
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid", "SID_WILD"),
+            ("www.tiktok.com", "FALSE", "/", "TRUE", zuk - 5, "sessionid", "SID_GENAU"),
+            # Gleicher Rang: die laengere Expiry bleibt.
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk - 100, "sid_tt", "KURZ"),
+            (".m.tiktok.com", "TRUE", "/", "TRUE", zuk, "sid_tt", "LANG"),
+            (".tiktok.com", "TRUE", "/", "TRUE", verg, "tt_chain_token", "TOT"),  # abgelaufen
+            (".tiktok.com", "TRUE", "/", "TRUE", verg, "odin_tt", "ALT"),     # abgelaufen, unkritisch
+            # Unkritisches Duplikat: nicht angefasst (gemeldet wird es auch nicht).
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "s_v_web_id", "A"),
+            ("www.tiktok.com", "FALSE", "/", "TRUE", zuk, "s_v_web_id", "B"),
+            (".tiktok.com", "TRUE", "/", "FALSE", 0, "sessionid_ss", "SS"),  # Sitzung + Login
+            (".tiktok.com", "TRUE", "/", "FALSE", 0, "", "NURWERT"),          # Name ohne Wert
+        ]
+        f = _datei("tiktok_cookies.txt", haupt)
+        vorher = _lade(f)
+        assert vorher["msToken"] == "MS_TT" and vorher["sessionid"] == "SID_GENAU", vorher
+        with open(f, encoding="utf-8") as fh:
+            nach_dateifolge, _ = CK._dedupe_cookie_text(fh.read())
+        assert "\tmsToken\tMS_ZZ" in nach_dateifolge, \
+            "Probe wertlos: die Dateifolge muss hier eine ANDERE Variante waehlen als der Bot"
+        h_vorher = CK.gesundheit()
+        assert sorted(h_vorher["duplicate_domain_cookies"]) == ["msToken", "sessionid", "sid_tt"], h_vorher
+
+        roh, mtime = _bytes(f), _os.stat(f).st_mtime_ns
+        v = CH.bereinigen(f, vorschau=True)
+        assert v["ok"] and v["vorschau"] and v["noetig"] and v["backup"] is None, v
+        assert _bytes(f) == roh and _os.stat(f).st_mtime_ns == mtime, "die Vorschau hat geschrieben"
+        assert not _os.path.exists(f + ".bak"), "die Vorschau hat eine Sicherung angelegt"
+        assert {x["name"] for x in v["abgelaufen"]} == {"tt_chain_token", "odin_tt"}, v["abgelaufen"]
+        assert {x["name"] for x in v["abgelaufen"]} == {x["name"] for x in h_vorher["expired"]}, \
+            "Knopf und Deck zaehlen verschieden als abgelaufen"
+        dop = {x["name"]: x for x in v["doppelt"]}
+        assert sorted(dop) == ["msToken", "sessionid", "sid_tt"], v["doppelt"]
+        assert dop["sessionid"]["behalten"] == "www.tiktok.com" and \
+            dop["sessionid"]["entfernt"] == [".tiktok.com"], dop["sessionid"]
+        assert dop["msToken"]["behalten"] == ".tiktok.com", \
+            ("Gleichstand nach Dateifolge aufgeloest — der Bot sendet die andere Variante", dop)
+        assert dop["sid_tt"]["behalten"] == ".m.tiktok.com", dop["sid_tt"]
+        assert v["wert_wechselt"] == [] and v["vorher"] == 13 and v["nachher"] == 8, v
+        assert v["unbrauchbar"] == [], v["unbrauchbar"]
+        roh_json = _json.dumps(v)
+        for wert in ("SID_GENAU", "SID_WILD", "MS_TT", "TOT", d):
+            assert wert not in roh_json, "Wert oder Pfad in der Antwort: %s" % wert
+
+        # (2) Ausfuehren: nur mit dem Stand der Vorschau.
+        falsch = CH.bereinigen(f, erwartet="0" * 16)
+        assert not falsch["ok"] and falsch["art"] == "veraltet", falsch
+        assert _bytes(f) == roh, "ein fremder Stand wurde ausgefuehrt"
+        # Gleiche Datei, aber inzwischen ist die GESENDETE sessionid-Variante
+        # abgelaufen: entfernt wuerde jetzt SID_GENAU statt SID_WILD — ein
+        # anderer Plan, also ein anderer Stand. Bestaetigt war der alte.
+        # (Laeuft nur ein Cookie ab, das ohnehin als Duplikat ginge, bleibt es
+        # derselbe Plan und derselbe Stand: entfernt werden dieselben Zeilen.)
+        assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 50)["stand"] == v["stand"]
+        assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 3)["wert_wechselt"] == ["sessionid"]
+        spaeter = CH.bereinigen(f, erwartet=v["stand"], jetzt=zuk - 3)
+        assert not spaeter["ok"] and spaeter["art"] == "veraltet", \
+            ("der Stand haengt nur am Dateiinhalt, nicht am Plan", spaeter)
+        assert _bytes(f) == roh
+        e = CH.bereinigen(f, erwartet=v["stand"])
+        assert e["ok"] and not e["vorschau"] and e["entfernt"] == 5, e
+        assert e["backup"] == "tiktok_cookies.txt.bak" and _os.sep not in e["backup"], e["backup"]
+        assert _bytes(f + ".bak") == roh, "die Sicherung ist nicht der alte Stand"
+        assert _stat.S_IMODE(_os.stat(f).st_mode) == 0o600, oct(_os.stat(f).st_mode)
+        nachher = _lade(f)
+        for name in set(vorher) - {"tt_chain_token", "odin_tt"}:
+            assert nachher.get(name, "<fehlt>") == vorher[name], \
+                ("die Bereinigung hat den GESENDETEN Wert geaendert", name, vorher[name], nachher.get(name))
+        assert "tt_chain_token" not in nachher and "odin_tt" not in nachher
+        assert nachher["ttwid"] == "TT" and nachher["sessionid_ss"] == "SS", \
+            "ein Sitzungs-Cookie (Ablauf 0) wurde entfernt"
+        with open(f, encoding="utf-8") as fh:
+            text = fh.read()
+        assert text.count("\ts_v_web_id\t") == 2, "ein unkritisches Duplikat wurde angefasst"
+        for weg in ("MS_ZZ", "SID_WILD", "KURZ", "TOT"):
+            assert weg not in text, weg
+        h = CK.gesundheit()
+        assert h["duplicate_domain_cookies"] == [] and h["expired"] == [], h
+        assert CH.bereinigen(f, vorschau=True)["noetig"] is False, "nach dem Lauf bleibt etwas"
+        stand_bak = _bytes(f + ".bak")
+        nichts = CH.bereinigen(f, erwartet="egal")
+        assert nichts["ok"] and not nichts["noetig"] and _bytes(f + ".bak") == stand_bak, \
+            "ohne Aenderung geschrieben — das setzt die mtime und das Deck meldet 'frisch'"
+
+        # (3) Der gesendete Wert war tot: er wechselt — und die Vorschau sagt es.
+        # Drei Varianten, weil erst dann die Reihenfolge der beiden Schritte
+        # zaehlt: wer die Duplikate ueber ALLE aufloest (der tote Sieger
+        # bliebe), wirft beide gueltigen als Duplikat und danach den toten
+        # als abgelaufen — die Anmeldung waere weg. Mit zwei Varianten ist
+        # das von aussen nicht zu unterscheiden; die Mutationsprobe ist
+        # genau daran entwischt.
+        f2 = _datei("wechsel.txt", [
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "GENAU_TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid", "ALT_GUELTIG"),
+            (".m.tiktok.com", "TRUE", "/", "TRUE", zuk - 10, "sessionid", "ALT_KURZ")])
+        assert _lade(f2)["sessionid"] == "GENAU_TOT"
+        v2 = CH.bereinigen(f2, vorschau=True)
+        assert v2["ok"] and v2["wert_wechselt"] == ["sessionid"], v2
+        assert v2["doppelt"] == [{"name": "sessionid", "behalten": ".tiktok.com",
+                                  "entfernt": [".m.tiktok.com"]}], v2["doppelt"]
+        e2 = CH.bereinigen(f2, erwartet=v2["stand"])
+        assert e2["ok"] and _lade(f2) == {"sessionid": "ALT_GUELTIG"}, (e2, _lade(f2))
+
+        # (4) Die Anmeldung geht nie verloren — auch nicht EIN Login-Name.
+        for name, zeilen, fehlt in (
+                ("login1.txt", [(".tiktok.com", "TRUE", "/", "TRUE", verg, "sessionid", "X"),
+                                (".tiktok.com", "TRUE", "/", "TRUE", verg, "msToken", "Y"),
+                                (".tiktok.com", "TRUE", "/", "TRUE", 0, "ttwid", "Z")], ["sessionid"]),
+                ("login2.txt", [(".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid_ss", "X"),
+                                (".tiktok.com", "TRUE", "/", "TRUE", verg, "sessionid", "Y")], ["sessionid"])):
+            fl = _datei(name, zeilen)
+            roh_l = _bytes(fl)
+            for vs in (True, False):
+                r = CH.bereinigen(fl, vorschau=vs, erwartet=None if vs else "egal")
+                assert not r["ok"] and r["art"] == "login_weg" and r["namen"] == fehlt, (name, vs, r)
+            assert _bytes(fl) == roh_l and not _os.path.exists(fl + ".bak"), name
+
+        # (5) Was das Jar annimmt, _feld_zeile aber nie schreibt, steht in der Vorschau.
+        f5 = _datei("leer.txt", [(".tiktok.com", "TRUE", "/", "TRUE", 0, "sessionid", "S"),
+                                 ("", "FALSE", "/", "FALSE", 0, "leer", "X")])
+        v5 = CH.bereinigen(f5, vorschau=True)
+        assert v5["unbrauchbar"] == [{"name": "leer", "ort": "?"}] and v5["noetig"], v5
+        assert CH.bereinigen(_os.path.join(d, "fehlt.txt"), vorschau=True)["art"] == "fehlt"
+        kaputt = _os.path.join(d, "kaputt.txt")
+        with open(kaputt, "wb") as fh:
+            fh.write(b"\x00\x01 kein Cookie, nirgends \xff\n")
+        r = CH.bereinigen(kaputt, vorschau=True)
+        assert r["art"] == "unlesbar" and r["detail"] and d not in r["detail"], r
+        # Scheitert das Schreiben, bleibt die Datei, und der Grund geht mit.
+        f_s = _datei("schreibfehler.txt", haupt)
+        roh_s = _bytes(f_s)
+        echt_schreibe = CH.schreibe
+
+        def _platte_voll(*a, **k):
+            raise OSError(28, "No space left on device", f_s)
+        CH.schreibe = _platte_voll
+        try:
+            r = CH.bereinigen(f_s, erwartet=CH.bereinigen(f_s, vorschau=True)["stand"])
+        finally:
+            CH.schreibe = echt_schreibe
+        assert r["art"] == "schreiben" and "No space" in r["detail"] and d not in r["detail"], r
+        assert _bytes(f_s) == roh_s
+
+        # (6) Geschrieben wird unter der Sperre, und verglichen AUCH: haelt ein
+        # anderer Schreiber sie und aendert die Datei, wird nicht getauscht.
+        f6 = _datei("sperre.txt", haupt)
+        v6 = CH.bereinigen(f6, vorschau=True)
+        fertig = []
+        with CK.DATEI_SPERRE:
+            t = _thr.Thread(target=lambda: fertig.append(CH.bereinigen(f6, erwartet=v6["stand"])))
+            t.start()
+            t.join(0.5)
+            assert not fertig, "bereinigen schreibt an DATEI_SPERRE vorbei"
+            with open(f6, "a", encoding="utf-8") as fh:
+                fh.write(".tiktok.com\tTRUE\t/\tTRUE\t0\tneu_bezogen\tN\n")
+        t.join(5)
+        assert fertig and fertig[0].get("art") == "veraltet", \
+            ("unter der Sperre nicht verglichen — der Auto-Bezug waere ueberschrieben", fertig)
+        assert "\tneu_bezogen\tN" in open(f6, encoding="utf-8").read(), \
+            "der Auto-Bezug wurde ueberschrieben"
+        assert not _os.path.exists(f6 + ".neu.tmp"), "die Temp-Datei blieb liegen"
+        # Geaendert heisst auch: inzwischen geloescht — dann wird keine neue
+        # Datei aus einem Plan fuer die alte angelegt.
+        for ziel in (f6, _os.path.join(d, "inzwischen_weg.txt")):
+            try:
+                CH.schreibe(ziel, "# Netscape HTTP Cookie File\n", nur_wenn=b"anders")
+                raise AssertionError("schreibe() hat trotz geaenderter Datei getauscht: %s" % ziel)
+            except CH.DateiGeaendert:
+                pass
+        assert not _os.path.exists(_os.path.join(d, "inzwischen_weg.txt"))
+
+        # (7) Die Route. Ohne Vorschau keine Ausfuehrung.
+        ST._t = lambda s: s
+        cache = {}
+        fr = _datei("route.txt", haupt)
+        _ncctx.configure(log=_Still(), cfg={"COOKIE_FILE": fr, "_COOKIES_CACHE": cache},
+                         get_cookie_health=lambda: {"status": "ok"})
+        app = Flask("w197")
+        app.register_blueprint(ST.bp)
+        regel = [r for r in app.url_map.iter_rules() if r.rule == "/api/cookies/bereinigen"]
+        assert regel and "POST" in regel[0].methods, "Route nicht registriert"
+        k = app.test_client()
+        roh_r = _bytes(fr)
+        for body in ({}, {"vorschau": "false"}, {"stand": "  "}):
+            r = k.post("/api/cookies/bereinigen", json=body)
+            assert r.status_code == 400 and r.get_json()["art"] == "ohne_vorschau", (body, r.status_code)
+        assert _bytes(fr) == roh_r
+        r = k.post("/api/cookies/bereinigen", json={"vorschau": True})
+        rv = r.get_json()
+        assert r.status_code == 200 and rv["ok"] and rv["noetig"] and rv["doppelt"], rv
+        assert _bytes(fr) == roh_r, "Vorschau ueber die Route hat geschrieben"
+        r = k.post("/api/cookies/bereinigen", json={"stand": "falsch"})
+        assert r.status_code == 409 and r.get_json()["art"] == "veraltet", r.status_code
+        cache["v"] = "alter Stand"
+        r = k.post("/api/cookies/bereinigen", json={"stand": rv["stand"]})
+        assert r.status_code == 200 and r.get_json()["entfernt"] == 5, r.get_json()
+        assert "v" not in cache, "Cookie-Cache nicht geleert — der Recorder sendet 5 s den alten Stand"
+        assert r.get_json()["health"] == {"status": "ok"}
+        text_r = r.get_data(as_text=True)
+        assert "SID_GENAU" not in text_r and d not in text_r, "Wert oder Pfad in der Antwort"
+        _ncctx._CTX.cfg["COOKIE_FILE"] = _datei("route_login.txt", [
+            (".tiktok.com", "TRUE", "/", "TRUE", verg, "sessionid", "X")])
+        r = k.post("/api/cookies/bereinigen", json={"vorschau": True})
+        assert r.status_code == 409 and r.get_json()["art"] == "login_weg" \
+            and "sessionid" in r.get_json()["error"], r.get_json()
+        _ncctx._CTX.cfg["COOKIE_FILE"] = _os.path.join(d, "gibtsnicht.txt")
+        assert k.post("/api/cookies/bereinigen", json={"vorschau": True}).status_code == 404
+        _ncctx._CTX.cfg["COOKIE_FILE"] = kaputt
+        r = k.post("/api/cookies/bereinigen", json={"vorschau": True})
+        assert r.status_code == 409 and r.get_json()["art"] == "unlesbar", r.status_code
+        # Ein Schreibfehler ist ein Serverfehler (500, log.error) — keine Lage.
+        _ncctx._CTX.cfg["COOKIE_FILE"] = _datei("route_voll.txt", haupt)
+        st = k.post("/api/cookies/bereinigen", json={"vorschau": True}).get_json()["stand"]
+        CH.schreibe = _platte_voll
+        try:
+            r = k.post("/api/cookies/bereinigen", json={"stand": st})
+        finally:
+            CH.schreibe = echt_schreibe
+        assert r.status_code == 500 and r.get_json()["art"] == "schreiben", r.status_code
+    finally:
+        CK._KONF.clear()
+        CK._KONF.update(alt_konf)
+        CK._KRITISCH = alt_krit
+        CK.CACHE.clear()
+        _ncctx._CTX, ST._t = alt_ctx, alt_t
+
+    # (8) Eine Regel, eine Stelle: load_dict und gesundheit rufen die Helfer,
+    # Route und Bereinigung schreiben nicht selbst.
+    def _aufrufe(pfad, name):
+        baum = _ast.parse(open(pfad, encoding="utf-8").read())
+        fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == name)
+        return [c for c in _ast.walk(fn) if isinstance(c, _ast.Call)]
+
+    def _rufe(pfad, name):
+        return {_ast.unparse(c.func) for c in _aufrufe(pfad, name)}
+    assert "auswahl" in _rufe("nc/cookies.py", "_lesen"), "load_dict waehlt wieder mit eigener Regel"
+    assert "abgelaufen" in _rufe("nc/cookies.py", "gesundheit"), "das Deck zaehlt mit eigener Regel"
+    assert "auswahl" in _rufe("nc/cookieholen.py", "_plan")
+    rb = _rufe("nc/cookieholen.py", "bereinigen")
+    assert "schreibe" in rb and not {"os.replace", "os.open", "shutil.copy2"} & rb, rb
+    # Lesen darf sie (die Bytes fuer Stand und Sperren-Vergleich), schreiben nur schreibe().
+    for c in _aufrufe("nc/cookieholen.py", "bereinigen"):
+        if _ast.unparse(c.func) == "open":
+            modus = c.args[1].value if len(c.args) > 1 and isinstance(c.args[1], _ast.Constant) else "r"
+            assert set(modus) <= {"r", "b"}, "bereinigen() schreibt an schreibe() vorbei: %r" % modus
+    rr = _rufe("nc/routes/settings.py", "api_cookies_bereinigen")
+    assert "_nc_cookieholen.bereinigen" in rr and not {"os.replace", "shutil.copy2", "open"} & rr, rr
+
+    # (9) Der Knopf: immer da, gesperrt mit Grund — und er fuehrt nur aus,
+    # was die Vorschau gezeigt und der Betreiber bestaetigt hat.
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    zeile = next(z for z in dash.splitlines() if 'id="ck_bereinigen"' in z)
+    assert zeile.lstrip().startswith("ch+="), "die Knopf-Zeile haengt an einer Bedingung"
+    for teil in ('onclick="cookiesBereinigen()"', "disabled", 'id="ck_bereinigen_msg"'):
+        assert teil in zeile, teil
+    a = dash.index("function ckMeldung(")
+    b = dash.index("\n}\n", dash.index("async function cookiesBereinigen(")) + 3
+    js = dash[a:b]
+    assert "'/api/cookies/bereinigen'" in js
+    if not _sh.which("node"):
+        print("  (kein node — Verhaltensprobe des Knopfs uebersprungen)")
+    else:
+        prog = r"""
+const els={'#ck_bereinigen':{disabled:false},'#ck_bereinigen_msg':{textContent:'',className:''}};
+const $=s=>els[s]; const T=s=>s; const toast=()=>{};
+let geladen=0; const loadSystem=async()=>{geladen++;};
+let antworten=[], posts=[], fragen=[], ja=false;
+const apiPost=async(p,b)=>{posts.push([p,JSON.parse(JSON.stringify(b))]); return antworten.shift();};
+const confirm=t=>{fragen.push(t); return ja;};
+""" + js + r"""
+(async()=>{
+  const plan={ok:true,noetig:true,stand:'s1',vorher:5,nachher:3,entfernt:2,
+    abgelaufen:[{name:'tt_chain_token',ort:'.tiktok.com'}],
+    doppelt:[{name:'sessionid',behalten:'www.tiktok.com',entfernt:['.tiktok.com']}],
+    unbrauchbar:[],wert_wechselt:[]};
+  const aus={};
+  antworten=[plan]; ja=false; await cookiesBereinigen();
+  aus.nein={posts, fragen, frei:!els['#ck_bereinigen'].disabled};
+  posts=[]; fragen=[]; ja=true;
+  antworten=[plan,{ok:true,entfernt:2,nachher:3,backup:'tiktok_cookies.txt.bak'}];
+  await cookiesBereinigen();
+  aus.ja={posts, geladen, msg:els['#ck_bereinigen_msg'].textContent,
+          cls:els['#ck_bereinigen_msg'].className};
+  posts=[]; fragen=[]; antworten=[{ok:true,noetig:false,stand:'s2'}]; await cookiesBereinigen();
+  aus.leer={posts, fragen};
+  els['#ck_bereinigen'].disabled=true; posts=[]; await cookiesBereinigen();
+  aus.gesperrt={posts};
+  console.log(JSON.stringify(aus));
+})();
+"""
+        out = _sp.run(["node", "-e", prog], capture_output=True, text=True, timeout=30)
+        assert out.returncode == 0, out.stderr
+        aus = _json.loads(out.stdout)
+        url = "/api/cookies/bereinigen"
+        assert aus["nein"]["posts"] == [[url, {"vorschau": True}]], aus["nein"]
+        frage = aus["nein"]["fragen"][0]
+        assert "tt_chain_token" in frage and "www.tiktok.com" in frage, frage
+        assert aus["nein"]["frei"], "nach Abbruch bleibt der Knopf gesperrt"
+        assert aus["ja"]["posts"] == [[url, {"vorschau": True}], [url, {"stand": "s1"}]], aus["ja"]
+        assert aus["ja"]["geladen"] == 1 and "tiktok_cookies.txt.bak" in aus["ja"]["msg"] \
+            and "ck-ok" in aus["ja"]["cls"], aus["ja"]
+        assert aus["leer"] == {"posts": [[url, {"vorschau": True}]], "fragen": []}, aus["leer"]
+        assert aus["gesperrt"]["posts"] == [], "ein gesperrter Knopf hat gefragt"
+    ok("v5.6-W197: Cookie-Datei bereinigen — Regel des Versands, Sitzung bleibt, "
+       "Anmeldung nie weg, nur der gezeigte Plan, unter der Sperre")
+
+
 def _test_v52_w190_sicherheit():
     """v5.2-W190: sechs Riegel aus dem Sicherheits-Durchgang.
 
@@ -37886,6 +38263,7 @@ def main():
     _test_v51_w184_raumkennung()
     _test_v51_w185_sendebruecke_meldungen()
     _test_v51_w186_lagebild_dienste()
+    _test_v56_w197_cookie_bereinigen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
