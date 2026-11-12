@@ -12633,11 +12633,13 @@ def _test_v42_w103_ohne_url_meldung_ist_gedrosselt():
 
     # ── (1) ALLE DREI AUSGAENGE GEHEN DURCH DEN MELDER, keiner mehr direkt
     # auf log.info. Gezaehlt wird beides: ein vergessener Ausgang faellt auf.
-    assert src.count("_ohne_url_melden(") == 4, \
-        "nicht alle drei Ausgaenge (plus die Definition) laufen ueber den " \
-        "Melder: %d" % src.count("_ohne_url_melden(")
+    # ANKER GEWANDERT (v5.4-W195): gezaehlt wurde in ganz bot.py. Seither
+    # rufen auch _live_ohne_stream und die Raumsperre-Probe den Melder — beide
+    # ausserhalb des Nachschlags. Die Aussage gilt seinen drei Ausgaengen.
     i = src.index("async def _url_nachschlag(")
     nach = rumpf_ab(src, i)
+    assert nach.count("_ohne_url_melden(") == 3, \
+        "nicht alle drei Ausgaenge laufen ueber den Melder: %d" % nach.count("_ohne_url_melden(")
     assert 'log.info("live-ohne-URL' not in nach, \
         "ein Ausgang schreibt wieder ungedrosselt auf log.info"
 
@@ -22799,9 +22801,21 @@ def _w123_sandbox(fehlt=("ffmpeg",), mit_listen=True):
         f.write("pip >= 1\nnc-gibt-es-nicht >= 1   # [optional] nur fuer den Vertrag\n")
     # Das venv-Python ist ein Umschlag um den echten Interpreter: pip-Aufrufe
     # werden protokolliert statt ausgefuehrt, alles andere laeuft echt.
+    # ANKER GEWANDERT (v5.4-W195): update.sh plant seither „TikTok-Werkzeuge",
+    # wenn in der venv yt-dlp, curl_cffi oder streamlink fehlen oder yt-dlp
+    # aelter als 30 Tage ist. Diese Attrappe stellt eine VOLLSTAENDIGE
+    # Installation dar — also bekommt sie die drei, frisch. Ohne das lief pip
+    # hier aus einem echten Grund, und „pip lief, obwohl nichts fehlte" fiel.
+    import datetime as _dtm
+    site = os.path.join(d, "venv-site")
+    for paket in ("yt_dlp", "curl_cffi", "streamlink"):
+        os.makedirs(os.path.join(site, paket))
+        open(os.path.join(site, paket, "__init__.py"), "w").close()
+    with open(os.path.join(site, "yt_dlp", "version.py"), "w") as f:
+        f.write("__version__ = %r\n" % _dtm.date.today().strftime("%Y.%m.%d"))
     _attrappe(os.path.join("..", "ziel", ".venv", "bin", "python"),
               'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then echo "pip $*" >> "%s"; exit 0; fi\n'
-              'exec "%s" "$@"' % (proto, sys.executable))
+              'export PYTHONPATH="%s"\nexec "%s" "$@"' % (proto, site, sys.executable))
     umg = {"PATH": binv, "NC_OS_RELEASE": osr, "NC_APT_LISTEN": listen,
            "NC_UNAME": "Linux", "NC_LANG": "de", "HOME": d}
     return d, ziel, proto, umg
@@ -23048,10 +23062,21 @@ def _w124_venv(ziel, proto):
         # Wie echtes pip: ein installiertes Programm liegt danach in .venv/bin.
         # Ohne das installierte jeder Lauf streamlink/yt-dlp erneut, und der
         # Vertrag hielte den Installer fuer nicht idempotent.
+        # ANKER GEWANDERT (v5.4-W195): der Installer erneuert yt-dlp (mit
+        # curl_cffi) und streamlink nur noch mit Grund, und den liest er aus
+        # den PAKETEN der venv (nc_tt_grund), nicht aus bin/. Die Attrappe legt
+        # deshalb wie echtes pip auch die Pakete an — frisch datiert.
+        import datetime as _dtm
+        site = os.path.join(ziel, ".venv", "site")
+        heute = _dtm.date.today().strftime("%Y.%m.%d")
         f.write('#!/bin/sh\nif [ "$1" = "-m" ] && [ "$2" = "pip" ]; then echo "pip $*" >> "%s"\n'
-                '  for p in "$@"; do case "$p" in streamlink|yt-dlp) printf "#!/bin/sh\\n" > "%s/$p";'
-                ' chmod +x "%s/$p";; esac; done; exit 0; fi\n'
-                'exec "%s" "$@"\n' % (proto, b, b, sys.executable))
+                '  for p in "$@"; do case "$p" in streamlink) n=streamlink;; yt-dlp*) n=yt-dlp;; *) n=;; esac\n'
+                '    case "$n" in "") ;; *) printf "#!/bin/sh\\n" > "%s/$n"; chmod +x "%s/$n"\n'
+                '    mkdir -p "%s/streamlink" "%s/yt_dlp" "%s/curl_cffi"\n'
+                '    : > "%s/streamlink/__init__.py"; : > "%s/yt_dlp/__init__.py"; : > "%s/curl_cffi/__init__.py"\n'
+                '    echo "__version__ = \'%s\'" > "%s/yt_dlp/version.py";; esac; done; exit 0; fi\n'
+                'export PYTHONPATH="%s"\nexec "%s" "$@"\n'
+                % (proto, b, b, site, site, site, site, site, site, heute, site, site, sys.executable))
     os.chmod(p, os.stat(p).st_mode | _st.S_IEXEC)
 
 
@@ -23088,9 +23113,10 @@ def _test_v42_w124_installer_idempotent():
     assert tok and len(tok.group(1)) == 40, env1
     assert oct(os.stat(envf).st_mode & 0o777) == "0o600", oct(os.stat(envf).st_mode)
     assert "Python-Pakete vollstaendig" in aus, "pip wurde trotz vollstaendigem venv gerufen"
-    # Nur die beiden Werkzeuge, die im PATH fehlen — nicht requirements.txt.
-    assert open(proto).read().splitlines() == ["pip -m pip install streamlink",
-                                               "pip -m pip install yt-dlp"], open(proto).read()
+    # Nur die TikTok-Werkzeuge — nicht requirements.txt. ANKER GEWANDERT
+    # (v5.4-W195): ein Aufruf fuer beide, mit curl_cffi, in die venv.
+    assert open(proto).read().splitlines() == [
+        "pip -m pip install --upgrade yt-dlp[default,pin-curl-cffi] streamlink"], open(proto).read()
     open(proto, "w").close()
 
     # ── (3) ZWEITER LAUF: kein neuer Token, keine Sicherung, kein pip.

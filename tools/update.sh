@@ -626,23 +626,7 @@ esac
 # ohne Netz: das Datum steckt in der yt-dlp-Fassung (JJJJ.MM.TT).
 Z_TT=0; TT_GRUND=""
 if [ "$W_PYTHON" = 1 ] && [ -x "$VPY" ]; then
-  TT_GRUND="$("$VPY" - 2>/dev/null <<'PY'
-import datetime, importlib.util
-g = []
-try:
-    import yt_dlp.version as v
-    alter = (datetime.date.today() - datetime.date(*map(int, v.__version__.split(".")[:3]))).days
-    if alter > 30:
-        g.append("yt-dlp %s ist %d Tage alt" % (v.__version__, alter))
-except (ImportError, ValueError, TypeError):
-    g.append("yt-dlp fehlt in der venv")
-if importlib.util.find_spec("curl_cffi") is None:
-    g.append("curl_cffi fehlt (yt-dlp kann keinen Browser nachahmen)")
-if importlib.util.find_spec("streamlink") is None:
-    g.append("streamlink fehlt in der venv")
-print("; ".join(g))
-PY
-)"
+  TT_GRUND="$(nc_tt_grund "$VPY")"
   [ "$UPGRADE" = 1 ] && [ -z "$TT_GRUND" ] && TT_GRUND="--upgrade"
   [ -n "$TT_GRUND" ] && Z_TT=1
 fi

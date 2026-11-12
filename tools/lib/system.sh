@@ -391,3 +391,28 @@ nc_dienst_finden(){
   done
   return 0
 }
+
+# v5.4-W195: Warum die TikTok-Werkzeuge in der venv erneuert werden muessen —
+# leer, wenn nichts zu tun ist. EINE Regel fuer Installer und update.sh: der
+# Installer rief pip bei jedem Lauf (nicht idempotent), update.sh nur mit
+# Grund. Geprueft ohne Netz; das Datum steckt in der yt-dlp-Fassung.
+#   nc_tt_grund <venv-python>
+nc_tt_grund(){
+  [ -x "$1" ] || return 0
+  "$1" - 2>/dev/null <<'PY'
+import datetime, importlib.util
+g = []
+try:
+    import yt_dlp.version as v
+    alter = (datetime.date.today() - datetime.date(*map(int, v.__version__.split(".")[:3]))).days
+    if alter > 30:
+        g.append("yt-dlp %s ist %d Tage alt" % (v.__version__, alter))
+except (ImportError, ValueError, TypeError):
+    g.append("yt-dlp fehlt in der venv")
+if importlib.util.find_spec("curl_cffi") is None:
+    g.append("curl_cffi fehlt (yt-dlp kann keinen Browser nachahmen)")
+if importlib.util.find_spec("streamlink") is None:
+    g.append("streamlink fehlt in der venv")
+print("; ".join(g))
+PY
+}

@@ -1492,8 +1492,13 @@ fi
 # hat die venv, weil der Bot ihr bin-Verzeichnis selbst vor den PATH stellt
 # (nc/werkzeugpfad.py); die Unit setzt keinen PATH. Mit curl_cffi, sonst kann
 # yt-dlp keinen Browser nachahmen und TikTok liefert die Sperrseite.
-"$VPY" -m pip install --upgrade "yt-dlp[default,pin-curl-cffi]" streamlink \
-  || warn "yt-dlp/streamlink liessen sich nicht in die venv installieren — es bleiben die des Systems."
+# Nur mit Grund (nc_tt_grund), sonst waere der zweite Lauf nicht idempotent.
+_tt="$(nc_tt_grund "$VPY")"
+if [ -n "$_tt" ]; then
+  info "TikTok-Werkzeuge aktualisieren: %s" "$_tt"
+  "$VPY" -m pip install --upgrade "yt-dlp[default,pin-curl-cffi]" streamlink \
+    || warn "yt-dlp/streamlink liessen sich nicht in die venv installieren — es bleiben die des Systems."
+fi
 gut "Python-Pakete stehen."
 
 # ═══════════════════════════════════════════════════════════════════════════
