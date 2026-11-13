@@ -35578,11 +35578,12 @@ const confirm=t=>{fragen.push(t); return ja;};
         url = "/api/cookies/bereinigen"
         assert aus["nein"]["posts"] == [[url, {"vorschau": True}]], aus["nein"]
         frage = aus["nein"]["fragen"][0]
-        # Als ganzes Wort, nicht als Teilstring: "www.tiktok.com" in frage
-        # hielte CodeQL fuer eine URL-Pruefung (py/incomplete-url-substring-
-        # sanitization) — und waere auch bei "www.tiktok.com.boese" wahr.
-        woerter = _re_w197.findall(r"[\w.-]+", frage)
-        assert "tt_chain_token" in woerter and "www.tiktok.com" in woerter, frage
+        # Als ganze Woerter, nicht als Teilstring — ein Teilstring-Test waere
+        # auch bei "www.tiktok.com.boese" wahr, und CodeQL liest jedes
+        # `"<host>" in x` als URL-Pruefung (py/incomplete-url-substring-
+        # sanitization), auch wenn x eine Liste ist. Deshalb als Teilmenge.
+        woerter = set(_re_w197.findall(r"[\w.-]+", frage))
+        assert {"tt_chain_token", "www.tiktok.com"} <= woerter, frage
         assert aus["nein"]["frei"], "nach Abbruch bleibt der Knopf gesperrt"
         assert aus["ja"]["posts"] == [[url, {"vorschau": True}], [url, {"stand": "s1"}]], aus["ja"]
         assert aus["ja"]["geladen"] == 1 and "tiktok_cookies.txt.bak" in aus["ja"]["msg"] \
