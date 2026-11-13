@@ -552,6 +552,110 @@ def main():
         _cs._db_conn = _echt
     ok("W199: Highlight-Radar \u2014 Lesefehler 503 ohne Schreiben, nicht genannte Felder bleiben")
 
+    # \u2500\u2500 v5.8-W200: AZRAEL antwortet in Telegram auf Antworten
+    #
+    # Der Betreiber: \u201eIn Telegram antwortet das Brain nicht auf
+    # Antwort-Nachrichten." Hier OHNE Redis (das Paket fehlt im Rauchtest) \u2014
+    # genau die Lage, in der bisher jede Antwort auf den Bot still verworfen
+    # wurde. Erst die Entscheidung im echten Handler, dann _run_ai_call bis
+    # zum LLM: kommt der Zusammenhang an, und wird die Antwort gemerkt?
+    import asyncio as _aio
+    import types as _ty
+    from nc import tgantwort as _tga
+    assert _aio.run(m.get_redis()) is None, "Rauchtest soll ohne Redis laufen"
+    _rufe = []
+
+    async def _ruf(update, context, text, file_obj=None, mime_hint="", vorher=""):
+        _rufe.append((text, vorher))
+    _echt = (m._run_ai_call, m._is_authorized)
+    m._run_ai_call, m._is_authorized = _ruf, (lambda u: True)
+    BOT_ID = 4242
+
+    class _Bot:
+        async def get_me(self):
+            return _ty.SimpleNamespace(id=BOT_ID)
+
+    def _upd(text, chat_typ="supergroup", bezug=None, thema=None):
+        msg = _ty.SimpleNamespace(text=text, chat_id=-100, reply_to_message=bezug,
+                                  message_thread_id=thema,
+                                  is_topic_message=thema is not None)
+        return _ty.SimpleNamespace(message=msg, effective_chat=_ty.SimpleNamespace(
+            id=-100, type=chat_typ), effective_user=_ty.SimpleNamespace(id=7))
+
+    def _vom_bot(text, mid, kopf=False):
+        return _ty.SimpleNamespace(text=text, message_id=mid,
+                                   from_user=_ty.SimpleNamespace(id=BOT_ID),
+                                   forum_topic_created=(_ty.SimpleNamespace() if kopf else None))
+    _ctx = _ty.SimpleNamespace(bot=_Bot())
+    try:
+        faelle = (
+            # Antwort auf eine KI-Antwort in der Gruppe, ohne Verlauf
+            (_upd("und warum?", bezug=_vom_bot("Weil X.\n\n\u2014 2.1s \u00b7 qwen", 50)),
+             [("und warum?", "Weil X.")]),
+            # Thema: Bezug auf den Themen-Kopf ist keine Antwort \u2014 Ansprache zaehlt
+            (_upd("@Azrael wer ist anna?", bezug=_vom_bot(None, 77, kopf=True), thema=77),
+             [("wer ist anna?", "")]),
+            # Thema ohne Namen: keine Antwort (sonst kommentiert AZRAEL jede Zeile)
+            (_upd("geiler stream", bezug=_vom_bot(None, 77, kopf=True), thema=77), []),
+            # Antwort auf einen anderen Nutzer mit Namen
+            (_upd("azrael, stimmt das?", bezug=_ty.SimpleNamespace(
+                text="die erde ist flach", message_id=60, forum_topic_created=None,
+                from_user=_ty.SimpleNamespace(id=9))), [("stimmt das?", "")]),
+            # Antwort auf eine Live-Meldung ohne Namen: still
+            (_upd("geil", bezug=_vom_bot("\ud83d\udd34 @anna ist LIVE", 61)), []),
+            # dieselbe im Privatchat: weiterreden
+            (_upd("wie lange schon?", chat_typ="private", bezug=_vom_bot("\ud83d\udd34 @anna ist LIVE", 62)),
+             [("wie lange schon?", "\ud83d\udd34 @anna ist LIVE")]),
+        )
+        for upd, soll in faelle:
+            del _rufe[:]
+            _aio.run(m._tg_ki_dialog(upd, _ctx))
+            assert _rufe == soll, (upd.message.text, _rufe, soll)
+        # Beide registrierten Handler fuehren dorthin.
+        del _rufe[:]
+        _aio.run(m.on_azrael_mention(_upd("hallo", chat_typ="private"), _ctx))
+        _aio.run(m.on_ai_reply(_upd("und warum?", bezug=_vom_bot("Weil X.\n\n\u2014 2.1s \u00b7 qwen", 50)), _ctx))
+        assert _rufe == [("hallo", ""), ("und warum?", "Weil X.")], _rufe
+    finally:
+        m._run_ai_call, m._is_authorized = _echt
+
+    # _run_ai_call bis zum LLM: der Zusammenhang steht vor der Frage, und die
+    # Antwort-Nachricht wird gemerkt (auch eine lange, in Stuecken).
+    _gesehen = {}
+
+    async def _llm(messages, model=None, timeout=None):
+        _gesehen["m"] = messages
+        return "Darum.", None
+
+    class _Antwort:
+        def __init__(self, mid):
+            self.message_id = mid
+
+        async def edit_text(self, *a, **k):
+            return self
+
+    class _Nachricht:
+        async def reply_text(self, *a, **k):
+            return _Antwort(901)
+
+    class _Bot2:
+        async def send_chat_action(self, *a, **k):
+            return True
+    _echt2 = m.llm_chat
+    m.llm_chat = _llm
+    try:
+        upd = _ty.SimpleNamespace(message=_Nachricht(), effective_chat=_ty.SimpleNamespace(id=-100),
+                                  effective_user=_ty.SimpleNamespace(id=7))
+        _aio.run(m._run_ai_call(upd, _ty.SimpleNamespace(bot=_Bot2()), "und warum?",
+                                vorher="Weil X."))
+    finally:
+        m.llm_chat = _echt2
+    rollen = [(x["role"], x["content"]) for x in _gesehen["m"][1:]]
+    assert rollen == [("assistant", "Weil X."), ("user", "und warum?")], rollen
+    assert _tga.gemerkt(-100, 901), "die KI-Antwort wurde nicht gemerkt"
+    ok("W200: Telegram \u2014 Antwort auf AZRAEL ohne Redis, Themen-Kopf keine Antwort, "
+       "Ansprache im Thema und als Antwort auf andere, Meldungen nur mit Grund")
+
     print("test_smoke OK \u2014 %d Vertraege gruen" % PASS)
 
 

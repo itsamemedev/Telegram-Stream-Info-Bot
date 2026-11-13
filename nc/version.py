@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.8.0"
+VERSION = "5.8.1"
 CODENAME = "Nachlese"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.8.1",
+        "date": "2026-11",
+        "title": "Nachlese",
+        # Fehlerbehebung: AZRAEL antwortet in Telegram auf Antworten (W200).
+        "highlights": [
+            "AZRAEL antwortet in Telegram wieder auf Antworten: eine Antwort auf seine Nachricht brauchte bisher einen Verlauf in Redis — ohne Redis, nach einer Stunde oder bei einem anderen Nutzer blieb es still",
+            "In Themen-Gruppen galt jede Nachricht als Antwort auf den Bot (Bezug auf den Themen-Kopf) — dort antwortete AZRAEL weder auf Antworten noch auf „@Azrael …“",
+            "Eine Antwort auf einen anderen Nutzer mit „@Azrael …“ wird jetzt beantwortet",
+            "Die beantwortete Nachricht geht als Zusammenhang mit, auch ohne gespeicherten Verlauf",
+            "Antworten auf Live- und Aufnahme-Meldungen des Bots bleiben still, außer AZRAEL wird angesprochen oder es ist der Privatchat",
+        ],
+    },
     {
         "version": "5.8.0",
         "date": "2026-11",

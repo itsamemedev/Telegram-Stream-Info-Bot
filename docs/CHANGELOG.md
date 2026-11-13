@@ -9,6 +9,45 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.8.1] — 2026-11-13 · „Nachlese" (W200)
+
+Der Betreiber: „In Telegram antwortet das Brain nicht auf Antwort-Nachrichten."
+
+### Behoben
+
+- **Eine Antwort auf AZRAEL brauchte einen Verlauf in Redis.** `on_ai_reply`
+  (F19) antwortete nur, wenn für genau diesen Chat und diesen Nutzer ein
+  Verlauf vorlag — und der liegt ausschließlich in Redis. Ohne Redis lieferte
+  `ai_history_load()` immer `[]`, damit wurde **jede** Antwort still
+  verworfen; mit Redis nach einer Stunde (`AI_HISTORY_TTL`) und immer dann,
+  wenn jemand anderes auf AZRAELs Antwort antwortete. Eine KI-Antwort wird
+  jetzt an ihrem Fuß („— 3.2s · Modell") und an gemerkten Nachrichtenkennungen
+  erkannt; die Antwort darauf läuft immer, und die beantwortete Nachricht geht
+  als Zusammenhang mit, wenn kein Verlauf da ist.
+- **Themen-Gruppen: jede Nachricht galt als Antwort auf den Bot.** Der Bot
+  legt seit W168 je Tracking ein Thema an. Dort trägt Telegram an jeder
+  Nachricht einen Bezug auf die Eröffnungsnachricht des Themas — und die
+  stammt vom Bot. Alles lief in die Sackgasse oben, und die Ansprache
+  „@Azrael …" (registriert nur für Nachrichten ohne Bezug) kam nie dran. Der
+  Themen-Kopf zählt jetzt nicht als Antwort (`nc.tgantwort.echte_antwort`).
+- **Antwort auf einen anderen Nutzer mit „@Azrael …"** fiel durch beide
+  Filter — keine Antwort auf den Bot, aber eine Antwort. Wird jetzt beantwortet.
+- Beide Handler rufen dieselbe Entscheidung (`_tg_ki_dialog`,
+  `nc/tgantwort.py`). Antworten auf Live- und Aufnahme-Meldungen bleiben still,
+  außer mit Ansprache, im Privatchat oder bei laufendem Gespräch — sonst
+  schriebe AZRAEL unter jede Meldung, auf die jemand „geil" antwortet.
+
+### Gegenprobe
+
+- Vertrag für die Entscheidung (Themen-Kopf mit und ohne `is_topic_message`,
+  KI-Antwort am Fuß und an der Kennung, Name nicht als Wortteil) und einer im
+  Rauchtest gegen den echten Bot **ohne Redis**: beide Handler, sechs Fälle,
+  und `_run_ai_call` bis zum LLM-Aufruf (Zusammenhang vor der Frage, Antwort
+  gemerkt). Bis hierher deckte kein einziger Vertrag diese Handler.
+- 11 Mutationsproben, alle gefangen. Eine entwischte zunächst: der Vertrag
+  prüfte den Themen-Kopf nur zusammen mit `is_topic_message`, sodass die
+  Prüfung über das Dienstfeld ungeprüft blieb.
+
 ## [5.8.0] — 2026-11-13 · „Nachlese" (W199)
 
 Der Betreiber: Bughunt einschließlich Sicherheit, das Repo aufräumen und

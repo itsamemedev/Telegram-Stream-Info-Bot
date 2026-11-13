@@ -120,8 +120,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 27.312 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
-    BOT -->|configure| NC["nc/ — 212 Fachmodule<br/>40 Blueprints"]:::lib
+    BOT["bot.py<br/>Monolith · 27.322 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT -->|configure| NC["nc/ — 213 Fachmodule<br/>40 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
     BOT --> DB[("SQLite oder MariaDB<br/>+ Einstellungen")]:::db
@@ -557,8 +557,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 27.312 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 386 Routen und 630 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 27.322 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 386 Routen und 631 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -585,11 +585,13 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
   alle anderen Zeitpläne. Jetzt streng gelesen und unter Sperre geschrieben.
 - **`build/` begrenzt:** die Evolution legte bei jedem Lernzyklus eine volle
   Kopie des Monolithen ab (rund 2 GB im Jahr, in jeder Sicherung) — jetzt höchstens 20.
+- **5.8.1: AZRAEL antwortet in Telegram auf Antworten** — auch ohne Redis, in
+  Themen-Gruppen und wenn jemand anderes auf ihn antwortet.
 - **Zusammenschnitt nicht mehr in Telegram:** das „Highlights & Memes“-Video
   nach jeder Aufnahme geht nur noch nach Discord — Telegram nur mit
   `MEME_REEL_TELEGRAM=1`.
 - **Aufgeräumt und abgetragen:** 27 tote Weiterleitungen und ein totes Modul
-  entfernt; Sperrliste/SSH-Angriffe nach `nc/abwehrlage.py`. `bot.py` 27.956 → 27.312 Zeilen.
+  entfernt; Sperrliste/SSH-Angriffe nach `nc/abwehrlage.py`. `bot.py` 27.956 → 27.322 Zeilen.
 
 ## 🆕 Neu in v5.7
 
@@ -801,10 +803,10 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.8.0** — „Nachlese“ (2026.11) |
+| Aktuelle Version | **5.8.1** — „Nachlese“ (2026.11) |
 | Flask-Routen | 386 (34 in `bot.py` · 352 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
-| Fachmodule | 212 in `nc/` (+40 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 213 in `nc/` (+40 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 16 |
 | Konfigurationsvariablen | ~620 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |

@@ -983,6 +983,7 @@ from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
 from nc import backupcfg as _nc_backup     # v4.1-W24: Sicherung, Aufbewahrung
 from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibweg
 from nc import abwehrlage as _nc_abwehrlage  # v5.8-W199: Sperrliste + SSH-Angriffe
+from nc import tgantwort as _nc_tgantwort  # v5.8-W200: wann AZRAEL in Telegram antwortet
 from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
 from nc import dashauth as _nc_dashauth   # v4.1-W30: ist das Deck offen?
 from nc import webserver as _nc_webserver  # v4.2-W84: Server + Bindung
@@ -6157,7 +6158,7 @@ async def _extract_file_payload(bot, file_obj, mime_hint: str = "") -> dict:
 
 
 async def _run_ai_call(update, context, prompt_text: str,
-                        file_obj=None, mime_hint: str = ""):
+                        file_obj=None, mime_hint: str = "", vorher: str = ""):
     """F16: gemeinsame Logik für /ai (mit/ohne Datei).
        prompt_text ist die User-Frage (Caption oder Args). file_obj ist optional
        ein Telegram File/PhotoSize/Document das als Kontext mitgeschickt wird."""
@@ -6220,6 +6221,11 @@ async def _run_ai_call(update, context, prompt_text: str,
     history = await ai_history_load(chat_id, user_id)
     messages = [{"role": "system", "content": AI_SYSTEM_PROMPT}]
     messages.extend(history)
+    if vorher and not history:
+        # v5.8-W200: eine Antwort auf AZRAEL ohne gespeicherten Verlauf (kein
+        # Redis, abgelaufen, oder ein anderer Nutzer antwortet) — die
+        # beantwortete Nachricht ist der Zusammenhang, sonst raet die KI.
+        messages.append({"role": "assistant", "content": vorher})
     user_msg = {"role": "user", "content": full_prompt}
     if images:
         user_msg["images"] = images
@@ -6265,14 +6271,20 @@ async def _run_ai_call(update, context, prompt_text: str,
     file_marker = f" · {file_kind}" if file_kind else ""
     footer = f"\n\n— {elapsed:.1f}s · {use_model}{file_marker}"
     chunks = split_for_telegram(response + footer, 4000)
+    # v5.8-W200: jede Nachricht, die einen Teil der Antwort traegt, merken —
+    # eine Antwort darauf ist ein Weiterreden (nc/tgantwort.py). Der Fuss steht
+    # nur am letzten Stueck.
+    _nc_tgantwort.merken(chat_id, msg.message_id)
     if len(chunks) == 1:
         try: await msg.edit_text(_nc_i18n.t(chunks[0]))
         except Exception as e: log.warning(f"AI edit_text failed: {e}")
     else:
         try: await msg.edit_text(_nc_i18n.t(chunks[0]))
-        except Exception: pass
+        except Exception as e: log.warning(f"AI edit_text failed: {e}")
         for c in chunks[1:]:
-            try: await update.message.reply_text(_nc_i18n.t(c))
+            try:
+                _teil = await update.message.reply_text(_nc_i18n.t(c))
+                _nc_tgantwort.merken(chat_id, getattr(_teil, "message_id", None))
             except Exception as e: log.warning(f"AI follow-up reply failed: {e}")
 
 
@@ -7592,32 +7604,44 @@ async def sysres(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """F19: Reply auf eine vorherige AI-Antwort des Bots → automatisch als
-       AI-Follow-up verarbeiten ohne dass /ai nochmal getippt werden muss.
+    """F19: Nachrichten mit Antwort-Bezug (filters.REPLY). Entschieden wird in
+    _tg_ki_dialog — siehe dort, warum das nicht mehr „Antwort auf den Bot mit
+    Verlauf in Redis" heissen darf (v5.8-W200)."""
+    await _tg_ki_dialog(update, context)
 
-       Triggered nur wenn:
-       - Message ist Reply auf irgendeine Bot-Message
-       - Reply-Text enthält keine andere /command (nicht mit / starten)
-       - User hat Conversation-History (sonst könnte es Zufall sein)"""
-    if not _is_authorized(update): return
-    msg = update.message
-    if not msg or not msg.text: return
-    if msg.text.startswith("/"): return  # explizite Commands haben Vorrang
 
-    reply_to = msg.reply_to_message
-    if not reply_to: return
-    me = await context.bot.get_me()
-    if not reply_to.from_user or reply_to.from_user.id != me.id: return
+async def _tg_ki_dialog(update, context):
+    """v5.8-W200: wann AZRAEL in Telegram antwortet — fuer BEIDE Handler.
 
-    # Nur loslegen wenn die Conversation-History für (chat, user) existiert.
-    # Vermeidet dass jeder Bot-Reply (z.B. Ankündigungen) AI triggert.
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    history = await ai_history_load(chat_id, user_id)
-    if not history:
+    Der Betreiber: „In Telegram antwortet das Brain nicht auf
+    Antwort-Nachrichten." Bis hierher verlangte eine Antwort auf den Bot einen
+    Verlauf in Redis (ohne Redis: nie), Themen-Gruppen schickten jede
+    Nachricht als „Antwort auf den Bot" in genau diese Sackgasse, und eine
+    Antwort auf einen anderen Nutzer mit „@Azrael" fiel durch beide Filter.
+    Die Regeln stehen in nc/tgantwort.py."""
+    if not _is_authorized(update):
         return
-
-    await _run_ai_call(update, context, msg.text)
+    msg = update.message
+    if not msg or not msg.text:
+        return
+    chat = update.effective_chat
+    privat = bool(chat and chat.type == "private")
+    bezug = _nc_tgantwort.echte_antwort(msg)
+    an_bot = False
+    if bezug is not None and getattr(bezug, "from_user", None) is not None:
+        me = await context.bot.get_me()
+        an_bot = bezug.from_user.id == me.id
+    ki = an_bot and _nc_tgantwort.ist_ki_antwort(msg.chat_id, bezug)
+    verlauf = False
+    if an_bot and not ki:
+        # Nur fragen, wenn es entscheidet: Redis ist optional und langsam weg.
+        verlauf = bool(await ai_history_load(chat.id, update.effective_user.id))
+    art = _nc_tgantwort.entscheiden(msg.text, privat, an_bot, ki, verlauf)
+    if art == _nc_tgantwort.FOLGE:
+        await _run_ai_call(update, context, _nc_tgantwort.frage_ohne_namen(msg.text)[:2000],
+                           vorher=_nc_tgantwort.ohne_fuss(bezug.text or "")[:3000])
+    elif art == _nc_tgantwort.ANSPRACHE:
+        await _run_ai_call(update, context, _nc_tgantwort.frage_ohne_namen(msg.text)[:600])
 
 
 # Telegram nimmt von Bots hoechstens 50 MB je Datei an; 48 laesst Platz fuer
@@ -7683,25 +7707,10 @@ async def on_azrael_mention(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     Privatchat: jede normale Nachricht ist eine Ansprache — dafuer schreibt man
     einem Bot. In Gruppen nur bei genanntem Namen, sonst kommentierte AZRAEL
-    jede Zeile mit.
+    jede Zeile mit. v5.8-W200: dieselbe Entscheidung wie fuer Antworten
+    (_tg_ki_dialog), damit beide Wege nicht wieder auseinanderlaufen.
     """
-    if not _is_authorized(update):
-        return
-    msg = update.message
-    if not msg or not msg.text:
-        return
-    text = msg.text.strip()
-    if text.startswith("/"):
-        return                                   # Commands haben Vorrang
-    if msg.reply_to_message:
-        return                                   # deckt on_ai_reply ab
-    privat = (update.effective_chat
-              and update.effective_chat.type == "private")
-    if not (privat or "azrael" in text.lower()):
-        return
-    # Den Namen aus der Frage nehmen, sonst antwortet die KI auf sich selbst.
-    frage = re.sub(r"@?azrael\b[:,]?\s*", "", text, flags=re.I).strip() or text
-    await _run_ai_call(update, context, frage[:600])
+    await _tg_ki_dialog(update, context)
 
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -24549,14 +24558,15 @@ async def run_bot():
     # v5.4-W195: Cookie-Datei mit Beschriftung /cookies (vom Telefon aus)
     app.add_handler(MessageHandler(
         filters.Document.ALL & filters.CaptionRegex(r"^/cookies\b"), cookies_datei_cmd))
-    # F19: Reply-to-bot-message → AI-Follow-up
+    # F19: Nachrichten mit Antwort-Bezug. v5.8-W200: dazu gehoert in
+    # Themen-Gruppen JEDE Nachricht (Bezug auf den Themen-Kopf) — entschieden
+    # wird deshalb nicht am Filter, sondern in _tg_ki_dialog (nc/tgantwort.py).
     app.add_handler(MessageHandler(
         filters.REPLY & filters.TEXT & ~filters.COMMAND,
         on_ai_reply))
-    # B138: direkte Ansprache ("@Azrael …") und Privatnachrichten. MUSS nach
-    # dem Reply-Handler stehen: python-telegram-bot ruft in derselben Gruppe
-    # nur den ERSTEN passenden Handler auf, und ein Reply soll weiterhin als
-    # Follow-up laufen, nicht als neue Ansprache.
+    # B138: direkte Ansprache ("@Azrael …") und Privatnachrichten, ohne
+    # Antwort-Bezug. Beide Handler rufen dieselbe Entscheidung; in derselben
+    # Gruppe ruft python-telegram-bot nur den ERSTEN passenden Handler auf.
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.REPLY,
         on_azrael_mention))

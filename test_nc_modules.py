@@ -37209,6 +37209,88 @@ def _test_v58_w199_zusammenschnitt_nicht_nach_telegram():
     ok("v5.8-W199: Zusammenschnitt nur nach Discord, Telegram nur mit MEME_REEL_TELEGRAM=1")
 
 
+def _test_v58_w200_telegram_antworten():
+    """v5.8-W200: wann AZRAEL in Telegram antwortet (nc/tgantwort.py).
+
+    Der Betreiber: „In Telegram antwortet das Brain nicht auf
+    Antwort-Nachrichten." Drei stille Wege: Antwort auf den Bot nur mit
+    Redis-Verlauf, Themen-Gruppen (jede Nachricht traegt einen Bezug auf den
+    Themen-Kopf des Bots), und die Antwort auf einen anderen Nutzer mit
+    „@Azrael". Geprueft an Attrappen der Telegram-Nachricht."""
+    import types as _ty
+    from nc import tgantwort as T
+
+    def _n(**kw):
+        return _ty.SimpleNamespace(**kw)
+    kopf = _n(message_id=77, forum_topic_created=_n(name="anna"), text=None)
+    # (1) Der Themen-Kopf ist keine Antwort — weder ueber das Dienstfeld
+    # noch ueber die Kennung (aeltere Bibliotheken liefern das Feld nicht).
+    assert T.echte_antwort(_n(reply_to_message=kopf, message_thread_id=77,
+                              is_topic_message=True)) is None
+    # Ohne is_topic_message (aeltere Fassung der Bibliothek) traegt nur noch
+    # das Dienstfeld die Erkennung — beide Wege gelten je fuer sich.
+    assert T.echte_antwort(_n(reply_to_message=kopf)) is None, \
+        "Themen-Kopf ohne is_topic_message als Antwort gelesen"
+    kopf_ohne = _n(message_id=77, forum_topic_created=None, text=None)
+    assert T.echte_antwort(_n(reply_to_message=kopf_ohne, message_thread_id=77,
+                              is_topic_message=True)) is None
+    echt = _n(message_id=90, forum_topic_created=None, text="x")
+    assert T.echte_antwort(_n(reply_to_message=echt, message_thread_id=77,
+                              is_topic_message=True)) is echt, "echte Antwort im Thema verworfen"
+    assert T.echte_antwort(_n(reply_to_message=None)) is None
+    assert T.echte_antwort(_n(reply_to_message=echt, message_thread_id=None,
+                              is_topic_message=False)) is echt
+
+    # (2) KI-Antwort erkennen: am Fuss, oder an der gemerkten Kennung.
+    ki = _n(message_id=5, text="Das ist so.\n\n— 3.2s · qwen3-14b")
+    ki_datei = _n(message_id=6, text="Bild zeigt X\n\n— 12s · llava · image")
+    meldung = _n(message_id=7, text="🔴 @anna ist LIVE — Aufnahme läuft")
+    zitat = _n(message_id=8, text="Er schrieb: — 3.2s · x und dann?")
+    assert T.ist_ki_antwort(-1, ki) and T.ist_ki_antwort(-1, ki_datei)
+    assert not T.ist_ki_antwort(-1, meldung) and not T.ist_ki_antwort(-1, zitat)
+    T.merken(-1, 7)
+    assert T.ist_ki_antwort(-1, meldung), "gemerkte Kennung nicht erkannt"
+    assert not T.ist_ki_antwort(-2, meldung), "Kennung gilt nur in ihrem Chat"
+    assert T.ohne_fuss(ki.text) == "Das ist so."
+    alt = T.MAX_GEMERKT
+    T.MAX_GEMERKT = 3
+    try:
+        for i in range(10):
+            T.merken(-9, i)
+        assert len([k for k in T._GEMERKT if k[0] == -9]) == 3 and T.gemerkt(-9, 9)
+        assert not T.gemerkt(-9, 0), "die Liste waechst ohne Grenze"
+    finally:
+        T.MAX_GEMERKT = alt
+
+    # (3) Name: Ansprache ja, Wortteil nein.
+    for t in ("@Azrael was geht", "azrael, sag mal", "Hey AZRAEL!", "was meinst du azrael"):
+        assert T.angesprochen(t), t
+    for t in ("Mazrael", "azraelfan", "mail@azrael.de"):
+        assert not T.angesprochen(t), t
+    assert T.frage_ohne_namen("@Azrael: wie spät?") == "wie spät?"
+    assert T.frage_ohne_namen("Azrael") == "Azrael"
+
+    # (4) Die Entscheidung.
+    E = T.entscheiden
+    F, A = T.FOLGE, T.ANSPRACHE
+    # Antwort auf eine KI-Antwort: immer — ohne Verlauf, in der Gruppe.
+    assert E("und warum?", False, True, True, False) == F
+    # Antwort auf eine Meldung des Bots: nur mit Grund.
+    assert E("geil", False, True, False, False) is None
+    assert E("azrael, wer ist das?", False, True, False, False) == F
+    assert E("und jetzt?", False, True, False, True) == F, "laufendes Gespraech"
+    assert E("und jetzt?", True, True, False, False) == F, "Privatchat"
+    # Keine Antwort auf den Bot (auch: Antwort auf einen anderen Nutzer, Thema).
+    assert E("@Azrael hilf mal", False, False, False, False) == A
+    assert E("hallo", True, False, False, False) == A
+    assert E("hallo zusammen", False, False, False, False) is None
+    # Befehle und Leeres nie.
+    assert E("/status", True, True, True, True) is None
+    assert E("   ", True, False, False, False) is None
+    ok("v5.8-W200: Telegram — Themen-Kopf keine Antwort, KI-Antwort am Fuss/an der "
+       "Kennung, Antwort auf AZRAEL ohne Verlauf, Meldungen nur mit Ansprache")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -40132,6 +40214,7 @@ def main():
     _test_v58_w199_abwehrlage()
     _test_v58_w199_geocache_anreichern()
     _test_v58_w199_zusammenschnitt_nicht_nach_telegram()
+    _test_v58_w200_telegram_antworten()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
