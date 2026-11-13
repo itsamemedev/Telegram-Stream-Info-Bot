@@ -45,12 +45,27 @@ def _translate_sql(sql: str, mit_parametern: bool = True) -> str:
         i += 1
     return ''.join(out)
 
-def _rule_based_sql(q):
+def zeitfenster_literal(heute=False, jetzt=None) -> str:
+    """Untergrenze eines Zeitfensters als ISO-Literal — fuer BEIDE Backends.
+
+    v5.6-W197: hier stand `datetime('now','-7 days')` und `date('now')`. Das
+    ist SQLite; unter MariaDB (dem Betrieb seit 11/2026) gibt es keine
+    Funktion `datetime`, und vier der sechs Regel-Abfragen endeten in
+    „FUNCTION datetime does not exist". Die Zeitspalten sind in beiden
+    Backends ISO-8601-Zeichenketten (MariaDB: VARCHAR(64), nc/schema.py) — ein
+    Vergleich mit einem ISO-Literal ist also dort wie hier derselbe
+    Zeichenkettenvergleich, ohne Dialekt."""
+    from datetime import datetime, timedelta, timezone
+    jetzt = jetzt or datetime.now(timezone.utc)
+    if heute:
+        return "'" + jetzt.strftime("%Y-%m-%d") + "'"
+    return "'" + (jetzt - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S") + "'"
+
+
+def _rule_based_sql(q, jetzt=None):
     """Fallback NL→SQL für häufige Fragen, falls keine LLM verfügbar ist."""
     ql = (q or "").lower()
-    win = "datetime('now','-7 days')"
-    if "today" in ql or "heute" in ql:
-        win = "date('now')"
+    win = zeitfenster_literal("today" in ql or "heute" in ql, jetzt)
     if ("fail" in ql or "scheiter" in ql or "fehl" in ql) and ("most" in ql or "meist" in ql or "häufig" in ql):
         return ("SELECT username, COUNT(*) AS fehlversuche FROM recording_attempts "
                 "WHERE outcome NOT IN ('ok','stall_killed_partial','running','cancelled') "

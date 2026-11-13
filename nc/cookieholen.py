@@ -30,6 +30,7 @@ verworfen, bevor es in die Datei kommt. `tiktok_cookies.txt` liegt im Bestand
 und in jedem Backup; sie ist kein Abladeplatz für fremde Sitzungen.
 """
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -38,9 +39,11 @@ import time as _time
 import urllib.request
 from http.cookiejar import CookieJar, MozillaCookieJar
 
+from nc import cookies as _nc_cookies
 from nc import fehlertext as _nc_fehlertext
-from nc.cookies import (DATEI_SPERRE, _cookies_input_to_netscape,
-                        _dedupe_cookie_text, hat_login)
+from nc.cookies import (DATEI_SPERRE, LOGIN_NAMEN, _KOPF, _cookies_input_to_netscape,
+                        _dedupe_cookie_text, _feld_zeile, abgelaufen, auswahl,
+                        hat_login)
 from nc.tiktokheaders import HEADERS as _TT_HEADERS
 
 # Die Seiten, die beim ersten Aufruf die Anti-Bot-Tokens setzen. Zwei, weil
@@ -327,14 +330,33 @@ def zusammenfuehren(alt_text: str, neue: dict, gast=True):
     return fertig, ergaenzt, ersetzt
 
 
-def schreibe(datei: str, netscape_text: str, auth_pflicht=False):
+class DateiGeaendert(RuntimeError):
+    """Die Datei ist nicht mehr die, auf der der Aufrufer seine Aenderung
+    berechnet hat — ein anderer Schreiber war dazwischen."""
+
+
+def _unveraendert(datei: str, erwartet: bytes) -> bool:
+    """Steht in der Datei noch genau `erwartet`? Fehlt sie, nein."""
+    if os.path.exists(datei):
+        with open(datei, "rb") as f:
+            return f.read() == erwartet
+    return False
+
+
+def schreibe(datei: str, netscape_text: str, auth_pflicht=False, nur_wenn=None):
     """Schreibt die cookies.txt — validiert, mit Backup, atomar.
        Returns (anzahl, backup_angelegt). Wirft, wenn das Ergebnis nicht
        ladbar wäre oder ein verlangtes Auth-Cookie fehlt.
 
        Reihenfolge ist Absicht: erst .tmp schreiben und LADEN, dann sichern,
        dann tauschen. Wer zuerst tauscht und danach prüft, hat im Fehlerfall
-       schon den funktionierenden Bestand überschrieben."""
+       schon den funktionierenden Bestand überschrieben.
+
+       nur_wenn (v5.6-W197): die Bytes, aus denen der Aufrufer seinen Text
+       berechnet hat. Steht unter der Sperre etwas anderes in der Datei, wird
+       NICHT getauscht (DateiGeaendert). Ohne das schreibt eine Bereinigung,
+       die vor dem Auto-Bezug gelesen und nach ihm geschrieben hat, die frisch
+       bezogenen Tokens wortlos wieder heraus — mit „ok" im Deck."""
     tmp = datei + ".neu.tmp"
     fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     try:
@@ -346,6 +368,12 @@ def schreibe(datei: str, netscape_text: str, auth_pflicht=False):
         if auth_pflicht and not (namen & {"sessionid_ss", "sessionid"}):
             raise RuntimeError("kein Auth-Cookie (sessionid_ss/sessionid) dabei")
         with DATEI_SPERRE:
+            # Die Pruefung steht UNTER der Sperre: davor waere zwischen
+            # Vergleich und Tausch wieder ein Fenster fuer genau den Schreiber,
+            # gegen den sie gebaut ist.
+            if nur_wenn is not None and not _unveraendert(datei, nur_wenn):
+                raise DateiGeaendert("die Cookie-Datei hat sich seit dem Lesen "
+                                     "geaendert — nichts geschrieben")
             backup = False
             if os.path.exists(datei):
                 try:
@@ -412,6 +440,203 @@ def uebernehmen(roh: str, datei: str) -> dict:
                 "gefunden": namen[:20]}
     return {"ok": True, "anzahl": n, "doppelt": doppelt, "backup": backup,
             "auth_cookie": "sessionid_ss" if "sessionid_ss" in namen else "sessionid"}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v5.6-W197: der Bereinigungs-Knopf im System-Tab.
+#
+# Das Deck schrieb seit dem Tiefenbughunt „mehrfach unter verschiedenen
+# Domains — cookies.txt bereinigen" unter die Domain-Duplikate, und es gab
+# keinen Knopf und keine Route dafuer (v4.5 bis v5.5 nachgesehen). Der
+# Betreiber sollte eine Datei mit Zugangsdaten von Hand editieren — auf dem
+# Server, ohne zu wissen, welche Zeile der Bot eigentlich sendet.
+# ══════════════════════════════════════════════════════════════════════════
+
+def _ort(c) -> str:
+    """Wo eine Variante liegt: Domain, der Pfad nur, wenn er nicht '/' ist.
+    Damit sieht der Betreiber, WELCHE bleibt — ohne je einen Wert zu sehen."""
+    pfad = c.path or "/"
+    return (c.domain or "?") + ("" if pfad == "/" else pfad)
+
+
+def _zeile(c) -> str:
+    """Ein Cookie aus dem Jar zurueck als Netscape-Zeile, ueber dieselbe
+    _feld_zeile(), die jeder Import nimmt — also genau sieben Felder, Feld 2
+    aus der Domain abgeleitet, Ablauf als Zahl.
+
+    Geschrieben wird aus dem JAR, nicht aus den Textzeilen: das Jar ist, was
+    load_dict() liest. Ein zweiter Zeilenparser, der „Zeile gehoert zu
+    Cookie" selbst entscheidet, waere die zweite Wahrheit — er muesste
+    nachbauen, dass bei gleicher (Domain, Pfad, Name) die LETZTE Zeile gilt,
+    dass „0" Sitzung heisst und dass `#HttpOnly_` kein Kommentar ist."""
+    if c.value is None:
+        # cookiejar liest eine Zeile mit leerem Namen als Name=Wert, Wert=None
+        # (so steht es in http.cookiejar). Zurueck also in dieselbe Form.
+        name, wert = "", c.name
+    else:
+        name, wert = c.name, c.value
+    return _feld_zeile([c.domain or "", "", c.path or "/",
+                        "TRUE" if c.secure else "FALSE",
+                        c.expires or 0, name, wert])
+
+
+def _plan(alle, kritisch, jetzt):
+    """Was die Bereinigung entfernt — rein rechnend, ohne Datei.
+
+    Reihenfolge ist die Entscheidung:
+      1. Abgelaufene raus (`abgelaufen()`: Ablauf 0 ist Sitzung, nicht alt).
+      2. Unter den UEBRIGEN je kritischem Namen mit mehreren Varianten die
+         behalten, die auswahl() waehlt — dieselbe Funktion, nach der
+         load_dict() den gesendeten Wert bestimmt.
+
+    Warum erst 1, dann 2: auswahl() liest abgelaufene mit (ignore_expires),
+    und der Rang der Domain steht VOR der Expiry. Ein abgelaufenes
+    `www.tiktok.com sessionid` schlaegt damit ein gueltiges `.tiktok.com
+    sessionid` — der Bot sendet heute den toten Wert. Andersherum gerechnet
+    behielte die Bereinigung genau ihn, um ihn im zweiten Schritt zu
+    loeschen, und der gueltige waere schon weg. So herum bleibt der Wert,
+    den auch ein Browser senden wuerde (der sendet abgelaufene nie).
+
+    Fuer jeden Namen, dessen gesendete Variante NICHT abgelaufen ist, aendert
+    das nichts am gesendeten Wert: der Sieger bleibt, und ein Gleichstand
+    mit ihm hat dieselbe Expiry, ist also ebenfalls nicht abgelaufen.
+    Wechselt der Wert doch (der Sieger war tot), steht der Name in
+    `wert_wechselt` — die Vorschau sagt es, bevor geschrieben wird."""
+    weg = {}                                      # id(cookie) -> Grund
+    for c in alle:
+        if abgelaufen(c.expires, jetzt):
+            weg[id(c)] = "abgelaufen"
+        elif not _zeile(c):
+            # Kein Name und kein Wert, oder keine Domain: das Jar nimmt so
+            # eine Zeile an, _feld_zeile() nie. Sie fiele beim Neuschreiben
+            # ohnehin heraus — dann soll sie in der Vorschau stehen, statt
+            # still zu fehlen.
+            weg[id(c)] = "unbrauchbar"
+    lebend = [c for c in alle if id(c) not in weg]
+    gewaehlt = auswahl(lebend)
+    je_name = {}
+    for c in lebend:
+        je_name.setdefault(c.name, []).append(c)
+    for name in kritisch:
+        varianten = je_name.get(name) or []
+        if len(varianten) > 1:
+            for c in varianten:
+                if c is not gewaehlt[name]:
+                    weg[id(c)] = "doppelt"
+    behalten = [c for c in alle if id(c) not in weg]
+
+    vorher = auswahl(alle)
+    nachher = auswahl(behalten)
+    doppelt = []
+    for name in sorted({c.name for c in alle if weg.get(id(c)) == "doppelt"}):
+        doppelt.append({"name": name, "behalten": _ort(nachher[name]),
+                        "entfernt": [_ort(c) for c in alle
+                                     if c.name == name and weg.get(id(c)) == "doppelt"]})
+    return {
+        "behalten": behalten,
+        "weg": [c for c in alle if id(c) in weg],
+        "abgelaufen": [{"name": c.name, "ort": _ort(c)} for c in alle
+                       if weg.get(id(c)) == "abgelaufen"],
+        "unbrauchbar": [{"name": c.name or "?", "ort": _ort(c)} for c in alle
+                        if weg.get(id(c)) == "unbrauchbar"],
+        "doppelt": doppelt,
+        # Nur Namen, nie Werte — die Antwort geht ins Deck.
+        "wert_wechselt": sorted(n for n in nachher
+                                if n in vorher and vorher[n].value != nachher[n].value),
+        "login_weg": sorted((set(LOGIN_NAMEN) & {c.name for c in alle})
+                            - {c.name for c in behalten}),
+    }
+
+
+def _stand(roh: bytes, weg) -> str:
+    """Fingerabdruck aus Dateiinhalt UND Entfernungsliste.
+
+    Die Vorschau gibt ihn heraus, die Ausfuehrung muss ihn zuruecksenden.
+    Das ist die Lehre aus W91 (/api/rec/orphans): der Betreiber bestaetigt,
+    was er GESEHEN hat. Liegt zwischen Vorschau und Klick ein Auto-Bezug
+    oder laeuft ein Cookie ab, ist der Plan ein anderer — und dann wird
+    nicht ausgefuehrt, sondern neu gefragt. Gekuerzt und ohne Werte: ein
+    Vergleichswert, kein Inhalt."""
+    teile = sorted("%s\t%s\t%s" % (c.domain, c.path, c.name) for c in weg)
+    h = hashlib.sha256(roh)
+    h.update(b"\0" + "\n".join(teile).encode("utf-8", "replace"))
+    return h.hexdigest()[:16]
+
+
+def bereinigen(datei: str, vorschau=False, erwartet=None, kritisch=None,
+               jetzt=None) -> dict:
+    """Die Cookie-Datei bereinigen: abgelaufene Eintraege und Domain-Duplikate
+    kritischer Cookies heraus — nie die Anmeldung.
+
+    vorschau=True rechnet nur und schreibt nichts. erwartet ist der `stand`
+    einer Vorschau; passt er nicht mehr, wird nicht geschrieben (siehe
+    _stand). kritisch: die Namen, deren Duplikate aufgeloest werden —
+    Vorgabe die Liste, die gesundheit() fuer die Duplikat-Warnung nimmt.
+
+    -> {"ok": True, "vorschau", "noetig", "stand", "vorher", "nachher",
+        "entfernt", "abgelaufen": [{name, ort}], "doppelt": [{name, behalten,
+        entfernt}], "unbrauchbar": [{name, ort}], "wert_wechselt": [Namen],
+        "backup": Dateiname|None}
+     | {"ok": False, "art": fehlt|unlesbar|login_weg|veraltet|schreiben,
+        "detail": str, "namen": [Namen]}
+
+    Nach aussen gehen Namen, Domains und Zahlen — nie ein Wert, nie ein Pfad
+    (der Backup-Name ohne Verzeichnis). Bei jedem Fehlschlag bleibt die Datei,
+    wie sie war; geschrieben wird ausschliesslich ueber schreibe() (Sperre,
+    .bak, 0600, erst laden, dann tauschen)."""
+    kritisch = tuple(_nc_cookies.kritisch() if kritisch is None else kritisch)
+    jetzt = _time.time() if jetzt is None else jetzt
+    if not os.path.exists(datei):
+        return {"ok": False, "art": "fehlt", "detail": "", "namen": []}
+    try:
+        # Einmal die Bytes fuer Stand und Sperren-Vergleich, einmal das Jar
+        # ueber lade_jar() — denselben Leser wie load_dict(). Aendert sich
+        # die Datei zwischen beiden, faellt das spaetestens unter der Sperre
+        # in schreibe() auf: dort wird gegen DIESE Bytes verglichen.
+        with open(datei, "rb") as f:
+            roh = f.read()
+        cj, normalisiert = _nc_cookies.lade_jar(datei)
+    except Exception as e:
+        return {"ok": False, "art": "unlesbar", "namen": [],
+                "detail": _nc_fehlertext.nach_aussen(e, "cookieholen.bereinigen")}
+    alle = list(cj)
+    p = _plan(alle, kritisch, jetzt)
+    stand = _stand(roh, p["weg"])
+    if p["login_weg"]:
+        # Abbruch statt „Anmeldung behalten und den Rest bereinigen": ein
+        # abgelaufener sessionid ist eine tote Anmeldung, und die Abhilfe ist
+        # ein neuer Export — nicht eine Datei, in der still ein Login fehlt.
+        return {"ok": False, "art": "login_weg", "detail": "",
+                "namen": p["login_weg"]}
+    bericht = {
+        "ok": True, "vorschau": bool(vorschau), "noetig": bool(p["weg"]),
+        "stand": stand, "vorher": len(alle), "nachher": len(p["behalten"]),
+        "entfernt": len(p["weg"]), "abgelaufen": p["abgelaufen"],
+        "doppelt": p["doppelt"], "unbrauchbar": p["unbrauchbar"],
+        "wert_wechselt": p["wert_wechselt"], "normalisiert": bool(normalisiert),
+        "backup": None,
+    }
+    if vorschau or not p["weg"]:
+        # Nichts zu tun heisst: NICHT schreiben. Ein Schreibvorgang ohne
+        # Aenderung setzt die mtime, und das Deck meldet „frisch".
+        return bericht
+    if erwartet is not None and erwartet != stand:
+        return {"ok": False, "art": "veraltet", "detail": "", "namen": []}
+    text = "\n".join([_KOPF, "# Bereinigt ueber das Deck: abgelaufene und doppelte "
+                      "Eintraege entfernt", ""] + [_zeile(c) for c in p["behalten"]]) + "\n"
+    try:
+        _anzahl, backup = schreibe(datei, text, nur_wenn=roh)
+    except DateiGeaendert as e:
+        # Ein anderer Schreiber war dazwischen (Auto-Bezug, Deck, yt-dlp).
+        # Kein Fehler, aber eine Zeile wert: wer „bereinigt" geklickt hat und
+        # nichts passiert, sucht genau diese.
+        return {"ok": False, "art": "veraltet", "namen": [],
+                "detail": _nc_fehlertext.nach_aussen(e, "cookieholen.bereinigen")}
+    except Exception as e:
+        return {"ok": False, "art": "schreiben", "namen": [],
+                "detail": _nc_fehlertext.nach_aussen(e, "cookieholen.bereinigen")}
+    bericht["backup"] = os.path.basename(datei) + ".bak" if backup else None
+    return bericht
 
 
 # Was zu tun ist, wenn der Bezug scheitert — je Weg. Ein Grund ohne Abhilfe

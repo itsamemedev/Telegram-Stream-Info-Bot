@@ -901,8 +901,6 @@ from nc.textmore import _merge_banned_words, configure_banned_cap  # noqa: F401
 import nc.freeai as _nc_freeai  # V37: keyless Cloud-AI (einziger Cloud-Pfad)
 import nc.claude as _nc_claude  # v4.0-W64: Anthropic-Claude-Provider (primär, wenn Key gesetzt)
 import nc.usage as _nc_usage    # v4.0-W92: LLM-Token-/Kostenzähler
-import nc.crypto as _nc_crypto  # v4.0-W94: Krypto-Spendenadressen + BTC-Live-Empfang
-import nc.qrsvg as _nc_qrsvg    # v4.0-W95: QR-Codes (Inline-SVG)
 
 # v4.0-W92/W93: chat_sync zentral mit Token-Zählung umhüllen — ALLE Claude-Calls
 # (mehrere Aufrufstellen) verbuchen so ihre Tokens/Kosten, ohne jede Stelle zu
@@ -985,10 +983,8 @@ from nc import stats as _nc_stats          # v4.0-W117: get_stats + Status-Verte
 from nc.stats import get_per_user_stats, _collect_session_stats  # noqa: F401
 from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
 from nc import backupcfg as _nc_backup     # v4.1-W24: Sicherung, Aufbewahrung
-from nc import defensecfg as _nc_dcfg     # v4.1-W25: Abwehr-Einstellungen
 from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibweg
 from nc import geoip as _nc_geoip         # v4.1-W25: ip-api-Stapelabfrage
-from nc import bandbreite as _nc_band      # v4.1-W26: Aufnahme-Durchsatz
 from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
 from nc import dashauth as _nc_dashauth   # v4.1-W30: ist das Deck offen?
 from nc import webserver as _nc_webserver  # v4.2-W84: Server + Bindung
@@ -1083,6 +1079,8 @@ from nc import overlaybrowser as _nc_ovbrowser
 from nc import kickzentrifugo as _nc_kickzentrifugo  # v4.2-W171: Kick-Chat ueber Centrifugo
 from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden, eine Quelle fuer alle
 from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Spendenziel fuer alle Anzeigen
+from nc import oeffentlichestats as _nc_oeffstats  # v5.6-W197: stats.json der Website
+from nc import tagesbericht as _nc_tagesbericht  # v5.6-W197: /summary und Autopost
 from nc import forkriegel as _nc_forkriegel     # v5.1-W183: Fork vor Whisper
 from nc import lagebild as _nc_lagebild         # v5.1-W186: Betriebsteile im Lagebild
 from nc import raumkennung as _nc_raumkennung   # v5.1-W184: Room-ID pruefen, Grund nennen
@@ -2038,7 +2036,6 @@ from nc.util import (  # noqa: F401
 # (Batch-Importe nach vorn gezogen — siehe früher Konstantenblock, V37-MOD)
 
 
-
 # --- Pull/Resolve-Proxy-Wahl mit Rotation -----------------------------------
 # Per-User: welcher Proxy läuft gerade für die Aufnahme (für Reporting beim Ende),
 # und welcher ist zuletzt geblockt (beim nächsten Versuch ausschließen → Rotation).
@@ -2075,8 +2072,6 @@ def _auto_on(key, env_default):
         return False
     ov = _AUTOMATION.get(key)
     return bool(env_default) if ov is None else bool(ov)
-
-
 
 
 def _proxy_report_recording(username, category, stderr_text, rc, duration):
@@ -2324,10 +2319,6 @@ def get_cookie_health() -> dict:
     return _nc_cookies_datei.gesundheit()
 
 
-
-
-
-
 def _ensure_cookie_file_netscape() -> bool:
     """Stellt sicher, dass COOKIE_FILE gültiges Netscape-Format ist — das, was
        sowohl yt-dlp (--cookies) als auch MozillaCookieJar (_load_cookies_dict)
@@ -2447,23 +2438,9 @@ _LIVE_RESOLVER_HEADERS = _nc_tthdr.HEADERS
 PREFER_H264 = os.getenv("PREFER_H264", "1").lower() in ("1", "true", "yes", "y")
 
 
-
-
-_HEVC_TOKENS = ("bytevc1", "hevc", "h265", "h.265", "hvc1", "hev1")
-
-def _is_hevc(vcodec: str) -> bool:
-    # v4.0-W29: verbatim nach nc/streamsel.py extrahiert (bitgenau geprüft).
-    return _nc_ss.is_hevc(vcodec)
-
-
 def _select_stream_from_data_section(data_section, prefer_h264: bool = True):
     # v4.0-W29: verbatim nach nc/streamsel.py extrahiert (bitgenau geprüft).
     return _nc_ss.select_stream_from_data_section(data_section, prefer_h264=prefer_h264)
-
-
-def _extract_urls_from_streamurl_node(node):
-    # v4.0-W29: verbatim nach nc/streamsel.py extrahiert; PREFER_H264 als Parameter.
-    return _nc_ss.extract_urls_from_streamurl_node(node, prefer_h264=PREFER_H264)
 
 
 def _find_stream_urls(obj, _depth: int = 0):
@@ -3719,7 +3696,6 @@ def _find_external_recorder():
     return _nc_reccmd._find_external_recorder()
 
 
-
 # F43: _build_streamlink_cmd entfernt — streamlink wird nicht mehr unterstützt.
 
 
@@ -3805,10 +3781,6 @@ def _anthropic_key():
     if _CLAUDE_PAUSE["bis"] > _time_mod.monotonic():
         return ""
     return _nc_claude.api_key()
-
-
-
-
 
 
 def _anthropic_model(override=None):
@@ -4070,8 +4042,6 @@ def _ki_rueckfall_melden(weg, grund):
 _LLM_MODELS_CACHE = {"ts": 0.0, "models": []}
 
 
-
-
 async def llm_list_models() -> Optional[List[str]]:
     """Modell-Liste: Brain-Backend (llama.cpp) zuerst, sonst freeai-Basen."""
     try:
@@ -4122,8 +4092,6 @@ def llm_chat_sync(messages, model=None, timeout=None):
     return _nc_freeai.chat_sync(messages, model=model, timeout=timeout)
 
 
-
-
 # v4.2-W4: beide Wege (brain, nc.freeai) liegen ausserhalb des Bots — er war
 # hier nur Durchreiche.
 _check_ai_alive_sync = _nc_probe.ai_alive
@@ -4142,11 +4110,6 @@ def _check_ai_models_sync(timeout: float = 1.5):
         return _nc_freeai.list_models_sync(timeout=max(3.0, timeout)) or []
     except Exception:
         return []
-
-
-
-
-
 
 
 # ---------- Live-Streaming des KI-Chats (SSE) ----------------------------
@@ -4321,8 +4284,6 @@ def _azrael_schweigt_melden(vorr, grund):
 AI_STREAM_TIMEOUT = _env_int("AI_STREAM_TIMEOUT", 900)   # nur greifend bei TOTALER Stille
 
 
-
-
 async def ai_rate_limit_check(user_id: int) -> bool:
     """True = Anfrage darf weiter, False = Limit erreicht.
        Ohne Redis: kein Limit (degraded)."""
@@ -4375,20 +4336,9 @@ async def ai_history_clear(chat_id: int, user_id: int):
 # -----------------------------
 
 
-
-
-
-
-
-
-
 # -----------------------------
 # Datenbank
 # -----------------------------
-
-
-
-
 
 
 # ---------------- MariaDB Backend (F46) ----------------
@@ -4401,14 +4351,8 @@ async def ai_history_clear(chat_id: int, user_id: int):
 # initialisiert ihn lazy und setzt ihn via nc.dbwrap.set_pool().
 
 
-
 # SQL-Übersetzer: SQLite-'?'-Placeholder → MariaDB-'%s'.
 # Edge-Case: '?' innerhalb von String-Literals NICHT übersetzen.
-
-
-
-
-
 
 
 def _migrate_columns(conn, table: str, expected: dict):
@@ -4503,7 +4447,6 @@ def init_db():
 # F21: Archive-Helpers
 
 
-
 # F38: Kind-Klassifikation für Type-Filter (video/audio/image).
 # Wird vom Dashboard-Filter und vom Bulk-Listing benutzt. Single source of truth,
 # damit Frontend und Backend nicht auseinanderlaufen wenn neue Extensions
@@ -4519,12 +4462,6 @@ def _kind_from_filename(filename: str) -> str:
 # Wir filtern/sortieren/paginieren jetzt server-side. Suche bleibt LIKE-basiert
 # (kein FTS) — bei 600-50k Rows ist das auf dem SQLite-File noch im Millisekunden-
 # Bereich, und ein FTS-Index wäre overkill für die Größenordnung.
-
-
-
-
-
-
 
 
 # F39: Rename-Funktion für das manuelle Archiv.
@@ -4760,7 +4697,6 @@ def _tracking_resume_cleanup(tracking_id: int) -> None:
     _PENDING_OFFLINE_COUNT.pop(tracking_id, None)
     _PENDING_OFFLINE_SINCE.pop(tracking_id, None)
     _EARLY_DISCONNECT_RETRY.pop(tracking_id, None)
-
 
 
 def claim_live_transition(tracking_id: int, going_live: bool) -> bool:
@@ -5163,7 +5099,6 @@ def get_event_log(limit: int = 100, kind: Optional[str] = None,
 # ---------- X2: Tracking-Tags ----------
 
 
-
 def get_all_tags_with_counts() -> List[dict]:
     """Alle Tags + Anzahl Trackings die diesen Tag haben."""
     return _nc_trackingdb.get_all_tags_with_counts()
@@ -5227,7 +5162,6 @@ def compute_storage_forecast() -> dict:
     return _nc_storage.forecast(RECORDINGS_DIR)
 
 # ---------- X11: Live-Bandwidth-Monitor ----------
-_BANDWIDTH_SAMPLES = {}    # tracking_id -> [(monotonic_ts, file_size), ...]
 _NET_SAMPLE = {"ts": 0.0, "bytes": 0}
 
 
@@ -5252,11 +5186,6 @@ def _sample_net_throughput():
 # v4.1-W26: Haken fuer nc/routes/auskunft.py.
 _nc_routes_auskunft.HAKEN["netzdurchsatz"]["fn"] = _sample_net_throughput
 
-
-def sample_bandwidth_for_active() -> list:
-    # v4.1-W26: nach nc/bandbreite.py geloest. Die Messreihe liegt dort, damit
-    # es nur EINE Wahrheit ueber den Durchsatz einer Aufnahme gibt.
-    return _nc_band.messen()
 
 # ---------- X12: Heatmaps ----------
 
@@ -5573,7 +5502,6 @@ def cleanup_old_recordings(days: int = None, dry_run: bool = False) -> dict:
 # ============================================================
 # Für Dashboard-Widget + /topusers Telegram-Command. Aggregiert über
 # recording_attempts (Erfolgs-Rate, Dauer) und recordings (Anzahl/Größe).
-
 
 
 # ============================================================
@@ -6390,7 +6318,6 @@ async def _extract_file_payload(bot, file_obj, mime_hint: str = "") -> dict:
     return result
 
 
-
 async def _run_ai_call(update, context, prompt_text: str,
                         file_obj=None, mime_hint: str = ""):
     """F16: gemeinsame Logik für /ai (mit/ohne Datei).
@@ -6952,95 +6879,10 @@ def _is_quiet_hours(now: Optional[datetime] = None) -> bool:
                              QUIET_HOURS_START, QUIET_HOURS_END)
 
 
-def _build_daily_summary() -> str:
-    """Baut den Summary-Text. Synchron — alles aus DB. Wird auch von
-       /summary command + autopost benutzt."""
-    now = datetime.now(timezone.utc)
-    cutoff = (now - timedelta(hours=24)).isoformat()
-    with db_conn() as conn:
-        # Aktuelle Status-Zahlen
-        n_track = conn.execute("SELECT COUNT(*) AS c FROM trackings").fetchone()["c"]
-        n_paused = conn.execute(
-            "SELECT COUNT(*) AS c FROM trackings WHERE COALESCE(paused,0)=1"
-        ).fetchone()["c"]
-        n_live = conn.execute(
-            "SELECT COUNT(*) AS c FROM trackings WHERE last_live=1").fetchone()["c"]
-        n_rec_active = conn.execute(
-            "SELECT COUNT(*) AS c FROM trackings WHERE recording=1").fetchone()["c"]
-
-        # Last-24h-Aktivität
-        rec_24h = conn.execute(
-            "SELECT COUNT(*) AS c FROM recordings WHERE created_at >= ?", (cutoff,)
-        ).fetchone()["c"]
-        att_24h_total = conn.execute(
-            "SELECT COUNT(*) AS c FROM recording_attempts WHERE started_at >= ?",
-            (cutoff,)).fetchone()["c"]
-        att_24h_ok = conn.execute(
-            "SELECT COUNT(*) AS c FROM recording_attempts WHERE started_at >= ? "
-            "AND outcome IN ('ok', 'stall_killed_partial')", (cutoff,)
-        ).fetchone()["c"]
-        att_24h_ed = conn.execute(
-            "SELECT COUNT(*) AS c FROM recording_attempts WHERE started_at >= ? "
-            "AND outcome = 'early_disconnect'", (cutoff,)).fetchone()["c"]
-
-        # Top 3 User der letzten 24h nach Aufnahmen
-        top_rows = conn.execute(
-            "SELECT username, COUNT(*) AS n FROM recordings "
-            "WHERE created_at >= ? GROUP BY username ORDER BY n DESC LIMIT 3",
-            (cutoff,)).fetchall()
-
-    success_pct = int(att_24h_ok / att_24h_total * 100) if att_24h_total else 0
-
-    # Storage
-    storage = get_storage_stats()
-    disk = storage.get("disk", {}) or {}
-    rec_size_mb = (storage.get("recordings_dir", {}).get("total_bytes") or 0) / 1024 / 1024
-    disk_pct = None
-    if disk.get("total_bytes") and disk.get("used_bytes"):
-        disk_pct = int(disk["used_bytes"] / disk["total_bytes"] * 100)
-
-    # Cookie-Health
-    ch = get_cookie_health()
-
-    # Bauen
-    lines = []
-    lines.append(f"<b>📋 DAILY SUMMARY</b> <i>{now.strftime('%d.%m.%Y')}</i>")
-    lines.append("")
-    lines.append("<b>Status jetzt:</b>")
-    lines.append(f"  {n_track} Trackings ({n_live} live, {n_rec_active} aufnehmend"
-                 + (f", {n_paused} pausiert" if n_paused else "") + ")")
-    lines.append("")
-    lines.append("<b>Letzte 24h:</b>")
-    if att_24h_total:
-        lines.append(f"  {rec_24h} Aufnahmen erfolgreich gespeichert")
-        lines.append(f"  {att_24h_total} Versuche · {success_pct}% Erfolg"
-                     + (f" · {att_24h_ed} early-disconnects" if att_24h_ed else ""))
-    else:
-        lines.append("  <i>keine Aufnahme-Aktivität</i>")
-
-    if top_rows:
-        lines.append("")
-        lines.append("<b>Top User (24h):</b>")
-        for i, r in enumerate(top_rows, 1):
-            lines.append(f"  {i}. @{safe(r['username'])} — {r['n']} Aufnahmen")
-
-    lines.append("")
-    lines.append("<b>Storage:</b>")
-    if disk_pct is not None:
-        warn = " ⚠️" if disk_pct > 85 else ""
-        lines.append(f"  Disk: {disk_pct}% belegt{warn}")
-    lines.append(f"  Recordings: {rec_size_mb:.0f} MB")
-    if storage.get("retention_days") and storage["retention_days"] > 0:
-        lines.append(f"  Auto-Cleanup: nach {storage['retention_days']} Tagen")
-
-    lines.append("")
-    lines.append("<b>Cookies:</b>")
-    icon = {"ok": "✅", "warning": "⚠️", "critical": "🚨",
-            "missing": "❌", "parse_error": "❌"}.get(ch["status"], "❓")
-    lines.append(f"  {icon} {ch['headline']}")
-
-    return "\n".join(lines)
-
+# v5.6-W197: der Bericht liegt in nc/tagesbericht.py; beide Getter stehen
+# weiter oben in dieser Datei.
+_nc_tagesbericht.configure(storage=get_storage_stats, cookies=get_cookie_health)
+_build_daily_summary = _nc_tagesbericht.bauen
 # v4.1-W26: Haken fuer nc/routes/auskunft.py.
 _nc_routes_auskunft.HAKEN["tagesbericht"]["fn"] = _build_daily_summary
 
@@ -7155,7 +6997,6 @@ async def _viewer_sample_loop():
             continue
 
 
-
 # v4.1-W9: Cache und Sendeprotokoll liegen in nc/kickapi.py. Die Aliase halten
 # die 12 Lesestellen im Bot-Kern unveraendert — und es ist DASSELBE Objekt:
 # der Sendepfad hier schreibt, /api/kick/sendcheck im Blueprint liest. Eine
@@ -7166,8 +7007,6 @@ _KICK_SEND_LAST = _nc_kickapi.SEND_LAST
 
 async def _kick_broadcaster_id():
     return await _nc_kickapi.broadcaster_id()
-
-
 
 
 async def _db_vacuum_loop():
@@ -7332,8 +7171,6 @@ async def _disk_alarm_loop(bot_app):
         except Exception as e:
             log.error(f"_disk_alarm_loop unerwarteter Fehler: {e}", exc_info=True)
             await asyncio.sleep(DISK_ALARM_INTERVAL)
-
-
 
 
 async def _cookie_alarm_loop(bot_app):
@@ -8311,8 +8148,6 @@ def _spawn(coro, *, name: str = None):
             log.error(f"background task {t.get_name()!r} crashed: {exc}", exc_info=exc)
     task.add_done_callback(_done)
     return task
-
-
 
 
 # B138: gedrosselte Fehlermeldung fuer periodische Schleifen.
@@ -9559,7 +9394,6 @@ async def check_all_trackings(bot_app):
         await asyncio.sleep(LOOP_TICK)
 
 
-
 # ============ Telegram Forum-Topics (Sub-Channels pro User) ============
 # Pro TikTok-User ein nach @username benanntes Forum-Topic in der Gruppe, damit
 # die Uploads je User sortiert landen. Voraussetzung: die Gruppe ist eine Super-
@@ -10710,9 +10544,6 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
 dashboard_app = Flask(__name__)
 
 
-
-
-
 # ---- V37-PERF: orjson als JSON-Serializer (optional) ------------------------
 # Das Dashboard pollt im 20s-Takt ueber viele Endpunkte; einige liefern grosse
 # Listen (Archiv, Trackings, Event-Log). orjson ist in C geschrieben und typisch
@@ -10780,7 +10611,7 @@ def _install_fast_json(app):
         return False
 
 
-_ORJSON_ON = _install_fast_json(dashboard_app)
+_install_fast_json(dashboard_app)
 # F21: Upload-Limit muss > ARCHIVE_MAX_UPLOAD_MB sein (multipart-Overhead).
 # Wenn das Archiv aus ist (ARCHIVE_DIR leer) bleibt's beim Default — wir setzen
 # trotzdem ein vernünftiges Limit damit keine Riesenrequests durchgehen.
@@ -10857,7 +10688,7 @@ _AUTH_EXEMPT_PREFIXES = ("/api/public/", "/fonts/")
 _AUTH_EXEMPT_READ = ("/overlay", "/api/overlay/state")
 _AUTH_EXEMPT_EXACT = ("/healthz",
                       "/api/kick/oauth/callback", "/api/twitch/oauth/callback",
-                      "/api/youtube/oauth/callback", "/api/yt/oauth/callback")
+                      "/api/youtube/oauth/callback")   # v5.6-W197: /api/yt/... gab es nie
 
 
 def _client_ip():
@@ -11373,12 +11204,6 @@ def dashboard():
         return msg, 500
 
 
-
-
-
-
-
-
 # F47: Storage-Dashboard
 
 
@@ -11386,8 +11211,6 @@ def dashboard():
 
 
 # F52: Cookie-Health-Endpoint für Dashboard-Widget
-
-
 
 
 # F55: Daily-Summary Preview + Send-Now
@@ -11401,8 +11224,6 @@ def dashboard():
 # kein Discord-Post, keine gruppenbezogene Ansicht. Beides sah für den
 # Betreiber gleich aus — "der hinzugefügte Streamer taucht nirgends auf".
 # Deshalb löst der Server die Gruppe jetzt selbst auf, wenn keine kommt.
-
-
 
 
 # F56: Bulk-Tracking-Import
@@ -11444,42 +11265,13 @@ AI_CHAT_CONTEXT_CHARS    = _env_int("AI_CHAT_CONTEXT_CHARS", 16000)
 AI_CHAT_TITLE_MAX        = 60
 
 
-
-
-
-
 def _conv_messages(conv_id):
     # v4.0-W112: nach nc/aidb.py geloest (KI-Datenzugriff).
     return _nc_aidb.conv_messages(conv_id)
 
 
-
-
-
-
-
-
-
-
 # F78: LLM-Modellliste mit Cache.
 # V37: Modell-Cache lebt in _llm_list_models (60s, Brain→freeai).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # F70: Health-Score — eine einzige 0-100 Zahl die den Gesamt-Status zeigt.
@@ -11510,13 +11302,7 @@ def _conv_messages(conv_id):
 # nc.ctx-Eintraege waeren bei 24 von 25 belegten Plaetzen nicht bezahlbar.
 # Warum STALLS dort ein Register und alles andere ein Alias ist, steht im
 # Modul-Kopf.
-_BRAIN_HISTORY = _nc_brainstate.HISTORY
-_BRAIN_STREAM = _nc_brainstate.STREAM
 _BRAIN_LOCK = _nc_brainstate.LOCK
-_BRAIN_LAST_STATUS = _nc_brainstate.LAST_STATUS
-_brain_record = _nc_brainstate.record
-_brain_history_for = _nc_brainstate.history_for
-_brain_stream_recent = _nc_brainstate.stream_recent
 
 def _brain_growth_snapshot():
     """V37-BRAINVIZ: EIN Wachstums-Datenpunkt (Wissen/Vektoren/Nutzer). Wird
@@ -11548,16 +11334,6 @@ def _brain_growth_snapshot():
         return False
 
 
-
-
-
-
-
-
-
-
-
-
 # ============================================================================
 # F75: AI Diagnose-Assistant (sichere Alternative zu Self-Modifying-Code)
 # ============================================================================
@@ -11576,11 +11352,6 @@ def _brain_growth_snapshot():
 # Liefert Duplikat-Gruppen sortiert nach "verschwendetem Platz".
 
 _MANUAL_ARCHIVE_DIR = os.getenv("MANUAL_ARCHIVE_DIR", "").strip()
-
-
-
-
-
 
 
 # ============================================================================
@@ -11798,7 +11569,6 @@ def _enrich_proxies_with_geo(proxies):
 # (und ein Hintergrund-Trigger) die Anonymität automatisch.
 _PROXY_ANON_CACHE = {}        # "ip:port" -> anon level
 _PROXY_ANON_LOCK = _threading_for_db.Lock()
-_PROXY_ANON_BG_RUNNING = [False]
 
 def _classify_pool_anonymity(proxies, max_workers=10):
     """Setzt p['anonymity'] für jeden Pool-Proxy (in-place). Cache-Hits sofort,
@@ -11844,26 +11614,6 @@ def _classify_pool_anonymity(proxies, max_workers=10):
     except Exception as e:
         log.debug(f"anonymity classify pool failed: {e}")
     return proxies
-
-
-def _classify_pool_anonymity_bg():
-    """Stößt die Anonymitäts-Klassifizierung im Hintergrund an (non-blocking,
-       nur EIN Lauf gleichzeitig, nur wenn unbekannte Proxies existieren)."""
-    if _PROXY_ANON_BG_RUNNING[0]:
-        return
-    with _PROXY_POOL_LOCK:
-        pool_ref = list(_PROXY_POOL)
-    if not any((not p.get("anonymity") or p.get("anonymity") == "unknown")
-               for p in pool_ref):
-        return
-    _PROXY_ANON_BG_RUNNING[0] = True
-
-    def _run():
-        try:
-            _classify_pool_anonymity(pool_ref)
-        finally:
-            _PROXY_ANON_BG_RUNNING[0] = False
-    threading.Thread(target=_run, daemon=True, name="proxy-anon").start()
 
 
 def _refresh_proxy_pool():
@@ -12039,14 +11789,11 @@ _PROXY_FAST_MS = _env_int("PROXY_FAST_MS", 500)
 _PROXY_MEDIUM_MS = _env_int("PROXY_MEDIUM_MS", 1500)
 
 
-
 # V37-MOD: ProxyHealth nach nc/proxyutil.py extrahiert.
 _nc_proxyutil = __import__("nc.proxyutil", fromlist=["configure_proxyhealth"])
 _nc_proxyutil.configure_proxyhealth(
     evict_after_fails=_PROXY_EVICT_AFTER_FAILS, fast_ms=_PROXY_FAST_MS,
     medium_ms=_PROXY_MEDIUM_MS)
-
-
 
 
 PROXY_ROUTER = _ProxyRouter()
@@ -12109,21 +11856,10 @@ _AI_DASHBOARD_MAX_PER_MIN = _env_int("AI_DASHBOARD_MAX_PER_MIN", 15)
 _AI_DASHBOARD_LOCK = _nc_brainstate.AI_LOCK
 
 
-
-
-
-
-
 # ═══ v37: Log-Tail + AZRAEL-Live-Test fürs Dashboard ═══
 
 
-
-
 # ═══ v37 Phase 5: Sende-Timeline + Auto-Report ═══
-
-
-
-
 
 
 @dashboard_app.route("/api/automation/status")
@@ -12164,10 +11900,6 @@ def api_automation_toggle():
     return jsonify(ok=True, key=key, override=_AUTOMATION[key])
 
 
-
-
-
-
 # ═══ v37: POLEN-VPS-TUNNEL — Aufnahme-Proxy zur Laufzeit steuern ═══
 
 def _tunnel_effective():
@@ -12175,14 +11907,6 @@ def _tunnel_effective():
     # (per configure_proxy_select derselbe Dict), und die Tunnel-Routen im
     # Blueprint kommen so ohne einen weiteren nc.ctx-Eintrag aus.
     return _nc_proxyutil_sel.tunnel_effective()
-
-
-
-
-
-
-
-
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -12214,36 +11938,12 @@ def _testpush_resolve_live():
 _nc_rsstate.TESTPUSH_LIVE["fn"] = _testpush_resolve_live   # v4.1-W22: Haken fuer /api/restream
 
 
-
-
-
-
-
-
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # B162 · Marketing-Agent (nc.marketing) — bewirbt die eigenen Kanaele + Website
 # auf den EIGENEN Flaechen (Discord-Webhook + Telegram). Default AUS, im
 # Dashboard schaltbar, Auto-Cadence opt-in, Anti-Spam bot-frei in nc.marketing.
 # Persistenz ueber app_config (_cfg_get/_cfg_set) → Toggle wirkt sofort & ueberlebt Neustart.
 # ═══════════════════════════════════════════════════════════════════════
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 async def _marketing_loop():
@@ -12265,16 +11965,6 @@ async def _marketing_loop():
         await asyncio.sleep(_env_int("MARKETING_CHECK_INTERVAL_S", 300))
 
 
-
-
-
-
-
-
-
-
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # B163 · News-Agent (nc.news) — schreibt oeffentliche News (Projekt/Creator/KI)
 # als news.json neben die statische Website. Default AUS, im Dashboard schaltbar,
@@ -12283,212 +11973,15 @@ async def _marketing_loop():
 # ═══════════════════════════════════════════════════════════════════════
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 _CREATOR_DOSSIER_LOCK = None
 
 
-
-
-
-
-
-
-
-
-def _public_stats() -> dict:
-    """v4.0: SICHERE oeffentliche Metriken fuer die Website (stats.json).
-       NIE Aufnahmen — nur Live-Begleitung/Moderation. live_7d = wie viele
-       getrackte Creator je Tag live waren (intern aus dem Live-Erkennungs-Log,
-       oeffentlich als 'live' formuliert)."""
-    facts = _nc_news.collect_facts()
-    stats = {
-        "version": BOT_VERSION,
-        "generated_at": _time_mod.time(),
-        "tracked": facts.get("tracked", 0),
-        "live_today": facts.get("live_today_count", 0),
-        "platforms": facts.get("platforms", []),
-        "agents_active": facts.get("agents_active", 0),
-        "kg_facts": facts.get("kg_facts", 0),
-        "live_7d": [],
-    }
-    try:
-        with db_conn() as c:
-            days = []
-            for i in range(6, -1, -1):
-                d0 = (datetime.now(timezone.utc) - timedelta(days=i)).date()
-                lo = datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc).isoformat()
-                hi = (datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc)
-                      + timedelta(days=1)).isoformat()
-                n = c.execute(
-                    "SELECT COUNT(DISTINCT username) AS n FROM recording_attempts "
-                    "WHERE started_at >= ? AND started_at < ?", (lo, hi)).fetchone()["n"]
-                days.append({"day": d0.isoformat(), "live": int(n or 0)})
-            stats["live_7d"] = days
-    except Exception:
-        pass
-    # v4.0: abgeleitete + aggregierte Zusatz-Metriken (weiter aufnahmefrei).
-    _lv = [d.get("live", 0) for d in stats.get("live_7d", [])]
-    stats["total_live_7d"] = sum(_lv)
-    stats["peak_live"] = max(_lv) if _lv else 0
-    stats["moderation_7d"] = 0
-    try:
-        with db_conn() as c:
-            _cut7 = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-            stats["moderation_7d"] = int(c.execute(
-                "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ?",
-                (_cut7,)).fetchone()["n"] or 0)
-    except Exception:
-        pass
-    # v4.0-W4: LIVE-Agentenliste (Name + aktiv) für die Website-Flotte.
-    # v4.0-W74: agents_known trennt „Brain gerade nicht erreichbar" (Liste leer,
-    # weil die Bridge im schreibenden Prozess nicht hochkam oder status() warf)
-    # von „Brain sagt 0 aktiv". Ohne dieses Flag zeigte die Website stur
-    # „0 von 12 aktiv", obwohl in Wahrheit nur der Snapshot leer war.
-    stats["agents"] = []
-    stats["agents_known"] = False
-    try:
-        from brain import get_brain
-        _b = get_brain()
-        _fleet = (_b.agents.status() or []) if _b else []
-        for _a in _fleet:
-            stats["agents"].append({"name": _a.get("name", ""),
-                                    "active": bool(_a.get("enabled", False))})
-        stats["agents_known"] = bool(_fleet)
-    except Exception:
-        pass
-    stats["agents_total"] = len(stats["agents"])
-    stats["agents_active"] = sum(1 for _a in stats["agents"] if _a.get("active")) or stats.get("agents_active", 0)
-    # v4.0-W4: Moderations-Aktivität je Tag (7 Tage) für einen zweiten Chart.
-    stats["mod_7d"] = []
-    try:
-        with db_conn() as c:
-            _md = []
-            for i in range(6, -1, -1):
-                d0 = (datetime.now(timezone.utc) - timedelta(days=i)).date()
-                lo = datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc).isoformat()
-                hi = (datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc)
-                      + timedelta(days=1)).isoformat()
-                n = c.execute(
-                    "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ? AND ts < ? "
-                    "AND kind IN ('timeout','ban','flag','delete','warn')", (lo, hi)).fetchone()["n"]
-                _md.append({"day": d0.isoformat(), "n": int(n or 0)})
-            stats["mod_7d"] = _md
-    except Exception:
-        pass
-
-    # v4.0-W92: LLM-Token-/Kostenverbrauch (aus nc.usage) — für die 3D-Statistik.
-    try:
-        stats["usage"] = _nc_usage.snapshot()
-    except Exception:
-        stats["usage"] = {}
-
-    # v4.0-W92: Live-Spendenpanel — PayPal-Ziel. Der aktuelle Betrag ist
-    # betreiber-gepflegt (DONATION_CURRENT_EUR): PayPal bietet keine öffentliche
-    # Live-Summe ohne API/IPN. Ziel + Adresse sind per env übersteuerbar.
-    try:
-        # v4.2-W173: Ziel und Stand aus nc/spendenziel.py — dieselben Zahlen wie
-        # Overlay, Sendebild und /spenden. Bis W172 zaehlte die Website nur
-        # manuell erfasste Spenden, seit Installation; eine Kick-Spende kam
-        # hier nie an.
-        with db_conn() as _conn:
-            _ziel = _nc_spendenziel.stand(_conn)
-        # v4.2-W172: eine Quelle fuer Website, Deck und /spenden.
-        _pp = _nc_spendeninfo.paypal()
-        _pp_url = _nc_spendeninfo.paypal_url(_pp)
-        stats["donation"] = {
-            "goal_eur": _ziel["ziel_eur"],
-            "current_eur": _ziel["aktuell_eur"],
-            "pct": _ziel["prozent"],
-            "paypal": _pp,
-            "paypal_url": _pp_url,
-            "paypal_qr": _nc_qrsvg.qr_svg(_pp_url) if _pp_url else "",
-            "period": _ziel["zeitraum"],
-            "label": _ziel["label"],
-            "purpose": _ziel["zweck"],
-            "currency": "EUR",
-        }
-    except Exception as e:
-        # War ein stiller Auffang: der Block verschwand von der Website, und
-        # „nichts konfiguriert" sah aus wie „Datenbank weg" (W99).
-        _loop_fehler("spendenziel-website", e)
-        stats["donation"] = {}
-
-    # v4.0-W94: Krypto-Spenden — Adressen aus env, BTC-Empfang best-effort live.
-    try:
-        stats["crypto"] = _nc_crypto.snapshot(fetch_live=True)
-    except Exception as e:
-        # v4.2-W99: war ein stiller Auffang. Eine leere Adressliste ist auf
-        # der oeffentlichen Seite nicht von "nichts konfiguriert" zu
-        # unterscheiden — der Spendenblock verschwindet in beiden Faellen —,
-        # und im Log stand dazu keine Zeile. Gedrosselt, weil die Schleife
-        # alle fuenf Minuten laeuft.
-        stats["crypto"] = {"addresses": [], "grund": "fehler"}
-        laut, unterdrueckt = _nc_meldetakt.melden(
-            "crypto-snapshot", type(e).__name__, _time_mod.monotonic())
-        if laut:
-            log.error("Krypto-Spendenadressen nicht ermittelbar: %s: %s — der "
-                      "Spendenblock auf der oeffentlichen Seite sagt bis dahin "
-                      "'derzeit nicht abrufbar'.%s",
-                      type(e).__name__, e, _nc_meldetakt.zusatz(unterdrueckt))
-    else:
-        _nc_meldetakt.zuruecksetzen("crypto-snapshot")
-        # Der haeufigere Fall ist nicht der Fehler, sondern die leere .env.
-        # Auch das gehoert gesagt — einmal und gedrosselt, mit den NAMEN, die
-        # gesucht wurden. Ein "keine Adressen" ohne die Namen ist dieselbe Art
-        # Auskunft wie ein blankes "HTTP 403".
-        if not stats["crypto"].get("addresses"):
-            laut, unterdrueckt = _nc_meldetakt.melden(
-                "crypto-leer", "keine_adresse", _time_mod.monotonic())
-            if laut:
-                log.warning(
-                    "Keine Krypto-Spendenadresse gesetzt — der Spendenblock auf "
-                    "der oeffentlichen Seite steht (v4.2-W101), nennt aber nur "
-                    "PayPal. Gesucht wird in der .env nach: %s%s",
-                    ", ".join(_nc_crypto.erwartete_namen()),
-                    _nc_meldetakt.zusatz(unterdrueckt))
-        else:
-            _nc_meldetakt.zuruecksetzen("crypto-leer")
-            # v4.2-W101: der dritte Zustand, der bis hierher gar keinen
-            # hatte. Zwei von sechs Wallets gesetzt sah im Log genauso aus
-            # wie alle sechs — und die oeffentliche Seite zeigt nur, was da
-            # ist, nie was fehlt. Einmal auf INFO mit den fehlenden Namen;
-            # das ist kein Fehler, sondern eine Lage, die man kennen will.
-            _fehlend = stats["crypto"].get("fehlend") or []
-            if _fehlend:
-                laut, unterdrueckt = _nc_meldetakt.melden(
-                    "crypto-teil", ",".join(_fehlend), _time_mod.monotonic())
-                if laut:
-                    log.info(
-                        "Krypto-Spenden: %d von %d Adressen gesetzt. Ohne "
-                        "Eintrag in der .env: %s%s",
-                        len(stats["crypto"].get("addresses") or []),
-                        len(_nc_crypto.erwartete_namen()),
-                        ", ".join(_fehlend),
-                        _nc_meldetakt.zusatz(unterdrueckt))
-            else:
-                _nc_meldetakt.zuruecksetzen("crypto-teil")
-    return stats
+# v5.6-W197: der Erzeuger liegt in nc/oeffentlichestats.py. _loop_fehler steht
+# weiter unten in dieser Datei — deshalb ein spaet bindender Verweis statt der
+# Funktion selbst.
+_nc_oeffstats.configure(version=BOT_VERSION,
+                        loop_fehler=lambda name, exc: _loop_fehler(name, exc))
+_public_stats = _nc_oeffstats.public_stats
 
 # v4.1-W26: Haken fuer nc/routes/auskunft.py.
 _nc_routes_auskunft.HAKEN["oeffentlich"]["fn"] = _public_stats
@@ -12567,8 +12060,6 @@ async def _stats_loop():
         await asyncio.sleep(max(60, interval))
 
 
-
-
 async def _news_loop():
     """Hintergrund-Loop. Self-gated: generiert NUR wenn enabled UND auto UND faellig."""
     await asyncio.sleep(120)
@@ -12589,30 +12080,6 @@ async def _news_loop():
         await asyncio.sleep(_env_int("NEWS_CHECK_INTERVAL_S", 900))
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # B169 · Kick User-OAuth (Authorization-Code + PKCE) — nc.kick_oauth
 # Liefert einen USER-Token mit Scope channel:write, damit Titel/Kategorie
@@ -12626,34 +12093,6 @@ async def _news_loop():
 # (W117) — danach kosteten /api/twitch und /api/youtube null neue Eintraege.
 # Uebrig sind hier nur die drei Kick-Namen: sie haben Aufrufstellen im
 # Bot-Kern (Restream, Token-Refresh), der nicht mitgewandert ist.
-
-
-
-
-
-
-async def _kick_user_token(session=None):
-    """Gueltiger Kick-USER-Access-Token (channel:write) oder None.
-
-    v4.2-W12: der Koerper liegt in nc.kickapi.user_token — dieselbe Datei wie
-    die Aufrufe, die ihn brauchen. Der Name bleibt hier, weil sechs Stellen im
-    Bot ihn benutzen und ein Alias billiger ist als sechs Umschreibungen.
-    """
-    return await _nc_kickapi.user_token(session)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ═══ F85: ON-AIR-Deck — kompakter Restream-Status fürs Dashboard-Hero ═══
@@ -12729,28 +12168,10 @@ def _sec_headers(resp):
 # ═══ v37: Betriebs-Metriken (14-Tage-Trends, DB-only) + AZRAEL-Gedächtnis ═══
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ═══ v37: RELIABILITY — Fehler-Analyse (Kategorisierung + Trend, read-only) ═══
 
 
 # ═══ v37: PREFLIGHT — Betriebsbereitschafts-Check aller Subsysteme (read-only) ═══
-
-
-
-
 
 
 # ═══ v37 Welle 2: Benachrichtigungen + Scheduler ═══
@@ -12783,28 +12204,10 @@ def api_notify_test():
         return jsonify(ok=False, error=_fehler_text(e, "api_notify_test")), 500
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 # ═══ v37 Welle 3: Streamer-Drawer (#18) + Recorder-Tier (#11) ═══
 
 
-
-
-
-
 # ═══ v37 Welle 3: Retention-Policy (#12) ═══
-
-
 
 
 # ═══ v37 Welle 3: Clip-of-the-Week-Stand (#13) ═══
@@ -12874,16 +12277,7 @@ def api_events_stream():
 _cpu_load_snapshot = _nc_probe.cpu_load_snapshot
 
 
-
-
-
-
-
-
-
 # ═══ v37: Community-Tab-Ausbau — reiche Discord-Stats + Broadcast ═══
-
-
 
 
 # F60: Per-Tracking Notes/Labels — Operator schreibt kurze Notiz pro Tracking
@@ -12893,8 +12287,6 @@ _cpu_load_snapshot = _nc_probe.cpu_load_snapshot
 
 
 # F53: Pause/Resume eines Trackings vom Dashboard
-
-
 
 
 # F51: Manueller Force-Recheck eines Trackings.
@@ -12909,8 +12301,6 @@ _cpu_load_snapshot = _nc_probe.cpu_load_snapshot
 # handle_recording_finished-Task fängt den natürlichen Exit auf, ruft
 # add_recording + clear_recording auf, ganz normale Cleanup-Pipeline.
 # SIGKILL würde die Datei kaputt machen (kein moov-atom) — nicht nehmen.
-
-
 
 
 @dashboard_app.route("/health")
@@ -12929,11 +12319,9 @@ def health():
     )
 
 
-
 # F49: AI-Chat-Endpoint ist weiter oben definiert (mit Rate-Limit B5 + Model-Pin B9).
 # Diese Stelle hatte vorher eine Duplikat-Definition die Flask beim Start
 # crashen ließ ("View function mapping is overwriting an existing endpoint").
-
 
 
 # =============================================================================
@@ -12980,8 +12368,6 @@ def archive_download(eid):
         os.path.basename(real_file),
         as_attachment=True,
         download_name=row["filename"])
-
-
 
 
 @dashboard_app.route("/download/<int:recording_id>")
@@ -13201,7 +12587,6 @@ def _install_faulthandler():
         log.debug("faulthandler-Setup: %s", _e)
 
 
-
 async def _loop_heartbeat():
     """Schlägt alle 2s den Loop-Heartbeat. Bleibt der Wert stehen, ist der
        Event-Loop synchron blockiert (Deadlock/blockierender Call)."""
@@ -13326,15 +12711,12 @@ def _run_async_from_flask(coro, timeout: float = 70.0):
     return fut.result(timeout=timeout)
 
 
-
 def _scraper_session():
     """Best-effort aiohttp-Session vom globalen Scraper. None wenn nicht da."""
     try:
         return _GLOBAL_SCRAPER.session if _GLOBAL_SCRAPER else None
     except Exception:
         return None
-
-
 
 
 # ---------- X20: Universal Search ----------
@@ -13354,7 +12736,6 @@ def api_annotation_delete(aid):
     return jsonify(ok=delete_annotation(aid))
 
 # ---------- X2: Tags ----------
-
 
 
 # ---------- X3: Priority ----------
@@ -13382,7 +12763,6 @@ def api_events():
 # ---------- X13: Profile-Snapshots ----------
 
 # ---------- X14: Auto-Archive-Rules ----------
-
 
 
 # ---------- X21: Recording-Manifest ----------
@@ -13470,9 +12850,7 @@ def api_proxy_heatmap():
 # ---------- X18: Manual Recording ----------
 
 
-
 # ---------- X19: Trash/Restore ----------
-
 
 
 # ---------- X23: Quick-Restart ----------
@@ -13513,8 +12891,6 @@ def _cfg_get(key, default=None):
 def _cfg_set(key, value):
     # v4.0-W111: nach nc/cfgstore.py geloest.
     return _nc_cfgstore.set_(key, value)
-
-
 
 
 def _post_json_threaded(url, body, wid):
@@ -13622,65 +12998,19 @@ def _latest_popularity(conn, username):
     return _nc_ovtext.latest_popularity(conn, username)
 
 
-
-
-
 # =====================  GROUP A — Insights / Analytics  =====================
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # =====================  GROUP B — Recording-Kuratierung  =====================
 
 
-
-
-
-
-
-
-
-
-
-
-
 # =====================  GROUP C — Streamer-Collections  =====================
-
-
-
-
-
-
-
 
 
 # =================  GROUP D — Per-Streamer-Einstellungen  ==================
 
 
-
-
-
 # =====================  GROUP E — Outbound-Webhooks  =====================
-
-
-
-
-
-
-
 
 
 # =================  GROUP F — Notification-Quiet-Hours  ==================
@@ -13706,20 +13036,10 @@ def api_quiet_hours():
 # =====================  GROUP G — Ops / System  =====================
 
 
-
-
-
-
-
 # ---- V37-DBX: DB als SQL exportieren / importieren --------------------------
 # Zweck: Umstieg SQLite <-> MariaDB ohne Handarbeit. Nur DATEN — das Schema
 # legt _init_db() auf dem Ziel selbst an (kennt beide Dialekte). Details und
 # der Backslash-Fallstrick stehen in nc/dbexport.py.
-
-
-
-
-
 
 
 # v4.0-W116: _parse_eur/_manual_donations_rows/_manual_donations_total liegen
@@ -13728,66 +13048,16 @@ def api_quiet_hours():
 # getrennt addierte manuelle Summe zaehlte dort jede Deck-Spende doppelt.
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 # ═══ B121: YOUTUBE VERBINDEN — Pendant zum Twitch-OAuth-Flow ═══════════
 # Bewusst 1:1 wie die Twitch-Routen aufgebaut: gleiche Namen, gleiche
 # Rueckmeldeseite, gleiche Tunnel-Logik. Wer den einen Flow kennt, kennt
 # den anderen.
 
 
-
-
-
-
-
-
-
-
-
-
-
 # ═══ B120: FINANZAMT — Einnahmen-Journal (nc.ledger) ═══════════════════
 # Bewusst getrennt von /api/donations/summary: das dort ist Live-Telemetrie
 # aus Anzeigewerten, das hier sind gebuchte Auszahlungen. Vermischen waere
 # der Fehler, der falsche Steuerzahlen erzeugt (siehe nc/ledger.py).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -13802,17 +13072,6 @@ def api_quiet_hours():
 # in einen Timeout und der Operator wuesste nicht, ob das Update noch laeuft
 # oder schon halb geschrieben hat.
 # ═══════════════════════════════════════════════════════════════════════
-
-
-
-
-
-
-
-
-
-
-
 
 
 # =============================================================================
@@ -13849,8 +13108,6 @@ EVOLUTION_WINDOW_DAYS    = max(1, int(os.getenv("EVOLUTION_WINDOW_DAYS", "30") o
 # Fachmodul.
 
 
-
-
 async def _evolution_loop():
     """Autonomer Lern-Loop. Erster Zyklus nach 90s Uptime (DB/Worker ready),
        danach alle EVOLUTION_INTERVAL_HOURS. Lern-Arbeit läuft in to_thread,
@@ -13868,21 +13125,6 @@ async def _evolution_loop():
 
 
 # ----------------------------- B66 Endpoints -----------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ===================== KICK RESTREAM + KI-MODERATOR =====================
@@ -14989,7 +14231,6 @@ def _drossel_zuruecksetzen(rid):
     Stufe ist besser als eine schwankende hohe.
     """
     _RESTREAM_DROSSEL.pop(int(rid), None)
-
 
 
 def _azrael_spricht():
@@ -17409,7 +16650,6 @@ _AZRAEL_DEFAULT_PERSONA = (
 AZRAEL_PERSONA = os.getenv("AZRAEL_PERSONA", "").strip() or _AZRAEL_DEFAULT_PERSONA
 
 
-
 # Nicht-überschreibbare Sicherheits-Leitplanken — gelten IMMER, auch wenn jemand
 # AZRAEL_PERSONA per env ändert. Schützt vor Identitäts-/Impersonations-/
 # Halluzinations-Entgleisungen und hält die Autonomie-Grenze (keine Strafen) fest.
@@ -17503,7 +16743,6 @@ def _ov_clip_text(t, maxlen=None):
 _AZRAEL_REACTION = _nc_azrael.REACTION          # v4.1-W19: geteilt mit nc/routes/azrael.py
 
 
-
 # ---- Schimpfwort-Basisliste (deutsch) ---------------------------------------
 # Frei verfügbare Liste (LDNOOBW, CC) wird per Dashboard-Button EINMAL geladen,
 # in banned_words gemerged (dedupliziert, gekappt) und lokal gecached → übersteht
@@ -17530,7 +16769,6 @@ _learned_save = _nc_badwords.save_learned
 # Kontext-Eintrag erreicht. Es IST AZRAEL-Zustand, nur eben persistent.
 _nc_azrael.configure(recordings_dir=RECORDINGS_DIR)
 _streamer_personas_load = _nc_azrael.personas_load
-_streamer_personas_save = _nc_azrael.personas_save
 
 def _streamer_persona_get(username):
     if not username:
@@ -18753,8 +17991,6 @@ def _ai_telemetry(purpose, prompt_len, answer_len, ms, ok, err=None):
         pass
 
 
-
-
 def _azrael_live_state():
     """V1: Echtzeit-Systemzustand für den Prompt — die KI weiß immer, was
        NIGHTCRAWLER gerade tut (nur In-Memory, kein DB-Hit)."""
@@ -19002,8 +18238,6 @@ _KICK_VELO_LAST = 0.0
 _KICK_MEME_FENSTER = _nc_memeklip.Fenster()
 _KICK_MEME_LETZTE_FRAGE = [0.0]
 _DIRECTOR_ANN_LAST = 0.0
-
-
 
 
 async def _director_mark(username, reason, recfile, offset_secs):
@@ -20494,7 +19728,6 @@ def _director_for(username):
     return d
 
 
-
 async def _audio_tap_melden(username, proc, start, puffer, sammler, seg_dir):
     """Der Nachruf auf einen gestorbenen Audio-Tap.
 
@@ -20942,7 +20175,6 @@ async def _live_react_loop():
         await asyncio.sleep(8)
 
 
-
 async def _restream_platform_state():
     """B123: Fragt die drei Plattformen, ob SIE uns als live sehen.
 
@@ -21202,20 +20434,7 @@ async def _auto_restream_loop():
         await asyncio.sleep(30)
 
 
-
 # ---- Restream-Endpoints ----
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -21320,12 +20539,6 @@ async def _intel_index_loop():
             # erste Meldung sofort mit Traceback, danach gedrosselt.
             _loop_fehler("_intel_index_loop", e)
         await asyncio.sleep(interval)
-
-
-
-
-
-
 
 
 @dashboard_app.route("/healthz")
@@ -21484,17 +20697,7 @@ def api_debug_threads():
                    uptime_s=_uptime_s())
 
 
-
-
-
-
-
-
 # ---- KI-Moderator-Endpoints ----
-
-
-
-
 
 
 @dashboard_app.route("/api/highlights/config", methods=["POST"])
@@ -21510,32 +20713,6 @@ def api_highlights_config():
             return jsonify(ok=False, error="min_score ungueltig"), 400
     _cfg_set("highlights", new)
     return jsonify(ok=True, **new)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 @dashboard_app.route("/api/clips")
@@ -21602,8 +20779,6 @@ def api_clips_clear():
         return jsonify(ok=False, error=_fehler_text(e, "api_clips_clear")), 500
 
 
-
-
 @dashboard_app.route("/api/tts/<fn>")
 def api_tts_file(fn):
     """Liefert die von Piper erzeugten WAV-Dateien aus (Overlay/Dashboard spielen sie ab)."""
@@ -21617,32 +20792,6 @@ def api_tts_file(fn):
         abort(404)
     return send_from_directory(os.path.abspath(_TTS_DIR), os.path.basename(p),
                                mimetype="audio/wav")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ---- V37-MP: Kanal-Status ALLER eigenen Plattformen -------------------------
@@ -21920,10 +21069,6 @@ def api_channels_status():
     except Exception as e:
         log.warning("api_channels_status: %s", e)
         return jsonify(ok=False, error=_fehler_text(e, "api_channels_status")), 500
-
-
-
-
 
 
 # ===================== TITEL/KATEGORIE (Kick + Twitch + YouTube) =============
@@ -22325,8 +21470,6 @@ REVENUE_PLATFORMS = _nc_revenue.PLATFORMS
 # sich ueber /api/donations/unbekannt einsehen.
 
 
-
-
 is_revenue_platform = _nc_revenue.is_revenue_platform
 
 
@@ -22384,14 +21527,6 @@ def overlay_page():
 # ═══ F92: Studio-Layout — Chat-Feed + Layout-Umschalter fürs Dashboard ═══
 
 
-
-
-
-
-
-
-
-
 @dashboard_app.route("/api/upload_window")
 def api_upload_window():
     """Status des Upload-Zeitfensters: aktiv/inaktiv, wann öffnet es nächste Mal."""
@@ -22439,7 +21574,7 @@ _B71_TABLES = ("trackings", "recordings", "recording_attempts", "tracking_priori
                "tracking_tags", "tracking_collections", "profile_snapshots",
                "event_log", "learned_params", "evolution_proposals", "archive")
 
-_B71_SCHEMA_DOC = """Tabellen (SQLite):
+_B71_SCHEMA_DOC = """Tabellen:
 trackings(id, group_id, username, created_at, last_live, recording, paused)
 recordings(id, username, filepath, created_at, file_size, duration_secs, starred, rating, label)
 recording_attempts(id, tracking_id, username, recorder, started_at, ended_at, duration_secs, returncode, file_size, outcome)
@@ -22450,95 +21585,16 @@ event_log(id, kind, severity, summary, created_at)
 Hinweise: Zeitspalten sind ISO-8601-Strings. Erfolg = outcome IN ('ok','stall_killed_partial')."""
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ---- RECORDING TOOLS --------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ---- STREAMER TOOLS ---------------------------------------------------------
 
 
-
-
-
-
-
-
-
-
-
 # ── Streamer-Existenz-Check + Löschen (für „Ruhende") ───────────────────────
 
 
-
-
-
-
-
-
 # ---- DATA / OPS TOOLS -------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # F15: Sync-Helper für Flask-Routen (Dashboard-Backend)
@@ -22662,13 +21718,6 @@ def _run_priv(args, timeout=6, sudo_first=False):
     # v4.0-W26: verbatim nach nc/sysrun.py extrahiert (bitgenau geprüft, inkl.
     # Aufrufreihenfolge und Fehlercodes 124/127).
     return _nc_sysrun.run_priv(args, timeout=timeout, sudo_first=sudo_first)
-
-
-def _geo_lookup_ips(ips):
-    # v4.1-W25: nach nc/geoip.py geloest. Dort liegt der Cache mit genau EINEM
-    # Schreibweg — der Direktzugriff, der hier stand, ging an der Obergrenze
-    # vorbei und liess den Cache bei Angriffswellen unbegrenzt wachsen.
-    return _nc_geoip.lookup(ips, fehler_setzen=_nc_dcfg.geo_fehler_setzen)
 
 
 def _crowdsec_via_lapi():
@@ -22842,11 +21891,6 @@ def _crowdsec_status():
             "jails": list(by_origin.values()), "total_banned": total}
 
 
-# Alter Name bleibt als Verweis: zwei Aufrufer haengen daran, und ein stiller
-# Namenswechsel waere genau die Art Bruch, die wir gerade beheben.
-_fail2ban_status = _crowdsec_status
-
-
 def _parse_ssh_attacks(limit=300):
     """Aggregiert fehlgeschlagene SSH-Logins (Angriffe) pro IP aus auth.log/secure,
        Fallback journalctl bzw. sudo. Returns {ok, attacks:[{ip,count,last,users}], ...}."""
@@ -22936,8 +21980,6 @@ _nc_routes_abwehr.HAKEN["sperrliste"]["fn"] = _crowdsec_status
 _nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _parse_ssh_attacks
 
 
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # B138: SELBSTTEST — eine Antwort auf "was ist kaputt und was tut man dagegen"
 # ═══════════════════════════════════════════════════════════════════════════
@@ -22947,15 +21989,6 @@ _nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _parse_ssh_attacks
 # journalctl. Wer wissen wollte, warum nichts sendet, musste alle fuenf
 # kennen. Hier laufen sie zusammen — jeder Befund mit dem Befehl, der ihn
 # behebt. Bewusst KEINE neue Datenerhebung: nur Zusammenfuehrung.
-
-
-
-
-
-
-
-
-
 
 
 # ===================== DISCORD-BOT (optional, env-gated) =====================
@@ -23015,7 +22048,6 @@ _discord_guild_filesize_bytes = _nc_dclimits.guild_filesize_bytes
 
 
 _discord_upload_limit_mb    = _nc_dclimits.aktuell_mb
-_discord_upload_limit_label = _nc_dclimits.aktuell_label
 DISCORD_TRACK_GROUP_ID = _env_int("DISCORD_TRACK_GROUP_ID", 0)     # group_id für Discord-/track (0 = Guild-ID; auf Telegram-Chat-ID setzen → geteilte Liste)
 DISCORD_VOICE_AI       = os.getenv("DISCORD_VOICE_AI", "1").strip().lower() in ("1","true","yes","on","y")  # /ai antwortet auch auf Sprachnachrichten (Whisper→KI)
 DISCORD_AUTOMOD        = os.getenv("DISCORD_AUTOMOD", "0").strip().lower() in ("1","true","yes","on","y")   # KI/Heuristik-Auto-Moderation
@@ -23094,8 +22126,6 @@ S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY", "").strip()
 S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "").strip()
 S3_REGION = os.getenv("S3_REGION", "us-east-1").strip()
 _ALERT_STATE = {}          # alert-key -> monotonic (Debounce für v37-Alarme)
-
-
 
 
 async def _discord_ops_alert(key, text):
@@ -23690,7 +22720,6 @@ async def _system_backup_loop():
             # v4.1-W5: war log.error OHNE Traceback und ungedrosselt. Sichtbar war der
             # Ausfall, die Ursache nicht — und ein Dauerfehler haette das Log geflutet.
             _loop_fehler("_system_backup_loop", e)
-
 
 
 async def _announce_loop():
@@ -24716,8 +23745,6 @@ async def _youtube_send(text):
                     _YT_SEND["token_exp"] = 0
                 raise RuntimeError(f"YT-API {r.status}: {_t[:120]}")
     return True
-
-
 
 
 def _wchat_thank_ok(user):
@@ -27253,7 +26280,6 @@ async def _maybe_hype_clip(username, director):
         log.debug("hype-clip @%s: %s", username, e)
 
 
-
 # ---------------------------------------------------------------------------
 # v4.2-W75: Zehn Rueckrufe, die in main() standen. Sie brauchen von dort
 # KEINE einzige Variable — nur Modul-Namen. Acht davon sind die
@@ -28180,6 +27206,22 @@ async def _selfcheck(verbose=True):
     except Exception as e:
         add("fail", "Datenbank", f"init/migration fehlgeschlagen: {e}")
 
+    # 4)–15) v5.6-W197: als benannte Abschnitte herausgeloest — _selfcheck
+    # war mit 281 Zeilen und 96 Verzweigungen die verzweigteste Funktion des
+    # Monolithen, und jede neue Pruefung wuchs in dieselbe Funktion. Die drei
+    # Pruefungen, auf die der Start wirklich wartet (BOT_TOKEN, Datenbank,
+    # Tonspur-Garantie), bleiben oben sichtbar.
+    await _sc_umgebung(add)
+    await _sc_ki_und_stimme(add)
+    _sc_dienste(add)
+    if verbose:
+        _sc_bericht(results, C)
+    return results
+
+
+async def _sc_umgebung(add):
+    """Selbsttest 4)–7): Platte, Cookies, Egress-Tunnel, Sign-Key."""
+    import shutil as _sh
     # 4) Disk
     try:
         st = _sh.disk_usage(RECORDINGS_DIR if os.path.isdir(RECORDINGS_DIR) else ".")
@@ -28225,6 +27267,9 @@ async def _selfcheck(verbose=True):
         add("warn", "Sign-Key (EulerStream)",
             "KEIN TIKTOK_SIGN_API_KEY — TikTok-Chat läuft nach wenigen Connects ins Tageslimit")
 
+
+async def _sc_ki_und_stimme(add):
+    """Selbsttest 8)–10): lokales LLM, Reaction-AI, Piper, AZRAEL-Stimme, Whisper."""
     # 8a) Lokales LLM (llama.cpp). v4.2-W110: der Selbsttest kannte es nicht —
     # er pruefte nur die Cloud-Kette und meldete STARTKLAR, waehrend der
     # installierte llama-server stand. Warnung nur, wenn er installiert IST
@@ -28315,6 +27360,9 @@ async def _selfcheck(verbose=True):
     else:
         add("ok", "Whisper", "Speech-Reaction aus (nur Chat)")
 
+
+def _sc_dienste(add):
+    """Selbsttest 11)–15): Discord, Restream, Multistream, Brain-Bridge, Endpunkte."""
     # 11) Discord
     if DISCORD_BOT_TOKEN:
         add("ok", "Discord-Token", "gesetzt (Login beim Start)")
@@ -28371,19 +27419,25 @@ async def _selfcheck(verbose=True):
     except Exception as e:
         add("warn", "Dashboard-Endpoints", str(e))
 
-    # ── Report ──
-    if verbose:
-        icon = {"ok": f"{C['g']}✓{C['x']}", "warn": f"{C['y']}▲{C['x']}", "fail": f"{C['r']}✗{C['x']}"}
-        print(f"\n{C['b']}🦇 NIGHTCRAWLER SELFCHECK{C['x']}  {C['d']}(--selfcheck){C['x']}\n" + "─" * 58)
-        for level, name, detail in results:
-            print(f"  {icon[level]}  {C['b']}{name:<24}{C['x']} {C['d']}{detail}{C['x']}")
-        fails = sum(1 for l, _, _ in results if l == "fail")
-        warns = sum(1 for l, _, _ in results if l == "warn")
-        oks = sum(1 for l, _, _ in results if l == "ok")
-        print("─" * 58)
-        verdict = (f"{C['r']}{C['b']}{fails} HARTE FEHLER{C['x']} · " if fails else f"{C['g']}{C['b']}STARTKLAR{C['x']} · ")
-        print(f"  {verdict}{oks} ok · {warns} Warnungen · {fails} Fehler\n")
-    return results
+
+def _sc_bericht(results, C):
+    """Die Tabelle des Selbsttests.
+
+    v5.6-W197: `icon[level]` warf KeyError fuer die Folgezeilen der
+    Datenbank-Diagnose — die stehen mit Stufe "" in der Liste (W92: eine
+    Diagnose, die in eine Tabellenspalte gequetscht wird, liest niemand zu
+    Ende). Ausgerechnet bei einer unlesbaren Datenbank endete --selfcheck damit
+    in "Selfcheck crashte: ''" und Exitcode 2, und die Diagnose war weg."""
+    icon = {"ok": f"{C['g']}✓{C['x']}", "warn": f"{C['y']}▲{C['x']}", "fail": f"{C['r']}✗{C['x']}"}
+    print(f"\n{C['b']}🦇 NIGHTCRAWLER SELFCHECK{C['x']}  {C['d']}(--selfcheck){C['x']}\n" + "─" * 58)
+    for level, name, detail in results:
+        print(f"  {icon.get(level, ' ')}  {C['b']}{name:<24}{C['x']} {C['d']}{detail}{C['x']}")
+    fails = sum(1 for l, _, _ in results if l == "fail")
+    warns = sum(1 for l, _, _ in results if l == "warn")
+    oks = sum(1 for l, _, _ in results if l == "ok")
+    print("─" * 58)
+    verdict = (f"{C['r']}{C['b']}{fails} HARTE FEHLER{C['x']} · " if fails else f"{C['g']}{C['b']}STARTKLAR{C['x']} · ")
+    print(f"  {verdict}{oks} ok · {warns} Warnungen · {fails} Fehler\n")
 
 
 def _run_selfcheck_and_exit():
@@ -28395,7 +27449,6 @@ def _run_selfcheck_and_exit():
         sys.exit(2)
     fails = sum(1 for l, _, _ in results if l == "fail")
     sys.exit(1 if fails else 0)
-
 
 
 def _install_fast_eventloop():

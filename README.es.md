@@ -59,14 +59,14 @@
 | | | |
 |---|---|---|
 | **🔍 Detectar** — sondeo adaptativo con histéresis anti-parpadeo; cada fila del panel dice cuándo se comprobó por última vez | **⏺️ Grabar** — grabador en tres etapas (ffmpeg → streamlink → yt-dlp) con comprobación previa, control de la pista de audio y detección de bloqueos | **📡 Retransmitir** — Kick, Twitch y YouTube a la vez, verificación de destinos contra las API de las plataformas |
-| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 379 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
+| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 380 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
 
 ```mermaid
 flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 27.441 líneas"]:::core
+    BOT["bot.py<br/>monolito · 27.954 líneas"]:::core
     BOT -->|configure| NC["nc/ — 185 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
@@ -320,6 +320,24 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
+## 🆕 Novedades en v5.6
+
+**“Barrido”** — caza de errores, limpieza, reducción del monolito:
+
+- **Consulta IA del panel reparada:** con MariaDB fallaban cuatro de seis
+  consultas de reglas (funciones de fecha de SQLite); cada consulta tiene ahora
+  un plazo de 15 s y un tope de filas que también vale con un `LIMIT` interno.
+- **Limpiar cookies:** botón en la comprobación de cookies de la pestaña
+  Sistema — primero vista previa, luego confirmación; quita cookies caducadas y
+  variantes de dominio que el bot no envía. Copia de seguridad, permisos 0600,
+  la sesión se conserva.
+- **Trabajadores sin vueltas en vacío:** tras un arranque fallido, yt-dlp y
+  Piper esperan diez minutos en lugar de reintentarlo en cada llamada.
+- **`--selfcheck` muestra el diagnóstico** de una base de datos ilegible en
+  lugar de morir en el informe.
+- **Monolito:** `bot.py` 28.831 → 27.954 líneas; las estadísticas de la web y
+  el resumen diario viven en `nc/`.
+
 ## 🆕 Novedades en v5.5
 
 **“Voz”** — AZRAEL habla con su persona a través del Qwen3-14B local:
@@ -386,8 +404,8 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.5.0** — “Voz” (2026.11) |
-| Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
+| Versión actual | **5.6.0** — “Barrido” (2026.11) |
+| Rutas Flask | 380 (34 en `bot.py` · 346 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |
 | Variables de configuración | ~577 |

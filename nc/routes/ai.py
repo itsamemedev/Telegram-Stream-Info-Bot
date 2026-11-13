@@ -27,7 +27,7 @@ from nc.claude import (api_key as _anthropic_key, model as _anthropic_model,
 from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc.aidb import conv_messages as _conv_messages, add_log_entry as add_ai_log_entry
 from nc.notes import _conv_list
-from nc.sqlutil import _rule_based_sql
+from nc.sqlutil import _rule_based_sql, zeitfenster_literal as _zeitfenster_literal
 from nc.fmt import _sse, _partial_tag_hold
 from nc.util import _ai_err_msg
 from nc.stats import _streamer_health
@@ -279,7 +279,12 @@ def _safe_select(sql, limit=200):
                               uri=True, timeout=15)
             try:
                 con.row_factory = _sq.Row
-                rows = [dict(r) for r in con.execute(s).fetchall()]
+                # v5.6-W197: Frist und Zeilendeckel — siehe nc/sqlguard.py.
+                # fetchmany statt fetchall: der Deckel gilt auch dann, wenn
+                # with_limit eine Form nicht erkennt.
+                con.set_progress_handler(
+                    _nc_sqlguard.abbruch_nach(_nc_sqlguard.FRIST_S), 10000)
+                rows = [dict(r) for r in con.execute(s).fetchmany(limit)]
             finally:
                 con.close()
             return rows, None
@@ -299,7 +304,16 @@ def _safe_select(sql, limit=200):
                 log.warning("KI-Abfrage: READ-ONLY-Transaktion nicht moeglich "
                             "(%s) — es greift nur der Wortfilter.", _e)
             try:
-                rows = [dict(r) for r in conn.execute(s).fetchall()]
+                try:
+                    cur = conn.execute(_nc_sqlguard.mariadb_mit_frist(s))
+                except Exception as _e:
+                    if not _nc_sqlguard.frist_unbekannt(_e):
+                        raise
+                    log.warning("KI-Abfrage: der Server kennt SET STATEMENT "
+                                "max_statement_time nicht (kein MariaDB?) — die "
+                                "Abfrage laeuft ohne Zeitlimit.")
+                    cur = conn.execute(s)
+                rows = [dict(r) for r in cur.fetchall()[:limit]]
             finally:
                 try:
                     conn.rollback()
@@ -307,6 +321,9 @@ def _safe_select(sql, limit=200):
                     pass
         return rows, None
     except Exception as e:
+        if _nc_sqlguard.frist_ueberschritten(e):
+            return None, _t("Abfrage nach %d s abgebrochen — zu aufwendig. Enger "
+                            "fragen (Zeitraum, Nutzer).") % _nc_sqlguard.FRIST_S
         return None, f"SQL-Fehler: {e}"
 
 
@@ -315,9 +332,18 @@ def _nl_to_sql(question):
        Bevorzugt die LLM (das LLM), fällt sonst auf Regeln zurück."""
     if _c().cfg["EVOLUTION_USE_LLM"]:
         try:
-            sys_prompt = ("Du bist ein SQLite-Experte. Wandle die Frage in GENAU EINE "
+            # v5.6-W197: der Prompt verlangte SQLite, auch unter MariaDB —
+            # `datetime('now', ...)` gibt es dort nicht. Zeitfenster deshalb
+            # als ISO-Literal (in beiden Backends ein Zeichenkettenvergleich,
+            # siehe nc/sqlutil.zeitfenster_literal), und der Dialekt beim Namen.
+            dialekt = "MariaDB" if _c().cfg["DB_BACKEND"] == "mariadb" else "SQLite"
+            sys_prompt = (f"Du bist ein {dialekt}-Experte. Wandle die Frage in GENAU EINE "
                           "read-only SELECT-Abfrage um. Gib NUR die SQL aus, ohne Erklärung, "
-                          "ohne Markdown, ohne Semikolon.\n\n" + _c().cfg["_B71_SCHEMA_DOC"])
+                          "ohne Markdown, ohne Semikolon.\n"
+                          "Zeitfenster NIE mit Datumsfunktionen, sondern als Vergleich mit "
+                          "einem ISO-Literal: die letzten 7 Tage sind >= "
+                          f"{_zeitfenster_literal()}, heute ist >= "
+                          f"{_zeitfenster_literal(True)}.\n\n" + _c().cfg["_B71_SCHEMA_DOC"])
             text, err = _c().llm_chat_sync(
                 [{"role": "system", "content": sys_prompt},
                  {"role": "user", "content": question}],

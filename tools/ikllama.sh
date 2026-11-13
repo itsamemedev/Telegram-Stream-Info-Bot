@@ -55,6 +55,8 @@
 #   LLM_THREADS         4       (Aufnahmen haben Vorrang — siehe nc-ki-backends)
 #   LLM_THREADS_BATCH   leer = wie LLM_THREADS; Threads nur fuers EINLESEN des Prompts
 #   LLM_KONTEXT         8192
+#   LLM_WEBUI           llamacpp  (none | auto | llamacpp) — Chat-Oberflaeche auf dem Port
+#   LLM_WEBUI_MCP_PROXY 0         1 = CORS-Proxy fuer MCP-Server der Oberflaeche
 #   IK_LLAMA_DIR        /opt/ik_llama.cpp
 #   IK_LLAMA_REPO       https://github.com/ikawrakow/ik_llama.cpp
 #   IK_LLAMA_REF        main
@@ -177,6 +179,17 @@ KONTEXT="$(wert LLM_KONTEXT 8192)"
 # x 2 Byte x (K+V) = 160 KiB je Token, bei 8192 Token Kontext 1,34 GB in f16,
 # mit q8_0 rund 0,71 GB. f16 = aus (wie bis v5.2.1).
 KV_CACHE="$(wert LLM_KV_CACHE q8_0)"
+# v5.6-W197: welche Chat-Oberflaeche llama-server auf seinem Port zeigt. Bis
+# v5.0 lief das Mainline-llama.cpp mit seiner neuen Oberflaeche — die hat in den
+# Einstellungen den Reiter „MCP". ik_llama.cpp liefert ohne Angabe (`auto`) die
+# alte Oberflaeche ohne diesen Reiter; seit dem Umstieg in v5.1 war er weg.
+# Gemeldet vom Betreiber: „seit 5.0.0 fehlt der MCP-Tab".
+WEBUI="$(wert LLM_WEBUI llamacpp)"
+# Der MCP-Proxy laesst den SERVER fremde Adressen abrufen, damit der Browser
+# MCP-Server ohne CORS erreicht — laut Programm „nicht in nicht vertrauten
+# Umgebungen". Der Server lauscht nur auf 127.0.0.1 (SSH-Tunnel); trotzdem
+# ausdruecklich anzuschalten, nicht per Vorgabe.
+WEBUI_MCP="$(wert LLM_WEBUI_MCP_PROXY 0)"
 IK_DIR_E="$(wert IK_LLAMA_DIR /opt/ik_llama.cpp)"
 IK_REPO="$(wert IK_LLAMA_REPO https://github.com/ikawrakow/ik_llama.cpp)"
 IK_REF="$(wert IK_LLAMA_REF main)"
@@ -197,6 +210,10 @@ fi
 zahl(){ case "$2" in ''|*[!0-9]*) fehler "%s ist keine Zahl: %s" "$1" "$2"; exit 2;; esac; }
 zahl "Port" "$PORT"; zahl LLM_THREADS "$THREADS"; zahl LLM_KONTEXT "$KONTEXT"
 [ -z "$THREADS_BATCH" ] || zahl LLM_THREADS_BATCH "$THREADS_BATCH"
+case "$WEBUI" in none|auto|llamacpp) ;; *)
+  fehler "LLM_WEBUI muss none, auto oder llamacpp sein: %s" "$WEBUI"; exit 2;; esac
+case "$WEBUI_MCP" in 0|1) ;; *)
+  fehler "LLM_WEBUI_MCP_PROXY muss 0 oder 1 sein: %s" "$WEBUI_MCP"; exit 2;; esac
 [ -z "$JOBS" ] || zahl IK_LLAMA_JOBS "$JOBS"
 if [ "$((10#$PORT))" -lt 1024 ] || [ "$((10#$PORT))" -gt 65535 ]; then
   fehler "Port ausserhalb von 1024 bis 65535: %s" "$PORT"; exit 2
@@ -357,9 +374,23 @@ tb_schalter(){
   printf ' -tb %s' "$THREADS_BATCH"
 }
 
+# v5.6-W197: --webui und der MCP-Proxy nur, wenn das Programm sie kennt (wie oben).
+# `auto` ist die Vorgabe des Programms und braucht keinen Schalter.
+webui_schalter(){
+  [ -x "$IK_BIN_E" ] || return 0
+  local _hilfe; _hilfe="$("$IK_BIN_E" --help 2>&1 || true)"
+  if [ "$WEBUI" != "auto" ] && printf '%s' "$_hilfe" | grep -q -- '--webui NAME'; then
+    printf ' --webui %s' "$WEBUI"
+  fi
+  if [ "$WEBUI_MCP" = "1" ] && [ "$WEBUI" != "none" ] \
+      && printf '%s' "$_hilfe" | grep -q -- '--webui-mcp-proxy'; then
+    printf ' --webui-mcp-proxy'
+  fi
+}
+
 unit_text(){ # unit_text GROESSE_BYTES DATEI
   local _gb=$(( ($1 + 1073741823) / 1073741824 + 4 ))
-  local _kv; _kv="$(kv_schalter)$(tb_schalter)"
+  local _kv; _kv="$(kv_schalter)$(tb_schalter)$(webui_schalter)"
   local _alias; _alias="$(printf '%s' "${MODELL_DATEI%.gguf}" | tr 'A-Z' 'a-z')"
   cat > "$2" <<UNIT
 $MARKE — erzeugt von tools/ikllama.sh (v5.1-W181).
@@ -372,6 +403,8 @@ $MARKE — erzeugt von tools/ikllama.sh (v5.1-W181).
 #   KEIN --embeddings: der Schalter beschraenkt den Server auf Embeddings (W110)
 #   -ctk/-ctv   KV-Cache quantisiert (LLM_KV_CACHE, v5.2-W193), braucht -fa
 #   -tb         Threads nur fuers Einlesen (LLM_THREADS_BATCH, v5.5-W196), leer = wie -t
+#   --webui     Chat-Oberflaeche mit MCP-Reiter (LLM_WEBUI, v5.6-W197); der
+#               MCP-Proxy nur mit LLM_WEBUI_MCP_PROXY=1
 [Unit]
 Description=ik_llama.cpp Server (NIGHTCRAWLER Brain-LLM, ${MODELL_DATEI%.gguf})
 After=network.target
@@ -724,7 +757,7 @@ fi
 # ── Dienst ───────────────────────────────────────────────────
 if [ "$NC_INIT" != "systemd" ]; then
   warn "Ohne systemd (gefunden: %s) wird kein Dienst eingerichtet." "$NC_INIT"
-  info "Von Hand starten: %s" "$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup$(kv_schalter)$(tb_schalter)"
+  info "Von Hand starten: %s" "$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup$(kv_schalter)$(tb_schalter)$(webui_schalter)"
   exit 0
 fi
 kopf "Dienst"

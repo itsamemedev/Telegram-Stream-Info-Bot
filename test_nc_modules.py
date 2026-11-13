@@ -2331,9 +2331,16 @@ def _test_w26_auskunft_blueprint():
     # Wahrheiten ueber denselben Wert.
     b = open("bot.py", encoding="utf-8").read()
     for ruf in ("_nc_suche.universal_search(", "_nc_outcomes.get_outcome_breakdown(",
-                "_nc_band.messen()", "_nc_storage.forecast(",
-                "_nc_recdb.get_all_checks("):
+                "_nc_storage.forecast(", "_nc_recdb.get_all_checks("):
         assert ruf in b, "Monolith ruft %s nicht auf" % ruf
+    # v5.6-W197: "_nc_band.messen()" stand hier mit — erfuellt nur von
+    # sample_bandwidth_for_active(), einer Huelle, die nichts aufrief. Die
+    # Aussage dahinter (EINE Wahrheit) gilt strenger: nur der Blueprint misst,
+    # und der Monolith haelt keine eigene Messreihe.
+    _a = open("nc/routes/auskunft.py", encoding="utf-8").read()
+    assert "_nc_band.messen()" in _a or "bandbreite.messen()" in _a, \
+        "der Blueprint misst den Durchsatz nicht mehr ueber nc.bandbreite"
+    assert "_BANDWIDTH_SAMPLES" not in b, "zweite Messreihe im Monolithen"
 
     # (3) Der Radar-Zustand ist ein REGISTER, kein Haken: das ist geteilter
     # ZUSTAND, keine Faehigkeit. Und Register und nicht Alias, weil bot.py den
@@ -12185,7 +12192,8 @@ def _test_v42_w101_krypto_block_bleibt_stehen():
     # ── (5) DER BOT MELDET DIE TEILKONFIGURATION — gedrosselt und mit den
     # fehlenden Namen. Sie hatte bis W101 gar keinen Zustand: zwei von sechs
     # Wallets sahen im Log aus wie alle sechs.
-    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    # ANKER GEWANDERT (v5.6-W197): der Erzeuger liegt in nc/oeffentlichestats.py.
+    src = _io.open(_os.path.join(wurzel, "nc", "oeffentlichestats.py"), encoding="utf-8").read()
     i = src.index('stats["crypto"] = _nc_crypto.snapshot')
     rumpf = rumpf_ab(src, i)
     # Hier stand `'"crypto-teil"' in rumpf` — und die Mutationsprobe ist
@@ -19438,7 +19446,8 @@ def _test_v42_w99_leerer_spendenblock_sagt_warum():
                 _os.environ[n] = v
 
     # ── (3) DER SERVER MELDET DEN LEEREN FALL — mit den Namen im Text.
-    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    # ANKER GEWANDERT (v5.6-W197): der Erzeuger liegt in nc/oeffentlichestats.py.
+    src = _io.open(_os.path.join(wurzel, "nc", "oeffentlichestats.py"), encoding="utf-8").read()
     # rumpf_ab statt eines Fensters fester Laenge: CLAUDE.md nennt die feste
     # Zahl namentlich als Bruchstelle, und tools/vertragscheck.py sperrt neue.
     # Der erste Anlauf dieses Vertrags trug eines, und die Sperre hat es
@@ -29989,8 +29998,10 @@ def _test_v42_w164_alles_auf_einmal():
     # Liste deshalb NICHT benutzen. Seit W173 laeuft jede Anzeige ueber EINE
     # Abfrage in nc/spendenziel.py, die 'manual' ueber die Liste einschliesst —
     # also darf dort und auf der Website nichts zusaetzlich addiert werden.
+    # ANKER GEWANDERT (v5.6-W197): der Erzeuger liegt in nc/oeffentlichestats.py.
     src = open("bot.py", encoding="utf-8").read()
-    st = src[src.index("_ziel = _nc_spendenziel.stand(_conn)") - 400:]
+    _oe = open("nc/oeffentlichestats.py", encoding="utf-8").read()
+    st = _oe[_oe.index("_ziel = _nc_spendenziel.stand(_conn)") - 400:]
     st = st[:st.index("_pp = _nc_spendeninfo.paypal()")]
     assert "_manual_donations_total" not in st, "manuelle Spenden zaehlen auf der Website doppelt"
     zq = open("nc/spendenziel.py", encoding="utf-8").read()
@@ -31311,9 +31322,11 @@ def _test_v42_w172_spenden():
         and "ParseMode.HTML" in _ast.unparse(fn)
     dsrc = open("discordbot.py", encoding="utf-8").read()
     assert 'name="spenden"' in dsrc and 'to_thread(_nc_spendeninfo.text, "md"' in dsrc
-    # Website und /spenden lesen PayPal an EINER Stelle.
-    assert "_nc_spendeninfo.paypal()" in src and \
-        'os.getenv("DONATION_PAYPAL"' not in src, "zweite PayPal-Lesestelle in bot.py"
+    # Website und /spenden lesen PayPal an EINER Stelle. ANKER GEWANDERT
+    # (v5.6-W197): der Website-Erzeuger liegt in nc/oeffentlichestats.py.
+    _oe = open("nc/oeffentlichestats.py", encoding="utf-8").read()
+    assert "_nc_spendeninfo.paypal()" in _oe and \
+        'os.getenv("DONATION_PAYPAL"' not in src + _oe, "zweite PayPal-Lesestelle"
     ok("v4.2-W172: /spenden auf Telegram und Discord — PayPal, Krypto, Ziel, leer laut")
 
 
@@ -31390,7 +31403,12 @@ def _test_v42_w173_ein_spendenziel():
 
     # (5) Jede Anzeige liest dieselbe Rechnung — und keine rechnet mehr selbst.
     src = open("bot.py", encoding="utf-8").read()
-    baum = _ast.parse(src)
+    # ANKER GEWANDERT (v5.6-W197): der Website-Erzeuger liegt in
+    # nc/oeffentlichestats.py; der Monolith darf keinen zweiten haben.
+    assert not any(isinstance(n, _ast.FunctionDef)
+                   and "stats[\"donation\"]" in _ast.unparse(n).replace("'", '"')
+                   for n in _ast.parse(src).body), "zweiter Website-Erzeuger im Monolithen"
+    baum = _ast.parse(open("nc/oeffentlichestats.py", encoding="utf-8").read())
     ps = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
               and "stats[\"donation\"]" in _ast.unparse(n).replace("'", '"'))
     psq = _ast.unparse(ps)
@@ -35193,6 +35211,389 @@ def _test_v42_w156_lagebild_radar():
 
 
 
+def _test_v56_w197_cookie_bereinigen():
+    """v5.6-W197: der Bereinigungs-Knopf im Cookie-Panel des System-Tabs.
+
+    Der Betreiber: „In der Cookie-/Auth-Pruefung im System-Tab fehlt der
+    Bereinigungs-Button." Das Deck schrieb seit dem Tiefenbughunt
+    „cookies.txt bereinigen" unter die Domain-Duplikate — Knopf und Route gab
+    es in keiner Fassung.
+
+    Gesichert wird, was der Knopf NICHT darf: auf eine andere Variante
+    bereinigen als die, die der Bot sendet; einen Sitzungs-Cookie (Ablauf 0)
+    als abgelaufen werfen; die Anmeldung verlieren; in der Vorschau
+    schreiben; einen anderen Plan ausfuehren als den gezeigten; an der Sperre
+    vorbei oder ohne Sicherung schreiben."""
+    import re as _re_w197
+    import ast as _ast
+    import json as _json
+    import os as _os
+    import shutil as _sh
+    import stat as _stat
+    import subprocess as _sp
+    import threading as _thr
+    import time as _time
+    from flask import Flask
+    from nc import cookieholen as CH
+    from nc import cookies as CK
+    from nc import ctx as _ncctx
+    import nc.routes.settings as ST
+
+    jetzt = int(_time.time())
+    zuk, verg = jetzt + 30 * 86400, jetzt - 30 * 86400
+    krit = ("sessionid_ss", "sessionid", "sid_tt", "tt_chain_token", "ttwid", "msToken")
+    d = _ph.verzeichnis()
+
+    def _datei(name, zeilen):
+        pfad = _os.path.join(d, name)
+        with open(pfad, "w", encoding="utf-8") as fh:
+            fh.write("# Netscape HTTP Cookie File\n"
+                     + "".join("\t".join(map(str, z)) + "\n" for z in zeilen))
+        return pfad
+
+    def _bytes(pfad):
+        with open(pfad, "rb") as fh:
+            return fh.read()
+
+    class _Still:
+        def __getattr__(self, n):
+            return lambda *a, **k: None
+
+    def _lade(pfad):
+        CK.configure(datei=pfad)
+        CK.CACHE.clear()
+        return CK.load_dict()
+
+    # (0) Ablauf 0/None ist Sitzung, nicht abgelaufen.
+    assert not CK.abgelaufen(0, jetzt) and not CK.abgelaufen(None, jetzt)
+    assert CK.abgelaufen(jetzt - 1, jetzt) and not CK.abgelaufen(jetzt + 1, jetzt)
+
+    alt_konf, alt_krit = dict(CK._KONF), CK._KRITISCH
+    alt_ctx, alt_t = _ncctx._CTX, ST._t
+    try:
+        CK.configure(log=_Still(), kritisch=krit, autorefresh_info=dict,
+                     autofetch_info=dict, reparieren=lambda: False)
+
+        # (1) Der Hauptfall. Jede Zeile traegt eine Aussage.
+        haupt = [
+            (".tiktok.com", "TRUE", "/", "TRUE", 0, "ttwid", "TT"),            # Sitzung: bleibt
+            # Gleichstand (Rang 0, gleiche Expiry). In der DATEI steht .zz
+            # zuerst, im JAR .tiktok.com (die Domain kam mit ttwid zuerst).
+            (".zz.tiktok.com", "TRUE", "/", "TRUE", zuk, "msToken", "MS_ZZ"),
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "msToken", "MS_TT"),
+            # Rang schlaegt Expiry: die exakte Domain bleibt.
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid", "SID_WILD"),
+            ("www.tiktok.com", "FALSE", "/", "TRUE", zuk - 5, "sessionid", "SID_GENAU"),
+            # Gleicher Rang: die laengere Expiry bleibt.
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk - 100, "sid_tt", "KURZ"),
+            (".m.tiktok.com", "TRUE", "/", "TRUE", zuk, "sid_tt", "LANG"),
+            (".tiktok.com", "TRUE", "/", "TRUE", verg, "tt_chain_token", "TOT"),  # abgelaufen
+            (".tiktok.com", "TRUE", "/", "TRUE", verg, "odin_tt", "ALT"),     # abgelaufen, unkritisch
+            # Unkritisches Duplikat: nicht angefasst (gemeldet wird es auch nicht).
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "s_v_web_id", "A"),
+            ("www.tiktok.com", "FALSE", "/", "TRUE", zuk, "s_v_web_id", "B"),
+            (".tiktok.com", "TRUE", "/", "FALSE", 0, "sessionid_ss", "SS"),  # Sitzung + Login
+            (".tiktok.com", "TRUE", "/", "FALSE", 0, "", "NURWERT"),          # Name ohne Wert
+        ]
+        f = _datei("tiktok_cookies.txt", haupt)
+        vorher = _lade(f)
+        assert vorher["msToken"] == "MS_TT" and vorher["sessionid"] == "SID_GENAU", vorher
+        with open(f, encoding="utf-8") as fh:
+            nach_dateifolge, _ = CK._dedupe_cookie_text(fh.read())
+        assert "\tmsToken\tMS_ZZ" in nach_dateifolge, \
+            "Probe wertlos: die Dateifolge muss hier eine ANDERE Variante waehlen als der Bot"
+        h_vorher = CK.gesundheit()
+        assert sorted(h_vorher["duplicate_domain_cookies"]) == ["msToken", "sessionid", "sid_tt"], h_vorher
+
+        roh, mtime = _bytes(f), _os.stat(f).st_mtime_ns
+        v = CH.bereinigen(f, vorschau=True)
+        assert v["ok"] and v["vorschau"] and v["noetig"] and v["backup"] is None, v
+        assert _bytes(f) == roh and _os.stat(f).st_mtime_ns == mtime, "die Vorschau hat geschrieben"
+        assert not _os.path.exists(f + ".bak"), "die Vorschau hat eine Sicherung angelegt"
+        assert {x["name"] for x in v["abgelaufen"]} == {"tt_chain_token", "odin_tt"}, v["abgelaufen"]
+        assert {x["name"] for x in v["abgelaufen"]} == {x["name"] for x in h_vorher["expired"]}, \
+            "Knopf und Deck zaehlen verschieden als abgelaufen"
+        dop = {x["name"]: x for x in v["doppelt"]}
+        assert sorted(dop) == ["msToken", "sessionid", "sid_tt"], v["doppelt"]
+        assert dop["sessionid"]["behalten"] == "www.tiktok.com" and \
+            dop["sessionid"]["entfernt"] == [".tiktok.com"], dop["sessionid"]
+        assert dop["msToken"]["behalten"] == ".tiktok.com", \
+            ("Gleichstand nach Dateifolge aufgeloest — der Bot sendet die andere Variante", dop)
+        assert dop["sid_tt"]["behalten"] == ".m.tiktok.com", dop["sid_tt"]
+        assert v["wert_wechselt"] == [] and v["vorher"] == 13 and v["nachher"] == 8, v
+        assert v["unbrauchbar"] == [], v["unbrauchbar"]
+        roh_json = _json.dumps(v)
+        for wert in ("SID_GENAU", "SID_WILD", "MS_TT", "TOT", d):
+            assert wert not in roh_json, "Wert oder Pfad in der Antwort: %s" % wert
+
+        # (2) Ausfuehren: nur mit dem Stand der Vorschau.
+        falsch = CH.bereinigen(f, erwartet="0" * 16)
+        assert not falsch["ok"] and falsch["art"] == "veraltet", falsch
+        assert _bytes(f) == roh, "ein fremder Stand wurde ausgefuehrt"
+        # Gleiche Datei, aber inzwischen ist die GESENDETE sessionid-Variante
+        # abgelaufen: entfernt wuerde jetzt SID_GENAU statt SID_WILD — ein
+        # anderer Plan, also ein anderer Stand. Bestaetigt war der alte.
+        # (Laeuft nur ein Cookie ab, das ohnehin als Duplikat ginge, bleibt es
+        # derselbe Plan und derselbe Stand: entfernt werden dieselben Zeilen.)
+        assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 50)["stand"] == v["stand"]
+        assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 3)["wert_wechselt"] == ["sessionid"]
+        spaeter = CH.bereinigen(f, erwartet=v["stand"], jetzt=zuk - 3)
+        assert not spaeter["ok"] and spaeter["art"] == "veraltet", \
+            ("der Stand haengt nur am Dateiinhalt, nicht am Plan", spaeter)
+        assert _bytes(f) == roh
+        e = CH.bereinigen(f, erwartet=v["stand"])
+        assert e["ok"] and not e["vorschau"] and e["entfernt"] == 5, e
+        assert e["backup"] == "tiktok_cookies.txt.bak" and _os.sep not in e["backup"], e["backup"]
+        assert _bytes(f + ".bak") == roh, "die Sicherung ist nicht der alte Stand"
+        assert _stat.S_IMODE(_os.stat(f).st_mode) == 0o600, oct(_os.stat(f).st_mode)
+        nachher = _lade(f)
+        for name in set(vorher) - {"tt_chain_token", "odin_tt"}:
+            assert nachher.get(name, "<fehlt>") == vorher[name], \
+                ("die Bereinigung hat den GESENDETEN Wert geaendert", name, vorher[name], nachher.get(name))
+        assert "tt_chain_token" not in nachher and "odin_tt" not in nachher
+        assert nachher["ttwid"] == "TT" and nachher["sessionid_ss"] == "SS", \
+            "ein Sitzungs-Cookie (Ablauf 0) wurde entfernt"
+        with open(f, encoding="utf-8") as fh:
+            text = fh.read()
+        assert text.count("\ts_v_web_id\t") == 2, "ein unkritisches Duplikat wurde angefasst"
+        for weg in ("MS_ZZ", "SID_WILD", "KURZ", "TOT"):
+            assert weg not in text, weg
+        h = CK.gesundheit()
+        assert h["duplicate_domain_cookies"] == [] and h["expired"] == [], h
+        assert CH.bereinigen(f, vorschau=True)["noetig"] is False, "nach dem Lauf bleibt etwas"
+        stand_bak = _bytes(f + ".bak")
+        nichts = CH.bereinigen(f, erwartet="egal")
+        assert nichts["ok"] and not nichts["noetig"] and _bytes(f + ".bak") == stand_bak, \
+            "ohne Aenderung geschrieben — das setzt die mtime und das Deck meldet 'frisch'"
+
+        # (3) Der gesendete Wert war tot: er wechselt — und die Vorschau sagt es.
+        # Drei Varianten, weil erst dann die Reihenfolge der beiden Schritte
+        # zaehlt: wer die Duplikate ueber ALLE aufloest (der tote Sieger
+        # bliebe), wirft beide gueltigen als Duplikat und danach den toten
+        # als abgelaufen — die Anmeldung waere weg. Mit zwei Varianten ist
+        # das von aussen nicht zu unterscheiden; die Mutationsprobe ist
+        # genau daran entwischt.
+        f2 = _datei("wechsel.txt", [
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "GENAU_TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid", "ALT_GUELTIG"),
+            (".m.tiktok.com", "TRUE", "/", "TRUE", zuk - 10, "sessionid", "ALT_KURZ")])
+        assert _lade(f2)["sessionid"] == "GENAU_TOT"
+        v2 = CH.bereinigen(f2, vorschau=True)
+        assert v2["ok"] and v2["wert_wechselt"] == ["sessionid"], v2
+        assert v2["doppelt"] == [{"name": "sessionid", "behalten": ".tiktok.com",
+                                  "entfernt": [".m.tiktok.com"]}], v2["doppelt"]
+        e2 = CH.bereinigen(f2, erwartet=v2["stand"])
+        assert e2["ok"] and _lade(f2) == {"sessionid": "ALT_GUELTIG"}, (e2, _lade(f2))
+
+        # (4) Die Anmeldung geht nie verloren — auch nicht EIN Login-Name.
+        for name, zeilen, fehlt in (
+                ("login1.txt", [(".tiktok.com", "TRUE", "/", "TRUE", verg, "sessionid", "X"),
+                                (".tiktok.com", "TRUE", "/", "TRUE", verg, "msToken", "Y"),
+                                (".tiktok.com", "TRUE", "/", "TRUE", 0, "ttwid", "Z")], ["sessionid"]),
+                ("login2.txt", [(".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid_ss", "X"),
+                                (".tiktok.com", "TRUE", "/", "TRUE", verg, "sessionid", "Y")], ["sessionid"])):
+            fl = _datei(name, zeilen)
+            roh_l = _bytes(fl)
+            for vs in (True, False):
+                r = CH.bereinigen(fl, vorschau=vs, erwartet=None if vs else "egal")
+                assert not r["ok"] and r["art"] == "login_weg" and r["namen"] == fehlt, (name, vs, r)
+            assert _bytes(fl) == roh_l and not _os.path.exists(fl + ".bak"), name
+
+        # (5) Was das Jar annimmt, _feld_zeile aber nie schreibt, steht in der Vorschau.
+        f5 = _datei("leer.txt", [(".tiktok.com", "TRUE", "/", "TRUE", 0, "sessionid", "S"),
+                                 ("", "FALSE", "/", "FALSE", 0, "leer", "X")])
+        v5 = CH.bereinigen(f5, vorschau=True)
+        assert v5["unbrauchbar"] == [{"name": "leer", "ort": "?"}] and v5["noetig"], v5
+        assert CH.bereinigen(_os.path.join(d, "fehlt.txt"), vorschau=True)["art"] == "fehlt"
+        kaputt = _os.path.join(d, "kaputt.txt")
+        with open(kaputt, "wb") as fh:
+            fh.write(b"\x00\x01 kein Cookie, nirgends \xff\n")
+        r = CH.bereinigen(kaputt, vorschau=True)
+        assert r["art"] == "unlesbar" and r["detail"] and d not in r["detail"], r
+        # Scheitert das Schreiben, bleibt die Datei, und der Grund geht mit.
+        f_s = _datei("schreibfehler.txt", haupt)
+        roh_s = _bytes(f_s)
+        echt_schreibe = CH.schreibe
+
+        def _platte_voll(*a, **k):
+            raise OSError(28, "No space left on device", f_s)
+        CH.schreibe = _platte_voll
+        try:
+            r = CH.bereinigen(f_s, erwartet=CH.bereinigen(f_s, vorschau=True)["stand"])
+        finally:
+            CH.schreibe = echt_schreibe
+        assert r["art"] == "schreiben" and "No space" in r["detail"] and d not in r["detail"], r
+        assert _bytes(f_s) == roh_s
+
+        # (6) Geschrieben wird unter der Sperre, und verglichen AUCH: haelt ein
+        # anderer Schreiber sie und aendert die Datei, wird nicht getauscht.
+        f6 = _datei("sperre.txt", haupt)
+        v6 = CH.bereinigen(f6, vorschau=True)
+        fertig = []
+        with CK.DATEI_SPERRE:
+            t = _thr.Thread(target=lambda: fertig.append(CH.bereinigen(f6, erwartet=v6["stand"])))
+            t.start()
+            t.join(0.5)
+            assert not fertig, "bereinigen schreibt an DATEI_SPERRE vorbei"
+            with open(f6, "a", encoding="utf-8") as fh:
+                fh.write(".tiktok.com\tTRUE\t/\tTRUE\t0\tneu_bezogen\tN\n")
+        t.join(5)
+        assert fertig and fertig[0].get("art") == "veraltet", \
+            ("unter der Sperre nicht verglichen — der Auto-Bezug waere ueberschrieben", fertig)
+        assert "\tneu_bezogen\tN" in open(f6, encoding="utf-8").read(), \
+            "der Auto-Bezug wurde ueberschrieben"
+        assert not _os.path.exists(f6 + ".neu.tmp"), "die Temp-Datei blieb liegen"
+        # Geaendert heisst auch: inzwischen geloescht — dann wird keine neue
+        # Datei aus einem Plan fuer die alte angelegt.
+        for ziel in (f6, _os.path.join(d, "inzwischen_weg.txt")):
+            try:
+                CH.schreibe(ziel, "# Netscape HTTP Cookie File\n", nur_wenn=b"anders")
+                raise AssertionError("schreibe() hat trotz geaenderter Datei getauscht: %s" % ziel)
+            except CH.DateiGeaendert:
+                pass
+        assert not _os.path.exists(_os.path.join(d, "inzwischen_weg.txt"))
+
+        # (7) Die Route. Ohne Vorschau keine Ausfuehrung.
+        ST._t = lambda s: s
+        cache = {}
+        fr = _datei("route.txt", haupt)
+        _ncctx.configure(log=_Still(), cfg={"COOKIE_FILE": fr, "_COOKIES_CACHE": cache},
+                         get_cookie_health=lambda: {"status": "ok"})
+        app = Flask("w197")
+        app.register_blueprint(ST.bp)
+        regel = [r for r in app.url_map.iter_rules() if r.rule == "/api/cookies/bereinigen"]
+        assert regel and "POST" in regel[0].methods, "Route nicht registriert"
+        k = app.test_client()
+        roh_r = _bytes(fr)
+        for body in ({}, {"vorschau": "false"}, {"stand": "  "}):
+            r = k.post("/api/cookies/bereinigen", json=body)
+            assert r.status_code == 400 and r.get_json()["art"] == "ohne_vorschau", (body, r.status_code)
+        assert _bytes(fr) == roh_r
+        r = k.post("/api/cookies/bereinigen", json={"vorschau": True})
+        rv = r.get_json()
+        assert r.status_code == 200 and rv["ok"] and rv["noetig"] and rv["doppelt"], rv
+        assert _bytes(fr) == roh_r, "Vorschau ueber die Route hat geschrieben"
+        r = k.post("/api/cookies/bereinigen", json={"stand": "falsch"})
+        assert r.status_code == 409 and r.get_json()["art"] == "veraltet", r.status_code
+        cache["v"] = "alter Stand"
+        r = k.post("/api/cookies/bereinigen", json={"stand": rv["stand"]})
+        assert r.status_code == 200 and r.get_json()["entfernt"] == 5, r.get_json()
+        assert "v" not in cache, "Cookie-Cache nicht geleert — der Recorder sendet 5 s den alten Stand"
+        assert r.get_json()["health"] == {"status": "ok"}
+        text_r = r.get_data(as_text=True)
+        assert "SID_GENAU" not in text_r and d not in text_r, "Wert oder Pfad in der Antwort"
+        _ncctx._CTX.cfg["COOKIE_FILE"] = _datei("route_login.txt", [
+            (".tiktok.com", "TRUE", "/", "TRUE", verg, "sessionid", "X")])
+        r = k.post("/api/cookies/bereinigen", json={"vorschau": True})
+        assert r.status_code == 409 and r.get_json()["art"] == "login_weg" \
+            and "sessionid" in r.get_json()["error"], r.get_json()
+        _ncctx._CTX.cfg["COOKIE_FILE"] = _os.path.join(d, "gibtsnicht.txt")
+        assert k.post("/api/cookies/bereinigen", json={"vorschau": True}).status_code == 404
+        _ncctx._CTX.cfg["COOKIE_FILE"] = kaputt
+        r = k.post("/api/cookies/bereinigen", json={"vorschau": True})
+        assert r.status_code == 409 and r.get_json()["art"] == "unlesbar", r.status_code
+        # Ein Schreibfehler ist ein Serverfehler (500, log.error) — keine Lage.
+        _ncctx._CTX.cfg["COOKIE_FILE"] = _datei("route_voll.txt", haupt)
+        st = k.post("/api/cookies/bereinigen", json={"vorschau": True}).get_json()["stand"]
+        CH.schreibe = _platte_voll
+        try:
+            r = k.post("/api/cookies/bereinigen", json={"stand": st})
+        finally:
+            CH.schreibe = echt_schreibe
+        assert r.status_code == 500 and r.get_json()["art"] == "schreiben", r.status_code
+    finally:
+        CK._KONF.clear()
+        CK._KONF.update(alt_konf)
+        CK._KRITISCH = alt_krit
+        CK.CACHE.clear()
+        _ncctx._CTX, ST._t = alt_ctx, alt_t
+
+    # (8) Eine Regel, eine Stelle: load_dict und gesundheit rufen die Helfer,
+    # Route und Bereinigung schreiben nicht selbst.
+    def _aufrufe(pfad, name):
+        baum = _ast.parse(open(pfad, encoding="utf-8").read())
+        fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == name)
+        return [c for c in _ast.walk(fn) if isinstance(c, _ast.Call)]
+
+    def _rufe(pfad, name):
+        return {_ast.unparse(c.func) for c in _aufrufe(pfad, name)}
+    assert "auswahl" in _rufe("nc/cookies.py", "_lesen"), "load_dict waehlt wieder mit eigener Regel"
+    assert "abgelaufen" in _rufe("nc/cookies.py", "gesundheit"), "das Deck zaehlt mit eigener Regel"
+    assert "auswahl" in _rufe("nc/cookieholen.py", "_plan")
+    rb = _rufe("nc/cookieholen.py", "bereinigen")
+    assert "schreibe" in rb and not {"os.replace", "os.open", "shutil.copy2"} & rb, rb
+    # Lesen darf sie (die Bytes fuer Stand und Sperren-Vergleich), schreiben nur schreibe().
+    for c in _aufrufe("nc/cookieholen.py", "bereinigen"):
+        if _ast.unparse(c.func) == "open":
+            modus = c.args[1].value if len(c.args) > 1 and isinstance(c.args[1], _ast.Constant) else "r"
+            assert set(modus) <= {"r", "b"}, "bereinigen() schreibt an schreibe() vorbei: %r" % modus
+    rr = _rufe("nc/routes/settings.py", "api_cookies_bereinigen")
+    assert "_nc_cookieholen.bereinigen" in rr and not {"os.replace", "shutil.copy2", "open"} & rr, rr
+
+    # (9) Der Knopf: immer da, gesperrt mit Grund — und er fuehrt nur aus,
+    # was die Vorschau gezeigt und der Betreiber bestaetigt hat.
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    zeile = next(z for z in dash.splitlines() if 'id="ck_bereinigen"' in z)
+    assert zeile.lstrip().startswith("ch+="), "die Knopf-Zeile haengt an einer Bedingung"
+    for teil in ('onclick="cookiesBereinigen()"', "disabled", 'id="ck_bereinigen_msg"'):
+        assert teil in zeile, teil
+    a = dash.index("function ckMeldung(")
+    b = dash.index("\n}\n", dash.index("async function cookiesBereinigen(")) + 3
+    js = dash[a:b]
+    assert "'/api/cookies/bereinigen'" in js
+    if not _sh.which("node"):
+        print("  (kein node — Verhaltensprobe des Knopfs uebersprungen)")
+    else:
+        prog = r"""
+const els={'#ck_bereinigen':{disabled:false},'#ck_bereinigen_msg':{textContent:'',className:''}};
+const $=s=>els[s]; const T=s=>s; const toast=()=>{};
+let geladen=0; const loadSystem=async()=>{geladen++;};
+let antworten=[], posts=[], fragen=[], ja=false;
+const apiPost=async(p,b)=>{posts.push([p,JSON.parse(JSON.stringify(b))]); return antworten.shift();};
+const confirm=t=>{fragen.push(t); return ja;};
+""" + js + r"""
+(async()=>{
+  const plan={ok:true,noetig:true,stand:'s1',vorher:5,nachher:3,entfernt:2,
+    abgelaufen:[{name:'tt_chain_token',ort:'.tiktok.com'}],
+    doppelt:[{name:'sessionid',behalten:'www.tiktok.com',entfernt:['.tiktok.com']}],
+    unbrauchbar:[],wert_wechselt:[]};
+  const aus={};
+  antworten=[plan]; ja=false; await cookiesBereinigen();
+  aus.nein={posts, fragen, frei:!els['#ck_bereinigen'].disabled};
+  posts=[]; fragen=[]; ja=true;
+  antworten=[plan,{ok:true,entfernt:2,nachher:3,backup:'tiktok_cookies.txt.bak'}];
+  await cookiesBereinigen();
+  aus.ja={posts, geladen, msg:els['#ck_bereinigen_msg'].textContent,
+          cls:els['#ck_bereinigen_msg'].className};
+  posts=[]; fragen=[]; antworten=[{ok:true,noetig:false,stand:'s2'}]; await cookiesBereinigen();
+  aus.leer={posts, fragen};
+  els['#ck_bereinigen'].disabled=true; posts=[]; await cookiesBereinigen();
+  aus.gesperrt={posts};
+  console.log(JSON.stringify(aus));
+})();
+"""
+        out = _sp.run(["node", "-e", prog], capture_output=True, text=True, timeout=30)
+        assert out.returncode == 0, out.stderr
+        aus = _json.loads(out.stdout)
+        url = "/api/cookies/bereinigen"
+        assert aus["nein"]["posts"] == [[url, {"vorschau": True}]], aus["nein"]
+        frage = aus["nein"]["fragen"][0]
+        # Als ganze Woerter, nicht als Teilstring — ein Teilstring-Test waere
+        # auch bei "www.tiktok.com.boese" wahr, und CodeQL liest jedes
+        # `"<host>" in x` als URL-Pruefung (py/incomplete-url-substring-
+        # sanitization), auch wenn x eine Liste ist. Deshalb als Teilmenge.
+        woerter = set(_re_w197.findall(r"[\w.-]+", frage))
+        assert {"tt_chain_token", "www.tiktok.com"} <= woerter, frage
+        assert aus["nein"]["frei"], "nach Abbruch bleibt der Knopf gesperrt"
+        assert aus["ja"]["posts"] == [[url, {"vorschau": True}], [url, {"stand": "s1"}]], aus["ja"]
+        assert aus["ja"]["geladen"] == 1 and "tiktok_cookies.txt.bak" in aus["ja"]["msg"] \
+            and "ck-ok" in aus["ja"]["cls"], aus["ja"]
+        assert aus["leer"] == {"posts": [[url, {"vorschau": True}]], "fragen": []}, aus["leer"]
+        assert aus["gesperrt"]["posts"] == [], "ein gesperrter Knopf hat gefragt"
+    ok("v5.6-W197: Cookie-Datei bereinigen — Regel des Versands, Sitzung bleibt, "
+       "Anmeldung nie weg, nur der gezeigte Plan, unter der Sperre")
+
+
 def _test_v52_w190_sicherheit():
     """v5.2-W190: sechs Riegel aus dem Sicherheits-Durchgang.
 
@@ -36926,6 +37327,604 @@ def _test_v55_w196_azrael_an_qwen():
     ok("v5.5-W196: AZRAEL an Qwen — Vorrang, Reserve, Prompt-Cache, Persona vorn, kein stiller Wechsel")
 
 
+def _test_v56_w197_oeffentliche_stats():
+    """v5.6-W197 (Monolith): der Erzeuger von stats.json lebt in
+    nc/oeffentlichestats.py. Echt ausgefuehrt gegen die Testdatenbank: die
+    Fassung kommt per configure(), keine Aufnahme-Zahl wird oeffentlich, und
+    ein ausgefallener Teil meldet sich (vorher sechs stille Auffaenge — die
+    Website zeigte Nullen, das Log nichts)."""
+    import logging as _lg
+    import os as _os_w197
+    from nc import oeffentlichestats as O
+    gemeldet = []
+    alt = dict(O._KONF)
+    alt_fakten = O._nc_news.collect_facts
+    # nc.news braucht im Bot eigene Startwerte; hier zaehlt der Erzeuger.
+    O._nc_news.collect_facts = lambda: {"tracked": 3, "live_today_count": 1,
+                                        "platforms": ["Kick"], "agents_active": 0, "kg_facts": 0}
+    O.configure(version="9.9.9", loop_fehler=lambda n, e: gemeldet.append(n))
+    # Eigene Datenbank: die gemeinsame Testdatenbank ist im Gesamtlauf anders
+    # belegt als einzeln — ein Vertrag darf davon nicht abhaengen.
+    import contextlib as _ctl
+    import sqlite3 as _sq
+    _pfad = _os_w197.path.join(_ph.verzeichnis(), "oeff.db")
+    _c = _sq.connect(_pfad)
+    _c.execute("CREATE TABLE recording_attempts (username TEXT, started_at TEXT)")
+    _c.execute("CREATE TABLE kick_mod_log (ts TEXT, kind TEXT)")
+    from datetime import datetime as _dt, timezone as _tz
+    _jetzt = _dt.now(_tz.utc).isoformat()
+    _c.executemany("INSERT INTO recording_attempts VALUES (?,?)", [("a", _jetzt), ("b", _jetzt)])
+    _c.executemany("INSERT INTO kick_mod_log VALUES (?,?)", [(_jetzt, "warn"), (_jetzt, "chat")])
+    _c.commit(); _c.close()
+
+    @_ctl.contextmanager
+    def _eigene_db():
+        k = _sq.connect(_pfad)
+        k.row_factory = _sq.Row
+        try:
+            yield k
+        finally:
+            k.close()
+    alt_db0 = O.db_conn
+    O.db_conn = _eigene_db
+    try:
+        st = O.public_stats()
+        assert st["version"] == "9.9.9", "die Fassung kommt nicht per configure()"
+        assert len(st["live_7d"]) == 7 and st["live_7d"][-1]["live"] == 2, st["live_7d"]
+        assert st["moderation_7d"] == 2 and st["mod_7d"][-1]["n"] == 1, \
+            ("Moderations-Serie zaehlt falsch (nur timeout/ban/flag/delete/warn)", st["mod_7d"])
+        for k in st:
+            assert "recording" not in k and "aufnahm" not in k.lower(), \
+                "Aufnahme-Zahl in den oeffentlichen Stats: " + k
+
+        class _Fang(_lg.Handler):
+            def __init__(self):
+                super().__init__()
+                self.zeilen = []
+
+            def emit(self, r):
+                self.zeilen.append(r.getMessage())
+        fang = _Fang()
+        _lg.getLogger("TikTokBot").addHandler(fang)
+        alt_db = O.db_conn
+
+        def _kaputt():
+            raise RuntimeError("database is locked")
+        O.db_conn = _kaputt
+        from nc import meldetakt as _mt
+        _mt.zuruecksetzen("oeffentliche-stats")
+        try:
+            st2 = O.public_stats()
+        finally:
+            O.db_conn = alt_db
+            _lg.getLogger("TikTokBot").removeHandler(fang)
+        assert st2["live_7d"] == [] and st2["moderation_7d"] == 0, st2
+        assert "spendenziel-website" in gemeldet, "Spendenziel-Ausfall geht nicht an die Schleifen-Meldung"
+        assert any("Teil live_7d fiel aus" in z and "database is locked" in z
+                   for z in fang.zeilen), ("Teilausfall still", fang.zeilen)
+    finally:
+        O.db_conn = alt_db0
+        O._KONF.clear(); O._KONF.update(alt)
+        O._nc_news.collect_facts = alt_fakten
+    b = open("bot.py", encoding="utf-8").read()
+    assert "def _public_stats(" not in b, "zweiter Erzeuger im Monolithen"
+    assert "_nc_oeffstats.configure(version=BOT_VERSION" in b
+    ok("v5.6-w197: stats.json-Erzeuger aus bot.py geloest — Fassung per configure, Teilausfaelle laut")
+
+
+def _test_v56_w197_tagesbericht():
+    """v5.6-W197 (Monolith): der Tagesbericht lebt in nc/tagesbericht.py. Echt
+    gebaut gegen die Testdatenbank, die beiden Lagen kommen als FUNKTIONEN per
+    configure() — ein Wert waere beim Start eingefroren und meldete fuer immer
+    den Plattenstand von damals."""
+    import contextlib as _ctl
+    import os as _os_tb
+    import sqlite3 as _sq
+    from nc import tagesbericht as T
+    alt = dict(T._KONF)
+    stand = {"pct": 50}
+    # Eigene Datenbank — die gemeinsame ist im Gesamtlauf anders belegt.
+    _pfad = _os_tb.path.join(_ph.verzeichnis(), "tag.db")
+    _c = _sq.connect(_pfad)
+    _c.execute("CREATE TABLE trackings (paused INTEGER, last_live INTEGER, recording INTEGER)")
+    _c.execute("CREATE TABLE recordings (username TEXT, created_at TEXT)")
+    _c.execute("CREATE TABLE recording_attempts (started_at TEXT, outcome TEXT)")
+    from datetime import datetime as _dt, timezone as _tz
+    _j = _dt.now(_tz.utc).isoformat()
+    _c.executemany("INSERT INTO trackings VALUES (?,?,?)", [(0, 1, 1), (1, 0, 0), (0, 0, 0)])
+    _c.executemany("INSERT INTO recordings VALUES (?,?)", [("anna", _j), ("anna", _j), ("bo", _j)])
+    _c.executemany("INSERT INTO recording_attempts VALUES (?,?)",
+                   [(_j, "ok"), (_j, "early_disconnect"), (_j, "stall_killed_partial"), (_j, "x")])
+    _c.commit(); _c.close()
+
+    @_ctl.contextmanager
+    def _eigene_db():
+        k = _sq.connect(_pfad)
+        k.row_factory = _sq.Row
+        try:
+            yield k
+        finally:
+            k.close()
+    alt_db = T.db_conn
+    T.db_conn = _eigene_db
+    T.configure(storage=lambda: {"disk": {"total_bytes": 100, "used_bytes": stand["pct"]},
+                                 "recordings_dir": {"total_bytes": 5 * 1024 * 1024},
+                                 "retention_days": 14},
+                cookies=lambda: {"status": "warning", "headline": "2 Cookie(s) abgelaufen"})
+    try:
+        t1 = T.bauen()
+        stand["pct"] = 91
+        t2 = T.bauen()
+    finally:
+        T._KONF.clear(); T._KONF.update(alt)
+    assert "3 Trackings (1 live, 1 aufnehmend, 1 pausiert)" in t1, t1
+    assert "4 Versuche · 50% Erfolg · 1 early-disconnects" in t1 and "1. @anna — 2 Aufnahmen" in t1, t1
+    assert "DAILY SUMMARY" in t1 and "Disk: 50% belegt" in t1 and "Recordings: 5 MB" in t1, t1
+    assert "Disk: 91% belegt ⚠️" in t2, "Lage eingefroren statt je Aufruf gelesen: " + t2
+    assert "⚠️ 2 Cookie(s) abgelaufen" in t1 and "nach 14 Tagen" in t1, t1
+    T._KONF.update(storage=T._nicht_konfiguriert)
+    try:
+        T.bauen()
+        raise AssertionError("ohne configure() still gebaut")
+    except RuntimeError as e:
+        assert "configure" in str(e)
+    finally:
+        T._KONF.clear(); T._KONF.update(alt)
+        T.db_conn = alt_db
+    b = open("bot.py", encoding="utf-8").read()
+    assert "def _build_daily_summary(" not in b, "zweiter Tagesbericht im Monolithen"
+    assert "_nc_tagesbericht.configure(storage=get_storage_stats, cookies=get_cookie_health)" in b
+    ok("v5.6-w197: Tagesbericht aus bot.py geloest — Lagen je Aufruf, ohne configure() laut")
+
+
+def _test_v56_w197_overlay_ladeversuch():
+    """v5.6-W197: ein unbeantworteter Ladeversuch frass die ganze Startfrist.
+
+    Der W170-Vertrag fiel in der CI (3.14) mit „Seite nicht geladen:
+    Runtime.evaluate: keine Antwort": jeder Versuch bekam die volle Frist, und
+    nach dem ersten ohne Antwort war keine Zeit fuer einen zweiten. Hier ohne
+    Chromium: die Attrappe beantwortet den ersten Versuch nicht und prueft,
+    dass er eine eigene, kurze Frist traegt."""
+    import time as _t
+    from types import SimpleNamespace as _NS
+    from nc import overlaybrowser as _ob
+    versuche = []
+
+    class _V:
+        def lebt(self):
+            return True
+
+        def aufruf(self, methode, params, frist, sitzung=None):
+            versuche.append(frist - _t.monotonic())
+            assert frist - _t.monotonic() <= _ob.VERSUCH_S + 0.5, \
+                "ein Ladeversuch traegt die ganze Startfrist (%.1f s)" % (frist - _t.monotonic())
+            if len(versuche) == 1:
+                raise _ob.OverlayBrowserFehler("Runtime.evaluate: keine Antwort")
+            return {"result": {"value": "complete"}}
+    t0 = _t.monotonic()
+    _ob.Dauerbrowser._warten_bis_geladen(_NS(url="http://x/overlay"), _V(), "s",
+                                         _t.monotonic() + 30)
+    assert len(versuche) == 2 and _t.monotonic() - t0 < 5, versuche
+    # Die Startfrist bleibt die Obergrenze: kurz vor ihrem Ende kein Versuch
+    # mit mehr Zeit, als sie noch hat.
+    versuche.clear()
+    try:
+        _ob.Dauerbrowser._warten_bis_geladen(_NS(url="http://x/overlay"), _V(), "s",
+                                             _t.monotonic() + 0.3)
+    except _ob.OverlayBrowserFehler:
+        pass
+    assert versuche and versuche[0] <= 0.35, versuche
+    ok("v5.6-w197: Overlay-Browser — jeder Ladeversuch mit eigener Frist, ein stummer frisst nicht den Start")
+
+
+def _test_v56_w197_llama_webui():
+    """v5.6-W197: der Reiter „MCP" der llama-server-Oberflaeche.
+
+    Der Betreiber: „seit 5.0.0 fehlt der MCP-Tab". Im Deck gab es keinen; es
+    war die Oberflaeche von llama-server. Mainline-llama.cpp (bis v5.0) zeigte
+    die neue mit MCP-Reiter, ik_llama.cpp (seit v5.1) ohne --webui die alte.
+    Am Server bestaetigt: `--webui NAME` (none|auto|llamacpp) und
+    `--webui-mcp-proxy` kennt sein Build. Geprueft: Schalter nur, wenn das
+    Programm sie kennt; der Proxy nur ausdruecklich; ungueltige Werte brechen ab."""
+    import os as _os
+    import subprocess as _sp
+    d = _ph.verzeichnis()
+    fkt = _sp.run(["sed", "-n", "/^webui_schalter(){/,/^}/p", "tools/ikllama.sh"],
+                  capture_output=True, text=True).stdout
+    assert fkt.strip(), "webui_schalter fehlt"
+    voll = ("         --webui NAME             controls which webui to server:\n"
+            "         --ui-mcp-proxy, --webui-mcp-proxy\n")
+
+    def _w(hilfe, webui, mcp):
+        b = _os.path.join(d, "llama-server")
+        with open(b, "w") as f:
+            f.write("#!/bin/sh\ncat <<'H'\n%s\nH\n" % hilfe)
+        _os.chmod(b, 0o755)
+        return _sp.run(["bash", "-c", fkt + "\nwebui_schalter"], capture_output=True, text=True,
+                       env=dict(_os.environ, IK_BIN_E=b, WEBUI=webui, WEBUI_MCP=mcp)).stdout
+    assert _w(voll, "llamacpp", "0") == " --webui llamacpp", "Vorgabe: die Oberflaeche mit MCP-Reiter"
+    assert _w(voll, "llamacpp", "1") == " --webui llamacpp --webui-mcp-proxy"
+    assert _w(voll, "auto", "0") == "", "auto ist die Vorgabe des Programms — kein Schalter"
+    assert _w(voll, "none", "1") == " --webui none", "ohne Oberflaeche kein Proxy"
+    assert _w("  -t N, --threads N", "llamacpp", "1") == "", \
+        "ein unbekannter Schalter liesse den Dienst nicht starten"
+    ik = open("tools/ikllama.sh", encoding="utf-8").read()
+    assert 'WEBUI="$(wert LLM_WEBUI llamacpp)"' in ik, "Vorgabe nicht llamacpp"
+    assert 'WEBUI_MCP="$(wert LLM_WEBUI_MCP_PROXY 0)"' in ik, "Proxy per Vorgabe an"
+    assert ik.count("$(webui_schalter)") == 2, "Unit und Von-Hand-Befehl muessen gleich sein"
+    for name, wert in (("LLM_WEBUI", "neu"), ("LLM_WEBUI_MCP_PROXY", "ja")):
+        r = _sp.run(["bash", "tools/ikllama.sh", "--check"], capture_output=True, text=True,
+                    timeout=120, env=dict(_os.environ, **{name: wert}))
+        assert r.returncode == 2 and name in r.stdout + r.stderr, (name, r.returncode)
+    # Die statische Vorlage traegt den Schalter NICHT in ExecStart — wer sie von
+    # Hand kopiert, haette auf einem Build ohne --webui einen Dienst, der nicht
+    # startet. Sie nennt ihn im Kommentar; setzen tut ihn das Werkzeug (W181).
+    unit = open("llama-server.service", encoding="utf-8").read()
+    assert "--webui" not in [z for z in unit.splitlines() if z.startswith("ExecStart=")][0]
+    assert "--webui llamacpp" in unit, "die Vorlage nennt den MCP-Reiter nicht"
+    ok("v5.6-w197: llama-server mit --webui llamacpp (MCP-Reiter), Proxy nur ausdruecklich")
+
+
+def _test_v56_w197_ki_sql():
+    """v5.6-W197 (Bughunt): die KI-Abfrage (/api/ai/query) unter beiden Backends.
+
+    Drei Befunde an derselben Stelle:
+      1. Keine Frist. Eine rekursive CTE ohne Abbruch oder ein Kreuzprodukt
+         lief, bis jemand den Dienst neu startete — und hielt unter SQLite
+         einen Lese-Schnappschuss, an dem der WAL-Checkpoint nicht vorbeikommt.
+      2. Kein Zeilendeckel, sobald irgendwo „limit" stand: das LIMIT einer
+         Unterabfrage begrenzt die aeussere Menge nicht.
+      3. SQLite-Dialekt unter MariaDB (dem Betrieb): `datetime('now', ...)` in
+         vier von sechs Regel-Abfragen und ein Prompt, der „SQLite-Experte"
+         verlangte — „FUNCTION datetime does not exist"."""
+    import sqlite3 as _sq
+    import time as _t
+    from datetime import datetime as _dt, timezone as _tz
+    from types import SimpleNamespace as _NS
+    from nc import sqlguard as g
+    from nc import sqlutil as su
+    import nc.routes.ai as AI
+
+    # ── 2: der Deckel gilt fuer die AEUSSERE Abfrage ─────────────────────
+    assert g.with_limit("SELECT 1 FROM t", 200) == "SELECT 1 FROM t LIMIT 200"
+    assert g.with_limit("SELECT 1 FROM t LIMIT 5", 200) == "SELECT 1 FROM t LIMIT 5"
+    assert g.with_limit("SELECT 1 FROM t LIMIT 900000", 200) == "SELECT 1 FROM t LIMIT 200"
+    assert g.with_limit("SELECT 1 FROM t limit 9000 offset 3", 200) == \
+        "SELECT 1 FROM t LIMIT 200 OFFSET 3"
+    assert g.with_limit("SELECT 1 FROM t LIMIT 10, 9000", 200) == "SELECT 1 FROM t LIMIT 10, 200"
+    innen = "SELECT * FROM t WHERE id IN (SELECT id FROM t LIMIT 5)"
+    assert g.with_limit(innen, 200) == innen + " LIMIT 200", \
+        "das LIMIT einer Unterabfrage hat den aeusseren Deckel abgeschaltet"
+    con = _sq.connect(":memory:")
+    con.execute("CREATE TABLE t (id INTEGER)")
+    con.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(500)])
+    n = len(con.execute(g.with_limit("SELECT a.id FROM t a WHERE a.id IN "
+                                     "(SELECT id FROM t LIMIT 400)", 50)).fetchall())
+    assert n == 50, ("echter Lauf: Deckel greift nicht", n)
+    ok("v5.6-w197: KI-SQL — LIMIT am Ende gedeckelt, inneres LIMIT schaltet den Deckel nicht ab")
+
+    # ── 1: Frist, echt gemessen ───────────────────────────────────────────
+    endlos = ("WITH RECURSIVE r(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM r "
+              "WHERE x < 20000000) SELECT count(*) FROM r")
+    con.set_progress_handler(g.abbruch_nach(0.3), 10000)
+    t0 = _t.monotonic()
+    try:
+        con.execute(endlos).fetchall()
+        raise AssertionError("endlose Abfrage lief ohne Frist zu Ende?")
+    except _sq.OperationalError as e:
+        assert g.frist_ueberschritten(e), ("Abbruch nicht als Frist erkannt", str(e))
+    assert _t.monotonic() - t0 < 5, "Frist greift nicht rechtzeitig"
+    con.close()
+    assert g.frist_ueberschritten(Exception(
+        "(1969, 'Query execution was interrupted (max_statement_time exceeded)')"))
+    assert not g.frist_ueberschritten(Exception("no such table: x"))
+    assert g.mariadb_mit_frist("SELECT 1", 15) == \
+        "SET STATEMENT max_statement_time=15 FOR SELECT 1", "Frist je Sitzung statt je Anweisung"
+    assert g.frist_unbekannt(Exception(
+        "(1064, \"You have an error ... near 'STATEMENT max_statement_time=15 FOR SELECT 1'\")"))
+    assert not g.frist_unbekannt(Exception("(1064, \"... near 'FORM recordings'\")"))
+
+    # _safe_select end-to-end unter SQLite: Frist und Deckel an der echten Route.
+    d = _ph.verzeichnis()
+    pfad = os.path.join(d, "ki.db")
+    c2 = _sq.connect(pfad)
+    c2.execute("CREATE TABLE recordings (id INTEGER, username TEXT, created_at TEXT)")
+    c2.executemany("INSERT INTO recordings VALUES (?,?,?)",
+                   [(i, "u%d" % (i % 7), "2026-11-%02dT10:00:00+00:00" % (1 + i % 28))
+                    for i in range(600)])
+    c2.commit()
+    c2.close()
+    alt_c, alt_frist = AI._c, g.FRIST_S
+    try:
+        AI._c = lambda: _NS(cfg={"DB_BACKEND": "sqlite", "DB_PATH": pfad,
+                                 "_B71_TABLES": ("recordings",)})
+        rows, err = AI._safe_select("SELECT * FROM recordings WHERE id IN "
+                                    "(SELECT id FROM recordings LIMIT 590)", limit=20)
+        assert err is None and len(rows) == 20, (err, rows and len(rows))
+        # Der zweite Riegel einzeln: erkennt with_limit eine Form nicht, gilt
+        # der Deckel trotzdem (fetchmany / [:limit]) — sonst waere er Zierde.
+        alt_wl = g.with_limit
+        g.with_limit = lambda sql, limit=200: sql
+        try:
+            rows, err = AI._safe_select("SELECT * FROM recordings", limit=7)
+            assert err is None and len(rows) == 7, ("Deckel haengt allein an with_limit", err)
+        finally:
+            g.with_limit = alt_wl
+        g.FRIST_S = 0.3
+        # Begrenzt statt endlos: ohne Frist laeuft sie gemessen einige Sekunden
+        # zu Ende und der Vertrag faellt — eine endlose haengte die Probe auf.
+        rows, err = AI._safe_select(
+            "WITH RECURSIVE r(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM r "
+            "WHERE x < 20000000) SELECT count(*) AS n FROM r "
+            "WHERE x NOT IN (SELECT id FROM recordings WHERE id < 0)")
+        assert rows is None and "abgebrochen" in (err or ""), ("keine Frist an der Route", err)
+
+        # ── MariaDB-Weg mit Attrappe: Frist je Anweisung, Rueckweg ohne Frist
+        gesehen = []
+
+        class _Cur:
+            def __init__(self, n):
+                self._n = n
+
+            def fetchall(self):
+                return [{"n": i} for i in range(self._n)]
+
+        class _Conn:
+            def __init__(self, fehler):
+                self._fehler = list(fehler)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, sql, params=()):
+                gesehen.append(sql)
+                if sql.startswith("SET STATEMENT") and self._fehler:
+                    raise Exception(self._fehler.pop(0))
+                return _Cur(500)
+
+            def rollback(self):
+                gesehen.append("ROLLBACK")
+
+        alt_db = AI.db_conn
+        import logging as _lg
+        AI._c = lambda: _NS(cfg={"DB_BACKEND": "mariadb", "DB_PATH": "",
+                                 "_B71_TABLES": ("recordings",)},
+                            log=_lg.getLogger("w197-test"))
+        try:
+            AI.db_conn = lambda: _Conn([])
+            rows, err = AI._safe_select("SELECT id AS n FROM recordings", limit=30)
+            assert err is None and len(rows) == 30, ("Deckel fehlt unter MariaDB", err)
+            g.with_limit = lambda sql, limit=200: sql
+            try:
+                assert len(AI._safe_select("SELECT id AS n FROM recordings", limit=9)[0]) == 9, \
+                    "MariaDB: Deckel haengt allein an with_limit"
+            finally:
+                g.with_limit = alt_wl
+            gesehen.clear()
+            AI.db_conn = lambda: _Conn([])
+            AI._safe_select("SELECT id AS n FROM recordings", limit=30)
+            assert any(s.startswith("SET STATEMENT max_statement_time=") and
+                       s.endswith("FROM recordings LIMIT 30") for s in gesehen), gesehen
+            assert "START TRANSACTION READ ONLY" in gesehen and gesehen[-1] == "ROLLBACK"
+            gesehen.clear()
+            AI.db_conn = lambda: _Conn(["(1064, \"... near 'STATEMENT max_statement_time=15"
+                                        " FOR SELECT'\")"])
+            rows, err = AI._safe_select("SELECT id AS n FROM recordings", limit=5)
+            assert err is None and len(rows) == 5, ("kein Rueckweg ohne Frist", err)
+            assert "SELECT id AS n FROM recordings LIMIT 5" in gesehen, gesehen
+            AI.db_conn = lambda: _Conn(["(1969, 'Query execution was interrupted "
+                                        "(max_statement_time exceeded)')"])
+            rows, err = AI._safe_select("SELECT id AS n FROM recordings")
+            assert rows is None and "abgebrochen" in err, err
+        finally:
+            AI.db_conn = alt_db
+    finally:
+        AI._c, g.FRIST_S = alt_c, alt_frist
+    ok("v5.6-w197: KI-SQL — Frist unter SQLite (Fortschritts-Handler) und MariaDB (je Anweisung), echt gemessen")
+
+    # ── 3: kein SQLite-Dialekt, der unter MariaDB nicht existiert ─────────
+    jetzt = _dt(2026, 11, 12, 15, 30, tzinfo=_tz.utc)
+    fragen = ("welcher streamer scheitert am häufigsten", "wie viele aufnahmen heute",
+              "wie viele aufnahmen", "erfolgsquote", "speicher", "aktiv", "längste")
+    for f in fragen:
+        sql = su._rule_based_sql(f, jetzt)
+        assert sql, f
+        for sqlite_only in ("datetime(", "date(", "julianday(", "strftime("):
+            assert sqlite_only not in sql.lower(), (f, sql)
+    assert "'2026-11-05T15:30:00'" in su._rule_based_sql(fragen[0], jetzt)
+    assert "'2026-11-12'" in su._rule_based_sql(fragen[1], jetzt)
+    # Dieselben Abfragen laufen wirklich — gegen die Testdatenbank oben.
+    c3 = _sq.connect(pfad)
+    n = c3.execute(su._rule_based_sql("wie viele aufnahmen", jetzt)).fetchone()[0]
+    c3.close()
+    assert 0 < n < 600, ("ISO-Literal filtert nicht", n)
+    q = open("nc/routes/ai.py", encoding="utf-8").read()
+    rumpf = rumpf_ab(q, q.index("def _nl_to_sql("))
+    assert '"Du bist ein SQLite-Experte' not in rumpf, "Prompt verlangt SQLite auch unter MariaDB"
+    assert 'cfg["DB_BACKEND"]' in rumpf and "_zeitfenster_literal(" in rumpf
+    ok("v5.6-w197: KI-SQL — Regel-Abfragen und Prompt ohne SQLite-Datumsfunktionen (MariaDB-tauglich)")
+
+
+def _test_v56_w197_arbeiter_startsperre():
+    """v5.6-W197 (Bughunt): die Dauer-Arbeiter aus W193 starteten nach einem
+    Fehlstart bei JEDEM Aufruf neu. Bei dauerhaft ungleicher yt-dlp-Fassung
+    (venv-Paket neben apt-Programm) oder einem Piper ohne Python-Paket (die
+    C++-Fassung) hiess das: Python hochfahren, laden, abschiessen — und danach
+    trotzdem der Einzelaufruf. Die Ersparnis kostete doppelt."""
+    import asyncio as _aio
+    import sys as _sys
+    from nc import piperdienst as PD
+    from nc import ytdlpdienst as YD
+
+    d = _ph.verzeichnis()
+    binpfad = os.path.join(d, "yt-dlp")
+    with open(binpfad, "w") as f:
+        f.write("#!/bin/sh\necho 1\n")
+    os.utime(binpfad, (1000, 1000))
+    starts = []
+
+    async def _fehlstart(_bin, _aus):
+        starts.append(_bin)
+        YD.LAGE["grund"] = "yt_dlp im Bot (1) ist nicht das yt-dlp im PATH (2)"
+        return None
+    einzeln = []
+
+    async def _einzeln(cmd, z):
+        einzeln.append(cmd)
+        return 0, b"ERSATZ", b""
+
+    alt = (YD._starten, dict(YD._STARTSPERRE), list(YD._ARBEITER), os.environ.get("YTDLP_ARBEITER"))
+    YD._starten = _fehlstart
+    YD._ARBEITER.clear()
+    YD._STARTSPERRE.update(bis=0.0, schluessel=None)
+    os.environ["YTDLP_ARBEITER"] = "2"
+
+    async def _yt():
+        for _ in range(5):
+            assert (await YD.ausfuehren([binpfad, "x"], 20, _einzeln))[1] == b"ERSATZ"
+        assert len(starts) == 1, ("Fehlstart wird bei jedem Aufruf wiederholt", len(starts))
+        assert len(einzeln) == 5 and "PATH" in YD.lage()["grund"]
+        os.utime(binpfad, (2000, 2000))           # yt-dlp -U: neuer Stand
+        await YD.ausfuehren([binpfad, "x"], 20, _einzeln)
+        assert len(starts) == 2, "ein Update des Programms hebt die Sperre nicht auf"
+        YD._STARTSPERRE["bis"] = 0.0              # Ruhezeit abgelaufen
+        await YD.ausfuehren([binpfad, "x"], 20, _einzeln)
+        assert len(starts) == 3, "nach der Ruhezeit kein neuer Versuch"
+    try:
+        _aio.run(_yt())
+    finally:
+        YD._starten = alt[0]
+        YD._STARTSPERRE.clear(); YD._STARTSPERRE.update(alt[1])
+        YD._ARBEITER[:] = alt[2]
+        if alt[3] is None:
+            os.environ.pop("YTDLP_ARBEITER", None)
+        else:
+            os.environ["YTDLP_ARBEITER"] = alt[3]
+
+    # Verschwindet das Programm zwischen which() und der Fassungsfrage, darf
+    # der schon gestartete Arbeiter nicht verwaist weiterlaufen.
+    kopf = os.path.join(d, "kopf.py")
+    with open(kopf, "w") as f:
+        f.write("import sys, json\nprint(json.dumps({'bereit': True, 'version': '1'}), "
+                "flush=True)\nsys.stdin.read()\n")
+    gestartet = []
+    echt = _aio.create_subprocess_exec
+
+    async def _merken(*a, **k):
+        p = await echt(*a, **k)
+        gestartet.append(p)
+        return p
+
+    async def _weg(cmd, z):
+        raise FileNotFoundError(cmd[0])
+
+    alt_skript, alt_args = YD._SKRIPT, YD.PY_ARGS
+    YD._SKRIPT, YD.PY_ARGS = kopf, []
+    _aio.create_subprocess_exec = _merken
+    try:
+        async def _verwaist():
+            try:
+                await YD._starten(os.path.join(d, "gibtsnicht"), _weg)
+                raise AssertionError("verschwundenes Programm verschluckt")
+            except FileNotFoundError:
+                pass
+            assert gestartet and gestartet[0].returncode is not None, \
+                "Arbeiter laeuft nach gescheiterter Fassungsfrage verwaist weiter"
+        _aio.run(_verwaist())
+    finally:
+        _aio.create_subprocess_exec = echt
+        YD._SKRIPT, YD.PY_ARGS = alt_skript, alt_args
+    ok("v5.6-w197: yt-dlp-Arbeiter — Fehlstart sperrt 10 min (Update hebt auf), kein verwaister Arbeiter")
+
+    # ── Piper ────────────────────────────────────────────────────────────
+    pstarts = []
+
+    async def _pfehl():
+        pstarts.append(1)
+        PD.LAGE["grund"] = "Arbeiter startet nicht: No module named 'piper'"
+        return None
+    altp = (PD._starten, dict(PD._STARTSPERRE), PD._ZUSTAND["proc"], os.environ.get("PIPER_ARBEITER"))
+    PD._starten = _pfehl
+    PD._ZUSTAND["proc"] = None
+    PD._STARTSPERRE["bis"] = 0.0
+    os.environ.pop("PIPER_ARBEITER", None)
+
+    class _Proc:
+        returncode = None
+
+        def __init__(self, zeile):
+            self._zeile = zeile
+            self.stdin = self
+            self.stdout = self
+
+        def write(self, _b):
+            pass
+
+        async def drain(self):
+            pass
+
+        async def readline(self):
+            return self._zeile
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    async def _pi():
+        for _ in range(4):
+            assert await PD.sprechen("/m.onnx", "x", os.path.join(d, "a.wav"), 1.0) is None
+        assert len(pstarts) == 1, ("Piper-Fehlstart je Satz wiederholt", len(pstarts))
+        PD._STARTSPERRE["bis"] = 0.0
+        await PD.sprechen("/m.onnx", "x", os.path.join(d, "a.wav"), 1.0)
+        assert len(pstarts) == 2
+        # Unlesbare Antwort: Arbeiter beenden, Einzelaufruf — keine Ausnahme bis _piper_say.
+        p = _Proc(b"onnxruntime: Warnung auf stdout\n")
+        PD._ZUSTAND["proc"] = p
+        assert await PD.sprechen("/m.onnx", "x", os.path.join(d, "a.wav"), 1.0) is None
+        assert p.returncode is not None and PD._ZUSTAND["proc"] is None
+        assert "unlesbar" in PD.lage()["grund"]
+    try:
+        _aio.run(_pi())
+    finally:
+        PD._starten = altp[0]
+        PD._STARTSPERRE.clear(); PD._STARTSPERRE.update(altp[1])
+        PD._ZUSTAND["proc"] = altp[2]
+        if altp[3] is not None:
+            os.environ["PIPER_ARBEITER"] = altp[3]
+    del _sys
+    ok("v5.6-w197: Piper-Arbeiter — Fehlstart sperrt 10 min, unlesbare Antwort beendet statt zu werfen")
+
+
+def _test_v56_w197_keine_ausnahme_auf_vorrat():
+    """v5.6-W197 (Security): "/api/yt/oauth/callback" stand in der Anmelde- und
+    in der Herkunfts-Ausnahme, ohne dass es die Route je gab. Wer dort spaeter
+    etwas anlegt, haette es ohne Anmeldung. Jede Ausnahme muss eine Route haben."""
+    import ast as _ast
+    from nc import herkunft as H
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    exakt = None
+    for k in baum.body:
+        if isinstance(k, _ast.Assign) and any(getattr(t, "id", "") == "_AUTH_EXEMPT_EXACT"
+                                              for t in k.targets):
+            exakt = _ast.literal_eval(k.value)
+    assert exakt, "_AUTH_EXEMPT_EXACT nicht gefunden"
+    routen = set()
+    for datei in ["bot.py"] + sorted(os.path.join("nc/routes", n) for n in os.listdir("nc/routes")
+                                     if n.endswith(".py")):
+        for m in re.finditer(r"""\.route\(\s*["']([^"']+)["']""",
+                             open(datei, encoding="utf-8").read()):
+            routen.add(m.group(1))
+    for pfad in tuple(exakt) + tuple(H.AUSNAHMEN):
+        assert pfad in routen, "Ausnahme ohne Route: " + pfad
+    ok("v5.6-w197: jede Anmelde-/Herkunfts-Ausnahme hat eine Route (keine Luecke auf Vorrat)")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -37348,11 +38347,19 @@ def main():
     _test_v54_w195_cookies_vom_telefon()
     _test_v54_w195_ab18_und_werkzeuge()
     _test_v55_w196_azrael_an_qwen()
+    _test_v56_w197_ki_sql()
+    _test_v56_w197_arbeiter_startsperre()
+    _test_v56_w197_keine_ausnahme_auf_vorrat()
+    _test_v56_w197_oeffentliche_stats()
+    _test_v56_w197_tagesbericht()
+    _test_v56_w197_overlay_ladeversuch()
+    _test_v56_w197_llama_webui()
     _test_v51_w182_kein_telegram_fuer_guild()
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()
     _test_v51_w185_sendebruecke_meldungen()
     _test_v51_w186_lagebild_dienste()
+    _test_v56_w197_cookie_bereinigen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

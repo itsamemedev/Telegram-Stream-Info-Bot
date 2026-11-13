@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **28.901 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **27.954 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -41,8 +41,8 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 379 Routen (34 in `bot.py`, 345 in
-`nc/routes/`), 67 Slash-Commands, 672 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`find` antwortet aus `.claude/INDEX.md` — 380 Routen (34 in `bot.py`, 346 in
+`nc/routes/`), 67 Slash-Commands, 668 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -71,9 +71,9 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  209 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  211 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           39 Flask-Blueprints mit 345 weiteren API-Routen
+    nc/routes/           39 Flask-Blueprints mit 346 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -276,7 +276,8 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **494**, und wie bei
+`tools/blindstellen.py` misst diese Klasse, Bestand **491** (v5.6-W197: drei
+verschwanden mit totem Code), und wie bei
 W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
 Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
 „dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
@@ -966,8 +967,8 @@ Die größte Funktion steht ohnehin nicht in `bot.py`:
 `discordbot.py` wurde in v4.2-W15 aus `bot.py` herausgelöst, genau gegen dieses
 Problem. Die Masse zog um, statt zu schrumpfen. `tools/monolith.py` misst deshalb den **ganzen**
 Produktionscode und zählt, wie viele Funktionen über einer Stufe liegen —
-seit v4.2-W138 sind das 62 über 100, 16 über 200, 8 über 300 und 1 über 500
-Zeilen, dazu 21 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
+seit v5.6-W197 sind das 61 über 100, 15 über 200, 8 über 300 und 1 über 500
+Zeilen, dazu 20 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
 wird die Anzahl, nicht die Länge: eine Sperre, die jede zusätzliche
 Zeile meldet, fällt bei jeder Fehlerbehebung und ist in einer Woche
 abgeschaltet.

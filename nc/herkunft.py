@@ -53,8 +53,12 @@ def _t(text):
 # Texte, die an Telegram/Discord gehen — eine JSON-Fehlerantwort waere in der
 # englischen Oberflaeche still deutsch geblieben.
 ABGEWIESEN = _t("Abgewiesen: Die Anfrage kam nicht vom Deck selbst (fremde Seite im Browser).")
+# v5.6-W197: "/api/yt/oauth/callback" stand hier und in _AUTH_EXEMPT_EXACT,
+# ohne dass es die Route je gab. Eine Ausnahme fuer einen leeren Pfad ist eine
+# Luecke auf Vorrat: wer dort spaeter etwas anlegt, haette es ohne Anmeldung
+# und ohne Herkunftspruefung.
 AUSNAHMEN = ("/api/kick/oauth/callback", "/api/twitch/oauth/callback",
-             "/api/youtube/oauth/callback", "/api/yt/oauth/callback")
+             "/api/youtube/oauth/callback")
 
 
 # Ein regulaerer Ausdruck statt urlsplit().port: der wirft bei einem Port

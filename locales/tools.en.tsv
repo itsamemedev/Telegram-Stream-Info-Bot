@@ -1023,6 +1023,8 @@ Fuer %s sind die Bau-Pakete nicht hinterlegt — falls pip scheitert: MariaDB-C-
 Kein Konfigurationsverzeichnis gefunden.	No configuration directory found.
 Kein systemd — MariaDB von Hand neu starten, damit %s wirkt.	No systemd — restart MariaDB by hand so that %s takes effect.
 LLM_KV_CACHE muss f16, q8_0 oder q4_0 sein: %s	LLM_KV_CACHE must be f16, q8_0 or q4_0: %s
+LLM_WEBUI muss none, auto oder llamacpp sein: %s	LLM_WEBUI must be none, auto or llamacpp: %s
+LLM_WEBUI_MCP_PROXY muss 0 oder 1 sein: %s	LLM_WEBUI_MCP_PROXY must be 0 or 1: %s
 MariaDB startete nach %s nicht neu — Datei pruefen.	MariaDB did not restart after %s — check the file.
 MariaDB startete nicht neu — %s pruefen, notfalls loeschen und neu starten.	MariaDB did not restart — check %s, delete it if necessary and restart.
 MariaDB-Einstellungen	MariaDB settings

@@ -2148,43 +2148,6 @@ async def _discord_run_once():
     _reg_system(tree)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @tree.command(name="clipoftheweek", description=_nc_i18n.t("Aktuell führender Clip-of-the-Week (⭐-Voting)"))
     async def _c_cotw(inter):
         await inter.response.defer()
@@ -2266,7 +2229,6 @@ async def _discord_run_once():
             await inter.response.send_message(embed=emb, ephemeral=True)
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
 
 
     # v4.2-W72: _ParMsg steht jetzt auf Modulebene.

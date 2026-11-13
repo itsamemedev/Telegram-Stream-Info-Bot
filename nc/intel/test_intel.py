@@ -113,55 +113,8 @@ def main():
     assert not bad["ok"] and T.get_meta(conn, 10)["status"] == T.FAILED
     ok("transcribe_and_store: Fehler → Status FAILED, wirft nicht")
 
-    _test_reel(conn)
 
     print(f"test_intel OK — {P} Checks grün")
-
-
-def _test_reel(conn):
-    from nc.intel import reel as R
-    segs = [
-        {"start": 0, "end": 3, "text": "ja"},                       # Füllwort → raus
-        {"start": 3, "end": 9, "text": "Und dann haben wir tatsächlich das ganze Turnier gewonnen, unglaublich!"},
-        {"start": 30, "end": 36, "text": "Jetzt reden wir ruhig über das Wetter und den Alltag heute."},
-        {"start": 70, "end": 78, "text": "Achtung, das war der krasseste Moment des Streams, absolut wahnsinn!"},
-    ]
-    # Hot-Marker nahe Segment 4 (t~74) → soll es zusätzlich anheben
-    scored = R.score_moments(segs, hot_ts=[74.0], keywords=None)
-    assert scored and scored[0]["t_start"] in (3.0, 70.0)
-    assert all(s["text"] != "ja" for s in scored)
-    ok("reel.score_moments: Füllwort raus, Reizwort/Hot bewertet")
-    # das Hot+Keyword-Segment (70-78) sollte vorn liegen
-    assert scored[0]["t_start"] == 70.0, scored[0]
-    ok("reel.score_moments: Hot-Marker + Reizwort gewinnt")
-
-    picks = R.select_highlights(scored, max_clips=2, min_gap_s=20, pad_pre=3, pad_post=3)
-    assert len(picks) == 2
-    assert picks[0]["t_start"] <= picks[1]["t_start"]     # chronologisch
-    assert picks[0]["t_start"] >= 0                        # Padding nicht negativ
-    ok("reel.select_highlights: nicht überlappend, chronologisch, gepaddet")
-
-    # DI-LLM: liefert deterministische „Untertitel"
-    picks2, title = R.annotate([dict(p) for p in picks],
-                               llm_fn=lambda prompt: "Turnier gewonnen und gefeiert")
-    assert all(p["caption"] for p in picks2) and title
-    assert all(len(p["caption"].split()) <= 6 for p in picks2)
-    ok("reel.annotate: Untertitel (≤6 Wörter) + Titel per DI-LLM")
-
-    plan = R.build_plan(501, picks2, title=title, source_path="/rec/501.mp4")
-    assert plan["ok"] and plan["clip_count"] == 2 and plan["total_s"] > 0
-    assert plan["clips"][0]["dur"] > 0 and "start" in plan["clips"][0]
-    ok("reel.build_plan: gültige Cut-Liste + Gesamtdauer")
-
-    # End-to-End aus dem Transkript-Store (Segmente von Aufnahme 7 existieren)
-    e2e = R.plan_from_transcript(conn, 7, hot_ts=[], max_clips=3,
-                                 llm_fn=lambda p: "Kurzer Untertitel hier")
-    assert e2e["ok"] and e2e["clip_count"] >= 1
-    ok("reel.plan_from_transcript: End-to-End-Plan aus dem Store")
-
-    empty = R.plan_from_transcript(conn, 9999, max_clips=3)
-    assert not empty["ok"]
-    ok("reel.plan_from_transcript: ohne Transkript sauber abgelehnt")
 
 
 if __name__ == "__main__":

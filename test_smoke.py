@@ -470,6 +470,44 @@ def main():
         "BOT_TOKEN als Warnung gemeldet — dann steht weiter STARTKLAR da"
     ok("W100: der Selbsttest prueft BOT_TOKEN, und zwar als harten Fehler")
 
+    # ── v5.6-W197: der Bericht stirbt nicht an der Datenbank-Diagnose
+    #
+    # Die Folgezeilen der Diagnose (W92) stehen mit Stufe "" in der Liste, der
+    # Bericht machte icon[level] — KeyError, und --selfcheck endete ausgerechnet
+    # bei einer unlesbaren Datenbank in "Selfcheck crashte: ''" ohne Diagnose.
+    # Echt aufgerufen, nicht im Quelltext gesucht.
+    import contextlib as _cl
+    import io as _io
+    _aus = _io.StringIO()
+    C0 = {k: "" for k in ("g", "y", "r", "d", "b", "x")}
+    with _cl.redirect_stdout(_aus):
+        m._sc_bericht([("fail", "Datenbank", "unlesbar: tiktok_bot.db"),
+                       ("", "", "Kopf: 16 03 01 00 2d — ein TLS-Record"),
+                       ("ok", "Python", "3.13")], C0)
+    _txt = _aus.getvalue()
+    assert "ein TLS-Record" in _txt and "1 HARTE FEHLER" in _txt, _txt
+    # Und die Zerlegung hat keinen Abschnitt verloren: alle fuenfzehn
+    # Pruefungen sind weiter vom Selbsttest aus erreichbar.
+    import ast as _ast
+    _baum = _ast.parse(quelle)
+    _fn = {k.name: k for k in _baum.body
+           if isinstance(k, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    _gerufen = {_ast.unparse(k.func) for k in _ast.walk(_fn["_selfcheck"])
+                if isinstance(k, _ast.Call)}
+    _namen = set()
+    for _n in ["_selfcheck"] + [x for x in ("_sc_umgebung", "_sc_ki_und_stimme",
+                                           "_sc_dienste") if x in _gerufen]:
+        for k in _ast.walk(_fn[_n]):
+            if isinstance(k, _ast.Call) and getattr(k.func, "id", "") == "add" \
+                    and len(k.args) > 1 and isinstance(k.args[1], _ast.Constant):
+                _namen.add(k.args[1].value)
+    for _soll in ("BOT_TOKEN", "Datenbank", "Disk", "TikTok-Cookies", "Egress-Tunnel",
+                  "Sign-Key (EulerStream)", "Lokales LLM", "Reaction-AI", "Piper-TTS",
+                  "AZRAEL-Stimme", "Discord-Token", "Restream", "Multistream",
+                  "Brain-Bridge", "Dashboard-Endpoints", "Tonspur-Garantie"):
+        assert _soll in _namen, "Selbsttest prueft %s nicht mehr" % _soll
+    ok("W197: Selbsttest-Bericht uebersteht die Diagnose-Folgezeilen, alle Abschnitte erreichbar")
+
     print("test_smoke OK \u2014 %d Vertraege gruen" % PASS)
 
 

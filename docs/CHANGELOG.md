@@ -9,6 +9,113 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.6.0] — 2026-11-12 · „Kehraus" (W197)
+
+Der Betreiber: Bughunt einschließlich Sicherheit, Repo aufräumen und nicht
+benötigte Dateien entfernen, den Monolithen abtragen. Dazu zwei Meldungen
+während der Arbeit: in der Cookie-Prüfung des System-Tabs fehle der
+Bereinigungs-Knopf, und dem Deck fehle seit 5.0.0 der MCP-Tab.
+
+### Befunde (Bughunt)
+
+- **KI-Abfrage ohne Frist** (`/api/ai/query`): eine rekursive CTE ohne Abbruch
+  oder ein Kreuzprodukt lief, bis jemand den Dienst neu startete, und hielt
+  unter SQLite einen Lese-Schnappschuss, an dem der WAL-Checkpoint nicht
+  vorbeikommt. Jetzt 15 s — SQLite per Fortschritts-Handler, MariaDB per
+  `SET STATEMENT max_statement_time … FOR` (je Anweisung, nicht je Sitzung: die
+  Verbindung geht zurück in den Pool).
+- **Kein Zeilendeckel, sobald irgendwo „limit" stand:** das `LIMIT` einer
+  Unterabfrage schaltete den äußeren Deckel ab. Gedeckelt wird jetzt das
+  `LIMIT` am Ende; `fetchmany`/`[:limit]` ist der zweite, einzeln geprüfte
+  Riegel.
+- **SQLite-Dialekt unter MariaDB:** vier der sechs Regel-Abfragen benutzten
+  `datetime('now', …)`, der LLM-Prompt verlangte „SQLite-Experte". Unter
+  MariaDB — dem Betrieb seit 11/2026 — endeten sie in „FUNCTION datetime does
+  not exist". Zeitfenster sind jetzt ISO-Literale (in beiden Backends derselbe
+  Zeichenkettenvergleich), der Prompt nennt den Dialekt.
+- **Dauer-Arbeiter (W193) starteten nach jedem Fehlstart neu:** bei dauerhaft
+  ungleicher yt-dlp-Fassung (venv-Paket neben apt-Programm) oder Piper ohne
+  Python-Paket hieß jeder Aufruf: Python hochfahren, laden, abschießen — und
+  dann trotzdem der Einzelaufruf. Jetzt zehn Minuten Ruhe; ein `yt-dlp -U`
+  (neue mtime) hebt sie sofort auf. Dazu: kein verwaister Arbeiter, wenn die
+  Fassungsfrage scheitert, und eine unlesbare Piper-Antwort beendet den
+  Arbeiter, statt bis `_piper_say` durchzuwerfen.
+- **Overlay-Browser: ein stummer Ladeversuch frass die ganze Startfrist.**
+  `_warten_bis_geladen` gab jedem `Runtime.evaluate` die volle Frist (30 s);
+  antwortete Chromium auf einen Versuch nicht (Kontext während der Navigation
+  neu, Maschine unter Last bei `nice 12`), blieb keine Zeit für einen zweiten —
+  „Seite nicht geladen: Runtime.evaluate: keine Antwort". So fiel der
+  W170-Vertrag in der CI (3.14), auch auf `main`. Jetzt drei Sekunden je
+  Versuch; eine verspätete Antwort verwirft `aufruf()` an der id.
+- **`--selfcheck` starb an der Diagnose einer unlesbaren Datenbank:** die
+  Folgezeilen stehen mit Stufe `""` in der Liste, der Bericht machte
+  `icon[level]` — `KeyError`, „Selfcheck crashte: ''", Exitcode 2, und die
+  Diagnose aus W92 war weg. Genau in dem Fall, für den sie gebaut ist.
+- **Sicherheit:** `/api/yt/oauth/callback` stand in der Anmelde- und der
+  Herkunfts-Ausnahme, ohne dass es die Route je gab — eine Lücke auf Vorrat.
+  Durchgesehen ohne Befund: Pfad-Riegel aller Datei-Routen, OAuth-Rückrufe
+  (zeitkonstant, escaped), `/healthz` für Fremde, CSRF, Rate-Limit, SQL mit
+  dynamischen Spalten (nur Positivlisten), `innerHTML`-Senken in Deck und
+  Overlay (escaped).
+
+### Neu
+
+- **Cookies bereinigen** (System-Tab, Cookie-/Auth-Prüfung): das Deck
+  verwies seit v4.5 mit „cookies.txt bereinigen" auf einen Knopf, den es nie
+  gab. `POST /api/cookies/bereinigen` mit Vorschau; ausgeführt wird nur der
+  gezeigte Stand (Hash aus Datei und Entfernungsliste — bestätigt wird, was
+  gezeigt wurde, W91). Entfernt abgelaufene Cookies (Ablauf 0 ist Sitzung, nicht
+  alt) und je kritischem Namen die Domain-Varianten, die der Bot nicht sendet —
+  nach derselben Regel, nach der er sendet (`nc.cookies.auswahl`, aus
+  `load_dict` herausgezogen, keine Nachbildung). Bricht ab, wenn ein
+  Anmelde-Cookie ganz verschwände. Schreibt nur über `cookieholen.schreibe`
+  (Sperre, Backup, 0600) und nur, wenn sich die Datei seit der Vorschau nicht
+  geändert hat.
+
+### Aufgeräumt
+
+- `patches/w113`–`w116` (Bezugsstand v4.0, jeder Anker trifft ins Leere).
+- `nc/intel/reel.py` samt Test: der Adapter im Bot wurde nie gebaut; dazu ein
+  `copilot` in `nc.intel.__all__`, das es nie gab.
+- Neun tote Hüllen und Aliase in `bot.py`, Dubletten ohne Aufrufer in
+  `nc/backupcfg.py`, `nc/donations.py`, `nc/sicherpfad.py`, `nc/kick_oauth.py`.
+
+### Monolith
+
+- `bot.py` **28.831 → 27.954 Zeilen**. `_public_stats` → `nc/oeffentlichestats.py`
+  (die sechs mitgewanderten stillen Auffänge melden jetzt gedrosselt — die
+  Website zeigte bei einem Datenbankfehler kommentarlos Nullen),
+  `_build_daily_summary` → `nc/tagesbericht.py`, `_selfcheck` (281 Z / 96
+  Zweige) in benannte Abschnitte zerlegt, 690 überzählige Leerzeilen
+  (Syntaxbaum nachweislich identisch).
+- Grundlinien gesenkt: über 100 Zeilen 62 → 61, über 200 Zeilen 16 → 15, über
+  50 Zweige 21 → 20; Blindstellen 494 → 491.
+
+### MCP-Tab
+
+Gab es im Deck in keiner Fassung: alle 29 Tags, alle Zweige, PRs und Issues
+durchsucht, das Deck in v4.6.11, v5.0.0 und HEAD gerendert und verglichen —
+Tab-Leiste und Panel-Überschriften identisch, keine JS-Fehler. Der stärkste
+Kandidat liegt außerhalb des Decks: die Weboberfläche von llama-server
+(Port 8080). Die Mainline-Oberfläche hat einen Einstellungsreiter „MCP"; seit
+dem Umstieg auf ik_llama.cpp (v5.1.0) startete der Dienst ohne
+`--webui llamacpp` und zeigte die alte Oberfläche ohne diesen Reiter. Der
+Betreiber hat am Server bestätigt, dass sein Build `--webui NAME` und
+`--webui-mcp-proxy` kennt: `tools/ikllama.sh` setzt jetzt `--webui llamacpp`
+(`LLM_WEBUI`, Vorgabe) und den CORS-Proxy für MCP-Server nur mit
+`LLM_WEBUI_MCP_PROXY=1` — beides nur, wenn das Programm den Schalter kennt.
+Wirkt nach `sudo bash tools/ikllama.sh` (schreibt die Unit neu) und Neustart
+von `llama-server`.
+
+### Gegenprobe
+
+- 17 + 8 + 32 Mutationsproben, alle gefangen. Zwei entwischten zuerst
+  (Befunde am Vertrag): eine endlose Abfrage hängte die Probe auf statt sie
+  fallen zu lassen (jetzt begrenzt lang), und „erst Duplikate, dann Ablauf"
+  war mit zwei Varianten von außen nicht zu unterscheiden (jetzt drei).
+- Neun Vertragsanker auf die neuen Module gezogen; zwei davon wurden nur von
+  toten Hüllen erfüllt und prüfen jetzt die strengere Aussage.
+
 ## [5.5.0] — 2026-11-12 · „Stimme" (W196)
 
 Der Betreiber: AZRAEL an Qwen3-14B-Uncensored binden, damit man mit der Persona

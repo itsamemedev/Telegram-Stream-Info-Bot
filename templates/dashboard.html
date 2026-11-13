@@ -750,6 +750,12 @@ pre.json{background:var(--sunken-2);border:1px solid var(--border);padding:12px;
 .ck-ta{width:100%;font-family:var(--mono);font-size:var(--fs-xs);line-height:1.4;resize:vertical;min-height:90px}
 .ck-actions{display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap}
 #ck_msg{font-size:var(--fs-sm)}
+/* v5.6-W197: Ergebniszeile des Bereinigungs-Knopfs. Klassen statt Inline-
+   Farben: die vier Themen setzen --neon und --magenta selbst, und der
+   Kontrast-Vertrag rechnet die Tokens nach, keine Inline-Werte. */
+.ck-meldung{font-size:var(--fs-sm)}
+.ck-meldung.ck-ok{color:var(--neon)}
+.ck-meldung.ck-fehler{color:var(--magenta)}
 /* ===== LAB (Tab 09) ===== */
 .lab-stat{font-family:var(--display);font-size:var(--fs-3xl);font-weight:700;line-height:1.1;letter-spacing:1px}
 .lab-bar{height:6px;background:rgba(255,255,255,0.05);border-radius:var(--r-sm);overflow:hidden;margin:3px 0 8px}
@@ -7182,6 +7188,15 @@ async function loadSystem(){
     if(dup.length) ch+=`<tr><th>&#9888; Domain-Duplikate</th><td>${dup.map(n=>`<span class="pill" style="border-color:var(--amber);color:var(--amber)">${esc(n)}</span>`).join(' ')}<div class="faint" style="font-size:9px;margin-top:3px">mehrfach unter verschiedenen Domains &mdash; cookies.txt bereinigen</div></td></tr>`;
     const exp = Array.isArray(cookHealth.expired) ? cookHealth.expired : [];
     if(exp.length) ch+=`<tr><th>Abgelaufen</th><td class="mono" style="color:var(--red)">${exp.length} Cookie(s)</td></tr>`;
+    // v5.6-W197: der Knopf, auf den der Hinweis oben seit dem Tiefenbughunt
+    // verweist. Er steht IMMER da — gesperrt und mit Grund, wenn nichts zu
+    // tun ist: ein Knopf, der nur manchmal erscheint, sieht beim naechsten
+    // Mal wie ein Fehler aus (CLAUDE.md, W101).
+    const ckTun = cookHealth.exists && sts!=='parse_error' && (dup.length>0 || exp.length>0);
+    const ckWarum = !cookHealth.exists ? T('Keine Cookie-Datei vorhanden.')
+      : (sts==='parse_error' ? T('Cookie-Datei unlesbar — erst neu einspielen.')
+      : T('Nichts zu bereinigen: keine Domain-Duplikate, nichts abgelaufen.'));
+    ch+=`<tr><th>${T('Bereinigen')}</th><td><button type="button" class="btn sm" id="ck_bereinigen" onclick="cookiesBereinigen()"${ckTun?'':' disabled'} title="${esc(ckTun?T('Erst Vorschau, dann Bestätigung — vorher wird eine Sicherung angelegt.'):ckWarum)}">⌫ ${T('BEREINIGEN')}</button> <span class="ck-meldung muted" id="ck_bereinigen_msg">${ckTun?'':esc(ckWarum)}</span></td></tr>`;
     const soon = Array.isArray(cookHealth.expiring_soon) ? cookHealth.expiring_soon : [];
     if(soon.length) ch+=`<tr><th>L&auml;uft bald ab</th><td class="mono amber">${soon.map(x=>esc(x.name)+' ('+x.days_left+'d)').join(', ')}</td></tr>`;
     if(cookHealth.oldest_expiry_days!=null) ch+=`<tr><th>K&uuml;rzeste G&uuml;ltigkeit</th><td class="mono">${cookHealth.oldest_expiry_days} Tage</td></tr>`;
@@ -7282,6 +7297,59 @@ async function fetchCookies(source){
     msg.style.color='var(--magenta)';
   }finally{
     knoepfe.forEach(b=>{ if(b) b.style.pointerEvents=''; if(b) b.style.opacity=''; });
+  }
+}
+
+/* v5.6-W197: Cookie-Datei bereinigen — Vorschau, Bestaetigung, Ausfuehrung.
+   WAS entfernt wird, rechnet der Server (nc/cookieholen.bereinigen) nach
+   derselben Regel, nach der der Bot den gesendeten Wert waehlt. Das Panel
+   raet nichts: ein Knopf, der im Browser entscheidet, bereinigt auf den
+   falschen Wert. Ausgefuehrt wird nur der gezeigte Plan — der `stand` der
+   Vorschau geht mit, und hat sich die Datei inzwischen geaendert, lehnt der
+   Server ab, statt neu zu rechnen (W91). */
+function ckMeldung(text, art){
+  const m=$('#ck_bereinigen_msg');
+  if(!m) return;
+  m.textContent=text;
+  m.className='ck-meldung '+(art||'muted');
+}
+function ckPlanZeilen(v){
+  const z=[];
+  (v.abgelaufen||[]).forEach(x=>z.push('− '+x.name+' ('+x.ort+') · '+T('abgelaufen')));
+  (v.doppelt||[]).forEach(x=>z.push('− '+x.name+' ('+(x.entfernt||[]).join(', ')+') · '
+    +T('Duplikat, es bleibt')+' '+x.behalten));
+  (v.unbrauchbar||[]).forEach(x=>z.push('− '+x.name+' ('+x.ort+') · '+T('ohne Name oder Domain')));
+  if((v.wert_wechselt||[]).length) z.push('', T('Gesendeter Wert wechselt, weil die bisher gesendete Variante abgelaufen war:')
+    +' '+v.wert_wechselt.join(', '));
+  return z;
+}
+async function cookiesBereinigen(){
+  const knopf=$('#ck_bereinigen');
+  if(!knopf || knopf.disabled) return;
+  knopf.disabled=true;
+  ckMeldung(T('Prüfe…'));
+  try{
+    const v=await apiPost('/api/cookies/bereinigen',{vorschau:true});
+    if(!v || !v.ok){ ckMeldung('✗ '+((v&&v.error)||T('Vorschau fehlgeschlagen')),'ck-fehler'); return; }
+    if(!v.noetig){ ckMeldung(T('Nichts zu bereinigen.')); return; }
+    const frage=T('Cookie-Datei bereinigen?')+'\n\n'+ckPlanZeilen(v).join('\n')+'\n\n'
+      +v.vorher+' → '+v.nachher+' Cookies · '+T('Vorher wird eine Sicherung (.bak) angelegt.');
+    if(!confirm(frage)){ ckMeldung(T('Abgebrochen — nichts geändert.')); return; }
+    const d=await apiPost('/api/cookies/bereinigen',{stand:v.stand});
+    if(d && d.ok){
+      const text='✓ '+d.entfernt+' '+T('entfernt')+' · '+d.nachher+' Cookies'
+        +(d.backup?' · '+T('Sicherung:')+' '+d.backup:'');
+      toast(T('Cookie-Datei bereinigt (')+d.entfernt+')');
+      await loadSystem();          // baut das Panel neu — die Zeile danach setzen
+      ckMeldung(text,'ck-ok');
+    } else {
+      ckMeldung('✗ '+((d&&d.error)||T('Bereinigung fehlgeschlagen')),'ck-fehler');
+      toast(T('Cookie-Bereinigung fehlgeschlagen'),'err');
+    }
+  }catch(e){
+    ckMeldung(T('✗ Netzwerkfehler: ')+e.message,'ck-fehler');
+  }finally{
+    knopf.disabled=false;
   }
 }
 

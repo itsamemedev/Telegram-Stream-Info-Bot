@@ -175,6 +175,77 @@ def api_cookies_fetch():
     return jsonify(bericht), 502
 
 
+def _ja(v) -> bool:
+    """JSON-true, "true", "1", "ja" — ein "false" als Zeichenkette ist in
+    Python wahr, und dann schriebe eine Vorschau."""
+    return v is True or str(v).strip().lower() in ("1", "true", "ja", "yes")
+
+
+@bp.route("/api/cookies/bereinigen", methods=["POST"])
+def api_cookies_bereinigen():
+    """v5.6-W197: Cookie-Datei bereinigen — der Knopf, auf den das Deck seit
+    dem Tiefenbughunt mit „cookies.txt bereinigen" verwies, ohne dass es ihn
+    gab.
+
+       Body: {"vorschau": true}            rechnet nur, schreibt nichts
+             {"stand": "<aus der Vorschau>"}  fuehrt genau diesen Plan aus
+
+       Was entfernt wird, entscheidet nc.cookieholen.bereinigen(): abgelaufene
+       Eintraege (Ablauf 0 ist Sitzung, nicht alt) und je kritischem Cookie
+       die Domain-Varianten, die der Bot NICHT sendet. Die Anmeldung
+       (sessionid/sessionid_ss) geht dabei nie verloren — sonst Abbruch.
+
+       Warum ein `stand` Pflicht ist: das Deck zeigt die Vorschau, der
+       Betreiber bestaetigt sie. Laeuft dazwischen der Auto-Bezug, ist es ein
+       anderer Plan — W91 hat gezeigt, was passiert, wenn der zweite Aufruf
+       einfach neu rechnet (bestaetigt waren drei Dateien, geloescht wurden
+       alle). Ohne Vorschau gibt es deshalb keine Ausfuehrung."""
+    payload = request.get_json(silent=True) or {}
+    vorschau = _ja(payload.get("vorschau"))
+    stand = payload.get("stand")
+    if not vorschau and not (isinstance(stand, str) and stand.strip()):
+        return jsonify(ok=False, art="ohne_vorschau", error=_t(
+            "Erst die Vorschau abrufen — ausgeführt wird nur, was sie gezeigt hat.")), 400
+    erg = _nc_cookieholen.bereinigen(_c().cfg["COOKIE_FILE"], vorschau=vorschau,
+                                     erwartet=None if vorschau else stand.strip())
+    if not erg["ok"]:
+        art = erg["art"]
+        namen = erg.get("namen") or []
+        if art == "fehlt":
+            fehler, code = _t("Keine Cookie-Datei vorhanden — nichts zu bereinigen."), 404
+        elif art == "unlesbar":
+            fehler, code = _t("Cookie-Datei nicht lesbar") + " — " + erg["detail"], 409
+        elif art == "login_weg":
+            fehler, code = _t(
+                "Abgebrochen: die Bereinigung würde den Anmelde-Cookie entfernen, "
+                "weil er abgelaufen ist. Die Datei bleibt unverändert — eingeloggt "
+                "neu exportieren.") + " (" + ", ".join(namen) + ")", 409
+        elif art == "veraltet":
+            fehler, code = _t(
+                "Die Cookie-Datei hat sich seit der Vorschau geändert (Auto-Bezug "
+                "oder yt-dlp). Nichts geschrieben — bitte erneut prüfen."), 409
+        else:
+            fehler, code = _t("Schreiben fehlgeschlagen") + ": " + erg["detail"], 500
+        if code >= 500:
+            # Ausdruecklich error: eine Cookie-Datei, die sich nicht schreiben
+            # laesst, ist genau das, wonach im Fehlerlog gesucht wird.
+            log.error("Cookie-Bereinigung fehlgeschlagen (%s): %s", art, erg["detail"])
+        else:
+            log.info("Cookie-Bereinigung %s: %s%s", "Vorschau" if vorschau else "abgewiesen",
+                     art, (" (" + ", ".join(namen) + ")") if namen else "")
+        return jsonify(ok=False, art=art, error=fehler, namen=namen), code
+    if not vorschau and erg["noetig"]:
+        # Cache leeren, sonst sendet der Recorder bis zu 5 s den alten Stand.
+        _c().cfg["_COOKIES_CACHE"].pop("v", None)
+        log.info("Cookies ueber das Deck bereinigt: %d -> %d (abgelaufen: %s; doppelt: %s; "
+                 "Wert gewechselt: %s), Backup %s", erg["vorher"], erg["nachher"],
+                 ", ".join(x["name"] for x in erg["abgelaufen"]) or "-",
+                 ", ".join(x["name"] for x in erg["doppelt"]) or "-",
+                 ", ".join(erg["wert_wechselt"]) or "-", erg["backup"] or "keins")
+        erg["health"] = _c().get_cookie_health()
+    return jsonify(erg)
+
+
 @bp.route("/api/cookies/age")
 def api_cookies_age():
     days = cookies_days_old()

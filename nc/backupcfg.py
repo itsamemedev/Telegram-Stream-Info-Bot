@@ -63,12 +63,6 @@ def sys_keep() -> int:
     return _zahl(os.getenv("SYS_BACKUP_KEEP", "14"), 14)
 
 
-def sys_max_file_mb() -> int:
-    """Einzeldatei-Limit im Archiv. Ohne das zieht eine einzige grosse
-       Aufnahme das Systemarchiv auf Stunden."""
-    return _zahl(os.getenv("SYS_BACKUP_MAX_FILE_MB", "256"), 256)
-
-
 # ---- Lokales Sicherungsziel -------------------------------------------------
 
 def lokal() -> bool:
@@ -94,10 +88,6 @@ def s3_endpoint() -> str:
     return (os.getenv("S3_ENDPOINT", "") or "").strip()
 
 
-def s3_region() -> str:
-    return (os.getenv("S3_REGION", "us-east-1") or "us-east-1").strip()
-
-
 def s3_zugang():
     """Die beiden Zugangsdaten. EINZIGE Funktion hier, die sie herausgibt —
        siehe Modul-Kopf. Nur für den boto3-Client, nie für eine Antwort."""
@@ -117,17 +107,6 @@ def s3_konfiguriert() -> bool:
 def aktiv() -> bool:
     """Mindestens ein Sicherungsziel konfiguriert — lokal oder S3."""
     return bool(lokal() and lokal_dir()) or s3_konfiguriert()
-
-
-def fehlgrund() -> str:
-    """Warum ist kein Ziel da? Der häufigste Support-Fall war 'Backup tut
-       nichts' ohne Begründung — dieselbe Überlegung wie bei
-       nc.restreamcfg.enabled()."""
-    if aktiv():
-        return ""
-    return ("Kein Backup-Ziel konfiguriert (.env: LOCAL_BACKUP=1 + "
-            "LOCAL_BACKUP_DIR und/oder S3_BACKUP=1 + "
-            "S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY)")
 
 
 # ---- Aufbewahrung -----------------------------------------------------------

@@ -484,6 +484,50 @@ def _im_hintergrund_neu_lesen():
     threading.Thread(target=_lauf, name="cookies-neu-lesen", daemon=True).start()
 
 
+def auswahl(cookies) -> dict:
+    """Name -> der Cookie, dessen Wert der Bot sendet.
+
+    v5.6-W197: aus _lesen() herausgezogen, damit der Bereinigungs-Knopf
+    (nc/cookieholen.bereinigen) DIESELBE Regel nimmt und nicht eine zweite,
+    die nur so aussieht. Die naheliegende zweite gab es schon:
+    _dedupe_cookie_text() entscheidet einen Gleichstand nach Zeilenfolge der
+    Datei, diese Schleife nach der Reihenfolge, in der MozillaCookieJar
+    liefert — gruppiert nach Domain und Pfad, in der Folge ihres ERSTEN
+    Auftretens (gemessen unter 3.11, 3.12 und 3.13). Steht eine Domain schon
+    weiter oben mit einem anderen Cookie, kommen ihre Eintraege vor denen
+    einer Domain, deren Zeile in der Datei frueher steht. Ein Knopf, der nach
+    der Dateifolge bereinigt, laesst im Gleichstand die Variante stehen, die
+    der Bot NICHT gesendet hat, und aendert damit still den gesendeten Wert.
+
+    Die Regel selbst ist der Bugfix aus dem Tiefenbughunt (siehe load_dict):
+    Rang 1 = exakte Domain (kein fuehrender Punkt — das, was ein Browser fuer
+    die besuchte Seite tatsaechlich sendet), Rang 0 = Wildcard ('.tiktok.com');
+    bei gleichem Rang die laengere Expiry; bei vollem Gleichstand der ERSTE
+    in der uebergebenen Reihenfolge (striktes `>`). Wer hier etwas aendert,
+    aendert den gesendeten Wert UND die Bereinigung — absichtlich zusammen."""
+    best: dict = {}
+    for c in cookies:
+        specificity = 0 if (c.domain or "").startswith(".") else 1
+        expiry = c.expires or 0
+        prev = best.get(c.name)
+        if prev is None or (specificity, expiry) > (prev[0], prev[1]):
+            best[c.name] = (specificity, expiry, c)
+    return {name: c for name, (_, _, c) in best.items()}
+
+
+def abgelaufen(expires, jetzt) -> bool:
+    """Ist ein Cookie mit dieser Ablaufzeit abgelaufen?
+
+    Ablauf 0/None ist ein SITZUNGS-Cookie, kein abgelaufener — curl, wget und
+    jeder Header-String-Import schreiben 0. MozillaCookieJar liefert dafuer
+    je nach Fassung None (3.13) oder 0 (3.11/3.12, nachgesehen); beides muss
+    hier „Sitzung" heissen. Wer `expires < jetzt` ohne die Null-Pruefung rechnet,
+    raeumt jeden Sitzungs-Cookie weg, beim Header-Import also die ganze
+    Anmeldung. Eine Stelle fuer gesundheit() und den Bereinigungs-Knopf:
+    was das Deck als abgelaufen zaehlt, ist genau das, was der Knopf entfernt."""
+    return bool(expires) and 0 < expires < jetzt
+
+
 def _lesen(mtime, now) -> dict:
     """Die Datei parsen und den Cache setzen (der eigentliche Lesevorgang)."""
     try:
@@ -492,23 +536,12 @@ def _lesen(mtime, now) -> dict:
             _warnen("cookies.txt ist kein sauberes Netscape-Format — beim Lesen "
                     "normalisiert. Einmal ueber das Deck neu einspielen oder "
                     "automatisch holen lassen, sonst bleibt es Gluecksache.")
-        # best[name] = (specificity_rank, expiry, value)
-        # specificity_rank: 1 = exakte Domain (kein führender Punkt, höchste
-        # Priorität — das ist was ein echter Browser für die aktuell besuchte
-        # Seite tatsächlich sendet), 0 = Wildcard-Domain ('.tiktok.com')
-        best: dict = {}
-        skipped_collisions = 0
-        for c in cj:
-            specificity = 0 if (c.domain or "").startswith(".") else 1
-            expiry = c.expires or 0
-            prev = best.get(c.name)
-            if prev is None:
-                best[c.name] = (specificity, expiry, c.value, c.domain)
-            else:
-                skipped_collisions += 1
-                if (specificity, expiry) > (prev[0], prev[1]):
-                    best[c.name] = (specificity, expiry, c.value, c.domain)
-        d = {name: val for name, (_, _, val, _) in best.items()}
+        # Die Kollisionsregel steht in auswahl() — dieselbe, nach der der
+        # Bereinigungs-Knopf entscheidet, welche Variante stehen bleibt.
+        alle = list(cj)
+        gewaehlt = auswahl(alle)
+        d = {name: c.value for name, c in gewaehlt.items()}
+        skipped_collisions = len(alle) - len(gewaehlt)
         if skipped_collisions:
             _KONF["log"].debug(f"load_dict: {skipped_collisions} Domain-Duplikate "
                       f"aufgelöst (spezifischste/frischeste Variante gewählt)")
@@ -569,6 +602,15 @@ CACHE = _COOKIES_CACHE
 # Cookies, ohne die TikTok den Pull ablehnt. Der Bot reicht die Liste herein,
 # damit sie an EINER Stelle in .env/bot.py steht.
 _KRITISCH: tuple = ()
+
+
+def kritisch() -> tuple:
+    """Die kritischen Cookie-Namen, zur AUFRUFZEIT gelesen. Ein
+    `from nc.cookies import _KRITISCH` in einem anderen Modul hielte das
+    leere Tupel vom Import fest — configure() bindet den Namen hier neu, und
+    der Bereinigungs-Knopf saehe nie ein Duplikat (CLAUDE.md: Modul-Konstanten
+    frieren ein)."""
+    return _KRITISCH
 
 # Merkt sich, fuer welchen Dateistand die Reparatur schon versucht wurde.
 # Der Versuch haengt an der mtime, NICHT am Aufruf: das Deck pollt diese
@@ -652,7 +694,7 @@ def gesundheit() -> dict:
             # aber für unsere Zwecke ist das "ewig gültig"
             continue
         days_left = (exp - now) / 86400
-        if days_left < 0:
+        if abgelaufen(exp, now):
             expired.append({"name": c.name, "days_ago": round(-days_left, 1)})
         elif days_left < 7:
             expiring_soon.append({"name": c.name, "days_left": round(days_left, 1)})
