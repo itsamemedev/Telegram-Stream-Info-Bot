@@ -425,18 +425,18 @@ PY
 #     -> fonts-noto-color-emoji;
 #   * der eingebrannte Chat in Aufnahmen (libass) eine UMRISS-Schrift — libass
 #     ueberspringt Bitmap-Schriften wie Noto Color Emoji -> fonts-symbola.
-# Ohne sie steht fuer jedes Emoji ein Kaestchen da. Geprueft wird an U+1F339
-# (Rose): DejaVu Sans fuehrt U+1F600 bis U+1F64F selbst und haette eine
-# Pruefung an 😀 bestanden, ohne dass eine Rose oder ein Krankenhaus ginge.
+# Ohne sie steht fuer jedes Emoji ein Kaestchen da. Gefragt wird die
+# Paketdatenbank, nicht fc-list: fc-list fehlt auf vielen Servern (Paket
+# fontconfig), und ein Werkzeug, das fehlt, haette jeden Lauf „fehlt"
+# gemeldet und neu installiert — update.sh waere nicht mehr idempotent.
+# Ohne dpkg-query ist nichts pruefbar, dann wird nichts vorgeschlagen.
 # Nur apt: die Paketnamen der anderen Verwalter sind nicht nachgesehen.
 nc_emoji_pakete(){
   _p="${1:-$NC_PKG}"
   [ "$_p" = "apt" ] || return 0
-  if ! command -v fc-list >/dev/null 2>&1; then
-    printf '%s\n' fonts-noto-color-emoji fonts-symbola
-    return 0
-  fi
-  fc-list 2>/dev/null | grep -qi "Noto Color Emoji" || printf '%s\n' fonts-noto-color-emoji
-  fc-list ':charset=1f339:outline=true' 2>/dev/null | grep -q . || printf '%s\n' fonts-symbola
+  command -v dpkg-query >/dev/null 2>&1 || return 0
+  for _k in fonts-noto-color-emoji fonts-symbola; do
+    dpkg-query -W -f='${Status}' "$_k" 2>/dev/null | grep -q "ok installed" || printf '%s\n' "$_k"
+  done
   return 0
 }

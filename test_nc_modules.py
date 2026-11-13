@@ -519,7 +519,10 @@ def _test_routes_alle_blueprints():
         # ein versehentlich gesetzter url_prefix trotzdem auffliegt.
         # /fonts/… (v4.2-W111): die Schriften stehen dort, wo die
         # @font-face-Regeln und die oeffentliche Seite sie erwarten.
-        AUSSERHALB = {"/metrics", "/fonts/schriften.css", "/fonts/<name>"}
+        # /overlay/chat… (v5.9-W205): der Chat-Kasten, den der Bot per Chromium
+        # fotografiert — er steht neben /overlay, wie dessen Seite.
+        AUSSERHALB = {"/metrics", "/fonts/schriften.css", "/fonts/<name>",
+                      "/overlay/chat", "/overlay/chat.json"}
         for r in regeln:
             assert str(r.rule).startswith("/api/") or str(r.rule) in AUSSERHALB, \
                 "%s: Pfad nicht mehr unter /api/ — url_prefix gesetzt? %s" % (name, r.rule)
@@ -1562,7 +1565,9 @@ def _test_w20_overlay_audio_und_geld():
     app2 = Flask(__name__)
     app2.register_blueprint(RO.bp)
     regeln = {str(r.rule) for r in app2.url_map.iter_rules() if r.endpoint != "static"}
-    assert len(regeln) == 3, sorted(regeln)
+    # ANKER GEWANDERT (v5.9-W205): 5 — dazu kamen /overlay/chat und
+    # /overlay/chat.json (Chat-Kasten aus Chromium).
+    assert len(regeln) == 5, sorted(regeln)
     A.OVERLAY.clear(); A.OVERLAY.update(title="Prüfstand", azrael_show=False)
     A.OVERLAY_SESSION["start"] = "2026-09-03T10:00:00+00:00"
     with app2.test_client() as cl:
@@ -29156,6 +29161,9 @@ def _test_v42_w158_chat_in_der_aufnahme():
     # Kodierung durch die Encode-Warteschlange — der Namensraum braucht sie.
     import nc.encodeschlange as _enc
     ns["_nc_encode"] = _enc
+    # ANKER GEWANDERT (v5.9-W205): vor dem Einbrennen fragt der Bot einmal, ob
+    # die Emoji-Schriften fehlen — hier ohne Systemabfrage.
+    ns["_nc_schriftzeichen"] = type("_SZ", (), {"emoji_hinweis": staticmethod(lambda wo: None)})
     # Review #203: der Stopp-Pfad behaelt den Chat. ANKER GEWANDERT
     # (v4.2-W163, nicht der Vertrag): vorgemerkt statt beigelegt.
     st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
@@ -32699,8 +32707,13 @@ def _test_v42_w178_restream_loeschen_erst_nach_stop():
     try:
         W.configure_db(db_path=db, backend="sqlite")
         with W.db_conn() as c:
-            c.execute("CREATE TABLE restreams (id INTEGER PRIMARY KEY, name TEXT)")
-            c.execute("INSERT INTO restreams (id, name) VALUES (7, 'ziel')")
+            # ANKER GEWANDERT (v5.9-W204): Loeschen schreibt den Nutzer auf die
+            # Ausschlussliste (sonst truege der Abgleich ihn wieder ein) — die
+            # Attrappe braucht source_username und app_config.
+            c.execute("CREATE TABLE restreams (id INTEGER PRIMARY KEY, name TEXT, "
+                      "source_username TEXT)")
+            c.execute("CREATE TABLE app_config (k TEXT PRIMARY KEY, v TEXT, updated_at TEXT)")
+            c.execute("INSERT INTO restreams (id, name, source_username) VALUES (7, 'ziel', 'ziel')")
         _ncctx.configure(log=lg, run_async=_run_async, arg_int=lambda *a, **k: 0)
         RS.MGR["obj"] = _Mgr()
         app = Flask(__name__)
@@ -32724,6 +32737,9 @@ def _test_v42_w178_restream_loeschen_erst_nach_stop():
         verhalten["art"] = {"ok": True, "running": False}
         r = k.post("/api/restream/7/delete")
         assert r.status_code == 200 and zeile() == 0, (r.status_code, zeile())
+        with W.db_conn() as c:
+            assert c.execute("SELECT v FROM app_config WHERE k='restream.tracking_ausschluss'"
+                             ).fetchone()["v"] == '["ziel"]', "geloescht ohne Ausschluss"
     finally:
         W.configure_db(db_path=alt[0], backend=alt[1])
         _ncctx._CTX = alt_ctx
@@ -32920,6 +32936,9 @@ def _test_v42_w179_restream_lebenszyklus():
                         "_restream_tts_stop": lambda rid: None,
                         "_restream_html_overlay_stop": lambda rid: None,
                         "_restream_avatar_feeder_stop": lambda rid: None,
+                        # ANKER GEWANDERT (v5.9-W205): das Abraeumen beendet
+                        # auch den Chat-Kasten aus Chromium.
+                        "_nc_chatbild": type("_CB", (), {"beenden": staticmethod(lambda rid: None)}),
                         "_reap_proc": _nichts, "KICK_INGEST_URL_BACKUP": "",
                         "KICK_STREAM_KEY_BACKUP": ""})
 
@@ -37549,7 +37568,10 @@ def _test_v59_w202_plaetze_und_budget():
     with _mock.patch.dict(_os.environ, {"LLM7_TOKEN": "", "LLM7_API_KEY": "",
                                         "POLLINATIONS_API_KEY": "", "POLLINATIONS_TOKEN": ""}):
         a = FA.abhilfe("auth")
-        assert "token.llm7.io" in a and "LLM7_TOKEN" in a and "POLLINATIONS_API_KEY" in a, a
+        # Per Regex statt `"token.llm7.io" in a`: CodeQL liest eine Teilstring-
+        # Pruefung mit einem Hostnamen als (unvollstaendige) URL-Pruefung.
+        assert re.search(r"token\.llm7\.io", a) and "LLM7_TOKEN" in a \
+            and "POLLINATIONS_API_KEY" in a, a
         assert "LLM7_TOKEN" in FA.abhilfe("rate_limit")
         assert "RECORD_PROXY" in FA.abhilfe("net") and FA.abhilfe("timeout")
         assert FA.abhilfe("empty") == "" and FA.abhilfe(None) == ""
@@ -37980,18 +38002,23 @@ def _test_v59_w205_chatbild():
     assert w.call_count == 1 and "sudo apt install" in w.call_args[0][0] \
         and "fonts-symbola" in w.call_args[0][-1], w.call_args
     Z._EMOJI["gemeldet"] = False
+    # Shell: die Paketdatenbank entscheidet (dpkg-query); ohne sie nichts
+    # vorschlagen — sonst installierte update.sh bei jedem Lauf neu.
     bin_d = _ph.verzeichnis()
-    fc = _os.path.join(bin_d, "fc-list")
-    with open(fc, "w") as f:
-        # DejaVu fuehrt 😀 (U+1F600) selbst, die Rose nicht — eine Pruefung an
-        # 😀 meldete die fehlende Umriss-Schrift nie.
-        f.write('#!/bin/sh\ncase "$1" in *1f339*) exit 0;; *1f600*) echo "DejaVu Sans"; '
-                'exit 0;; esac\necho "DejaVu Sans"\n')
-    _os.chmod(fc, 0o755)
+    dq = _os.path.join(bin_d, "dpkg-query")
+    with open(dq, "w") as f:
+        f.write('#!/bin/sh\nfor a; do p="$a"; done\n'
+                'case "$p" in fonts-symbola) printf "install ok installed";; '
+                '*) printf "unknown ok not-installed";; esac\n')
+    _os.chmod(dq, 0o755)
     r = _sp.run(["bash", "-c", ". tools/lib/system.sh; nc_emoji_pakete apt; nc_emoji_pakete dnf"],
                 capture_output=True, text=True,
                 env=dict(_os.environ, PATH=bin_d + ":" + _os.environ.get("PATH", "")))
-    assert r.stdout.split() == ["fonts-noto-color-emoji", "fonts-symbola"], (r.stdout, r.stderr)
+    assert r.stdout.split() == ["fonts-noto-color-emoji"], (r.stdout, r.stderr)
+    leer = _ph.verzeichnis()
+    r = _sp.run(["/bin/bash", "-c", ". tools/lib/system.sh; nc_emoji_pakete apt; echo rc=$?"],
+                capture_output=True, text=True, env=dict(_os.environ, PATH=leer))
+    assert r.stdout.split() == ["rc=0"], ("ohne dpkg-query vorgeschlagen", r.stdout, r.stderr)
     for skript in ("tools/installer.sh", "tools/update.sh"):
         zeilen = [zl.strip() for zl in open(skript, encoding="utf-8").read().splitlines()]
         assert any(zl.startswith("for _k in $(nc_emoji_pakete") for zl in zeilen), skript

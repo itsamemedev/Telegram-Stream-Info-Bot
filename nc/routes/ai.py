@@ -325,7 +325,11 @@ def _safe_select(sql, limit=200):
         if _nc_sqlguard.frist_ueberschritten(e):
             return None, _t("Abfrage nach %d s abgebrochen — zu aufwendig. Enger "
                             "fragen (Zeitraum, Nutzer).") % _nc_sqlguard.FRIST_S
-        return None, f"SQL-Fehler: {e}"
+        # v5.9 (CodeQL „Information exposure through an exception"): der
+        # Wortlaut der Datenbank (Pfade, Tabellennamen, Serverdetails) ging
+        # ungefiltert in die Antwort. nach_aussen loggt ihn und gibt die
+        # gesaeuberte Fassung heraus — wie bei jeder anderen Route.
+        return None, _t("SQL-Fehler: ") + _nc_fehlertext.nach_aussen(e, "_safe_select")
 
 
 def _nl_to_sql(question):
