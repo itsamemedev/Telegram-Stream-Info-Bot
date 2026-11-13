@@ -19,18 +19,25 @@ Sendebild wie ein eigener Zufluss aussehen.
 
 import os
 
+from nc import schriftzeichen as _schriftzeichen
+
 # v4.2-W22: aus .env, einmal beim Start gesetzt — siehe configure(). Als
 # Modul-Konstante statt Parameter, weil overlay_src_ok() an vielen Stellen
 # mit nur einem Argument aufgerufen wird; eine Signaturaenderung an allen
 # Aufrufstellen haette das Risiko dieser Welle unnoetig vergroessert.
 _OVERLAY_GIFT_SOURCE = "kick"
+# v5.9-W203: die Schrift, mit der drawtext die Overlay-Dateien zeichnet — als
+# Aufrufbares, weil sie zur Laufzeit gesucht wird (nc.restreamcmd.schriftart).
+_SCHRIFT = None
 
 
-def configure(gift_source=None):
+def configure(gift_source=None, schrift=None):
     """Der Bot reicht die .env-Vorgabe einmal beim Start herein."""
-    global _OVERLAY_GIFT_SOURCE
+    global _OVERLAY_GIFT_SOURCE, _SCHRIFT
     if gift_source is not None:
         _OVERLAY_GIFT_SOURCE = gift_source
+    if schrift is not None:
+        _SCHRIFT = schrift
 
 
 def ov_oneline(s, maxlen):
@@ -53,8 +60,16 @@ def ov_atomic_write(path, text):
 
     Schluckt jeden Fehler: ein Overlay-Textfeld, das nicht schreibt, darf die
     Aufnahme oder den Restream nicht mitreissen — leer bleibt drawtext einfach
-    unsichtbar."""
+    unsichtbar.
+
+    v5.9-W203: jede Datei hier liest drawtext, und drawtext zeichnet fuer jedes
+    Zeichen, das die Schrift nicht hat, ein Kaestchen (die Emoji im Chat).
+    Deshalb an DIESER Stelle gefiltert — alle Overlay-Felder laufen hier durch."""
     try:
+        schrift = _schriftzeichen.schrift_von(_SCHRIFT) if _SCHRIFT else None
+        if schrift:
+            _schriftzeichen.vorbereiten(schrift)
+        text = _schriftzeichen.zeichenbar(text, schrift)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:

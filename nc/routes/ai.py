@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+import logging as _logging
 from flask import Blueprint, Response, jsonify, request
 from nc.textmore import _parse_iso
 from nc.dbwrap import db_conn
@@ -324,7 +325,11 @@ def _safe_select(sql, limit=200):
         if _nc_sqlguard.frist_ueberschritten(e):
             return None, _t("Abfrage nach %d s abgebrochen — zu aufwendig. Enger "
                             "fragen (Zeitraum, Nutzer).") % _nc_sqlguard.FRIST_S
-        return None, f"SQL-Fehler: {e}"
+        # v5.9 (CodeQL „Information exposure through an exception"): der
+        # Wortlaut der Datenbank (Pfade, Tabellennamen, Serverdetails) ging
+        # ungefiltert in die Antwort. nach_aussen loggt ihn und gibt die
+        # gesaeuberte Fassung heraus — wie bei jeder anderen Route.
+        return None, _t("SQL-Fehler: ") + _nc_fehlertext.nach_aussen(e, "_safe_select")
 
 
 def _nl_to_sql(question):
@@ -541,11 +546,15 @@ def api_ai_conversation_send(conv_id):
                        assistant_message_id=asst_msg_id,
                        model=model, duration_ms=duration_ms), 502
 
+    # v5.9-W201: wer hat geantwortet? Ins Modellfeld — so zeigen Verlauf und
+    # KI-Log die Herkunft auch spaeter noch, ohne neue Spalte.
+    ki_weg = _nc_kiwahl.herkunft()
+    etikett = _nc_kiwahl.beschriftung(ki_weg, model)
     asst_msg_id = _conv_add_message(conv_id, "assistant", response,
-                                    model=model, duration_ms=duration_ms)
+                                    model=etikett, duration_ms=duration_ms)
     # Globaler AI-Stream bekommt auch einen Eintrag
     try:
-        add_ai_log_entry(0, 0, prompt, response, model, duration_ms, None, None, None)
+        add_ai_log_entry(0, 0, prompt, response, etikett, duration_ms, None, None, None)
     except Exception as e:
         log.warning(f"ai_log dashboard-chat write failed: {e}")
 
@@ -562,7 +571,8 @@ def api_ai_conversation_send(conv_id):
             "id": asst_msg_id,
             "role": "assistant",
             "content": response,
-            "model": model,
+            "model": etikett,
+            "ki_weg": ki_weg,
             "duration_ms": duration_ms,
         },
     })
@@ -750,10 +760,12 @@ def api_ai_diagnose():
     if err_kind or not response:
         return jsonify(ok=False, error=err_kind or "no response from LLM"), 502
 
+    ki_weg = _nc_kiwahl.herkunft()
     return jsonify({
         "ok": True,
         "diagnosis": response.strip(),
-        "model": _c().cfg["AI_MODEL"],
+        "model": _nc_kiwahl.beschriftung(ki_weg, _c().cfg["AI_MODEL"]),
+        "ki_weg": ki_weg,
         "duration_ms": duration_ms,
         "context_chars": sum(len(p) for p in context_parts),
         "sections": len(context_parts),
@@ -819,13 +831,48 @@ def api_ai_ask():
         return jsonify(ok=False, error=err_msg, error_kind=err_kind,
                        model=model, duration_ms=duration_ms), 502
 
+    ki_weg = _nc_kiwahl.herkunft()
+    etikett = _nc_kiwahl.beschriftung(ki_weg, model)
     try:
         add_ai_log_entry(DASHBOARD_CHAT_ID, DASHBOARD_USER_ID, prompt, response,
-                         model, duration_ms, None, None, None)
+                         etikett, duration_ms, None, None, None)
     except Exception as e:
         log.warning(f"ai_log dashboard write failed: {e}")
 
-    return jsonify(ok=True, response=response, model=model, duration_ms=duration_ms)
+    return jsonify(ok=True, response=response, model=etikett, ki_weg=ki_weg,
+                   duration_ms=duration_ms)
+
+
+@bp.route("/api/ki/wahl")
+def api_ki_wahl():
+    """v5.9-W201: die eine KI-Wahl (lokal / free / auto) und was sie bewirkt."""
+    try:
+        return jsonify(ok=True, **_nc_kiwahl.deck_lage())
+    except Exception as e:
+        return jsonify(ok=False, error=_nc_fehlertext.nach_aussen(e, "api_ki_wahl")), 503
+
+
+@bp.route("/api/ki/wahl", methods=["POST"])
+def api_ki_wahl_setzen():
+    """{wahl: "lokal"|"free"|"auto"|""} — "" hebt die Wahl auf (dann gilt die .env).
+
+    Nur als JSON: ein Formular einer fremden Seite kommt so nicht durch
+    (die Herkunftspruefung der App gilt ohnehin)."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict) or "wahl" not in d:
+        return jsonify(ok=False, error=_t("Erwartet JSON mit „wahl“: lokal, free, auto oder leer.")), 400
+    try:
+        _nc_kiwahl.deck_setzen(d.get("wahl"))
+    except ValueError:
+        # Den Wert selbst NICHT ins Log: er kommt aus der Anfrage, und ein
+        # Zeilenumbruch darin schriebe eine gefaelschte Logzeile (CodeQL
+        # py/log-injection). Dass abgewiesen wurde, genuegt.
+        _logging.getLogger(__name__).info(
+            "KI-Wahl: ungueltiger Wert abgewiesen (erlaubt: lokal, free, auto, leer).")
+        return jsonify(ok=False, error=_t("KI-Wahl muss lokal, free, auto oder leer sein.")), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_nc_fehlertext.nach_aussen(e, "api_ki_wahl_setzen")), 503
+    return jsonify(ok=True, **_nc_kiwahl.deck_lage())
 
 
 @bp.route("/api/ai/config")
@@ -965,10 +1012,14 @@ def api_ai_query():
         return jsonify(ok=False, error=_t("Konnte die Frage nicht in SQL übersetzen "
                                           "(LLM offline? Versuch eine einfachere Formulierung)."),
                        question=q), 200
+    # v5.9-W201: nur wenn die KI die Abfrage geschrieben hat, hat sie eine
+    # Herkunft — sonst stuende hier der Rest der vorigen Anfrage im Faden.
+    ki_weg = _nc_kiwahl.herkunft() if source == "llm" else ""
     rows, err = _safe_select(sql)
     if err:
-        return jsonify(ok=False, question=q, sql=sql, source=source, error=err), 200
-    return jsonify(ok=True, question=q, sql=sql, source=source,
+        return jsonify(ok=False, question=q, sql=sql, source=source, ki_weg=ki_weg,
+                       error=err), 200
+    return jsonify(ok=True, question=q, sql=sql, source=source, ki_weg=ki_weg,
                    row_count=len(rows), rows=rows[:200])
 
 
@@ -1207,7 +1258,9 @@ def api_ai_report():
                 f"(~{stats['stored_mb']} MB).")
         if topfail:
             text += f" Häufigster Fehler: {topfail['outcome']}."
-        # Optional: LLM-Verfeinerung
+        # Optional: LLM-Verfeinerung. ki_weg bleibt leer, wenn der Text die
+        # Vorlage ist — dann hat keine KI geschrieben (v5.9-W201).
+        ki_weg = ""
         if _c().cfg["EVOLUTION_USE_LLM"]:
             try:
                 t2, err = _c().llm_chat_sync(
@@ -1217,9 +1270,10 @@ def api_ai_report():
                     timeout=30)
                 if t2 and len(t2.strip()) > 20:
                     text = t2.strip()
+                    ki_weg = _nc_kiwahl.herkunft()
             except Exception:
                 pass
-        return jsonify(ok=True, stats=stats, report=text)
+        return jsonify(ok=True, stats=stats, report=text, ki_weg=ki_weg)
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_ai_report")), 500
 

@@ -62,7 +62,7 @@
 | | | |
 |---|---|---|
 | **🔍 Erkennen** — adaptives Polling mit Anti-Flap-Hysterese; jede Zeile im Deck sagt, wann sie zuletzt geprüft wurde | **⏺️ Aufnehmen** — dreistufiger Recorder (ffmpeg → streamlink → yt-dlp) mit Preflight, Tonspur-Prüfung und Hänger-Erkennung | **📡 Weitersenden** — Kick, Twitch und YouTube gleichzeitig, Ziel-Verifikation gegen die Plattform-APIs |
-| **🛡️ Moderieren** — SENTINEL-SHIELD gegen Doxxing und Hass, deterministisch und **vor** jeder KI | **🤖 Mitreden** — AZRAEL antwortet in drei Chats, reagiert aufs Sendebild und steht als Figur im Bild | **📊 Auswerten** — Deck mit 386 API-Routen, Wissensgraph, Einnahmen-Journal mit Hash-Kette, PWA |
+| **🛡️ Moderieren** — SENTINEL-SHIELD gegen Doxxing und Hass, deterministisch und **vor** jeder KI | **🤖 Mitreden** — AZRAEL antwortet in drei Chats, reagiert aufs Sendebild und steht als Figur im Bild | **📊 Auswerten** — Deck mit 390 API-Routen, Wissensgraph, Einnahmen-Journal mit Hash-Kette, PWA |
 
 <details>
 <summary><b>🔎 Vollständige Funktionsliste</b></summary>
@@ -80,10 +80,10 @@
 | **Sentinel-Flotte** | 16 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank, prometheus, grafana) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
 | **Geld** | Spenden-Telemetrie (Schätzwerte) · getrenntes Einnahmen-Journal (`nc/ledger.py`) mit Hash-Kette und CSV-Export fürs Finanzamt |
-| **Dashboard** | 386 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
+| **Dashboard** | 390 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · Umzug per `update.sh --mariadb` mit Nachzählen · zentrales Schema-Modul · Export-Werkzeug · Datenbank-Wächter |
-| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~620 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
+| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~623 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
 | **Beobachtung** | `/metrics` für Prometheus · Grafana-Dashboard mit jedem Messwert · 16 Alarmregeln mit Tests · Einrichtung per `tools/observability.sh` |
 
 </details>
@@ -120,8 +120,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 27.312 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
-    BOT -->|configure| NC["nc/ — 212 Fachmodule<br/>40 Blueprints"]:::lib
+    BOT["bot.py<br/>Monolith · 27.568 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT -->|configure| NC["nc/ — 216 Fachmodule<br/>40 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
     BOT --> DB[("SQLite oder MariaDB<br/>+ Einstellungen")]:::db
@@ -204,7 +204,7 @@ löst nichts aus; ein Zeitplan zieht nie still eine Datenbank um.
 
 ## ⚙️ Einstellungen
 
-**Im Deck, Reiter „Einstellungen“.** Alle rund 620 Variablen aus `.env.example`
+**Im Deck, Reiter „Einstellungen“.** Alle rund 623 Variablen aus `.env.example`
 mit Gruppe, Vorgabe und Beschreibung, durchsuchbar. Je Zeile steht, woher der
 Wert kommt — *vom Deck gesetzt*, *aus der .env* oder *Vorgabe*. Gespeichert wird
 in der Datenbank (SQLite oder MariaDB); die Werte gelten beim nächsten Start
@@ -557,8 +557,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 27.312 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 386 Routen und 630 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 27.568 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 390 Routen und 639 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -575,6 +575,26 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 
 ---
 
+## 🆕 Neu in v5.9
+
+**„Schaltpult“** — eine KI-Wahl, mehrere Plätze, Antworten mit Herkunft:
+
+- **Eine KI-Wahl für alles:** Lokal, Free oder Auto im KI-Cockpit — gilt für
+  Deck, Telegram und AZRAEL im Stream. „Lokal“ heißt nur das Modell auf dem
+  Server, ohne stillen Wechsel in die Cloud.
+- **Jede Antwort sagt, woher sie kommt:** Abzeichen lokal / free / Claude im
+  Deck, in Telegram steht es im Fuß.
+- **Mehrere Inferenz-Plätze:** bis zu vier Antworten zugleich
+  (`LLM_PLAETZE`); `/brain` wartet auf einen freien Platz statt „Slot belegt“.
+  Kein Stundendeckel mehr per Vorgabe — die Cloud wartet nicht hinter dem
+  lokalen Platz.
+- **Telegram:** AZRAEL antwortet auf Antworten (auch ohne Redis und in
+  Themen-Gruppen), eine Antwort auf `/brain` geht zurück ans Brain.
+- **Emoji im Restream-Chat farbig:** den Chat-Kasten zeichnet Chromium statt
+  ffmpeg; in Aufnahmen sind Emoji einfarbig lesbar (Schriften zieht `update.sh` nach).
+- **Getrackte Nutzer aus Telegram und Discord** landen automatisch in der
+  Restream-Auto-Liste (Kick, YouTube, Twitch); im Deck gelöschte bleiben draußen.
+
 ## 🆕 Neu in v5.8
 
 **„Nachlese“** — Bughunt mit Sicherheit, Aufräumen, Monolith-Abtrag:
@@ -589,7 +609,7 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
   nach jeder Aufnahme geht nur noch nach Discord — Telegram nur mit
   `MEME_REEL_TELEGRAM=1`.
 - **Aufgeräumt und abgetragen:** 27 tote Weiterleitungen und ein totes Modul
-  entfernt; Sperrliste/SSH-Angriffe nach `nc/abwehrlage.py`. `bot.py` 27.956 → 27.312 Zeilen.
+  entfernt; Sperrliste/SSH-Angriffe nach `nc/abwehrlage.py`. `bot.py` schrumpfte von 27.956 auf 27.322.
 
 ## 🆕 Neu in v5.7
 
@@ -801,12 +821,12 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.8.0** — „Nachlese“ (2026.11) |
-| Flask-Routen | 386 (34 in `bot.py` · 352 in `nc/routes/`) |
+| Aktuelle Version | **5.9.0** — „Schaltpult“ (2026.11) |
+| Flask-Routen | 390 (34 in `bot.py` · 356 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
-| Fachmodule | 212 in `nc/` (+40 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 216 in `nc/` (+40 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 16 |
-| Konfigurationsvariablen | ~620 |
+| Konfigurationsvariablen | ~623 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |
 
 Nächster großer Schritt: `bot.py` weiter zerlegen — **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.

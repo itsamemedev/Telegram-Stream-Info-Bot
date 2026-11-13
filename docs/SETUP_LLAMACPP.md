@@ -57,7 +57,8 @@ Ein zweiter Lauf auf fertigem Bestand tut nichts. Neu bauen:
 | `LLM_WEBUI` | `llamacpp` | Chat-Oberfläche auf dem Port (`--webui`, v5.6): `llamacpp` ist die neue mit dem Reiter **„MCP“** in den Einstellungen, `auto` die alte von ik_llama.cpp ohne MCP, `none` keine. Gesetzt wird der Schalter nur, wenn das gebaute Programm ihn kennt |
 | `LLM_WEBUI_MCP_PROXY` | `0` | `1` = CORS-Proxy für MCP-Server der Oberfläche (`--webui-mcp-proxy`). Der Server ruft dann fremde Adressen ab — laut Programm nicht in nicht vertrauten Umgebungen. Er lauscht nur auf 127.0.0.1 (SSH-Tunnel); trotzdem bewusst anschalten. Wirkt erst nach `sudo bash tools/ikllama.sh` und Neustart des Dienstes |
 | `LLM_KV_CACHE` | `q8_0` | KV-Cache quantisiert (v5.3), `f16` = aus |
-| `LLM_KONTEXT` | `8192` | |
+| `LLM_KONTEXT` | `8192` | **je Platz** — llama-server bekommt `-c KONTEXT × PLÄTZE` |
+| `LLM_PLAETZE` | `4` | gleichzeitige Antworten (`-np`, v5.9). Der Bot liest die Zahl beim Server (`/props`). Jeder Platz über den ersten kostet rund 680 MB KV-Cache (q8_0); die RAM-Vorprüfung rechnet ihn mit |
 | `IK_LLAMA_DIR` / `IK_LLAMA_REF` | `/opt/ik_llama.cpp` / `main` | |
 | `BRAIN_LLAMACPP_URL` | `http://127.0.0.1:8080` | daraus der Port — derselbe wie vorher |
 
@@ -89,9 +90,11 @@ MemoryMax=13G        # Modellgroesse + 4 GB, vom Werkzeug berechnet
 
 **ABWÄGUNG** (kein GPU, 8 Kerne, ffmpeg hat Vorrang):
 
-- 14B auf der CPU ist **langsam** — grob einige Token je Sekunde. Das
-  Stundenbudget (`BRAIN_LLM_MAX_CALLS_H`) und der Timeout
-  (`BRAIN_LLM_TIMEOUT_S=300`) bleiben deshalb, wie sie sind.
+- 14B auf der CPU ist **langsam** — grob einige Token je Sekunde. Mehrere
+  Plätze (`LLM_PLAETZE`) helfen trotzdem: beim Erzeugen hängt die CPU am
+  Speicherdurchsatz, und vier Antworten in einem Schritt lesen die Gewichte
+  einmal. Einen Stundendeckel gibt es seit v5.9 per Vorgabe nicht mehr
+  (`BRAIN_LLM_MAX_CALLS_H=0`); der Timeout (`BRAIN_LLM_TIMEOUT_S=300`) bleibt.
 - Reicht der RAM knapp? Kleinere Quantisierung (siehe oben) oder `-c 6144`
   über `LLM_KONTEXT`.
 - Recordings stottern während KI-Last? **Nicht** auf `-t 6` erhöhen — die
@@ -150,7 +153,7 @@ AI_PROVIDER=auto                # auto = lokal wenn erreichbar | lokal = immer z
 REACTION_AI_PROVIDER=auto
 BRAIN_LLM_BACKEND=auto          # in brain/: lokal zuerst, keyless Cloud als Reserve
 BRAIN_LLAMACPP_URL=http://127.0.0.1:8080
-BRAIN_LLM_MAX_CALLS_H=30        # hartes Stundenbudget (danach Cloud)
+BRAIN_LLM_MAX_CALLS_H=0         # kein Stundendeckel (v5.9) — die Plaetze begrenzen
 BRAIN_LLM_TIMEOUT_S=300         # CPU-Inferenz braucht Zeit
 BRAIN_LLM_DENKEN=0              # Qwen3-Denkmodus aus (siehe 4.)
 ```

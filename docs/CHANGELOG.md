@@ -9,6 +9,184 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.9.0] — 2026-11-13 · „Schaltpult" (W200–W206)
+
+Der Betreiber, in vier Meldungen: „In Telegram antwortet das Brain nicht auf
+Antwort-Nachrichten." — „Dir ist klar, dass ich den /brain-Befehl meinte?
+AZRAEL nutzt in Telegram eine free AI. Und im gesamten Dashboard sollte man
+zwischen lokaler und free AI unterscheiden können." — „/brain meint, der Slot
+wäre belegt. Wir brauchen mehrere Slots bei über 800 Mitgliedern." — „Das
+Budget für die LLM reicht bei weitem nicht mehr aus." Dazu ein Screenshot des
+Sendebilds mit Kästchen hinter fast jeder Chatzeile. Danach: „Emojis sollten
+im Restream-Chat zu sehen sein sowie in den Aufnahmen" und „die User aus
+Discord und Telegram werden nicht mehr in die Liste eingetragen, welche im
+Kick-, YouTube- und Twitch-Stream landen". 5.8.1 (nur W200) wurde nie
+veröffentlicht und geht hier auf.
+
+### Neu — eine KI-Wahl, und jede Antwort sagt, woher sie kommt (W201)
+
+- **Drei Schalter, keiner im Deck.** `AI_PROVIDER` (Chat und Deck),
+  `REACTION_AI_PROVIDER` (Reaktions-Engine) und `AZRAEL_LLM` (Persona) standen
+  nur in der `.env`, und **Telegram fragte `AZRAEL_LLM` gar nicht** — `_run_ai_call`
+  lief über `llm_chat` und landete still bei der freien Cloud-KI. Jetzt eine
+  Wahl im KI-Cockpit (`app_config` `ki.wahl`, `/api/ki/wahl`): **Lokal** = nur
+  das Modell auf dem Server (kein Claude, kein stiller Wechsel in die Cloud —
+  scheitert es, sagt Telegram das), **Free** = nur `nc.freeai`, **Auto** = die
+  bisherige Kette. Ohne Wahl gelten die `.env`-Schalter wie bisher. Telegram
+  spricht über `_azrael_ki`, denselben Weg wie AZRAEL im Stream.
+- **Der Fuß nannte das eingestellte Modell, nicht das, das geantwortet hat.**
+  Die Herkunft wird je Aufruf gemerkt (`nc.kiwahl.herkunft`, ContextVar) und
+  steht im Telegram-Fuß (`— 3.2s · lokal · qwen3-14b`), im Deck-Chat, in
+  Bericht, Datenfrage, Diagnose und KI-Log als Abzeichen lokal / free / Claude.
+- **Antwort auf eine /brain-Antwort** ging an AZRAELs Chat oder nirgends hin.
+  Sie geht jetzt zurück an das Brain (Router-Kaskade), die beantwortete
+  Nachricht als Zusammenhang. Der `@`-Name des Bots zählt als Ansprache — mit
+  Telegrams Datenschutzmodus erreichen Gruppennachrichten den Bot nur so.
+
+### Behoben — mehrere Plätze, kein Stundendeckel, Cloud ohne Platz (W202)
+
+- **Ein Platz für 800 Mitglieder.** `brain/llm.py` ließ genau eine Inferenz zu,
+  und `/brain` wartete nicht: jede Frage während einer Rechnung hieß „Slot
+  belegt" (22-mal gezählt). Jetzt so viele Plätze, wie llama-server meldet
+  (`/props` → `total_slots`, ersatzweise `/slots`); `tools/ikllama.sh` startet
+  ihn mit `-np LLM_PLAETZE` (Vorgabe 4) und `-c KONTEXT × PLAETZE`, prüft den
+  RAM dafür und rechnet den KV-Cache der weiteren Plätze in `MemoryMax`.
+  `/brain` fragt als Gespräch und wartet auf einen freien Platz, in einem
+  eigenen Pool (W47: im Default-Pool lebt DNS); die Warteschlange ist auf drei
+  je Platz begrenzt, Eigeninitiative bekommt nie den letzten freien Platz.
+- **Der Platz galt auch für die Cloud.** Der Slot wurde vor der ganzen Kette
+  genommen — war er belegt, kam `/brain` gar nicht erst bei freeai an. Er gilt
+  jetzt nur dem lokalen Modell.
+- **Stundendeckel 30.** Beim Betreiber 894 Ablehnungen; bei rund 46 s je
+  Antwort schafft ein Platz ohnehin nur rund 78 in der Stunde. Vorgabe jetzt
+  `BRAIN_LLM_MAX_CALLS_H=0` (kein Deckel); die Kerne schützen die Plätze und
+  die Unit (`Nice=10`, `CPUWeight=50`). Ein gesetzter Deckel wirkt wie bisher.
+- **„freeai: auth" ohne Rat.** `nc.freeai.abhilfe()` nennt den Handgriff
+  (kostenloses `LLM7_TOKEN` von token.llm7.io, `POLLINATIONS_API_KEY`), auf der
+  Brain-Seite, in Telegram und im Router-Grund. Die Brain-Seite zeigte die
+  Cloud-Reserve als „UP", während jede Antwort an `auth` scheiterte — tragen
+  alle Basen einen Fehler, steht dort jetzt „GESTÖRT" mit Abhilfe.
+
+### Behoben — Kästchen im Sendebild (W203)
+
+- drawtext zeichnet das Sendebild in **einer** Schrift (DejaVu) und kennt keinen
+  Rückfall: jedes Emoji der Zuschauer wurde ein Kästchen. Eine Emoji-Schrift
+  nachzuinstallieren hilft drawtext nicht. `nc/schriftzeichen.py` liest die
+  Zeichentabelle der Schrift (`fc-query`, einmal, im Hintergrund) und
+  `ov_atomic_write` nimmt alles heraus, was sie nicht hat; ohne Tabelle eine
+  vorsichtige Vermutung (Emoji-Ebene, Variantenwähler, Verbinder, private
+  Zeichen, Steuerzeichen — nie ein Buchstabe).
+
+### Neu — Emoji im Restream-Chat farbig, in Aufnahmen lesbar (W205)
+
+- W203 hat die Kästchen beseitigt, indem es die Emoji herausnahm — der
+  Betreiber will sie **sehen**. drawtext kann das nicht (eine Schrift, kein
+  Rückfall). Den Chat-Kasten des Studio-Sendebilds zeichnet jetzt Chromium
+  (`templates/chatbild.html`, `/overlay/chat`, `nc/chatbild.py`): ein
+  dauerhafter Browser, ein Bild je Sekunde, ein Schreiber mit festem Takt in
+  die FIFO — derselbe Aufbau wie das HTML-Overlay, weil ein stockender
+  Bild-Eingang den ganzen ffmpeg anhält. ffmpeg legt das Bild genau an die
+  Stelle des Text-Chats (`ffmpeg_filters.chat_kasten`, eine Quelle für beide).
+  Startet Chromium nicht, bleibt der Text-Chat (Emoji gefiltert, ohne
+  Kästchen). Abschaltbar: `RESTREAM_CHAT_BILD=0`.
+- Aufnahmen brennen den Chat mit libass ein, und libass überspringt
+  Bitmap-Schriften wie Noto Color Emoji — dort sind Emoji einfarbig aus einer
+  Umriss-Schrift (Symbola). Installer und `update.sh` ziehen beide Pakete nach
+  (`nc_emoji_pakete`, geprüft an der Rose U+1F339, weil DejaVu 😀 selbst hat).
+  Die Update-Funktion installiert keine Pakete — fehlen sie, sagt der Bot es
+  einmal laut mit dem `apt`-Befehl.
+
+### Neu — Trackings in die Restream-Auto-Liste (W204)
+
+- Die Liste der Restream-Ziele füllte nur das Deck; wer per Telegram oder
+  Discord trackte, kam dort nie an. `nc/restreamliste.py` gleicht alle zwei
+  Minuten ab: ein getrackter Nutzer bekommt eine Zeile (`auto_restream=1`,
+  Keys aus der `.env`, Umkodieren wie die jüngste manuelle Zeile,
+  `herkunft='tracking'`), ein nicht mehr getrackter ruht, ein zurückkehrender
+  wird wieder scharf. Pausierte Trackings zählen nicht, manuelle Zeilen und der
+  Auto-Schalter des Betreibers bleiben unangetastet, Schreibweisen werden ohne
+  Groß-/Kleinschreibung verglichen (der Vertrag fand „Dora" und „dora" als zwei
+  Nutzer). Löschen im Deck schließt aus — **vor** dem Löschen, sonst käme die
+  Zeile in zwei Minuten zurück —, Anlegen von Hand nimmt den Ausschluss
+  zurück; der Bot liest die Ausschlussliste streng (W199). Abschaltbar:
+  `RESTREAM_TRACKINGS=0`.
+
+### Behoben — ein totes Ziel riss den ganzen Restream mit (W206)
+
+- **Restream ohne Bild und Ton.** Das Log des Betreibers zeigte die Ursache:
+  „youtube meldet offline trotz laufendem Prozess — Neuaufbau (2. … 7.
+  Versuch)" im Sechs-Minuten-Takt, jedes Mal gefolgt von „Sendebruecke
+  beendet — Broken pipe". Bei tee lässt sich kein einzelnes Ziel neu
+  verbinden; der Wächter baute deshalb den ganzen Multistream neu auf, und
+  Kick und Twitch brachen jedes Mal mit ab — dazu ein Neustart unter
+  Volllast mit Drosselstufe 5. Sein Backoff (60 → 120 → 240 s) lag unter dem
+  eigenen Prüfzyklus (90 s Anlauf + 3 × 120 s) und griff nie. Jetzt
+  (`nc/restream_guard.py`): sendet ein anderes Ziel nachweislich, bekommt das
+  tote **einen** Neuaufbau; danach ist es aufgegeben, einmal laut gemeldet mit
+  Abhilfe (YouTube: Stream-Schlüssel, „Automatisch starten"), und die
+  laufenden Ziele bleiben in Ruhe. Sendet es wieder, bekommt es seine
+  Versuche zurück; sendet kein Ziel mehr, wird wie bisher neu aufgebaut.
+
+### Offen
+
+- **CPU am Anschlag.** Vor jedem Restream-Start „frei 0,6 von 8 Kernen
+  (Load 6,2)", ffmpeg 0,46x Echtzeit, selbst Drosselstufe 5 passt nicht.
+  Whisper tritt beim Restream schon zurück (3 → 1), das lokale Sprachmodell
+  (`-t 4`) nicht — und seit dem Wegfall des Stundendeckels rechnet es mehr.
+
+### Behoben — Telegram-Antworten (W200)
+
+- **Eine Antwort auf AZRAEL brauchte einen Verlauf in Redis.** `on_ai_reply`
+  (F19) antwortete nur, wenn für genau diesen Chat und diesen Nutzer ein
+  Verlauf vorlag — und der liegt ausschließlich in Redis. Ohne Redis lieferte
+  `ai_history_load()` immer `[]`, damit wurde **jede** Antwort still
+  verworfen; mit Redis nach einer Stunde (`AI_HISTORY_TTL`) und immer dann,
+  wenn jemand anderes auf AZRAELs Antwort antwortete. Eine KI-Antwort wird
+  jetzt an ihrem Fuß („— 3.2s · Modell") und an gemerkten Nachrichtenkennungen
+  erkannt; die Antwort darauf läuft immer, und die beantwortete Nachricht geht
+  als Zusammenhang mit, wenn kein Verlauf da ist.
+- **Themen-Gruppen: jede Nachricht galt als Antwort auf den Bot.** Der Bot
+  legt seit W168 je Tracking ein Thema an. Dort trägt Telegram an jeder
+  Nachricht einen Bezug auf die Eröffnungsnachricht des Themas — und die
+  stammt vom Bot. Alles lief in die Sackgasse oben, und die Ansprache
+  „@Azrael …" (registriert nur für Nachrichten ohne Bezug) kam nie dran. Der
+  Themen-Kopf zählt jetzt nicht als Antwort (`nc.tgantwort.echte_antwort`).
+- **Antwort auf einen anderen Nutzer mit „@Azrael …"** fiel durch beide
+  Filter — keine Antwort auf den Bot, aber eine Antwort. Wird jetzt beantwortet.
+- Beide Handler rufen dieselbe Entscheidung (`_tg_ki_dialog`,
+  `nc/tgantwort.py`). Antworten auf Live- und Aufnahme-Meldungen bleiben still,
+  außer mit Ansprache, im Privatchat oder bei laufendem Gespräch — sonst
+  schriebe AZRAEL unter jede Meldung, auf die jemand „geil" antwortet.
+
+### Gegenprobe
+
+- Vertrag für die Entscheidung (Themen-Kopf mit und ohne `is_topic_message`,
+  KI-Antwort am Fuß und an der Kennung, Name nicht als Wortteil) und einer im
+  Rauchtest gegen den echten Bot **ohne Redis**: beide Handler, sechs Fälle,
+  und `_run_ai_call` bis zum LLM-Aufruf (Zusammenhang vor der Frage, Antwort
+  gemerkt). Bis hierher deckte kein einziger Vertrag diese Handler.
+- 11 Mutationsproben, alle gefangen. Eine entwischte zunächst: der Vertrag
+  prüfte den Themen-Kopf nur zusammen mit `is_topic_message`, sodass die
+  Prüfung über das Dienstfeld ungeprüft blieb.
+- W201–W203: drei neue Verträge (KI-Wahl samt Route, Plätze/Deckel/Cloud,
+  Sendebild-Zeichen) und zwei im Rauchtest gegen den echten Bot (Wahl „lokal"
+  fragt nie die Cloud, „free" nie lokal; /brain-Antwort zurück ans Brain,
+  `@`-Name, Fuß mit Herkunft). 35 Mutationsproben, alle gefangen — drei
+  entwischten zunächst und haben die Verträge geschärft: ein Formular statt
+  JSON wurde mit falscher Kodierung geschickt, eine halbe Zeichentabelle fiel
+  nur zufällig auf, und „free" war von „auto" nicht zu unterscheiden, solange
+  das lokale Modell im Test nicht lief.
+- W204/W205: zwei Verträge (Abgleich samt Routen, Chat-Kasten von den Daten
+  bis zum ffmpeg-Eingang, Lebenszyklus mit Browser-Attrappe, Schriftprüfung in
+  Python und Shell) und einer im Rauchtest (ohne lesbaren Ausschluss kein
+  Abgleich). Echt geprüft: Chromium rendert den Kasten mit Farb-Emoji,
+  ffmpeg setzt ihn an die Stelle des Text-Chats, libass zeichnet mit Symbola
+  einfarbige Emoji. 21 Mutationsproben, alle gefangen — eine entwischte
+  zunächst: die Shell-Attrappe für `fc-list` unterschied 😀 und die Rose nicht.
+- Anker gewandert: der W177-Vertrag zählt fünf statt vier `llm.chat`-Stellen
+  (dazu kam `_nur_lokal_sync`), W181/W110 erwarten `-np 4 -c 32768` und
+  `MemoryMax=7G`, W196 liest `in_arbeit` in `lage()`.
+
 ## [5.8.0] — 2026-11-13 · „Nachlese" (W199)
 
 Der Betreiber: Bughunt einschließlich Sicherheit, das Repo aufräumen und

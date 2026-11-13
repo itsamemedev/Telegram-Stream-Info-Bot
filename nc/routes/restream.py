@@ -49,6 +49,8 @@ from nc.stats import _collect_session_stats
 from nc.textutil import clean_username
 from nc.util import _loop_not_ready
 
+from nc import cfgstore as _nc_cfgstore
+from nc import restreamliste as _nc_rsliste
 from nc import ctx as _ctx
 
 bp = Blueprint("restream", __name__)
@@ -419,6 +421,10 @@ def api_restream_list():
         def _auto(r):
             try: return bool(r["auto_restream"])
             except (IndexError, KeyError): return False
+
+        def _herkunft(r):
+            # Vor dem ersten Start mit W204 gibt es die Spalte noch nicht.
+            return (r["herkunft"] or "") if "herkunft" in r.keys() else ""
         return jsonify(ok=True, enabled=en, reason=why,
                        configured=bool(_nc_rscfg.ingest("kick") or any(r["ingest_url"] for r in rows)),
                        targets=[{
@@ -427,6 +433,8 @@ def api_restream_list():
                            "has_key": bool(r["stream_key"] or _nc_rscfg.ziel("kick")["key"]),
                            "transcode": bool(r["transcode"]), "enabled": bool(r["enabled"]),
                            "auto_restream": _auto(r),
+                           # v5.9-W204: aus den Trackings abgeglichen?
+                           "herkunft": _herkunft(r),
                            "status": r["status"], "last_error": r["last_error"],
                            "uptime_s": live.get(r["id"], {}).get("uptime_s"),
                            "attempts": live.get(r["id"], {}).get("attempts"),
@@ -451,6 +459,10 @@ def api_restream_create():
     if not src:
         return jsonify(ok=False, error=_t("source_username fehlt")), 400
     try:
+        # v5.9-W204: wer einen Nutzer von Hand anlegt, nimmt ihn von der
+        # Ausschlussliste — sonst bliebe er nach dem naechsten Loeschen aus.
+        _nc_cfgstore.aendern(_nc_rsliste.AUSSCHLUSS_SCHLUESSEL,
+                             lambda alt: _nc_rsliste.zulassen(alt, src), fehlt=[], art=list)
         with db_conn() as conn:
             conn.execute(
                 "INSERT INTO restreams (created_at, label, source_username, ingest_url, stream_key, "
@@ -510,6 +522,18 @@ def api_restream_delete(rid):
                        rid, res)
         return jsonify(ok=False, error=_t("Restream ließ sich nicht stoppen — der Eintrag bleibt, damit er steuerbar bleibt.")), 503
     try:
+        with db_conn() as conn:
+            r = conn.execute("SELECT source_username FROM restreams WHERE id=?",
+                             (rid,)).fetchone()
+        # v5.9-W204: geloescht heisst „diesen Nutzer nicht restreamen" — ohne
+        # den Ausschluss truege ihn der naechste Abgleich aus den Trackings
+        # sofort wieder ein, und Loeschen haette keine Wirkung. Erst der
+        # Ausschluss, dann das Loeschen: scheitert der Ausschluss, bleibt die
+        # Zeile, statt in zwei Minuten still zurueckzukommen.
+        if r is not None and r["source_username"]:
+            _nc_cfgstore.aendern(_nc_rsliste.AUSSCHLUSS_SCHLUESSEL,
+                                 lambda alt: _nc_rsliste.ausschliessen(alt, r["source_username"]),
+                                 fehlt=[], art=list)
         with db_conn() as conn:
             conn.execute("DELETE FROM restreams WHERE id=?", (rid,))
             conn.commit()

@@ -512,11 +512,27 @@ def _register_db_handlers() -> None:
     # --- M6: Tier 'llm' wird aktiv — die LETZTE Instanz ------------------
     from brain import BudgetExhausted
 
-    def _llm_guarded(messages, max_tokens=None):
+    def _llm_guarded(messages, max_tokens=None, vorrang="reaktion"):
         """Budget/Busy → Unhandled: der Router soll ehrlich 'kein Tier
-        konnte' melden statt auf einen Slot zu warten."""
+        konnte' melden.
+
+        v5.9-W201: die Wahl im Deck (lokal/free/auto) bestimmt die Kette —
+        auch /brain und die Brain-Seite folgen ihr. Das Ergebnis traegt
+        `backend`; daraus zeigen Telegram und Deck, wer geantwortet hat.
+
+        v5.9-W202 `vorrang`: eine Frage (/brain, Brain-Seite) ist ein
+        Gespraech — sie darf auf einen freien Platz warten und ueberholt
+        Reaktionen. Bis dahin flog sie sofort mit „Slot belegt" raus, sobald
+        irgendwo gerechnet wurde."""
+        from nc import kiwahl as _kiwahl
         try:
-            res = get_brain().llm.chat(messages, max_tokens=max_tokens)
+            res = get_brain().llm.chat(messages, max_tokens=max_tokens,
+                                       backends=_kiwahl.brain_kette(),
+                                       vorrang=vorrang,
+                                       # Nur eine Frage wartet; alles andere wie
+                                       # bisher sofort (Router-Pfad nicht blockieren).
+                                       warten_s=(_kiwahl.wartezeit(vorrang)
+                                                 if vorrang == "gespraech" else 0.0))
         except BudgetExhausted as e:
             raise Unhandled(str(e)) from None
         if not res["ok"]:
@@ -539,8 +555,14 @@ def _register_db_handlers() -> None:
         sysmsg = ("Du bist AZRAEL, das Brain von NIGHTCRAWLER (TikTok-"
                   "Live-Recording/Restream-System). Antworte knapp, "
                   "deutsch, technisch präzise.")
-        return _llm_guarded([{"role": "system", "content": sysmsg},
-                             {"role": "user", "content": prompt}])
+        msgs = [{"role": "system", "content": sysmsg}]
+        # v5.9-W201: eine Antwort auf eine /brain-Antwort setzt das Gespraech
+        # fort — die beantwortete Nachricht ist der Zusammenhang.
+        vorher = str(payload.get("vorher") or "").strip()
+        if vorher:
+            msgs.append({"role": "assistant", "content": vorher[:3000]})
+        msgs.append({"role": "user", "content": prompt})
+        return _llm_guarded(msgs, vorrang="gespraech")
 
     def llm_explain(task):
         # Showcase des v37-'Warum?': Entscheidungslog → natürliche Sprache.

@@ -556,7 +556,6 @@ import os, re, sys, json, html, asyncio, logging, threading, shutil, glob, io, s
 import time as _time_mod                  # B4: war mid-file bei Z. 3554 — wird in get_cookie_health() benutzt
 _BOOT_TS = _time_mod.time()               # F82: Prozess-Start für /api/health-Uptime
 import collections as _collections        # B4: war mid-file bei Z. 1175
-import contextvars                       # v5.5-W196: welcher KI-Weg antwortete (je Aufruf)
 import atexit                            # v4.2-W97: Log-Schleuse am Prozessende leeren
 import signal as _signal_mod              # B4: war function-local — zentral importiert
 from datetime import datetime, timezone, timedelta
@@ -607,6 +606,9 @@ from nc import audiocue as _nc_audiocue  # v4.1-W20: Signalton/Ducking
 from nc import brainstate as _nc_brainstate  # v4.1-W21: Brain-Panel-Zustand
 from nc import tiktokheaders as _nc_tthdr  # v4.1-W23: Kopfzeilen fuer TikTok-Abrufe
 from nc import restreamcfg as _nc_rscfg  # v4.1-W22: Sendeziele + Pruef-Parameter
+from nc import restreamliste as _nc_rsliste  # v5.9-W204: Trackings -> Restream-Auto-Liste
+from nc import chatbild as _nc_chatbild  # v5.9-W205: Chat-Kasten aus Chromium (Emoji)
+from nc import schriftzeichen as _nc_schriftzeichen  # v5.9-W205: fehlen Emoji-Schriften?
 from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustand
 from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import sendebruecke as _nc_bruecke  # v4.2-W130: Verbindung ueberlebt den Quellwechsel
@@ -983,6 +985,7 @@ from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
 from nc import backupcfg as _nc_backup     # v4.1-W24: Sicherung, Aufbewahrung
 from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibweg
 from nc import abwehrlage as _nc_abwehrlage  # v5.8-W199: Sperrliste + SSH-Angriffe
+from nc import tgantwort as _nc_tgantwort  # v5.8-W200: wann AZRAEL in Telegram antwortet
 from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
 from nc import dashauth as _nc_dashauth   # v4.1-W30: ist das Deck offen?
 from nc import webserver as _nc_webserver  # v4.2-W84: Server + Bindung
@@ -3984,6 +3987,9 @@ async def llm_chat(messages: List[dict],
        Vertrag unverändert: (text, error_kind). Vision-Anfragen (images) gehen
        direkt an freeai — die Brain-Runtime ist text-only."""
     timeout = AI_TIMEOUT if timeout is None else timeout
+    _gewaehlt = await _ki_nach_deckwahl(messages, model, timeout, "Chat")
+    if _gewaehlt is not None:
+        return _gewaehlt
     # v4.0-W64: Claude zuerst, sobald ein Anthropic-Key gesetzt ist. Auth-Fehler
     # NICHT still verschlucken (der Betreiber soll den falschen Key merken);
     # transiente Fehler (rate/unreachable) fallen auf die keyless Kette zurück.
@@ -3993,6 +3999,7 @@ async def llm_chat(messages: List[dict],
             _nc_claude.chat_sync, messages, _akey, _anthropic_model(model),
             timeout if (timeout and timeout > 0) else 60)
         if _txt:
+            _nc_kiwahl.herkunft_setzen("claude")
             return (_txt, None)
         if _err == "auth":
             return (None, "auth")
@@ -4013,11 +4020,89 @@ async def llm_chat(messages: List[dict],
                 timeout if (timeout and timeout > 0) else 3600,
                 None, ["llamacpp"])
             if _res.get("ok"):
+                _nc_kiwahl.herkunft_setzen("lokal")
                 return (_res["text"], None)
             _ki_rueckfall_melden("Chat", _res.get("error"))
         except Exception as _e:
             _ki_rueckfall_melden("Chat", "%s: %s" % (type(_e).__name__, _e))
-    return await _nc_freeai.chat(messages, model=model, timeout=timeout)
+    return await _nur_free(messages, model, timeout)
+
+
+async def _ki_nach_deckwahl(messages, model, timeout, weg):
+    """v5.9-W201: die eine Wahl aus dem Deck (nc/kiwahl.deck_wahl) geht vor.
+
+    -> (text, fehler), wenn sie entscheidet (lokal oder free), sonst None —
+    dann laeuft die bisherige Kette des Aufrufers. Loescht vorher die
+    Herkunft, damit kein Rest der vorigen Anfrage im Fuss steht.
+
+    Die aeussere Grenze bei „lokal" umfasst das Warten auf einen freien Platz
+    (W202): mit timeout+10 allein schnitt sie eine Antwort ab, die nach dem
+    Warten gerade fertig wurde, und der Faden hielt den Platz trotzdem."""
+    _nc_kiwahl.herkunft_loeschen()
+    wahl = _nc_kiwahl.deck_wahl()
+    if wahl == _nc_kiwahl.LOKAL:
+        vorr = "reaktion" if weg == "Reaktion" else "gespraech"
+        return await asyncio.wait_for(
+            asyncio.to_thread(_nur_lokal_sync, messages, timeout, weg),
+            timeout=(timeout or AI_TIMEOUT) + _nc_kiwahl.wartezeit(vorr) + 10)
+    if wahl == _nc_kiwahl.FREE:
+        return await _nur_free(messages, model, timeout)
+    return None
+
+
+async def _nur_free(messages, model, timeout):
+    """v5.9-W201: die freie Cloud-KI (nc.freeai) — und merken, dass sie es war."""
+    txt, err = await _nc_freeai.chat(messages, model=model, timeout=timeout)
+    if txt:
+        _nc_kiwahl.herkunft_setzen("free")
+    return txt, err
+
+
+def _nur_free_sync(messages, model, timeout):
+    txt, err = _nc_freeai.chat_sync(messages, model=model, timeout=timeout)
+    if txt:
+        _nc_kiwahl.herkunft_setzen("free")
+    return txt, err
+
+
+def _nur_lokal_sync(messages, timeout, weg):
+    """v5.9-W201: nur das lokale Modell — fuer die Wahl „lokal" im Deck.
+
+    Kein Claude, kein Rueckfall in die Cloud: wer „lokal" waehlt, will wissen,
+    dass nichts hinausgeht. Scheitert es, kommt der Grund zurueck (der
+    Aufrufer zeigt ihn) und steht gedrosselt im Log. Bilder kann der lokale
+    Pfad nicht (nc/kiwahl.py) — das ist hier ein Grund, keine Umleitung."""
+    if any(m.get("images") for m in messages):
+        return None, "lokal: das lokale Modell sieht keine Bilder (KI-Wahl im Deck auf Auto oder Free)"
+    # v5.9-W202: wer fragt, wartet auf einen freien Platz (Gespraech); eine
+    # Reaktion kuerzer. Ohne das hiess jede Frage bei belegtem Platz sofort
+    # „belegt" — und bei „lokal" gibt es keinen Ausweg in die Cloud.
+    vorr = "reaktion" if weg == "Reaktion" else "gespraech"
+    try:
+        from brain import get_brain
+        res = get_brain().llm.chat(messages, timeout if (timeout and timeout > 0) else 3600,
+                                   None, ["llamacpp"], vorrang=vorr,
+                                   warten_s=_nc_kiwahl.wartezeit(vorr))
+    except Exception as e:
+        grund = "%s: %s" % (type(e).__name__, e)
+    else:
+        if res.get("ok"):
+            _nc_kiwahl.herkunft_setzen("lokal")
+            try:
+                _nc_usage.record("brain", "llama.cpp", _nc_usage.estimate_tokens(messages),
+                                 _nc_usage.estimate_tokens(res.get("text", "")))
+            except Exception as e:
+                log.debug("Zaehlung lokal (%s): %s", weg, e)
+            return res["text"], None
+        grund = res.get("error") or "keine Antwort"
+    laut, weg_n = _nc_meldetakt.melden("ki-nur-lokal", weg + ":" + str(grund).split(":")[0][:40],
+                                       _time_mod.monotonic())
+    if laut:
+        log.warning("KI (%s): KI-Wahl 'lokal' — das lokale Modell antwortet nicht (%s); "
+                    "bewusst kein Wechsel in die Cloud. Abhilfe: `systemctl status "
+                    "llama-server`, oder im Deck (KI) auf Auto/Free stellen.%s",
+                    weg, grund, _nc_meldetakt.zusatz(weg_n))
+    return None, "lokal: %s" % grund
 
 
 def _ki_rueckfall_melden(weg, grund):
@@ -4053,12 +4138,20 @@ async def llm_list_models() -> Optional[List[str]]:
 def llm_chat_sync(messages, model=None, timeout=None):
     """Blockierender Chat für Flask-Routen/Threads. Claude → lokal → freeai."""
     timeout = AI_TIMEOUT if timeout is None else timeout
+    # v5.9-W201: die eine Wahl aus dem Deck geht vor (nc/kiwahl.deck_wahl).
+    _nc_kiwahl.herkunft_loeschen()
+    _wahl = _nc_kiwahl.deck_wahl()
+    if _wahl == _nc_kiwahl.LOKAL:
+        return _nur_lokal_sync(messages, timeout, "Deck")
+    if _wahl == _nc_kiwahl.FREE:
+        return _nur_free_sync(messages, model, timeout)
     # v4.0-W64: Claude zuerst (Dashboard/ENV-Key), sonst Brain → keyless.
     _akey = _anthropic_key()
     if _akey:
         _txt, _err = _nc_claude.chat_sync(messages, _akey, _anthropic_model(model),
                                           timeout if (timeout and timeout > 0) else 60)
         if _txt:
+            _nc_kiwahl.herkunft_setzen("claude")
             return (_txt, None)
         if _err == "auth":
             return (None, "auth")
@@ -4071,6 +4164,7 @@ def llm_chat_sync(messages, model=None, timeout=None):
                 messages, timeout if (timeout and timeout > 0) else 3600,
                 backends=["llamacpp"])     # v4.2-W177: Cloud folgt unten
             if _res.get("ok"):
+                _nc_kiwahl.herkunft_setzen("lokal")
                 # v4.0-W93: Brain-LLM (llama.cpp) liefert keine Tokens → schätzen.
                 try:
                     _nc_usage.record("brain", "llama.cpp",
@@ -4082,7 +4176,7 @@ def llm_chat_sync(messages, model=None, timeout=None):
             _ki_rueckfall_melden("Chat-sync", _res.get("error"))
         except Exception as _e:
             _ki_rueckfall_melden("Chat-sync", "%s: %s" % (type(_e).__name__, _e))
-    return _nc_freeai.chat_sync(messages, model=model, timeout=timeout)
+    return _nur_free_sync(messages, model, timeout)
 
 
 # v4.2-W4: beide Wege (brain, nc.freeai) liegen ausserhalb des Bots — er war
@@ -4128,6 +4222,10 @@ async def ai_chat(messages, model=None, timeout=None, zweck=None):
     # V37-B92: Zeitbudget IMMER begrenzen — die Reaction-Engine läuft in der
     # live-react-Loop; ein hängendes Backend darf sie nie blockieren.
     timeout = timeout if (timeout and timeout > 0) else REACTION_AI_TIMEOUT
+    _gewaehlt = await _ki_nach_deckwahl(messages, model or REACTION_AI_MODEL, timeout,
+                                        "Reaktion")
+    if _gewaehlt is not None:
+        return _gewaehlt
     # v4.0-W65: Claude zuerst, sobald ein Anthropic-Key gesetzt ist (auch die
     # Reaction-Engine läuft dann über Claude). Auth-Fehler → keine stille
     # Rückkehr auf keyless; transiente Fehler fallen auf die Kette zurück.
@@ -4146,7 +4244,7 @@ async def ai_chat(messages, model=None, timeout=None, zweck=None):
             on_error=_claude_grund)
         if _ctxt:
             _CLAUDE_PAUSE["bis"] = 0.0        # es geht wieder
-            _KI_WEG.set("claude")
+            _nc_kiwahl.herkunft_setzen("claude")
             return (_ctxt, None)
         if _cerr == "auth":
             return (None, "auth")
@@ -4192,27 +4290,24 @@ async def ai_chat(messages, model=None, timeout=None, zweck=None):
                                   None, ["llamacpp"]),
                 timeout=timeout + 10)
             if _res.get("ok"):
-                _KI_WEG.set("lokal")
+                _nc_kiwahl.herkunft_setzen("lokal")
                 return (_res["text"], None)
             _react_warn("brainfb", "Reaction-AI brain fehlgeschlagen (%s) → freeai."
                         % _res.get("error"))
         except Exception as _e:
-            # Budget oder belegter Slot sind kein Defekt, sondern die Bremse
-            # aus brain/llm.py (Concurrency 1, Stundenbudget) — eigener
-            # Schluessel, damit sie echte Ausfaelle nicht ueberdeckt.
+            # Deckel oder belegte Plaetze sind kein Defekt, sondern die Bremse
+            # aus brain/llm.py (Inferenz-Plaetze, optionaler Stundendeckel) —
+            # eigener Schluessel, damit sie echte Ausfaelle nicht ueberdeckt.
             _react_warn("brainbudget" if type(_e).__name__ == "BudgetExhausted"
                         else "brainfb",
                         "Reaction-AI lokal nicht verfuegbar (%s) → Cloud." % _e)
     # V37: einziger Cloud-Pfad = nc.freeai (keyless, Basen-Rotation, 429-Backoff)
-    _KI_WEG.set("cloud")
-    return await _nc_freeai.chat(messages, model=model or REACTION_AI_MODEL,
-                                 timeout=timeout)
+    return await _nur_free(messages, model or REACTION_AI_MODEL, timeout)
 
 
-# v5.5-W196: welcher Weg die letzte ai_chat-Antwort lieferte — je Aufruf, nicht
-# global (ein ContextVar folgt dem awaitenden Task; zwei gleichzeitige Aufrufe
-# ueberschreiben sich nicht).
-_KI_WEG = contextvars.ContextVar("ki_weg", default="")
+# v5.5-W196 stand hier _KI_WEG (welcher Weg die letzte ai_chat-Antwort
+# lieferte). v5.9-W201: die Herkunft liegt in nc/kiwahl.py — dort lesen sie
+# auch die Deck-Routen, ohne Umweg ueber den Bot.
 
 
 async def _azrael_ki(messages, model, timeout, zweck):
@@ -4222,12 +4317,14 @@ async def _azrael_ki(messages, model, timeout, zweck):
     wird nur gezaehlt, wer geantwortet hat. Beides steht in /healthz
     (`sparen.azrael_ki`), damit „mit wem spricht man eigentlich?" eine
     nachsehbare Antwort hat."""
+    _nc_kiwahl.herkunft_loeschen()
     if (_nc_kiwahl.azrael_wahl() == _nc_kiwahl.LOKAL
             and not any(m.get("images") for m in messages)):
         return await _azrael_lokal(messages, _nc_kiwahl.vorrang(zweck))
-    _KI_WEG.set("")
     txt, err = await ai_chat(messages, model=model, timeout=timeout)
-    _nc_kiwahl.weg_zaehlen(_KI_WEG.get() or "cloud" if txt else "verworfen", err or "")
+    # AZRAEL_WEG fuehrt die Cloud seit W196 als "cloud" (/healthz liest es so).
+    _h = {"free": "cloud"}.get(_nc_kiwahl.herkunft(), _nc_kiwahl.herkunft())
+    _nc_kiwahl.weg_zaehlen((_h or "cloud") if txt else "verworfen", err or "")
     return txt, err
 
 
@@ -4253,6 +4350,7 @@ async def _azrael_lokal(messages, vorr):
     if not res.get("ok"):
         return _azrael_schweigt_melden(vorr, res.get("error") or "keine Antwort")
     _nc_kiwahl.weg_zaehlen("lokal")
+    _nc_kiwahl.herkunft_setzen("lokal")
     return res["text"], None
 
 
@@ -6157,7 +6255,7 @@ async def _extract_file_payload(bot, file_obj, mime_hint: str = "") -> dict:
 
 
 async def _run_ai_call(update, context, prompt_text: str,
-                        file_obj=None, mime_hint: str = ""):
+                        file_obj=None, mime_hint: str = "", vorher: str = ""):
     """F16: gemeinsame Logik für /ai (mit/ohne Datei).
        prompt_text ist die User-Frage (Caption oder Args). file_obj ist optional
        ein Telegram File/PhotoSize/Document das als Kontext mitgeschickt wird."""
@@ -6220,6 +6318,11 @@ async def _run_ai_call(update, context, prompt_text: str,
     history = await ai_history_load(chat_id, user_id)
     messages = [{"role": "system", "content": AI_SYSTEM_PROMPT}]
     messages.extend(history)
+    if vorher and not history:
+        # v5.8-W200: eine Antwort auf AZRAEL ohne gespeicherten Verlauf (kein
+        # Redis, abgelaufen, oder ein anderer Nutzer antwortet) — die
+        # beantwortete Nachricht ist der Zusammenhang, sonst raet die KI.
+        messages.append({"role": "assistant", "content": vorher})
     user_msg = {"role": "user", "content": full_prompt}
     if images:
         user_msg["images"] = images
@@ -6228,21 +6331,45 @@ async def _run_ai_call(update, context, prompt_text: str,
     started = datetime.now(timezone.utc)
     # FIX: vorher AI_TIMEOUT (120s) -> killte langsame Modelle (claude-fable auf CPU braucht laenger).
     # Jetzt wie die Dashboard-AI: grosszuegiger Timeout, der praktisch nur bei totaler Stille greift.
-    response, err_kind = await llm_chat(messages, model=use_model, timeout=AI_STREAM_TIMEOUT)
+    # v5.9-W201: AZRAEL in Telegram spricht ueber denselben Weg wie im Stream
+    # (_azrael_ki: AZRAEL_LLM bzw. die Wahl im Deck). Vorher llm_chat — das
+    # fragte AZRAEL_LLM nie und landete still bei der freien Cloud-KI.
+    response, err_kind = await _azrael_ki(messages, use_model, AI_STREAM_TIMEOUT, "gespraech")
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
     duration_ms = int(elapsed * 1000)
+    _etikett = _nc_kiwahl.beschriftung(_nc_kiwahl.herkunft(), use_model)
+
+    if response is None and str(err_kind or "").startswith("lokal"):
+        # Wahl „lokal" und das lokale Modell schwieg: sagen, statt fremd zu antworten.
+        # Zwei Literale ohne Backslash: i18n_extract sammelt nur solche ein
+        # (ein „\n" im Literal hielt den Satz aus dem Katalog).
+        await msg.edit_text(
+            "⚠️ <b>%s</b>\n<i>%s</i>\n<code>%s</code>" % (
+                _nc_i18n.t("Lokales Modell antwortet nicht"),
+                _nc_i18n.t("Die KI-Wahl steht auf „lokal“ — bewusst ohne Wechsel in die "
+                           "Cloud. Im Deck (KI) auf Auto oder Free stellen, oder "
+                           "llama-server prüfen."),
+                safe(str(err_kind)[6:160])),
+            parse_mode=ParseMode.HTML)
+        add_ai_log_entry(chat_id, user_id, prompt_text, None, "lokal", duration_ms,
+                         error=str(err_kind)[:200], file_kind=file_kind, file_size=file_size)
+        return
 
     if response is None:
         err_text_map = {
             "net":        "Kein LLM erreichbar (Brain-Runtime + freeai-Basen). Netz/llama-server prüfen.",
             "timeout":    f"LLM hat länger als {AI_TIMEOUT}s gebraucht — Backend zu langsam oder hängt.",
-            "rate_limit": "freeai: alle Basen im Rate-Limit (429) — kurz warten, Rotation läuft.",
-            "auth":       "freeai: Base verlangt API-Key (FREEAI_BASES 'url|key' setzen oder Base wechseln).",
+            # v5.9-W202: Abhilfe aus nc.freeai — dort steht, welcher Schluessel fehlt.
+            "rate_limit": "freeai: " + _nc_freeai.abhilfe("rate_limit") + ".",
+            "auth":       "freeai: " + _nc_freeai.abhilfe("auth") + ".",
             "http":       "LLM-HTTP-Fehler. Siehe debug.log.",
             "empty":      "LLM lieferte leere Antwort. Siehe debug.log.",
         }.get(err_kind, "Unbekannter Fehler.")
+        # Kopf uebersetzt, Grund als Text: ein f-String durch t() trifft nie
+        # einen Katalogeintrag und bliebe in jeder Sprache deutsch.
         await msg.edit_text(
-            _nc_i18n.t(f"⚠️ <b>AI nicht verfügbar</b>\n<i>{err_text_map}</i>"),
+            "⚠️ <b>%s</b>\n<i>%s</i>" % (_nc_i18n.t("AI nicht verfügbar"),
+                                         safe(_nc_i18n.t(err_text_map))),
             parse_mode=ParseMode.HTML)
         add_ai_log_entry(chat_id, user_id, prompt_text, None, use_model, duration_ms,
                          error=err_kind, file_kind=file_kind, file_size=file_size)
@@ -6257,22 +6384,31 @@ async def _run_ai_call(update, context, prompt_text: str,
         if r is not None: await r.incr("ai_calls_total")
     except Exception: pass
 
-    # Persist log row
-    add_ai_log_entry(chat_id, user_id, prompt_text, response, use_model, duration_ms,
+    # Persist log row — mit der Herkunft (lokal/free/Claude) im Modellfeld,
+    # damit der KI-Log im Deck sie zeigt (v5.9-W201).
+    add_ai_log_entry(chat_id, user_id, prompt_text, response, _etikett, duration_ms,
                      error=None, file_kind=file_kind, file_size=file_size)
 
-    # Antwort als plain text + Footer
+    # Antwort als plain text + Footer. v5.9-W201: der Fuss nennt, WER
+    # geantwortet hat — vorher das eingestellte Modell, auch wenn die Cloud
+    # antwortete.
     file_marker = f" · {file_kind}" if file_kind else ""
-    footer = f"\n\n— {elapsed:.1f}s · {use_model}{file_marker}"
+    footer = f"\n\n— {elapsed:.1f}s · {_etikett}{file_marker}"
     chunks = split_for_telegram(response + footer, 4000)
+    # v5.8-W200: jede Nachricht, die einen Teil der Antwort traegt, merken —
+    # eine Antwort darauf ist ein Weiterreden (nc/tgantwort.py). Der Fuss steht
+    # nur am letzten Stueck.
+    _nc_tgantwort.merken(chat_id, msg.message_id)
     if len(chunks) == 1:
         try: await msg.edit_text(_nc_i18n.t(chunks[0]))
         except Exception as e: log.warning(f"AI edit_text failed: {e}")
     else:
         try: await msg.edit_text(_nc_i18n.t(chunks[0]))
-        except Exception: pass
+        except Exception as e: log.warning(f"AI edit_text failed: {e}")
         for c in chunks[1:]:
-            try: await update.message.reply_text(_nc_i18n.t(c))
+            try:
+                _teil = await update.message.reply_text(_nc_i18n.t(c))
+                _nc_tgantwort.merken(chat_id, getattr(_teil, "message_id", None))
             except Exception as e: log.warning(f"AI follow-up reply failed: {e}")
 
 
@@ -7592,32 +7728,63 @@ async def sysres(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """F19: Reply auf eine vorherige AI-Antwort des Bots → automatisch als
-       AI-Follow-up verarbeiten ohne dass /ai nochmal getippt werden muss.
+    """F19: Nachrichten mit Antwort-Bezug (filters.REPLY). Entschieden wird in
+    _tg_ki_dialog — siehe dort, warum das nicht mehr „Antwort auf den Bot mit
+    Verlauf in Redis" heissen darf (v5.8-W200)."""
+    await _tg_ki_dialog(update, context)
 
-       Triggered nur wenn:
-       - Message ist Reply auf irgendeine Bot-Message
-       - Reply-Text enthält keine andere /command (nicht mit / starten)
-       - User hat Conversation-History (sonst könnte es Zufall sein)"""
-    if not _is_authorized(update): return
-    msg = update.message
-    if not msg or not msg.text: return
-    if msg.text.startswith("/"): return  # explizite Commands haben Vorrang
 
-    reply_to = msg.reply_to_message
-    if not reply_to: return
-    me = await context.bot.get_me()
-    if not reply_to.from_user or reply_to.from_user.id != me.id: return
+async def _tg_ki_dialog(update, context):
+    """v5.8-W200: wann AZRAEL in Telegram antwortet — fuer BEIDE Handler.
 
-    # Nur loslegen wenn die Conversation-History für (chat, user) existiert.
-    # Vermeidet dass jeder Bot-Reply (z.B. Ankündigungen) AI triggert.
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    history = await ai_history_load(chat_id, user_id)
-    if not history:
+    Der Betreiber: „In Telegram antwortet das Brain nicht auf
+    Antwort-Nachrichten." Bis hierher verlangte eine Antwort auf den Bot einen
+    Verlauf in Redis (ohne Redis: nie), Themen-Gruppen schickten jede
+    Nachricht als „Antwort auf den Bot" in genau diese Sackgasse, und eine
+    Antwort auf einen anderen Nutzer mit „@Azrael" fiel durch beide Filter.
+    Die Regeln stehen in nc/tgantwort.py."""
+    if not _is_authorized(update):
         return
+    msg = update.message
+    if not msg or not msg.text:
+        return
+    chat = update.effective_chat
+    privat = bool(chat and chat.type == "private")
+    bezug = _nc_tgantwort.echte_antwort(msg)
+    an_bot = False
+    if bezug is not None and getattr(bezug, "from_user", None) is not None:
+        me = await context.bot.get_me()
+        an_bot = bezug.from_user.id == me.id
+    brain = an_bot and _nc_tgantwort.ist_brain_antwort(bezug)
+    ki = an_bot and not brain and _nc_tgantwort.ist_ki_antwort(msg.chat_id, bezug)
+    verlauf = False
+    if an_bot and not ki and not brain:
+        # Nur fragen, wenn es entscheidet: Redis ist optional und langsam weg.
+        verlauf = bool(await ai_history_load(chat.id, update.effective_user.id))
+    name = _tg_botname(context.bot)
+    art = _nc_tgantwort.entscheiden(msg.text, privat, an_bot, ki, verlauf,
+                                    brain_antwort=brain, bot_name=name)
+    frage = _nc_tgantwort.frage_ohne_namen(msg.text, name)
+    if art == _nc_tgantwort.BRAIN:
+        from brain import get_brain
+        await _brain_fragen(update, get_brain(), frage[:2000],
+                            vorher=_nc_tgantwort.ohne_brain_kopf(bezug.text or "")[:3000])
+    elif art == _nc_tgantwort.FOLGE:
+        await _run_ai_call(update, context, frage[:2000],
+                           vorher=_nc_tgantwort.ohne_fuss(bezug.text or "")[:3000])
+    elif art == _nc_tgantwort.ANSPRACHE:
+        await _run_ai_call(update, context, frage[:600])
 
-    await _run_ai_call(update, context, msg.text)
+
+def _tg_botname(bot):
+    """Der @-Name des Bots, oder "" (vor initialize() kennt python-telegram-bot
+    ihn noch nicht und wirft RuntimeError)."""
+    try:
+        return getattr(bot, "username", "") or ""
+    except RuntimeError as e:
+        log.info("Telegram: Bot-Name noch nicht bekannt (%s) — Ansprache nur ueber "
+                 "„Azrael“.", e)
+        return ""
 
 
 # Telegram nimmt von Bots hoechstens 50 MB je Datei an; 48 laesst Platz fuer
@@ -7683,25 +7850,10 @@ async def on_azrael_mention(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     Privatchat: jede normale Nachricht ist eine Ansprache — dafuer schreibt man
     einem Bot. In Gruppen nur bei genanntem Namen, sonst kommentierte AZRAEL
-    jede Zeile mit.
+    jede Zeile mit. v5.8-W200: dieselbe Entscheidung wie fuer Antworten
+    (_tg_ki_dialog), damit beide Wege nicht wieder auseinanderlaufen.
     """
-    if not _is_authorized(update):
-        return
-    msg = update.message
-    if not msg or not msg.text:
-        return
-    text = msg.text.strip()
-    if text.startswith("/"):
-        return                                   # Commands haben Vorrang
-    if msg.reply_to_message:
-        return                                   # deckt on_ai_reply ab
-    privat = (update.effective_chat
-              and update.effective_chat.type == "private")
-    if not (privat or "azrael" in text.lower()):
-        return
-    # Den Namen aus der Frage nehmen, sonst antwortet die KI auf sich selbst.
-    frage = re.sub(r"@?azrael\b[:,]?\s*", "", text, flags=re.I).strip() or text
-    await _run_ai_call(update, context, frage[:600])
+    await _tg_ki_dialog(update, context)
 
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -13864,6 +14016,26 @@ def _fifo_schreiber_wecken(fifo):
         pass   # Aufraeumen: FIFO schon weg, dann wartet auch niemand darauf
 
 
+def _restream_chatbild_start(rid, nutzer, drossel=0):
+    """v5.9-W205: der Chat-Kasten aus Chromium (Emoji farbig, nc/chatbild.py).
+    -> FIFO oder None (dann bleibt der Text-Chat). Der Schalter
+    RESTREAM_CHAT_BILD steht beim Aufrufer (nc.chatbild.an)."""
+    binpath = _find_chromium()
+    if not binpath:
+        log.info("Chat-Kasten: kein Chromium — der Chat bleibt Text (Emoji ohne Bild).")
+        return None
+    _nc_schriftzeichen.emoji_hinweis("Chat-Kasten")
+    _x, _y, breite, hoehe = _nc_rscmd.chat_kasten(drossel)
+    url = (f"http://127.0.0.1:{DASHBOARD_PORT}/overlay/chat?user="
+           + quote(clean_username(nutzer or "")) + "&fs=%d&abstand=%d"
+           % (_nc_ff.CHAT_FS, _nc_ff.CHAT_ABSTAND))
+    return _nc_chatbild.starten(rid, _nc_ovbrowser.Dauerbrowser, binpath, url,
+                                "%d,%d" % (breite, hoehe),
+                                os.path.join(RECORDINGS_DIR, "overlay_live"),
+                                fps=_nc_rscmd.RESTREAM_CHAT_BILD_FPS, nice=FFMPEG_NICE_BG,
+                                melden=_loop_fehler)
+
+
 def _restream_html_overlay_stop(rid):
     """v4.2-W179: laeuft auch in einem Worker-Thread (Browser-Ende bis 5 s) —
     deshalb wird der Schuss-Task per call_soon_threadsafe beendet."""
@@ -15176,6 +15348,14 @@ class RestreamManager:
             # Eine Durchreicher-Adresse ist fuer ffprobe keine Adresse (W148).
             _html_ov = await asyncio.to_thread(_restream_html_overlay_start,
                                                rid, source_url=None if _nc_durch.ist(src) else src)
+        # v5.9-W205: Chat-Kasten aus Chromium, damit Emoji im Sendebild farbig
+        # stehen — nur im Studio-Layout und ohne HTML-Overlay (das ersetzt die
+        # Studio-Kette). Scheitert er, bleibt der Text-Chat.
+        _chat_fifo = None
+        if (RESTREAM_OVERLAY and transcode and _html_ov is None
+                and _restream_layout_mode() == "studio" and _nc_chatbild.an()):
+            _chat_fifo = await asyncio.to_thread(_restream_chatbild_start, rid,
+                                                 row["source_username"], _drossel_stufe(rid))
         # v4.2-W34: AZRAELs Frames-Feeder. Scheitert er, bleibt _av_feed None
         # und der Bauer nimmt die feste Schleife aus W32 — der Restream
         # startet in jedem Fall.
@@ -15210,14 +15390,15 @@ class RestreamManager:
                                           html_ov_fifo=_html_ov,
                                           avatar_feed=_av_feed,
                                           drossel=_drossel_stufe(rid),
-                                          tonlos=rid in self._tonlos)
+                                          tonlos=rid in self._tonlos,
+                                          chat_fifo=_chat_fifo)
             else:
                 cmd = _build_restream_cmd(src, ingest, key, transcode, tts_fifo=tts_fifo, rid=rid,
                                           html_ov_fifo=_html_ov, targets=_targets,
                                           avatar_feed=_av_feed,
                                           drossel=_drossel_stufe(rid),
                                           tonlos=rid in self._tonlos,
-                                          bruecke=_bruecke_an)
+                                          bruecke=_bruecke_an, chat_fifo=_chat_fifo)
             if RESTREAM_OVERLAY:
                 # Textdateien anlegen, BEVOR drawtext sie öffnet — abgewartet,
                 # aber im Thread (W179): os.replace stand unter Plattenlast bis
@@ -16058,6 +16239,7 @@ class RestreamManager:
         Teil ab."""
         _restream_tts_stop(rid)
         await asyncio.to_thread(_restream_html_overlay_stop, rid)
+        await asyncio.to_thread(_nc_chatbild.beenden, rid)       # v5.9-W205
         _restream_avatar_feeder_stop(rid)
         if info is not None:
             await self._relays_abraeumen(info)
@@ -19205,6 +19387,8 @@ def _aufnahme_chat_einarbeiten(video, chat, modus, username):
             f.write(_nc_aufnahmechat.ass(chat, breite or 720, hoehe or 1280))
         for versuch in ((modus, "untertitel") if modus == "einbrennen" else (modus,)):
             if versuch == "einbrennen":
+                # v5.9-W205: libass braucht eine Umriss-Schrift mit Emoji.
+                _nc_schriftzeichen.emoji_hinweis("Aufnahme-Chat")
                 cmd = _nc_aufnahmechat.einbrennen_cmd(
                     video, ass_pfad, tmp, preset=os.getenv("AUFNAHME_CHAT_PRESET", "veryfast"),
                     threads=_env_int("AUFNAHME_CHAT_THREADS", 2))
@@ -20049,7 +20233,7 @@ async def _restream_verify_loop():
                     if plat.get("youtube") == _nc_guard.OFFLINE:
                         await _youtube_restream_autoconfig(force=True)
                     await _RESTREAM_MGR.stop(rid, _keep_desired=True)
-                    _RESTREAM_GUARD.note_restart(rid, now)
+                    _RESTREAM_GUARD.note_restart(rid, now, dead=d["dead"])
                     await asyncio.sleep(3)
                     await _RESTREAM_MGR.start(rid, _src_watch=True)
                 elif act == _nc_guard.ACT_STOP:
@@ -20057,6 +20241,14 @@ async def _restream_verify_loop():
                     await _RESTREAM_MGR.stop(rid, _keep_desired=True)
                 elif is_running and d["reason"] == "alle Ziele bestaetigt":
                     _RESTREAM_GUARD.note_healthy(rid)
+                for _p in d.get("neu_aufgegeben") or ():
+                    # v5.9-W206: einmal laut, mit Abhilfe — danach bleibt das
+                    # Ziel still aus der Pruefung, bis es wieder sendet oder
+                    # der Restream von aussen gestoppt wird.
+                    log.error("Restream #%d: %s geht trotz Neuaufbau nicht live — "
+                              "kein weiterer Neuaufbau seinetwegen (er riss jedes Mal "
+                              "die laufenden Ziele mit ab). %s", rid, _p,
+                              _nc_guard.abhilfe(_p))
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -20107,12 +20299,39 @@ async def _restream_resume_after_restart():
         await _RESTREAM_MGR.start(r["id"], _src_watch=True)
 
 
+_RESTREAM_LISTE_TAKT_S = 120.0
+
+
+def _restream_liste_abgleichen():
+    """v5.9-W204: getrackte Nutzer (Telegram, Discord, Deck) in die Restream-
+    Auto-Liste — nc/restreamliste.py. Die Ausschlussliste wird STRENG gelesen:
+    ohne sie truege der Abgleich jeden geloeschten Nutzer wieder ein (W199)."""
+    aus = _nc_cfgstore.lesen(_nc_rsliste.AUSSCHLUSS_SCHLUESSEL, []) or []
+    with db_conn() as conn:
+        erg = _nc_rsliste.abgleichen(conn, datetime.now(timezone.utc).isoformat(), aus)
+        conn.commit()
+    if erg["neu"] or erg["ruht"] or erg["wieder"]:
+        log.info("Restream-Liste: %d aus den Trackings dazu (%s), %d ruhen (nicht mehr "
+                 "getrackt), %d wieder dabei.", len(erg["neu"]),
+                 ", ".join("@" + u for u in erg["neu"][:10]) or "—",
+                 len(erg["ruht"]), len(erg["wieder"]))
+    return erg
+
+
 async def _auto_restream_loop():
     """Prüft periodisch, ob ein Auto-Restream-Ziel gestartet/umgeschaltet werden muss.
        30s-Takt: im Single-Modus ist das die Failover-Latenz zum nächsten Live-User
-       (kostet nichts, solange ein Slot belegt ist — dann kehrt auto_start_due sofort um)."""
+       (kostet nichts, solange ein Slot belegt ist — dann kehrt auto_start_due sofort um).
+       v5.9-W204: alle zwei Minuten vorher der Abgleich mit den Trackings."""
     await asyncio.sleep(45)
+    _abgleich_t = -1e9
     while True:
+        if _nc_rsliste.an() and _time_mod.monotonic() - _abgleich_t >= _RESTREAM_LISTE_TAKT_S:
+            _abgleich_t = _time_mod.monotonic()
+            try:
+                await asyncio.to_thread(_restream_liste_abgleichen)
+            except Exception as e:
+                _loop_fehler("restream-liste", e)
         try:
             if _auto_on("auto_restream", True):
                 await _RESTREAM_MGR.auto_start_due()
@@ -24116,28 +24335,61 @@ async def brain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Entscheidungen 24h: {o.get('decisions_24h', '?')}"
                 f"{warn_lines}\n\nFrage stellen: /brain <frage>")
             return
-        # B120: Payload-Key war "question", der Handler in brain_bridge
-        # liest "prompt" -> jede Frage lief in Unhandled und die Antwort
-        # fiel auf den Default-String "keine Antwort" zurueck.
-        res = await asyncio.to_thread(b.router.route, "ask", {"prompt": q})
-        if not res.get("ok"):
-            # B120: Statt stumpf "keine Antwort" den echten Grund zeigen —
-            # der Router-Trace sagt, WELCHER Tier warum passen musste.
-            why = []
-            for t in (res.get("trace") or []):
-                mark = t.get("skip") or t.get("error")
-                if mark and mark != "kein Handler":
-                    why.append(f"{t['tier']}: {mark}")
-            await update.message.reply_text(
-                "🧠 Keine Antwort — " + (res.get("error") or "unbekannt")
-                + (("\n\n" + "\n".join(why[:4])) if why else "")
-                + "\n\nLLM-Status: /brain (ohne Argumente)")
-            return
-        _r = res.get("result")
-        txt = (_r.get("text") if isinstance(_r, dict) else None) or _r or "keine Antwort"
-        await update.message.reply_text(_nc_i18n.t(f"🧠 [{res.get('tier', '?')}] {str(txt)[:3500]}"))
+        await _brain_fragen(update, b, q)
     except Exception as e:
         await update.message.reply_text(_nc_i18n.t(f"❌ Brain nicht verfügbar: {e}"))
+
+
+# v5.9-W202: /brain wartet jetzt auf einen freien Platz (bis rund 90 s) und
+# rechnet dann bis BRAIN_LLM_TIMEOUT_S. Im Default-Pool hielte jede Frage
+# einen Thread fest, den DNS und Netz brauchen (W47) — bei 800 Mitgliedern
+# genuegt eine Welle Fragen. Ein eigener, begrenzter Pool; die Warteschlange
+# der Plaetze (brain/llm.py) weist den Rest sofort ab.
+_BRAIN_FRAGEN_POOL = _cf_thread.ThreadPoolExecutor(max_workers=16,
+                                                   thread_name_prefix="brainfrage")
+
+
+async def _brain_fragen(update, b, q, vorher=""):
+    """Eine Frage an das Brain (Router-Kaskade) und die Antwort in Telegram.
+
+    v5.9-W201 aus brain_cmd geloest: eine Antwort AUF eine /brain-Antwort
+    laeuft ueber denselben Weg, mit der beantworteten Nachricht als
+    Zusammenhang (`vorher`). Die Antwort beginnt mit „🧠 [Stufe · Herkunft]" —
+    daran erkennt nc/tgantwort.py sie wieder (nicht an gemerkten Kennungen:
+    die fuehren zu AZRAEL), und der Betreiber sieht, ob lokal oder free
+    geantwortet hat."""
+    # B120: Payload-Key war "question", der Handler in brain_bridge
+    # liest "prompt" -> jede Frage lief in Unhandled und die Antwort
+    # fiel auf den Default-String "keine Antwort" zurueck.
+    nutzlast = {"prompt": q}
+    if vorher:
+        nutzlast["vorher"] = vorher
+    try:
+        await update.message.chat.send_action("typing")
+    except Exception as _e:
+        log.debug("brain: Tipp-Anzeige nicht gesendet: %s", _e)
+    res = await asyncio.get_running_loop().run_in_executor(
+        _BRAIN_FRAGEN_POOL, b.router.route, "ask", nutzlast)
+    if not res.get("ok"):
+        # B120: Statt stumpf "keine Antwort" den echten Grund zeigen —
+        # der Router-Trace sagt, WELCHER Tier warum passen musste.
+        why = []
+        for t in (res.get("trace") or []):
+            mark = t.get("skip") or t.get("error")
+            if mark and mark != "kein Handler":
+                why.append(f"{t['tier']}: {mark}")
+        await update.message.reply_text(
+            "🧠 Keine Antwort — " + (res.get("error") or "unbekannt")
+            + (("\n\n" + "\n".join(why[:4])) if why else "")
+            + "\n\nLLM-Status: /brain (ohne Argumente)")
+        return
+    _r = res.get("result")
+    txt = (_r.get("text") if isinstance(_r, dict) else None) or _r or "keine Antwort"
+    _herk = _nc_kiwahl.herkunft_von(_r.get("backend")) if isinstance(_r, dict) else ""
+    if _herk:
+        _nc_kiwahl.herkunft_setzen(_herk)
+    _stufe = res.get("tier", "?") + (" · " + _nc_kiwahl.etikett(_herk) if _herk else "")
+    await update.message.reply_text("🧠 [%s] %s" % (_stufe, str(txt)[:3500]))
 
 
 async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -24549,14 +24801,15 @@ async def run_bot():
     # v5.4-W195: Cookie-Datei mit Beschriftung /cookies (vom Telefon aus)
     app.add_handler(MessageHandler(
         filters.Document.ALL & filters.CaptionRegex(r"^/cookies\b"), cookies_datei_cmd))
-    # F19: Reply-to-bot-message → AI-Follow-up
+    # F19: Nachrichten mit Antwort-Bezug. v5.8-W200: dazu gehoert in
+    # Themen-Gruppen JEDE Nachricht (Bezug auf den Themen-Kopf) — entschieden
+    # wird deshalb nicht am Filter, sondern in _tg_ki_dialog (nc/tgantwort.py).
     app.add_handler(MessageHandler(
         filters.REPLY & filters.TEXT & ~filters.COMMAND,
         on_ai_reply))
-    # B138: direkte Ansprache ("@Azrael …") und Privatnachrichten. MUSS nach
-    # dem Reply-Handler stehen: python-telegram-bot ruft in derselben Gruppe
-    # nur den ERSTEN passenden Handler auf, und ein Reply soll weiterhin als
-    # Follow-up laufen, nicht als neue Ansprache.
+    # B138: direkte Ansprache ("@Azrael …") und Privatnachrichten, ohne
+    # Antwort-Bezug. Beide Handler rufen dieselbe Entscheidung; in derselben
+    # Gruppe ruft python-telegram-bot nur den ERSTEN passenden Handler auf.
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.REPLY,
         on_azrael_mention))
@@ -26987,7 +27240,10 @@ _nc_reccmd.configure(
     RECORD_403_YTDLP=RECORD_403_YTDLP,
     STREAM_URL_MIN_TTL=_STREAM_URL_MIN_TTL)
 
-_nc_ovtext.configure(gift_source=OVERLAY_GIFT_SOURCE)
+# v5.9-W203: dieselbe Schrift wie drawtext — damit die Overlay-Dateien nur
+# Zeichen tragen, die sie hat (Emoji im Chat waren Kaestchen im Sendebild).
+_nc_ovtext.configure(gift_source=OVERLAY_GIFT_SOURCE,
+                     schrift=lambda: _nc_rscmd.schriftart(RESTREAM_FONT))
 
 _nc_cookies_datei.configure(
     datei=COOKIE_FILE, log=log,

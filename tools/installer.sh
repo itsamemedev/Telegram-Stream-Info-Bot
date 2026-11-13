@@ -1409,6 +1409,11 @@ if [ "$P_SYSTEM" = "J" ]; then
   # Das venv-Paket muss zur GEWAEHLTEN Python-Fassung passen — sonst
   # scheitert python -m venv mit "ensurepip is not available", und das
   # ist die mit Abstand haeufigste Sackgasse auf Debian.
+  # v5.9-W205: Emoji im Sendebild (Chromium) und in Aufnahmen (libass) —
+  # ohne die Schriften steht je Emoji ein Kaestchen (nc_emoji_pakete).
+  for _k in $(nc_emoji_pakete "$PKG"); do
+    if nc_paket_verfuegbar "$_k" || nc_quellen_leer; then SYS_PAKETE="$SYS_PAKETE $_k"; fi
+  done
   if [ "$PKG" = "apt" ] && ! "$PY" -c 'import ensurepip' 2>/dev/null; then
     PYV="$("$PY" -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
     SYS_PAKETE="$SYS_PAKETE $(nc_venvpaket "$PYV")"

@@ -54,7 +54,8 @@
 #   LLM_MODELL_VERZ     /opt/models
 #   LLM_THREADS         4       (Aufnahmen haben Vorrang — siehe nc-ki-backends)
 #   LLM_THREADS_BATCH   leer = wie LLM_THREADS; Threads nur fuers EINLESEN des Prompts
-#   LLM_KONTEXT         8192
+#   LLM_KONTEXT         8192    (je Platz — llama-server bekommt KONTEXT x PLAETZE)
+#   LLM_PLAETZE         4       gleichzeitige Antworten (--parallel), 1..16 (v5.9-W202)
 #   LLM_WEBUI           llamacpp  (none | auto | llamacpp) — Chat-Oberflaeche auf dem Port
 #   LLM_WEBUI_MCP_PROXY 0         1 = CORS-Proxy fuer MCP-Server der Oberflaeche
 #   IK_LLAMA_DIR        /opt/ik_llama.cpp
@@ -175,10 +176,24 @@ THREADS="$(wert LLM_THREADS 4)"
 # wie viel mehr Threads hier helfen, misst der Betreiber an SEINER Box.
 THREADS_BATCH="$(wert LLM_THREADS_BATCH "")"
 KONTEXT="$(wert LLM_KONTEXT 8192)"
+# v5.9-W202: mehrere Inferenz-Plaetze. Bis dahin lief llama-server mit einem
+# Platz, und der Bot hielt sich daran („Concurrency 1") — beim Betreiber mit
+# 800 Mitgliedern hiess jede zweite /brain-Frage „Slot belegt". Erzeugen haengt
+# auf der CPU am Speicherdurchsatz: vier Antworten in einem Schritt lesen die
+# Gewichte EINMAL, nicht viermal. llama-server teilt -c auf die Plaetze auf,
+# deshalb bekommt er KONTEXT x PLAETZE — jeder Platz behaelt seinen Kontext.
+# Der Bot liest die Zahl beim Server (/props), es gibt sie nur hier.
+PLAETZE="$(wert LLM_PLAETZE 4)"
 # v5.2-W193: KV-Cache quantisieren. Qwen3-14B: 40 Schichten x 8 KV-Koepfe x 128
 # x 2 Byte x (K+V) = 160 KiB je Token, bei 8192 Token Kontext 1,34 GB in f16,
 # mit q8_0 rund 0,71 GB. f16 = aus (wie bis v5.2.1).
 KV_CACHE="$(wert LLM_KV_CACHE q8_0)"
+# KV-Cache je Platz in MB (Qwen3-14B: 160 KiB je Token in f16). Fuer die RAM-
+# Vorpruefung und MemoryMax — ein Platz mehr ohne mehr Speicher endet sonst im
+# OOM-Kill mitten in einer Antwort.
+case "$KV_CACHE" in
+  q8_0) _kv_kib=85;; q5_0|q5_1) _kv_kib=55;; q4_0|q4_1|iq4_nl) _kv_kib=45;; *) _kv_kib=160;;
+esac
 # v5.6-W197: welche Chat-Oberflaeche llama-server auf seinem Port zeigt. Bis
 # v5.0 lief das Mainline-llama.cpp mit seiner neuen Oberflaeche — die hat in den
 # Einstellungen den Reiter „MCP". ik_llama.cpp liefert ohne Angabe (`auto`) die
@@ -209,6 +224,12 @@ if [ -z "$PORT" ]; then
 fi
 zahl(){ case "$2" in ''|*[!0-9]*) fehler "%s ist keine Zahl: %s" "$1" "$2"; exit 2;; esac; }
 zahl "Port" "$PORT"; zahl LLM_THREADS "$THREADS"; zahl LLM_KONTEXT "$KONTEXT"
+zahl LLM_PLAETZE "$PLAETZE"
+if [ "$PLAETZE" -lt 1 ] || [ "$PLAETZE" -gt 16 ]; then
+  fehler "LLM_PLAETZE muss zwischen 1 und 16 liegen: %s" "$PLAETZE"; exit 2
+fi
+KONTEXT_GESAMT=$(( KONTEXT * PLAETZE ))
+KV_MB_JE_PLATZ=$(( KONTEXT * _kv_kib / 1024 ))
 [ -z "$THREADS_BATCH" ] || zahl LLM_THREADS_BATCH "$THREADS_BATCH"
 case "$WEBUI" in none|auto|llamacpp) ;; *)
   fehler "LLM_WEBUI muss none, auto oder llamacpp sein: %s" "$WEBUI"; exit 2;; esac
@@ -389,7 +410,9 @@ webui_schalter(){
 }
 
 unit_text(){ # unit_text GROESSE_BYTES DATEI
-  local _gb=$(( ($1 + 1073741823) / 1073741824 + 4 ))
+  # Modell + 4 GB (Kontext des ersten Platzes und Puffer, wie bis v5.8) + der
+  # KV-Cache jedes weiteren Platzes (v5.9-W202).
+  local _gb=$(( ($1 + 1073741823) / 1073741824 + 4 + (KV_MB_JE_PLATZ * (PLAETZE - 1) + 1023) / 1024 ))
   local _kv; _kv="$(kv_schalter)$(tb_schalter)$(webui_schalter)"
   local _alias; _alias="$(printf '%s' "${MODELL_DATEI%.gguf}" | tr 'A-Z' 'a-z')"
   cat > "$2" <<UNIT
@@ -397,6 +420,7 @@ $MARKE — erzeugt von tools/ikllama.sh (v5.1-W181).
 # Nicht von Hand aendern: der naechste Lauf schreibt sie neu. Werte ueber die
 # .env (LLM_THREADS, LLM_KONTEXT, LLM_MODELL_DATEI, BRAIN_LLAMACPP_URL).
 #   -t $THREADS        Aufnahmen und Restreams haben Vorrang vor der KI (Nice, CPUWeight)
+#   -np $PLAETZE       gleichzeitige Antworten (LLM_PLAETZE, v5.9-W202); -c ist KONTEXT x PLAETZE
 #   -ngl 0      reiner CPU-Betrieb; die Vorgabe von ik_llama.cpp ist 999
 #   -rtr        Gewichte beim Laden in die verschraenkte Form umpacken (schneller auf CPU)
 #   --jinja     Chat-Vorlage aus dem Modell: nur damit wirkt enable_thinking=false
@@ -411,7 +435,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI -a $_alias --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup$_kv
+ExecStart=$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI -a $_alias --host 127.0.0.1 --port $PORT -t $THREADS -np $PLAETZE -c $KONTEXT_GESAMT -ngl 0 -rtr --jinja --no-warmup$_kv
 Nice=10
 CPUWeight=50
 MemoryMax=${_gb}G
@@ -457,7 +481,7 @@ kopf "Lokales LLM: ik_llama.cpp"
 nc_system_erkennen
 nc_init_erkennen
 info "Modell: %s/%s" "$MODELL_REPO" "$MODELL_DATEI"
-info "Server: %s  (127.0.0.1:%s, %s Threads, Kontext %s)" "$IK_BIN_E" "$PORT" "$THREADS" "$KONTEXT"
+info "Server: %s  (127.0.0.1:%s, %s Threads, %s Plaetze, Kontext %s je Platz)" "$IK_BIN_E" "$PORT" "$THREADS" "$PLAETZE" "$KONTEXT"
 [ "$TROCKEN" = 1 ] && info "Trockenlauf — Befehle werden gezeigt, nicht ausgefuehrt."
 
 ZST="$(zustand)"
@@ -561,13 +585,13 @@ if [ -f "$MODELL" ] && ! modell_fertig; then GROESSE="$(wc -c < "$MODELL" | tr -
 # vollstaendig im RAM, und daneben laufen ffmpeg, Whisper und der Bot.
 RAM_MB="${NC_IK_RAM_MB:-}"
 [ -n "$RAM_MB" ] || RAM_MB="$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)"
-RAM_NOETIG=$(( $(mb "$GROESSE") + 3072 ))
+RAM_NOETIG=$(( $(mb "$GROESSE") + 3072 + KV_MB_JE_PLATZ * (PLAETZE - 1) ))
 if [ -n "$RAM_MB" ] && [ "$RAM_MB" -lt "$RAM_NOETIG" ]; then
   if [ "$TROTZ_RAM" = 1 ]; then
     warn "Arbeitsspeicher knapp: %s MB vorhanden, rund %s MB noetig — auf Wunsch trotzdem (--trotz-ram)." "$RAM_MB" "$RAM_NOETIG"
   else
     fehler "Zu wenig Arbeitsspeicher: %s MB vorhanden, rund %s MB noetig. Nichts veraendert." "$RAM_MB" "$RAM_NOETIG"
-    erklaere "Ein kleineres Modell passt: LLM_MODELL_DATEI=Qwen3-14B-Uncensored.Q3_K_M.gguf (rund 7 GB) oder .Q2_K.gguf (rund 6 GB) in die .env, dann erneut. Wer es trotzdem will: --trotz-ram."
+    erklaere "Jeder Platz ueber den ersten kostet rund %s MB: LLM_PLAETZE senken (jetzt %s). Oder ein kleineres Modell: LLM_MODELL_DATEI=Qwen3-14B-Uncensored.Q3_K_M.gguf (rund 7 GB) oder .Q2_K.gguf (rund 6 GB) in die .env, dann erneut. Wer es trotzdem will: --trotz-ram." "$KV_MB_JE_PLATZ" "$PLAETZE"
     exit 1
   fi
 else
@@ -757,7 +781,7 @@ fi
 # ── Dienst ───────────────────────────────────────────────────
 if [ "$NC_INIT" != "systemd" ]; then
   warn "Ohne systemd (gefunden: %s) wird kein Dienst eingerichtet." "$NC_INIT"
-  info "Von Hand starten: %s" "$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI --host 127.0.0.1 --port $PORT -t $THREADS -c $KONTEXT -ngl 0 -rtr --jinja --no-warmup$(kv_schalter)$(tb_schalter)$(webui_schalter)"
+  info "Von Hand starten: %s" "$IK_BIN_E -m $MODELL_VERZ_E/$MODELL_DATEI --host 127.0.0.1 --port $PORT -t $THREADS -np $PLAETZE -c $KONTEXT_GESAMT -ngl 0 -rtr --jinja --no-warmup$(kv_schalter)$(tb_schalter)$(webui_schalter)"
   exit 0
 fi
 kopf "Dienst"
@@ -807,6 +831,7 @@ if ! warte_health; then
   if [ "$KV_CACHE" != "f16" ] && grep -q -- ' -ctk ' "$UNIT" 2>/dev/null; then
     warn "%s startet mit quantisiertem KV-Cache nicht (HTTP %s) — schreibe die Unit ohne (LLM_KV_CACHE=f16) und versuche es erneut." "$UNIT_NAME" "${_code:-—}"
     KV_CACHE=f16
+    _kv_kib=160; KV_MB_JE_PLATZ=$(( KONTEXT * _kv_kib / 1024 ))   # f16 braucht doppelt so viel
     _neu="$(mktemp)"; unit_text "$_groesse" "$_neu"
     lauf install -m 644 "$_neu" "$UNIT" || { rm -f "$_neu"; fehler "Unit nicht schreibbar: %s" "${UNIT#"$W"}"; exit 1; }
     rm -f "$_neu"

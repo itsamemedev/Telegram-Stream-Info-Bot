@@ -12,10 +12,14 @@
 #   - Ollama fällt trotzdem weg: llama-server ist EIN statisches Binary
 #     + EIN GGUF-File, kein Go-Daemon, kein Model-Registry-Overhead.
 #
-# BUDGET-PRINZIP: Das LLM ist Tier 4 — die LETZTE Instanz. Hartes
-# Stundenbudget + Concurrency 1 (CPU-Box: zwei parallele Inferenzen
-# würden Recording-ffmpeg die Kerne stehlen). Budget erschöpft ⇒ der
-# Router bekommt Unhandled und antwortet ehrlich "kein Tier konnte".
+# BUDGET-PRINZIP: Das LLM ist Tier 4 — die LETZTE Instanz. Begrenzt wird
+# es ueber die Inferenz-PLAETZE (so viele, wie llama-server mit --parallel
+# hat; die Unit laeuft mit Nice=10/CPUWeight=50, Aufnahmen haben Vorrang).
+# Ein Stundendeckel (BRAIN_LLM_MAX_CALLS_H) ist seit v5.9-W202 nur noch
+# Option: der alte Deckel 30/h lag beim Betreiber mit 800 Mitgliedern bei
+# 894 Ablehnungen — er schuetzte nicht die Kerne, er schaltete die KI ab.
+# Budget erschöpft ⇒ der Router bekommt Unhandled und antwortet ehrlich
+# "kein Tier konnte".
 #
 # WARUM stdlib-urllib statt aiohttp: brain/ ist thread-basiert (M1) und
 # dependency-frei. Blocking-HTTP ist bei Concurrency 1 kein Nachteil.
@@ -48,7 +52,23 @@ def _llamacpp_url() -> str:
 
 
 def _max_calls_h() -> int:
-    return env_int("BRAIN_LLM_MAX_CALLS_H", 30)
+    """Stundendeckel fuer lokale Antworten. 0 (Vorgabe seit v5.9-W202) = keiner.
+
+    Die Kerne schuetzen die Plaetze und die Unit (Nice/CPUWeight), nicht eine
+    Zahl je Stunde: bei rund 46 s je Antwort schafft EIN Platz ohnehin nur
+    rund 78 Antworten in der Stunde — 30 war weniger als die Haelfte davon."""
+    return max(0, env_int("BRAIN_LLM_MAX_CALLS_H", 0))
+
+
+def _plaetze_conf() -> str:
+    """BRAIN_LLM_PLAETZE: auto (Vorgabe) = so viele, wie llama-server meldet
+    (/props total_slots, also sein --parallel); eine Zahl erzwingt sie."""
+    return os.getenv("BRAIN_LLM_PLAETZE", "auto").strip().lower()
+
+
+MAX_PLAETZE = 16
+# So viele duerfen je Platz anstehen; wer danach kommt, bekommt sofort „belegt".
+WARTESCHLANGE_JE_PLATZ = 3
 
 
 def _timeout_s() -> float:
@@ -112,7 +132,13 @@ RANG = {"gespraech": 0, "reaktion": 1, "nebenbei": 2}
 
 
 class _Vorrangslot:
-    """EIN Inferenz-Platz (Concurrency 1 bleibt), aber mit Warteschlange.
+    """Die Inferenz-Plaetze, mit Warteschlange nach Vorrang.
+
+    v5.9-W202: bis dahin genau EIN Platz („Concurrency 1"), und jeder zweite
+    /brain-Aufruf in einer Gruppe mit 800 Mitgliedern bekam „Slot belegt"
+    (22-mal gezaehlt). Jetzt so viele Plaetze, wie llama-server hat
+    (`erwerben(..., kapazitaet=n)`); die Regel bleibt dieselbe: frei wird ein
+    Platz fuer den Besten, der wartet. Mit n=1 verhaelt sich alles wie vorher.
 
     Bis W196 war der Platz ein Lock mit `acquire(blocking=False)`: wer kam,
     waehrend Qwen rechnete, flog sofort raus und ging in die Cloud. Auf der
@@ -125,20 +151,31 @@ class _Vorrangslot:
 
     def __init__(self):
         self._bed = threading.Condition()
-        self._belegt = False
+        self._belegt = 0
         self._wartend: list[int] = []
 
-    def erwerben(self, rang: int, warten_s: float) -> bool:
+    def erwerben(self, rang: int, warten_s: float, kapazitaet: int = 1,
+                 max_wartend: Optional[int] = None) -> bool:
+        """max_wartend (v5.9-W202): stehen schon so viele an, wird nicht mehr
+        angestellt, sondern sofort abgewiesen. Jeder Wartende haelt einen
+        Thread fest — 800 Mitglieder, die /brain fragen, duerfen den Bot nicht
+        mit wartenden Threads zustellen (W47: dieselben Threads braucht DNS)."""
         frist = time.monotonic() + max(0.0, warten_s)
+        kap = max(1, int(kapazitaet or 1))
         with self._bed:
+            if (max_wartend is not None and warten_s > 0
+                    and len(self._wartend) >= max_wartend):
+                warten_s, frist = 0.0, time.monotonic()
             self._wartend.append(rang)
             try:
-                while self._belegt or min(self._wartend) < rang:
+                # Frei ist ein Platz fuer MICH erst, wenn nach allen Besseren,
+                # die gerade warten, noch einer uebrig bleibt.
+                while self._belegt + sum(1 for r in self._wartend if r < rang) >= kap:
                     rest = frist - time.monotonic()
                     if rest <= 0:
                         return False
                     self._bed.wait(rest)
-                self._belegt = True
+                self._belegt += 1
                 return True
             finally:
                 self._wartend.remove(rang)
@@ -148,12 +185,13 @@ class _Vorrangslot:
 
     def freigeben(self):
         with self._bed:
-            self._belegt = False
+            self._belegt = max(0, self._belegt - 1)
             self._bed.notify_all()
 
     def lage(self) -> dict:
         with self._bed:
-            return {"belegt": self._belegt, "wartend": len(self._wartend)}
+            return {"belegt": self._belegt > 0, "in_arbeit": self._belegt,
+                    "wartend": len(self._wartend)}
 
 
 def _ohne_denken_bitten(messages: list) -> list:
@@ -179,9 +217,12 @@ class BudgetExhausted(Exception):
 
 class LLMRuntime:
     def __init__(self):
-        # Concurrency 1: EIN Inferenz-Slot. Seit v5.5-W196 mit Vorrang und
-        # Wartezeit (_Vorrangslot); ohne Angabe wie vorher sofort „belegt".
+        # Die Inferenz-Plaetze. Seit v5.5-W196 mit Vorrang und Wartezeit
+        # (_Vorrangslot), seit v5.9-W202 so viele, wie llama-server hat.
         self._slot = _Vorrangslot()
+        self._server_plaetze = None       # aus /props; None = nicht gemessen
+        self._plaetze_t = -1e9            # wann zuletzt gemessen (monotonic)
+        self._plaetze_fehler = None
         self._zeiten: dict = {}           # v5.5-W196: timings der letzten lokalen Antwort
         self._calls: list[float] = []
         self._durs: list[float] = []      # V37: letzte Latenzen (ms)      # Timestamps fürs Stundenbudget
@@ -228,70 +269,148 @@ class LLMRuntime:
         kette = self._chain()
         if backends is not None:
             kette = [x for x in kette if x in backends]
-        budget_grund = None
-        if "llamacpp" in kette:
-            b = self.budget()
-            nebenbei = rang == RANG["nebenbei"]
-            if b["remaining"] <= 0 or (nebenbei and b["remaining"] <= _reserve()):
-                with self._stats_lock:
-                    self._stats["reserve_denied" if b["remaining"] > 0
-                                else "budget_denied"] += 1
-                budget_grund = (f"LLM-Stundenbudget verbraucht "
-                                f"({b['used_h']}/{b['max_h']})" if b["remaining"] <= 0 else
-                                f"Reserve fuer Gespraeche ({b['remaining']} von {b['max_h']} "
-                                f"uebrig, BRAIN_LLM_RESERVE={_reserve()})")
-                kette = [x for x in kette if x != "llamacpp"]
-                if not kette:
-                    raise BudgetExhausted(budget_grund)
-        if not self._slot.erwerben(rang, warten_s):
-            with self._stats_lock:
-                self._stats["busy_denied"] += 1
-            raise BudgetExhausted("Inferenz-Slot belegt (Concurrency 1%s)"
-                                  % (", %.0f s gewartet" % warten_s if warten_s > 0 else ""))
-        try:
-            t0 = time.time()
-            last_err = budget_grund or "kein Backend konfiguriert"
-            for backend in kette:
-                try:
-                    text = self._call(backend, messages,
-                                      timeout or _timeout_s(),
-                                      max_tokens or _max_tokens())
-                    ms = round((time.time() - t0) * 1000, 1)
+        budget_grund = self._deckel_grund(rang) if "llamacpp" in kette else None
+        if budget_grund:
+            kette = [x for x in kette if x != "llamacpp"]
+            if not kette:
+                raise BudgetExhausted(budget_grund)
+        t0 = time.time()
+        gruende = [budget_grund] if budget_grund else []
+        gefragt = False
+        for backend in kette:
+            # v5.9-W202: der Platz gilt NUR dem lokalen Modell — er schuetzt die
+            # Kerne. Bis dahin wartete auch der Cloud-Aufruf darauf: war der
+            # eine Platz belegt, kam /brain gar nicht erst bei der Cloud an.
+            lokal = backend == "llamacpp"
+            if lokal:
+                kap = self.plaetze(messen=True)
+                if not self._slot.erwerben(rang, warten_s, self._plaetze_fuer(rang, kap),
+                                           max_wartend=WARTESCHLANGE_JE_PLATZ * kap):
                     with self._stats_lock:
-                        self._stats["ok"] += 1
-                        bb = self._stats["by_backend"]
-                        bb[backend] = bb.get(backend, 0) + 1
-                        if backend == "llamacpp":     # nur lokal ins Budget
-                            self._calls.append(time.time())
-                        # V37: Latenz-Historie für stats()/Metrik/Dashboard
-                        self._durs.append(ms)
-                        if len(self._durs) > 50:
-                            del self._durs[:25]
-                    self._letzter_fehler.pop(backend, None)   # wieder gesund
-                    return {"ok": True, "text": text,
-                            "backend": backend, "ms": ms}
-                except Exception as e:
-                    last_err = f"{backend}: {type(e).__name__}: {e}"
-                    # v4.2-W110: war log.debug. Antwortet llama-server auf
-                    # /health, aber nicht auf den Chat (z. B. mit
-                    # --embeddings gestartet: nur Embeddings), ging JEDE
-                    # Anfrage still in die Cloud. Gemeldet wird ein WECHSEL
-                    # des Grundes — ein Dauerfehler steht so einmal im Log.
-                    if last_err != self._letzter_fehler.get(backend):
-                        log.warning("LLM-Backend %s scheitert: %s — die Anfrage "
-                                    "geht an das naechste Backend der Kette.",
-                                    backend, e)
-                    self._letzter_fehler[backend] = last_err
-            with self._stats_lock:
-                self._stats["errors"] += 1
-            if budget_grund and last_err != budget_grund:
-                # Beide Gruende nennen: "Cloud scheiterte" allein verschwiege,
-                # dass lokal gar nicht erst gefragt wurde.
-                last_err = f"{budget_grund} — {last_err}"
-            return {"ok": False, "error": last_err, "backend": None,
-                    "ms": round((time.time() - t0) * 1000, 1)}
-        finally:
-            self._slot.freigeben()
+                        self._stats["busy_denied"] += 1
+                    gruende.append("alle %d Inferenz-Plaetze belegt%s" % (
+                        kap, ", %.0f s gewartet" % warten_s if warten_s > 0 else ""))
+                    continue
+            gefragt = True
+            try:
+                text = self._call(backend, messages,
+                                  timeout or _timeout_s(),
+                                  max_tokens or _max_tokens())
+                ms = self._erfolg_buchen(backend, t0)
+                return {"ok": True, "text": text,
+                        "backend": backend, "ms": ms}
+            except Exception as e:
+                fehler = f"{backend}: {type(e).__name__}: {e}"
+                gruende.append(fehler)
+                # v4.2-W110: war log.debug. Antwortet llama-server auf
+                # /health, aber nicht auf den Chat (z. B. mit
+                # --embeddings gestartet: nur Embeddings), ging JEDE
+                # Anfrage still in die Cloud. Gemeldet wird ein WECHSEL
+                # des Grundes — ein Dauerfehler steht so einmal im Log.
+                if fehler != self._letzter_fehler.get(backend):
+                    log.warning("LLM-Backend %s scheitert: %s — die Anfrage "
+                                "geht an das naechste Backend der Kette.",
+                                backend, e)
+                self._letzter_fehler[backend] = fehler
+            finally:
+                if lokal:
+                    self._slot.freigeben()
+        if not gefragt and gruende:
+            # Niemand wurde gefragt — Deckel oder Plaetze: das ist „gedeckelt",
+            # nicht „kaputt" (BudgetExhausted, wie bisher).
+            raise BudgetExhausted(" — ".join(gruende))
+        with self._stats_lock:
+            self._stats["errors"] += 1
+        # Alle Gruende nennen: "Cloud scheiterte" allein verschwiege, dass
+        # lokal gar nicht erst gefragt wurde (Deckel oder Plaetze).
+        return {"ok": False, "error": " — ".join(gruende) or "kein Backend konfiguriert",
+                "backend": None, "ms": round((time.time() - t0) * 1000, 1)}
+
+    def _deckel_grund(self, rang: int):
+        """Warum lokal NICHT gefragt wird (Stundendeckel oder Reserve) — None,
+        wenn es gefragt werden darf. Ohne Deckel (Vorgabe seit W202) immer None."""
+        b = self.budget()
+        nebenbei = rang == RANG["nebenbei"]
+        if not b["max_h"] or not (b["remaining"] <= 0
+                                  or (nebenbei and b["remaining"] <= _reserve())):
+            return None
+        with self._stats_lock:
+            self._stats["reserve_denied" if b["remaining"] > 0
+                        else "budget_denied"] += 1
+        if b["remaining"] <= 0:
+            return f"LLM-Stundenbudget verbraucht ({b['used_h']}/{b['max_h']})"
+        return (f"Reserve fuer Gespraeche ({b['remaining']} von {b['max_h']} "
+                f"uebrig, BRAIN_LLM_RESERVE={_reserve()})")
+
+    def _erfolg_buchen(self, backend: str, t0: float) -> float:
+        """Zaehler, Budget (nur lokal) und Latenz einer gelungenen Antwort -> ms."""
+        ms = round((time.time() - t0) * 1000, 1)
+        with self._stats_lock:
+            self._stats["ok"] += 1
+            bb = self._stats["by_backend"]
+            bb[backend] = bb.get(backend, 0) + 1
+            if backend == "llamacpp":         # nur lokal ins Budget
+                self._calls.append(time.time())
+            # V37: Latenz-Historie für stats()/Metrik/Dashboard
+            self._durs.append(ms)
+            if len(self._durs) > 50:
+                del self._durs[:25]
+        self._letzter_fehler.pop(backend, None)   # wieder gesund
+        return ms
+
+    # ------------------------------------------------------------ Plaetze
+
+    @staticmethod
+    def _plaetze_fuer(rang: int, kap: int) -> int:
+        """Eigeninitiative bekommt nie den LETZTEN freien Platz (ab zwei
+        Plaetzen): sonst plaudert AZRAEL alle Plaetze voll, und wer ihn
+        anspricht, wartet. Das ist die Reserve aus W196, eine Ebene tiefer —
+        sie haengt nicht mehr an einem Stundendeckel, den es nicht mehr gibt."""
+        return kap - 1 if (rang == RANG["nebenbei"] and kap > 1) else kap
+
+    _PLAETZE_TTL = 60.0
+
+    def plaetze(self, messen: bool = False) -> int:
+        """Wie viele Inferenz-Plaetze gelten. BRAIN_LLM_PLAETZE=<n> erzwingt n,
+        sonst zaehlt, was llama-server meldet (sein --parallel), sonst 1.
+
+        messen=False misst nie (Anzeigen, /healthz); messen=True fragt den
+        Server hoechstens alle 60 s."""
+        roh = _plaetze_conf()
+        if roh not in ("", "auto"):
+            try:
+                return max(1, min(MAX_PLAETZE, int(roh)))
+            except ValueError:
+                if roh != self._plaetze_fehler:
+                    log.warning("BRAIN_LLM_PLAETZE=%r ist keine Zahl — es gilt auto "
+                                "(so viele Plaetze, wie llama-server meldet).", roh)
+                    self._plaetze_fehler = roh
+        if messen and time.monotonic() - self._plaetze_t > self._PLAETZE_TTL:
+            self._plaetze_t = time.monotonic()
+            self._server_plaetze = self._plaetze_messen()
+        n = self._server_plaetze
+        return max(1, min(MAX_PLAETZE, n)) if n else 1
+
+    def _plaetze_messen(self):
+        """total_slots aus /props, ersatzweise die Laenge von /slots; None, wenn
+        der Server keines davon sagt (dann gilt 1 — das sichere Mass)."""
+        for pfad in ("/props", "/slots"):
+            try:
+                req = urllib.request.Request(f"{_llamacpp_url()}{pfad}", method="GET")
+                with urllib.request.urlopen(req, timeout=3) as r:
+                    j = json.loads(r.read(1 << 20).decode("utf-8", "replace"))
+            except Exception as e:
+                grund = f"{pfad}: {type(e).__name__}"
+                if grund != self._plaetze_fehler:
+                    log.info("llama-server: Zahl der Plaetze unter %s nicht lesbar (%s) — "
+                             "es gilt 1, bis der Server sie nennt.", pfad, type(e).__name__)
+                    self._plaetze_fehler = grund
+                continue
+            if pfad == "/props" and isinstance(j, dict) and isinstance(j.get("total_slots"), int):
+                return j["total_slots"]
+            if pfad == "/slots" and isinstance(j, list) and j:
+                return len(j)
+        return None
 
     _HEALTH_TTL = 15.0
 
@@ -315,14 +434,28 @@ class LLMRuntime:
                 mods = self.models()
                 if mods:
                     out["llamacpp"]["modell"] = mods[0]
+                # v5.9-W202: wie viele Antworten gleichzeitig gehen
+                out["llamacpp"]["plaetze"] = self.plaetze(messen=True)
             # B120: Cloud-Reserve im Health sichtbar machen. Ohne den
             # Eintrag meldete das Dashboard 'offline', obwohl freeai
             # antwortet — der Operator suchte dann am falschen Ende.
             if "freeai" in self._chain():
                 try:
                     from nc import freeai as _freeai
-                    out["freeai"] = {"up": bool(_freeai.alive_sync(3.0)),
-                                     "bases": _freeai.bases_status()}
+                    basen = _freeai.bases_status()
+                    out["freeai"] = {"up": bool(_freeai.alive_sync(3.0)), "bases": basen}
+                    # v5.9-W202: „UP" hiess nur, dass die Modellliste antwortet —
+                    # beim Betreiber stand UP, und jede Antwort scheiterte mit
+                    # auth. Tragen ALLE Basen einen Fehler (ein Erfolg loescht
+                    # ihn), ist die Reserve gestoert; auth zuerst, weil ein
+                    # Schluessel sie behebt.
+                    fehler = [b["last_error"] for b in basen if b.get("last_error")]
+                    if basen and len(fehler) == len(basen):
+                        arten = [f.get("kind") for f in fehler]
+                        art = "auth" if "auth" in arten else max(
+                            fehler, key=lambda f: f.get("ts") or 0).get("kind")
+                        out["freeai"]["gestoert"] = art
+                        out["freeai"]["abhilfe"] = _freeai.abhilfe(art)
                 except Exception as e:
                     out["freeai"] = {"up": False, "error": type(e).__name__}
             self._health_cache = (now, dict(out))
@@ -389,12 +522,17 @@ class LLMRuntime:
         return ids
 
     def budget(self) -> dict:
+        """used_h zaehlt immer; max_h 0 = kein Deckel, dann remaining None.
+
+        None und nicht eine grosse Zahl: eine erfundene Restmenge saehe im
+        Deck aus wie ein Deckel, den es nicht gibt."""
         cutoff = time.time() - 3600
         with self._stats_lock:
             self._calls = [t for t in self._calls if t > cutoff]
             used = len(self._calls)
-        return {"used_h": used, "max_h": _max_calls_h(),
-                "remaining": max(_max_calls_h() - used, 0)}
+        deckel = _max_calls_h()
+        return {"used_h": used, "max_h": deckel,
+                "remaining": max(deckel - used, 0) if deckel else None}
 
     def stats(self) -> dict:
         with self._stats_lock:
@@ -404,7 +542,8 @@ class LLMRuntime:
                                 if self._durs else None),
                         last_ms=(self._durs[-1] if self._durs else None),
                         # v5.5-W196: was die letzte lokale Antwort gekostet hat
-                        letzte_zeiten=dict(self._zeiten), slot=self._slot.lage(),
+                        letzte_zeiten=dict(self._zeiten),
+                        slot=dict(self._slot.lage(), plaetze=self.plaetze()),
                         cache_anteil=(round(self._stats["prompt_gecacht"] / pt, 3)
                                       if pt else None),
                         reserve=_reserve())
@@ -440,7 +579,10 @@ class LLMRuntime:
             from nc import freeai as _freeai
             txt, err = _freeai.chat_sync(messages, timeout=timeout)
             if not txt:
-                raise RuntimeError(f"freeai: {err or 'leer'}")
+                # v5.9-W202: mit Abhilfe — „freeai: auth" allein stand beim
+                # Betreiber auf der Brain-Seite und sagte nicht, was zu tun ist.
+                hilfe = _freeai.abhilfe(err)
+                raise RuntimeError(f"freeai: {err or 'leer'}" + (f" ({hilfe})" if hilfe else ""))
             return txt
         if backend == "llamacpp":
             # llama-server spricht die OpenAI-kompatible API — Vorteil:

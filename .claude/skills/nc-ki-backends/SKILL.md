@@ -63,14 +63,20 @@ Callsites prüfen: `grep -n 'router.route('`. Ein Drift `prompt` vs. `question`
 fiel monatelang nur im Telegram-Pfad aus, weil die Flask-Route den richtigen Key
 benutzte — und niemand testet den Pfad, der noch geht.
 
-## Budget und Concurrency im lokalen LLM
+## Plätze und Deckel im lokalen LLM
 
-Hartes **Stundenbudget** plus **Concurrency 1**. Der Grund ist die Hardware: die
-Box hat 8 Kerne und nimmt gleichzeitig auf und restreamt. Zwei parallele
-Inferenzen stehlen ffmpeg die Kerne — Aufnahmen brechen, damit die KI schneller
-plaudert. Deshalb läuft `llama-server` mit `-t 4` und `Nice=10`. Mit 14B ist
-das langsam (grob einige Token je Sekunde) — das ist der Preis, nicht ein
-Grund, `-t` zu heben.
+Seit v5.9-W202 **mehrere Inferenz-Plätze** und **kein Stundendeckel per
+Vorgabe**. Die Kerne schützt `-t 4` mit `Nice=10`/`CPUWeight=50` — mehrere
+Plätze rechnen in denselben vier Threads (llama-server bündelt sie zu einem
+Schritt), sie nehmen ffmpeg keine Kerne weg. Die Zahl der Plätze steht genau
+einmal: `LLM_PLAETZE` in `tools/ikllama.sh` (`-np`); `brain/llm.py` liest sie
+beim Server (`/props` → `total_slots`), `BRAIN_LLM_PLAETZE` erzwingt eine Zahl.
+Der Platz gilt **nur** dem lokalen Modell — die Cloud wartet nie dahinter.
+Eigeninitiative bekommt nie den letzten freien Platz, und die Warteschlange ist
+begrenzt (drei je Platz): jeder Wartende hält einen Thread fest.
+`BRAIN_LLM_MAX_CALLS_H` > 0 setzt wieder einen Stundendeckel (mit
+`BRAIN_LLM_RESERVE` für Gespräche). Mit 14B ist eine Antwort langsam (grob
+einige Token je Sekunde) — das ist der Preis, nicht ein Grund, `-t` zu heben.
 
 `BudgetExhausted` ist kein Fehler, sondern ein Ergebnis: der Router reicht es als
 `Unhandled` weiter. Es wird nie stumm geschluckt und nie in eine Wiederholung

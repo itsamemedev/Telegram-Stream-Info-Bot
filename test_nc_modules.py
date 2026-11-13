@@ -519,7 +519,10 @@ def _test_routes_alle_blueprints():
         # ein versehentlich gesetzter url_prefix trotzdem auffliegt.
         # /fonts/… (v4.2-W111): die Schriften stehen dort, wo die
         # @font-face-Regeln und die oeffentliche Seite sie erwarten.
-        AUSSERHALB = {"/metrics", "/fonts/schriften.css", "/fonts/<name>"}
+        # /overlay/chat… (v5.9-W205): der Chat-Kasten, den der Bot per Chromium
+        # fotografiert — er steht neben /overlay, wie dessen Seite.
+        AUSSERHALB = {"/metrics", "/fonts/schriften.css", "/fonts/<name>",
+                      "/overlay/chat", "/overlay/chat.json"}
         for r in regeln:
             assert str(r.rule).startswith("/api/") or str(r.rule) in AUSSERHALB, \
                 "%s: Pfad nicht mehr unter /api/ — url_prefix gesetzt? %s" % (name, r.rule)
@@ -729,8 +732,9 @@ def _test_routes_ai():
     app = Flask(__name__)
     app.register_blueprint(rt.bp)
     regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
-    assert len(regeln) == 24, "24 Regeln erwartet, %d" % len(regeln)
-    ok("routes.ai: 24 Regeln registriert")
+    # ANKER GEWANDERT (v5.9-W201): 26 — dazu kam /api/ki/wahl (GET und POST).
+    assert len(regeln) == 26, "26 Regeln erwartet, %d" % len(regeln)
+    ok("routes.ai: 26 Regeln registriert")
 
     q = open("nc/routes/ai.py", encoding="utf-8").read()
 
@@ -1561,7 +1565,9 @@ def _test_w20_overlay_audio_und_geld():
     app2 = Flask(__name__)
     app2.register_blueprint(RO.bp)
     regeln = {str(r.rule) for r in app2.url_map.iter_rules() if r.endpoint != "static"}
-    assert len(regeln) == 3, sorted(regeln)
+    # ANKER GEWANDERT (v5.9-W205): 5 — dazu kamen /overlay/chat und
+    # /overlay/chat.json (Chat-Kasten aus Chromium).
+    assert len(regeln) == 5, sorted(regeln)
     A.OVERLAY.clear(); A.OVERLAY.update(title="Prüfstand", azrael_show=False)
     A.OVERLAY_SESSION["start"] = "2026-09-03T10:00:00+00:00"
     with app2.test_client() as cl:
@@ -20914,7 +20920,9 @@ def _test_v42_w110_lokales_llm_zuerst():
                      if z.strip() and not z.strip().startswith("#")
                      and (z.startswith("ExecStart") or z.startswith("  ")))
     assert "--embedding" not in exec_, exec_
-    assert "-c 8192" in exec_, exec_
+    # ANKER GEWANDERT (v5.9-W202): 8192 je Platz, vier Plaetze — llama-server
+    # teilt -c auf die Plaetze auf. Die Aussage („genug Kontext") bleibt.
+    assert "-np 4" in exec_ and "-c 32768" in exec_, exec_
 
     ok("W110: lokales llama.cpp zuerst (auto), Modellliste lokal, ein Ort fuer "
        "die Wahl, kein Ollama-Rat, Brain-Panel rendert, Unit ohne --embeddings")
@@ -29153,6 +29161,9 @@ def _test_v42_w158_chat_in_der_aufnahme():
     # Kodierung durch die Encode-Warteschlange — der Namensraum braucht sie.
     import nc.encodeschlange as _enc
     ns["_nc_encode"] = _enc
+    # ANKER GEWANDERT (v5.9-W205): vor dem Einbrennen fragt der Bot einmal, ob
+    # die Emoji-Schriften fehlen — hier ohne Systemabfrage.
+    ns["_nc_schriftzeichen"] = type("_SZ", (), {"emoji_hinweis": staticmethod(lambda wo: None)})
     # Review #203: der Stopp-Pfad behaelt den Chat. ANKER GEWANDERT
     # (v4.2-W163, nicht der Vertrag): vorgemerkt statt beigelegt.
     st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
@@ -31787,8 +31798,9 @@ def _test_v42_w177_brain_verwoben():
                         or (_ast.unparse(n.func).endswith("to_thread") and n.args
                             and _ast.unparse(n.args[0]).endswith("llm.chat")))]
         # ANKER GEWANDERT (v5.5-W196): vier Stellen — dazu kam _azrael_lokal.
+        # v5.9-W201: fuenf — dazu kam _nur_lokal_sync (die Wahl „lokal" im Deck).
         # Die Aussage gilt unveraendert je Stelle (Schleife darunter).
-        assert len(stellen) == 4, [_ast.unparse(s)[:80] for s in stellen]
+        assert len(stellen) == 5, [_ast.unparse(s)[:80] for s in stellen]
         for s in stellen:
             assert "['llamacpp']" in _ast.unparse(s), _ast.unparse(s)[:160]
 
@@ -32695,8 +32707,13 @@ def _test_v42_w178_restream_loeschen_erst_nach_stop():
     try:
         W.configure_db(db_path=db, backend="sqlite")
         with W.db_conn() as c:
-            c.execute("CREATE TABLE restreams (id INTEGER PRIMARY KEY, name TEXT)")
-            c.execute("INSERT INTO restreams (id, name) VALUES (7, 'ziel')")
+            # ANKER GEWANDERT (v5.9-W204): Loeschen schreibt den Nutzer auf die
+            # Ausschlussliste (sonst truege der Abgleich ihn wieder ein) — die
+            # Attrappe braucht source_username und app_config.
+            c.execute("CREATE TABLE restreams (id INTEGER PRIMARY KEY, name TEXT, "
+                      "source_username TEXT)")
+            c.execute("CREATE TABLE app_config (k TEXT PRIMARY KEY, v TEXT, updated_at TEXT)")
+            c.execute("INSERT INTO restreams (id, name, source_username) VALUES (7, 'ziel', 'ziel')")
         _ncctx.configure(log=lg, run_async=_run_async, arg_int=lambda *a, **k: 0)
         RS.MGR["obj"] = _Mgr()
         app = Flask(__name__)
@@ -32720,6 +32737,9 @@ def _test_v42_w178_restream_loeschen_erst_nach_stop():
         verhalten["art"] = {"ok": True, "running": False}
         r = k.post("/api/restream/7/delete")
         assert r.status_code == 200 and zeile() == 0, (r.status_code, zeile())
+        with W.db_conn() as c:
+            assert c.execute("SELECT v FROM app_config WHERE k='restream.tracking_ausschluss'"
+                             ).fetchone()["v"] == '["ziel"]', "geloescht ohne Ausschluss"
     finally:
         W.configure_db(db_path=alt[0], backend=alt[1])
         _ncctx._CTX = alt_ctx
@@ -32916,6 +32936,9 @@ def _test_v42_w179_restream_lebenszyklus():
                         "_restream_tts_stop": lambda rid: None,
                         "_restream_html_overlay_stop": lambda rid: None,
                         "_restream_avatar_feeder_stop": lambda rid: None,
+                        # ANKER GEWANDERT (v5.9-W205): das Abraeumen beendet
+                        # auch den Chat-Kasten aus Chromium.
+                        "_nc_chatbild": type("_CB", (), {"beenden": staticmethod(lambda rid: None)}),
                         "_reap_proc": _nichts, "KICK_INGEST_URL_BACKUP": "",
                         "KICK_STREAM_KEY_BACKUP": ""})
 
@@ -34351,11 +34374,14 @@ def _test_v51_w181_ikllama_umstieg():
         teile = befehl[0][len("ExecStart="):].split()
         assert teile[0] == "/opt/ik_llama.cpp/build/bin/llama-server", "Pfad in der Unit traegt die Testwurzel"
         flags = " ".join(teile[1:])
+        # ANKER GEWANDERT (v5.9-W202): -np 4 und -c 32768 (8192 je Platz);
+        # MemoryMax traegt den KV-Cache der drei weiteren Plaetze (je rund
+        # 680 MB in q8_0 -> 2 GB) — 5G wurden 7G.
         for soll in ("-m /opt/models/" + datei, "--host 127.0.0.1", "--port 8080", "-t 4",
-                     "-c 8192", "-ngl 0", "-rtr", "--jinja", "--no-warmup"):
+                     "-np 4", "-c 32768", "-ngl 0", "-rtr", "--jinja", "--no-warmup"):
             assert (" " + soll + " ") in (" " + flags + " "), (soll, flags)
         assert "--embedding" not in flags, "W110: --embeddings macht den Chat tot"
-        assert "MemoryMax=5G" in text, "Speicherdeckel folgt nicht der Modellgroesse"
+        assert "MemoryMax=7G" in text, "Speicherdeckel folgt nicht Modell und Plaetzen"
         assert "Nice=10" in text and "CPUWeight=50" in text
         assert "Chat-Probe beantwortet" in r.stdout, r.stdout
 
@@ -37209,6 +37235,873 @@ def _test_v58_w199_zusammenschnitt_nicht_nach_telegram():
     ok("v5.8-W199: Zusammenschnitt nur nach Discord, Telegram nur mit MEME_REEL_TELEGRAM=1")
 
 
+def _test_v58_w200_telegram_antworten():
+    """v5.8-W200: wann AZRAEL in Telegram antwortet (nc/tgantwort.py).
+
+    Der Betreiber: „In Telegram antwortet das Brain nicht auf
+    Antwort-Nachrichten." Drei stille Wege: Antwort auf den Bot nur mit
+    Redis-Verlauf, Themen-Gruppen (jede Nachricht traegt einen Bezug auf den
+    Themen-Kopf des Bots), und die Antwort auf einen anderen Nutzer mit
+    „@Azrael". Geprueft an Attrappen der Telegram-Nachricht."""
+    import types as _ty
+    from nc import tgantwort as T
+
+    def _n(**kw):
+        return _ty.SimpleNamespace(**kw)
+    kopf = _n(message_id=77, forum_topic_created=_n(name="anna"), text=None)
+    # (1) Der Themen-Kopf ist keine Antwort — weder ueber das Dienstfeld
+    # noch ueber die Kennung (aeltere Bibliotheken liefern das Feld nicht).
+    assert T.echte_antwort(_n(reply_to_message=kopf, message_thread_id=77,
+                              is_topic_message=True)) is None
+    # Ohne is_topic_message (aeltere Fassung der Bibliothek) traegt nur noch
+    # das Dienstfeld die Erkennung — beide Wege gelten je fuer sich.
+    assert T.echte_antwort(_n(reply_to_message=kopf)) is None, \
+        "Themen-Kopf ohne is_topic_message als Antwort gelesen"
+    kopf_ohne = _n(message_id=77, forum_topic_created=None, text=None)
+    assert T.echte_antwort(_n(reply_to_message=kopf_ohne, message_thread_id=77,
+                              is_topic_message=True)) is None
+    echt = _n(message_id=90, forum_topic_created=None, text="x")
+    assert T.echte_antwort(_n(reply_to_message=echt, message_thread_id=77,
+                              is_topic_message=True)) is echt, "echte Antwort im Thema verworfen"
+    assert T.echte_antwort(_n(reply_to_message=None)) is None
+    assert T.echte_antwort(_n(reply_to_message=echt, message_thread_id=None,
+                              is_topic_message=False)) is echt
+
+    # (2) KI-Antwort erkennen: am Fuss, oder an der gemerkten Kennung.
+    ki = _n(message_id=5, text="Das ist so.\n\n— 3.2s · qwen3-14b")
+    ki_datei = _n(message_id=6, text="Bild zeigt X\n\n— 12s · llava · image")
+    meldung = _n(message_id=7, text="🔴 @anna ist LIVE — Aufnahme läuft")
+    zitat = _n(message_id=8, text="Er schrieb: — 3.2s · x und dann?")
+    assert T.ist_ki_antwort(-1, ki) and T.ist_ki_antwort(-1, ki_datei)
+    assert not T.ist_ki_antwort(-1, meldung) and not T.ist_ki_antwort(-1, zitat)
+    T.merken(-1, 7)
+    assert T.ist_ki_antwort(-1, meldung), "gemerkte Kennung nicht erkannt"
+    assert not T.ist_ki_antwort(-2, meldung), "Kennung gilt nur in ihrem Chat"
+    assert T.ohne_fuss(ki.text) == "Das ist so."
+    alt = T.MAX_GEMERKT
+    T.MAX_GEMERKT = 3
+    try:
+        for i in range(10):
+            T.merken(-9, i)
+        assert len([k for k in T._GEMERKT if k[0] == -9]) == 3 and T.gemerkt(-9, 9)
+        assert not T.gemerkt(-9, 0), "die Liste waechst ohne Grenze"
+    finally:
+        T.MAX_GEMERKT = alt
+
+    # (3) Name: Ansprache ja, Wortteil nein.
+    for t in ("@Azrael was geht", "azrael, sag mal", "Hey AZRAEL!", "was meinst du azrael"):
+        assert T.angesprochen(t), t
+    for t in ("Mazrael", "azraelfan", "mail@azrael.de"):
+        assert not T.angesprochen(t), t
+    assert T.frage_ohne_namen("@Azrael: wie spät?") == "wie spät?"
+    assert T.frage_ohne_namen("Azrael") == "Azrael"
+
+    # (4) Die Entscheidung.
+    E = T.entscheiden
+    F, A = T.FOLGE, T.ANSPRACHE
+    # Antwort auf eine KI-Antwort: immer — ohne Verlauf, in der Gruppe.
+    assert E("und warum?", False, True, True, False) == F
+    # Antwort auf eine Meldung des Bots: nur mit Grund.
+    assert E("geil", False, True, False, False) is None
+    assert E("azrael, wer ist das?", False, True, False, False) == F
+    assert E("und jetzt?", False, True, False, True) == F, "laufendes Gespraech"
+    assert E("und jetzt?", True, True, False, False) == F, "Privatchat"
+    # Keine Antwort auf den Bot (auch: Antwort auf einen anderen Nutzer, Thema).
+    assert E("@Azrael hilf mal", False, False, False, False) == A
+    assert E("hallo", True, False, False, False) == A
+    assert E("hallo zusammen", False, False, False, False) is None
+    # Befehle und Leeres nie.
+    assert E("/status", True, True, True, True) is None
+    assert E("   ", True, False, False, False) is None
+    ok("v5.8-W200: Telegram — Themen-Kopf keine Antwort, KI-Antwort am Fuss/an der "
+       "Kennung, Antwort auf AZRAEL ohne Verlauf, Meldungen nur mit Ansprache")
+
+
+def _test_v59_w201_ki_wahl():
+    """v5.9-W201: EINE KI-Wahl fuer Deck, Telegram und AZRAEL — und wer antwortet.
+
+    Der Betreiber: „Azrael nutzt in Telegram eine free AI. Und im gesamten
+    Dashboard sollte man zwischen lokaler und free AI unterscheiden koennen."
+    Es gab drei Schalter nur in der .env, und keine Antwort sagte, woher sie
+    kam. Geprueft: die Wahl im Deck (app_config ki.wahl) geht vor, ein
+    falscher Wert wird abgewiesen, „free" heisst fuer AZRAEL „cloud" und fuer
+    das Brain nur freeai, „lokal" nur llamacpp; die Herkunft je Aufruf und das
+    Etikett nennen, wer WIRKLICH geantwortet hat; die Route nimmt nur JSON."""
+    import os as _os
+    from unittest import mock as _mock
+    from flask import Flask
+    from nc import kiwahl as K
+    import nc.routes.ai as RA
+    lage, roh, zurueck = _w199_speicher()
+    alt_deck = dict(K._DECK)
+    try:
+        K._DECK.update(t=-1e9, wert="")
+        # (1) Ohne Wahl: die .env gilt (AZRAEL_LLM), das Brain bekommt keine Einschraenkung.
+        with _mock.patch.dict(_os.environ, {"AZRAEL_LLM": "lokal"}):
+            assert K.deck_wahl() == "" and K.azrael_wahl() == K.LOKAL
+            assert K.brain_kette() is None
+            # (2) Die Wahl im Deck geht vor — fuer AZRAEL, das Brain und den Chat.
+            assert K.deck_setzen("FREE ") == K.FREE
+            assert K.azrael_wahl() == K.CLOUD, "free im Deck, AZRAEL bleibt lokal"
+            assert K.brain_kette() == ["freeai"]
+            assert roh(K.DECK_SCHLUESSEL) == "free", "die Wahl steht nicht in app_config"
+            K.deck_setzen("lokal")
+            assert K.azrael_wahl() == K.LOKAL and K.brain_kette() == ["llamacpp"]
+            K.deck_setzen("auto")
+            assert K.azrael_wahl() == K.AUTO and K.brain_kette() is None
+            # Ein unbekannter Wert in der Tabelle zaehlt nicht als Wahl.
+            from nc import cfgstore as C
+            C.set_(K.DECK_SCHLUESSEL, "claude")
+            K._DECK.update(t=-1e9)
+            assert K.deck_wahl() == "", "unbekannter Wert als Wahl genommen"
+            for falsch in ("claude", "cloud", 3):
+                try:
+                    K.deck_setzen(falsch)
+                    raise AssertionError("ungueltige Wahl angenommen: %r" % falsch)
+                except ValueError:
+                    pass
+            K.deck_setzen("")
+            assert K.deck_wahl() == "" and K.azrael_wahl() == K.LOKAL, "aufheben wirkt nicht"
+            # Gesperrte Datenbank beim Lesen: die .env gilt, AZRAEL wird nicht stumm.
+            K._DECK.update(t=-1e9)
+            lage["lesen_gesperrt"] = True
+            assert K.deck_wahl() == "" and K.azrael_wahl() == K.LOKAL
+            lage["lesen_gesperrt"] = False
+
+        # (3) Herkunft je Aufruf und das Etikett.
+        z0 = dict(K.HERKUNFT_ZAEHLER)
+        K.herkunft_loeschen()
+        assert K.herkunft() == ""
+        assert K.herkunft_setzen("llamacpp") == "lokal" and K.herkunft() == "lokal"
+        assert K.herkunft_setzen("freeai") == "free"
+        assert K.HERKUNFT_ZAEHLER["lokal"] == z0["lokal"] + 1
+        assert K.HERKUNFT_ZAEHLER["free"] == z0["free"] + 1
+        assert K.herkunft_setzen("gibtsnicht") == "" and K.HERKUNFT_ZAEHLER == {
+            "lokal": z0["lokal"] + 1, "free": z0["free"] + 1, "claude": z0["claude"]}
+        with _mock.patch.object(K, "lokales_modell", return_value="qwen3-14b"):
+            assert K.beschriftung("lokal", "openai") == "lokal · qwen3-14b", \
+                "lokal nennt das angefragte Cloud-Modell statt des geladenen"
+        assert K.beschriftung("free", "openai") == "free · openai"
+        assert K.beschriftung("claude", "claude-x") == "Claude"
+        assert K.beschriftung("", "openai") == "openai", "Fehlerfall: wie bisher"
+
+        # (4) Die Route: lesen, setzen, nur JSON, falscher Wert 400.
+        app = Flask(__name__)
+        app.register_blueprint(RA.bp)
+        cl = app.test_client()
+        with _mock.patch.object(K, "lokal_stand", return_value=True), \
+             _mock.patch.object(K, "lokales_modell", return_value="qwen3-14b"):
+            j = cl.post("/api/ki/wahl", json={"wahl": "lokal"}).get_json()
+            assert j["ok"] and j["wahl"] == "lokal" and j["azrael"] == "lokal", j
+            assert j["lokal_oben"] is True and j["lokal_modell"] == "qwen3-14b", j
+            assert set(j["zaehler"]) == {"lokal", "free", "claude"}, j
+            assert cl.get("/api/ki/wahl").get_json()["wahl"] == "lokal"
+            r = cl.post("/api/ki/wahl", json={"wahl": "claude"})
+            assert r.status_code == 400 and roh(K.DECK_SCHLUESSEL) == "lokal", r.get_json()
+            r = cl.post("/api/ki/wahl", data={"wahl": "free"})
+            assert r.status_code == 400 and roh(K.DECK_SCHLUESSEL) == "lokal", \
+                "ein Formular (fremde Seite) setzt die KI-Wahl"
+            # Schreibfehler: 503, nicht 200.
+            with _mock.patch.object(K, "deck_setzen", side_effect=RuntimeError("locked")):
+                assert cl.post("/api/ki/wahl", json={"wahl": "free"}).status_code == 503
+
+        # (5) Das Deck zeigt die Herkunft: die Routen geben ki_weg mit, das
+        # Deck hat den Umschalter und die Abzeichen.
+        quelle = open("nc/routes/ai.py", encoding="utf-8").read()
+        for route in ("/api/ai/conversations/<int:conv_id>/messages", "/api/ai/diagnose",
+                      "/api/ai/ask", "/api/ai/report", "/api/ai/query"):
+            i = quelle.index("\ndef ", quelle.index('"%s"' % route)) + 1
+            rumpf = rumpf_ab(quelle, i)
+            assert "ki_weg" in rumpf and "_nc_kiwahl.herkunft()" in rumpf, route
+        html = open("templates/dashboard.html", encoding="utf-8").read()
+        assert 'id="kc_wahl_btns"' in html and "kiWahlSetzen('lokal')" in html \
+            and "kiWahlSetzen('free')" in html and "kiWahlSetzen('auto')" in html
+        for anker in ("kiChip(d.ki_weg)+esc(d.report", "kiChip(kiWegAus(r.model))",
+                      "kiChip(m.ki_weg||kiWegAus(m.model))", "kiChip(d.ki_weg):''"):
+            assert anker in html, anker
+    finally:
+        K._DECK.clear()
+        K._DECK.update(alt_deck)
+        zurueck()
+    ok("v5.9-W201: KI-Wahl im Deck geht vor (lokal/free/auto), ungueltig abgewiesen, "
+       "Herkunft je Aufruf, Etikett mit dem echten Modell, Route nur JSON")
+
+
+def _test_v59_w202_plaetze_und_budget():
+    """v5.9-W202: mehrere Inferenz-Plaetze, kein Stundendeckel per Vorgabe,
+    die Cloud wartet nicht hinter dem lokalen Platz.
+
+    Beim Betreiber (800 Mitglieder): „Slot belegt" 22-mal, 894
+    Budget-Ablehnungen bei 30/h, und /brain kam bei belegtem Platz gar nicht
+    erst bei der Cloud an — der eine Platz galt auch fuer freeai."""
+    import os as _os
+    import threading as _th
+    import time as _ti
+    import json as _js
+    from unittest import mock as _mock
+    import brain.llm as L
+    from nc import freeai as FA
+
+    # (1) Plaetze: zwei frei, der dritte nicht; Eigeninitiative laesst den letzten frei.
+    pl = L._Vorrangslot()
+    assert pl.erwerben(L.RANG["reaktion"], 0, kapazitaet=2)
+    assert not pl.erwerben(L.RANG["nebenbei"], 0, kapazitaet=L.LLMRuntime._plaetze_fuer(
+        L.RANG["nebenbei"], 2)), "Eigeninitiative nahm den letzten Platz"
+    assert pl.erwerben(L.RANG["gespraech"], 0, kapazitaet=2), "zweiter Platz nicht vergeben"
+    assert not pl.erwerben(L.RANG["gespraech"], 0, kapazitaet=2)
+    assert pl.lage() == {"belegt": True, "in_arbeit": 2, "wartend": 0}
+    pl.freigeben()
+    pl.freigeben()
+    pl.freigeben()                      # ueberzaehlig: nie negativ
+    assert pl.lage()["in_arbeit"] == 0
+    assert L.LLMRuntime._plaetze_fuer(L.RANG["nebenbei"], 1) == 1, \
+        "mit einem Platz darf die Eigeninitiative ihn weiter nehmen"
+
+    # (2) Warteschlange begrenzt: wer nach max_wartend kommt, wartet nicht.
+    pl2 = L._Vorrangslot()
+    assert pl2.erwerben(0, 0, 1)
+    faeden = [_th.Thread(target=pl2.erwerben, args=(0, 1.5, 1)) for _ in range(3)]
+    for f in faeden:
+        f.start()
+    for _ in range(100):
+        if pl2.lage()["wartend"] == 3:
+            break
+        _ti.sleep(0.01)
+    t0 = _ti.monotonic()
+    assert not pl2.erwerben(0, 5.0, 1, max_wartend=3)
+    assert _ti.monotonic() - t0 < 1.0, "die Warteschlange waechst ohne Grenze"
+    pl2.freigeben()
+    for f in faeden:
+        f.join(5)
+
+    # (3) Zahl der Plaetze: erzwungen, vom Server gemeldet, sonst 1.
+    rt = L.LLMRuntime()
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_PLAETZE": "3"}):
+        assert rt.plaetze() == 3
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_PLAETZE": "99"}):
+        assert rt.plaetze() == L.MAX_PLAETZE
+
+    class _Antw:
+        def __init__(self, daten):
+            self.daten = daten
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, *a):
+            return _js.dumps(self.daten).encode()
+    gefragt = []
+
+    def _oeffne(req, timeout=None):
+        gefragt.append(req.full_url.rsplit("/", 1)[-1])
+        if req.full_url.endswith("/props"):
+            return _Antw({"total_slots": 4})
+        raise AssertionError("nach /props noch gefragt")
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_PLAETZE": "auto"}), \
+         _mock.patch.object(L.urllib.request, "urlopen", _oeffne):
+        assert rt.plaetze() == 1, "ohne Messung eine erfundene Zahl"
+        assert rt.plaetze(messen=True) == 4 and gefragt == ["props"]
+        assert rt.plaetze(messen=True) == 4 and gefragt == ["props"], "misst bei jedem Aufruf"
+    rt2 = L.LLMRuntime()
+
+    def _oeffne2(req, timeout=None):
+        if req.full_url.endswith("/props"):
+            return _Antw({"default_generation_settings": {}})      # aelterer Server
+        return _Antw([{"id": 0}, {"id": 1}])
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_PLAETZE": "viel"}), \
+         _mock.patch.object(L.urllib.request, "urlopen", _oeffne2):
+        assert rt2.plaetze(messen=True) == 2, "Rueckweg ueber /slots fehlt"
+
+    # (4) Kein Stundendeckel per Vorgabe; mit Deckel wie bisher.
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_BACKEND": "llamacpp",
+                                        "BRAIN_LLM_PLAETZE": "1"}):
+        _os.environ.pop("BRAIN_LLM_MAX_CALLS_H", None)
+        rt3 = L.LLMRuntime()
+        with _mock.patch.object(L.LLMRuntime, "_call", lambda self, b, m, t, mt: "ok"):
+            for _ in range(40):
+                assert rt3.chat([{"role": "user", "content": "x"}])["ok"]
+            b = rt3.budget()
+            assert b == {"used_h": 40, "max_h": 0, "remaining": None}, b
+            _os.environ["BRAIN_LLM_MAX_CALLS_H"] = "40"
+            try:
+                rt3.chat([{"role": "user", "content": "x"}])
+                raise AssertionError("gesetzter Deckel wirkt nicht")
+            except L.BudgetExhausted as e:
+                assert "40/40" in str(e), e
+
+    # (5) Die Cloud wartet nicht hinter dem lokalen Platz.
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_BACKEND": "auto",
+                                        "BRAIN_LLM_PLAETZE": "1"}):
+        _os.environ.pop("BRAIN_LLM_MAX_CALLS_H", None)
+        rt4 = L.LLMRuntime()
+        gerufen = []
+
+        def _call(self, backend, m, t, mt):
+            gerufen.append(backend)
+            return "aus " + backend
+        assert rt4._slot.erwerben(0, 0, 1)            # jemand rechnet lokal
+        with _mock.patch.object(L.LLMRuntime, "_call", _call):
+            r = rt4.chat([{"role": "user", "content": "x"}])
+            assert r["ok"] and r["backend"] == "freeai" and gerufen == ["freeai"], (r, gerufen)
+            assert rt4.stats()["busy_denied"] == 1
+            assert rt4._slot.lage()["in_arbeit"] == 1, "die Cloud hat einen Platz belegt/freigegeben"
+            try:
+                rt4.chat([{"role": "user", "content": "x"}], backends=["llamacpp"])
+                raise AssertionError("nur lokal, alle Plaetze belegt: kein BudgetExhausted")
+            except L.BudgetExhausted as e:
+                assert "Plaetze belegt" in str(e), e
+        rt4._slot.freigeben()
+
+        # Cloud scheitert bei belegtem Platz: beide Gruende, mit Abhilfe.
+        def _call_tot(self, backend, m, t, mt):
+            raise RuntimeError("freeai: auth (" + FA.abhilfe("auth") + ")")
+        assert rt4._slot.erwerben(0, 0, 1)
+        with _mock.patch.object(L.LLMRuntime, "_call", _call_tot):
+            r = rt4.chat([{"role": "user", "content": "x"}])
+        rt4._slot.freigeben()
+        assert not r["ok"] and "Plaetze belegt" in r["error"] and "LLM7_TOKEN" in r["error"], r
+
+    # (6) Abhilfe fuer freeai — „auth" allein sagt nicht, was zu tun ist.
+    with _mock.patch.dict(_os.environ, {"LLM7_TOKEN": "", "LLM7_API_KEY": "",
+                                        "POLLINATIONS_API_KEY": "", "POLLINATIONS_TOKEN": ""}):
+        a = FA.abhilfe("auth")
+        # Per Regex statt `"token.llm7.io" in a`: CodeQL liest eine Teilstring-
+        # Pruefung mit einem Hostnamen als (unvollstaendige) URL-Pruefung.
+        assert re.search(r"token\.llm7\.io", a) and "LLM7_TOKEN" in a \
+            and "POLLINATIONS_API_KEY" in a, a
+        assert "LLM7_TOKEN" in FA.abhilfe("rate_limit")
+        assert "RECORD_PROXY" in FA.abhilfe("net") and FA.abhilfe("timeout")
+        assert FA.abhilfe("empty") == "" and FA.abhilfe(None) == ""
+    with _mock.patch.dict(_os.environ, {"LLM7_TOKEN": "abc", "POLLINATIONS_API_KEY": "x"}):
+        a = FA.abhilfe("auth")
+        assert "erneuern" in a and "POLLINATIONS_API_KEY" not in a, a
+        assert "LLM7_TOKEN" not in FA.abhilfe("rate_limit"), "Rat zu einem Token, das schon gesetzt ist"
+
+    # Der Weg ueber das Brain (/brain, Brain-Seite) traegt die Abhilfe mit.
+    with _mock.patch.object(FA, "chat_sync", lambda *a, **k: (None, "auth")), \
+         _mock.patch.dict(_os.environ, {"LLM7_TOKEN": "", "LLM7_API_KEY": ""}):
+        try:
+            L.LLMRuntime()._call("freeai", [{"role": "user", "content": "x"}], 5, 10)
+            raise AssertionError("freeai ohne Text ohne Fehler")
+        except RuntimeError as e:
+            assert str(e).startswith("freeai: auth (") and "LLM7_TOKEN" in str(e), e
+
+    # (7) Die Reserve in der Cloud: „UP" mit lauter Fehlern ist gestoert.
+    rt5 = L.LLMRuntime()
+    basen = [{"url": "a", "last_error": {"kind": "rate_limit", "ts": 9}},
+             {"url": "b", "last_error": {"kind": "auth", "ts": 1}}]
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_BACKEND": "auto"}), \
+         _mock.patch.object(L.LLMRuntime, "_probe", lambda self, b: {"up": False}), \
+         _mock.patch.object(FA, "alive_sync", lambda t=3.0: True), \
+         _mock.patch.object(FA, "bases_status", lambda: basen):
+        h = rt5.health()
+        assert h["freeai"]["gestoert"] == "auth" and "LLM7_TOKEN" in h["freeai"]["abhilfe"], h
+        basen[1] = {"url": "b", "last_error": None}
+        rt5._health_cache = None
+        assert "gestoert" not in rt5.health()["freeai"], "eine gesunde Base macht die Reserve nicht gestoert"
+
+    # (8) /brain wartet als Gespraech, im eigenen Pool; Reaktionen warten nicht.
+    import ast as _ast
+    br = open("brain_bridge.py", encoding="utf-8").read()
+    baum = _ast.parse(br)
+    rufe = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+            and _ast.unparse(n.func) == "_llm_guarded"]
+    assert any(any(k.arg == "vorrang" and _ast.unparse(k.value) == "'gespraech'"
+                   for k in r.keywords) for r in rufe), "llm_ask fragt nicht als Gespraech"
+    g = br[br.index("def _llm_guarded"):]
+    g = g[:g.index("def llm_ask")]
+    assert "warten_s=(_kiwahl.wartezeit(vorrang)" in g and 'if vorrang == "gespraech" else 0.0' in g
+    bot = open("bot.py", encoding="utf-8").read()
+    i = bot.index("async def _brain_fragen")
+    assert "run_in_executor(\n        _BRAIN_FRAGEN_POOL, b.router.route" in rumpf_ab(bot, i), \
+        "/brain wartet im Default-Pool (W47: dort lebt DNS)"
+    ok("v5.9-W202: mehrere Plaetze (vom Server gelesen), Eigeninitiative laesst einen "
+       "frei, Warteschlange begrenzt, kein Stundendeckel per Vorgabe, Cloud ohne Platz, "
+       "freeai mit Abhilfe, /brain wartet als Gespraech im eigenen Pool")
+
+
+def _test_v59_w203_sendebild_zeichen():
+    """v5.9-W203: im Sendebild nur Zeichen, die die drawtext-Schrift hat.
+
+    Screenshot des Betreibers: hinter fast jeder Chatzeile ein Kaestchen —
+    die Emoji der Zuschauer, gezeichnet in DejaVu, das keine hat. drawtext
+    kennt keine zweite Schrift, also muessen sie vor der Datei heraus."""
+    import os as _os
+    from nc import schriftzeichen as Z
+    from nc import overlaytext as O
+
+    # (1) Tabelle lesen: das fc-query-Format, ein kaputtes Format ergibt keine.
+    assert Z._bereiche("20-7e a0-2e9 300") == [(0x20, 0x7E), (0xA0, 0x2E9), (0x300, 0x300)]
+    assert Z._bereiche("") is None
+    for kaputt in ("20-zz", "20-7e 30-zz"):
+        try:
+            Z._bereiche(kaputt)
+            raise AssertionError("halbe Tabelle angenommen: %r" % kaputt)
+        except ValueError:
+            pass
+    # Grenzen der binaeren Suche: erster, letzter, zwischen zwei Bereichen.
+    tb = Z._bereiche("41-43 61")
+    assert [Z._in(c, tb) for c in (0x40, 0x41, 0x43, 0x44, 0x61, 0x62)] == \
+        [False, True, True, False, True, False]
+
+    # (2) Mit Tabelle: genau die Zeichen der Schrift.
+    schrift = "/attrappe/Schrift.ttf"
+    Z._TABELLEN[schrift] = Z._bereiche("20-7e a0-17f 400-4ff 2580-25ff")
+    try:
+        t = "▸ Luna  gut 🙏 im Krankenhaus❤️ 漢字 привет █░\r\n● ok"
+        assert Z.zeichenbar(t, schrift) == "▸ Luna  gut  im Krankenhaus  привет █░\n● ok", \
+            repr(Z.zeichenbar(t, schrift))
+    finally:
+        Z._TABELLEN.pop(schrift, None)
+
+    # (3) Ohne Tabelle: die Vermutung nimmt Emoji, Variantenwaehler, Verbinder,
+    # private Zeichen und Steuerzeichen — nie einen Buchstaben.
+    v = Z.zeichenbar("Ä ß é ж ✓ ♥ 👍🏽 ❤️ 👨‍👩‍👧 1️⃣  \x07\r€", None)
+    assert v == "Ä ß é ж ✓ ♥  ❤  1  €", repr(v)
+
+    # (4) Die echte Schrift fragen (fc-query), wenn es sie gibt.
+    import shutil as _sh
+    echt = next((p for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+                 if _os.path.isfile(p)), None)
+    if echt and _sh.which("fc-query"):
+        Z._TABELLEN.pop(echt, None)
+        Z._abfragen(echt)
+        assert Z.tabelle(echt), "fc-query lieferte keine Tabelle"
+        assert Z.zeichenbar("Krankenhaus🙏 ▸ █", echt) == "Krankenhaus ▸ █"
+    else:
+        print("    (kein fc-query/DejaVu — echte Tabelle nicht gefragt)")
+
+    # (5) Der Schreibweg: jede Overlay-Datei laeuft durch den Filter.
+    d = _ph.verzeichnis()
+    alt = O._SCHRIFT
+    try:
+        ziel = _os.path.join(d, "chat.txt")
+        O.configure(schrift=lambda: None)
+        O.ov_atomic_write(ziel, "▸ coco  danke 🙏\r")
+        assert open(ziel, encoding="utf-8").read() == "▸ coco  danke ", "Emoji im Sendebild"
+
+        def _kaputt():
+            raise OSError("weg")
+        O.configure(schrift=_kaputt)
+        O.ov_atomic_write(ziel, "noch da 🙏")
+        assert open(ziel, encoding="utf-8").read() == "noch da ", \
+            "eine unbestimmbare Schrift legt das Overlay lahm"
+    finally:
+        O._SCHRIFT = alt
+    # Der Bot reicht dieselbe Schrift herein wie drawtext.
+    bot = open("bot.py", encoding="utf-8").read()
+    assert "_nc_ovtext.configure(gift_source=OVERLAY_GIFT_SOURCE,\n                     schrift=lambda: _nc_rscmd.schriftart(RESTREAM_FONT))" in bot
+    ok("v5.9-W203: Sendebild — nur Zeichen der drawtext-Schrift (fc-query), ohne "
+       "Tabelle Emoji/Verbinder/Steuerzeichen raus, jede Overlay-Datei gefiltert")
+
+
+def _test_v59_w204_restream_liste():
+    """v5.9-W204: getrackte Nutzer landen in der Restream-Auto-Liste.
+
+    Der Betreiber: „Die User aus Discord und Telegram werden nicht mehr in die
+    Liste eingetragen, welche im Kick-, YouTube- und Twitch-Stream landen." Die
+    Liste (`restreams`) fuellte nur das Deck. Geprueft: der Abgleich traegt
+    ein, ruht und weckt, respektiert manuelle Zeilen, Pausen, den
+    Auto-Schalter des Betreibers und die Ausschlussliste; Loeschen im Deck
+    schliesst aus, Anlegen nimmt den Ausschluss zurueck; der Bot liest die
+    Ausschlussliste streng."""
+    import sqlite3 as _sq
+    import ast as _ast
+    import os as _os
+    from unittest import mock as _mock
+    from nc import restreamliste as L
+    k = _sq.connect(":memory:")
+    k.row_factory = _sq.Row
+    k.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, group_id INT, username TEXT, "
+              "paused INT DEFAULT 0)")
+    k.execute("CREATE TABLE restreams (id INTEGER PRIMARY KEY, created_at TEXT, label TEXT, "
+              "source_username TEXT, ingest_url TEXT, stream_key TEXT, transcode INT, "
+              "enabled INT, auto_restream INT, status TEXT, herkunft TEXT, last_error TEXT)")
+    for g, u, p in ((-100, "anna", 0), (987654321, "anna", 0),          # Telegram + Discord
+                    (-100, "https://www.tiktok.com/@Berta", 0), (-200, "cleo", 1),
+                    (-100, "dora", 0), (-100, "emil", 0)):
+        k.execute("INSERT INTO trackings (group_id, username, paused) VALUES (?,?,?)", (g, u, p))
+    k.execute("INSERT INTO restreams (label, source_username, transcode, enabled, auto_restream, "
+              "herkunft) VALUES ('alt', 'Dora', 0, 1, 0, NULL)")
+    k.execute("INSERT INTO restreams (label, source_username, transcode, enabled, auto_restream, "
+              "herkunft) VALUES ('neu', 'zora', 1, 1, 1, '')")
+    erg = L.abgleichen(k, "2026-11-13T00:00:00", ausgeschlossen=["@Emil"])
+    assert erg == {"neu": ["anna", "Berta"], "ruht": [], "wieder": []}, erg
+    zeilen = {r["source_username"].lower(): dict(r) for r in k.execute("SELECT * FROM restreams")}
+    a = zeilen["anna"]
+    assert a["auto_restream"] == 1 and a["enabled"] == 1 and a["herkunft"] == L.HERKUNFT
+    assert a["ingest_url"] == "" and a["stream_key"] == "", "eigene Keys statt der .env-Ziele"
+    assert a["transcode"] == 1, "Umkodieren nicht von der juengsten manuellen Zeile geerbt"
+    assert "cleo" not in zeilen, "pausiertes Tracking eingetragen"
+    assert "emil" not in zeilen, "Ausschluss (im Deck geloescht) missachtet"
+    assert zeilen["dora"]["auto_restream"] == 0, "manuelle Zeile vom Abgleich angefasst"
+    assert zeilen["berta"]["source_username"] == "Berta", "Schreibweise des Trackings verloren"
+    assert len(zeilen) == 4, "Doppel trotz zweier Gruppen/Schreibweisen: %s" % list(zeilen)
+    # Zweiter Lauf: nichts zu tun.
+    assert L.abgleichen(k, "x", ["emil"]) == {"neu": [], "ruht": [], "wieder": []}
+    # Der Betreiber stellt Auto aus: das bleibt so.
+    k.execute("UPDATE restreams SET auto_restream=0 WHERE source_username='Berta'")
+    assert L.abgleichen(k, "x", ["emil"])["wieder"] == []
+    assert k.execute("SELECT auto_restream FROM restreams WHERE source_username='Berta'"
+                     ).fetchone()[0] == 0, "Auto-Schalter des Betreibers ueberschrieben"
+    # Nicht mehr getrackt: ruht; wieder getrackt: scharf.
+    k.execute("DELETE FROM trackings WHERE username='anna'")
+    assert L.abgleichen(k, "x", ["emil"])["ruht"] == ["anna"]
+    r = k.execute("SELECT auto_restream, herkunft FROM restreams WHERE source_username='anna'"
+                  ).fetchone()
+    assert r[0] == 0 and r[1] == L.HERKUNFT_RUHT, tuple(r)
+    k.execute("INSERT INTO trackings (group_id, username) VALUES (-1, 'anna')")
+    assert L.abgleichen(k, "x", ["emil"])["wieder"] == ["anna"]
+    assert k.execute("SELECT auto_restream FROM restreams WHERE source_username='anna'"
+                     ).fetchone()[0] == 1
+    # Ohne manuelle Zeile: umkodieren (ohne gibt es kein Overlay).
+    assert L._transcode_vorgabe([]) == 1
+    assert L._transcode_vorgabe([{"id": 1, "transcode": 0, "herkunft": ""},
+                                 {"id": 2, "transcode": 1, "herkunft": "tracking"}]) == 0
+    # Schalter, Ausschluss-Helfer.
+    with _mock.patch.dict(_os.environ, {"RESTREAM_TRACKINGS": "0"}):
+        assert not L.an()
+    with _mock.patch.dict(_os.environ, {"RESTREAM_TRACKINGS": ""}):
+        assert L.an(), "leer gesetzt schaltet ab"
+    assert L.ausschliessen(["anna"], "@Berta") == ["anna", "berta"]
+    assert L.ausschliessen(["Anna"], "anna") == ["Anna"] and L.ausschliessen(None, "x") == ["x"]
+    assert L.zulassen(["anna", "Berta"], "https://www.tiktok.com/@berta") == ["anna"]
+
+    # Die Routen: Loeschen schliesst aus (vor dem Loeschen), Anlegen nimmt es zurueck.
+    # Eigene Restream-Tabelle (die Testdatenbank fuehrt keine) und die
+    # app_config aus W199, damit ein Schreibfehler gezielt einstellbar ist.
+    import contextlib as _cl
+    from flask import Flask
+    import nc.routes.restream as RR
+    lage, roh, zurueck = _w199_speicher()
+
+    @_cl.contextmanager
+    def _rs_db():
+        yield k
+    try:
+        app = Flask(__name__)
+        app.register_blueprint(RR.bp)
+        cl = app.test_client()
+        with _mock.patch.object(RR, "db_conn", _rs_db), \
+             _mock.patch.object(RR._nc_rsstate, "mgr", lambda: None):
+            assert cl.post("/api/restream/create", json={"source_username": "w204nutzer"}).get_json()["ok"]
+            rid = k.execute("SELECT id FROM restreams WHERE source_username='w204nutzer'").fetchone()[0]
+            assert cl.post("/api/restream/%d/delete" % rid).get_json()["ok"]
+            assert roh(L.AUSSCHLUSS_SCHLUESSEL) == ["w204nutzer"], "Loeschen schliesst nicht aus"
+            assert cl.post("/api/restream/create",
+                           json={"source_username": "@W204Nutzer"}).get_json()["ok"]
+            assert roh(L.AUSSCHLUSS_SCHLUESSEL) == [], "von Hand angelegt bleibt ausgeschlossen"
+            rid = k.execute("SELECT id FROM restreams WHERE source_username='W204Nutzer'").fetchone()[0]
+            # Ausschluss nicht lesbar: die Zeile bleibt (sonst kaeme sie still zurueck).
+            lage["lesen_gesperrt"] = True
+            assert cl.post("/api/restream/%d/delete" % rid).status_code == 500
+            lage["lesen_gesperrt"] = False
+            assert k.execute("SELECT id FROM restreams WHERE id=?", (rid,)).fetchone(), \
+                "geloescht, obwohl der Ausschluss nicht geschrieben wurde"
+        class _Mgr:
+            def status(self):
+                return {}
+        with _mock.patch.object(RR, "db_conn", _rs_db), \
+             _mock.patch.object(RR._nc_rsstate, "mgr", lambda: _Mgr()):
+            liste = cl.get("/api/restream/list").get_json()
+            herk = {t["source_username"]: t["herkunft"] for t in liste["targets"]}
+            assert herk["anna"] == L.HERKUNFT and herk["W204Nutzer"] == "", herk
+    finally:
+        zurueck()
+
+    # Der Bot: Abgleich im Takt der Auto-Restream-Schleife, Ausschluss STRENG gelesen.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    abgl = _ast.unparse(fn["_restream_liste_abgleichen"])
+    assert "_nc_cfgstore.lesen(_nc_rsliste.AUSSCHLUSS_SCHLUESSEL" in abgl and ".get(" not in abgl, \
+        "nachsichtig gelesen: eine gesperrte Datenbank truege jeden Geloeschten wieder ein"
+    assert "asyncio.to_thread(_restream_liste_abgleichen)" in _ast.unparse(fn["_auto_restream_loop"])
+    ok("v5.9-W204: Trackings (Telegram/Discord) in die Restream-Auto-Liste — eintragen, "
+       "ruhen, wecken, manuelle Zeilen/Pausen/Auto-Schalter/Ausschluss respektiert")
+
+
+def _test_v59_w205_chatbild():
+    """v5.9-W205: Emoji im Restream-Chat (Chromium) und in Aufnahmen (Schriften).
+
+    drawtext kennt eine Schrift, jedes Emoji wurde ein Kaestchen. Geprueft:
+    die Chat-Daten (Filter je Quelle, Emoji bleiben), die Routen, der
+    Filtergraph (Bild statt drawtext-Chat, an derselben Stelle), der
+    ffmpeg-Eingang, der Lebenszyklus mit einer Browser-Attrappe und die
+    Pruefung auf fehlende Emoji-Schriften (Python und Shell)."""
+    import os as _os
+    import subprocess as _sp
+    import threading as _th
+    from unittest import mock as _mock
+    from nc import channels as C
+    from nc import chatbild as CB
+    from nc import ffmpeg_filters as F
+    from nc import schriftzeichen as Z
+
+    # (1) Daten: eigener Kanal ueberall, TikTok nur aus der Quelle, Emoji bleiben.
+    alt = list(C.RESTREAM_CHAT)
+    C.RESTREAM_CHAT.clear()
+    try:
+        for src, who, text, origin in (("tiktok", "coco", "haha 😂", "anna"),
+                                       ("tiktok", "fremd", "nein", "berta"),
+                                       ("kick", "luna", "gut 🙏", None),
+                                       ("event", "jo", "GIFT 🌹", "anna")):
+            C.RESTREAM_CHAT.append({"ts": 1, "src": src, "who": who, "text": text, "origin": origin})
+        z = C.chat_eintraege(source_user="@Anna")
+        assert [e["who"] for e in z] == ["coco", "luna", "jo"], z
+        assert z[0]["text"] == "haha 😂", "Emoji im Chat-Kasten entfernt"
+        assert [e["who"] for e in C.chat_eintraege(anzahl=2, source_user="anna")] == ["luna", "jo"]
+        assert len(C.chat_eintraege()) == 4
+
+        # (2) Routen.
+        from flask import Flask
+        import nc.routes.overlay as RO
+        app = Flask(__name__)
+        app.register_blueprint(RO.bp)
+        cl = app.test_client()
+        r = cl.get("/overlay/chat")
+        assert r.status_code == 200 and b"/overlay/chat.json" in r.data and b"Noto Color Emoji" in r.data
+        j = cl.get("/overlay/chat.json?user=https://www.tiktok.com/@anna").get_json()
+        assert j["ok"] and [e["who"] for e in j["zeilen"]] == ["coco", "luna", "jo"], j
+        assert j["zeilen"][1]["text"] == "gut 🙏"
+    finally:
+        C.RESTREAM_CHAT.clear()
+        C.RESTREAM_CHAT.extend(alt)
+
+    # (3) Filtergraph: Bild statt drawtext-Chat, an der Stelle des Text-Chats.
+    files = {k: "/x/%s.txt" % k for k in ("title", "source", "caption", "chat", "goal",
+                                           "follow", "react", "brand", "alert")}
+    mit, lab = F.studio_chain(files, "/f.ttf", 1920, 1080, 30, chat_idx=3)
+    ohne, _l = F.studio_chain(files, "/f.ttf", 1920, 1080, 30)
+    x, y, b, h = F.chat_kasten(1920, 1080)
+    M = F.studio_masse(1920, 1080)
+    assert (x, y, b, h) == (M["px"], M["chat_y"], M["panel_b"], M["chat_h"])
+    assert "textfile='/x/chat.txt'" in ";".join(ohne) and "textfile='/x/chat.txt'" not in ";".join(mit)
+    assert any(p.startswith("[vdeco][3:v]overlay=x=%d:y=%d:eof_action=repeat:shortest=0" % (x, y))
+               for p in mit), mit
+    assert lab == "vstudio" and mit[-1].startswith("[vchat]")
+    assert "textfile='/x/title.txt'" in ";".join(mit), "die uebrigen Texte fehlen"
+
+    # (4) Der ffmpeg-Eingang: nur im Studio-Layout mit Overlay, vor der Stille.
+    import nc.restreamcmd as R
+    from nc import restreamstate as RS
+    from nc import tonspur as T
+    font = next((p for p in R.FONT_KANDIDATEN if _os.path.isfile(p)), None)
+    if font:
+        R.configure(
+            cookie_header=lambda: "", pick_pull_proxy=lambda: "",
+            restream_overlay_files=lambda rid=None: files, FFMPEG_THREADS_LIVE=3,
+            FFMPEG_THREADS_RELAY=2, RESTREAM_AVATAR="", RESTREAM_BITRATE_K=4500,
+            RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170, RESTREAM_AVATAR_LOOP="",
+            RESTREAM_CANVAS_H=1080, RESTREAM_CANVAS_W=1920, RESTREAM_FONT=font,
+            RESTREAM_FPS=30, RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=True,
+            RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+            RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+            RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+        alt_mode = RS.LAYOUT.get("mode")
+        try:
+            RS.LAYOUT["mode"] = "studio"
+            cmd = R.build("http://q/x.flv", "rtmp://k/app", "KEY", transcode=True, rid=7,
+                          chat_fifo="/tmp/cb.fifo", tonlos=True)
+            i = cmd.index("/tmp/cb.fifo")
+            assert cmd[i - 1] == "-i" and "image2pipe" in cmd[i - 12:i]
+            idx = cmd[:i - 1].count("-i")      # Eingangsnummer des Kastens
+            fc = cmd[cmd.index("-filter_complex") + 1]
+            assert "[%d:v]overlay=x=%d:y=%d" % (idx, x, y) in fc, fc
+            assert "textfile=" in fc and "chat.txt" not in fc, "Chat doppelt (Bild UND drawtext)"
+            assert T.hat_tonspur(cmd), "die Stille muss hinter dem Kasten bleiben"
+            ohne_cmd = R.build("http://q/x.flv", "rtmp://k/app", "KEY", transcode=True, rid=7)
+            assert "/tmp/cb.fifo" not in ohne_cmd and "chat.txt" in " ".join(ohne_cmd)
+            RS.LAYOUT["mode"] = "burnin"
+            bi = R.build("http://q/x.flv", "rtmp://k/app", "KEY", transcode=True, rid=7,
+                         chat_fifo="/tmp/cb.fifo")
+            assert "/tmp/cb.fifo" not in bi, "Kasten ausserhalb des Studio-Layouts"
+            RS.LAYOUT["mode"] = "studio"
+            kopie = R.build("http://q/x.flv", "rtmp://k/app", "KEY", transcode=False, rid=7,
+                            chat_fifo="/tmp/cb.fifo")
+            assert "/tmp/cb.fifo" not in kopie, "Kasten ohne Umkodieren"
+        finally:
+            RS.LAYOUT["mode"] = alt_mode
+    else:
+        print("    (keine Schrift — ffmpeg-Eingang nicht geprueft)")
+
+    # (5) Lebenszyklus mit einer Browser-Attrappe.
+    PNG = b"\x89PNG" + b"x" * 200
+
+    class _Browser:
+        faellt = False
+
+        def __init__(self, binpath, url, groesse, nice=None):
+            self.url, self.groesse, self.aus = url, groesse, False
+
+        def starten(self, timeout=20):
+            if _Browser.faellt:
+                raise RuntimeError("kein Chromium")
+
+        def schuss(self, timeout=15):
+            return PNG
+
+        def lebt(self):
+            return not self.aus
+
+        def beenden(self):
+            self.aus = True
+    d = _ph.verzeichnis()
+    fifo = CB.starten("w205", _Browser, "/bin/x", "http://127.0.0.1/overlay/chat?user=a",
+                      "978,688", d, fps=20, anlauf_s=0)
+    assert fifo and _os.path.exists(fifo) and open(_os.path.join(d, "chatbild_w205.png"), "rb").read() == PNG
+    gelesen = []
+
+    def _lesen():
+        with open(fifo, "rb") as f:
+            gelesen.append(f.read(len(PNG) * 2))
+    t = _th.Thread(target=_lesen)
+    t.start()
+    t.join(5)
+    assert gelesen and gelesen[0].startswith(PNG), "der Schreiber schiebt nichts in die FIFO"
+    assert CB.lage() == {"w205": {"browser_lebt": True}}
+    br = CB._LAUF["w205"]["browser"]
+    CB.beenden("w205")
+    assert br.aus and not _os.path.exists(fifo) and CB.lage() == {}
+    _Browser.faellt = True
+    assert CB.starten("w205b", _Browser, "/bin/x", "u", "1,1", d, anlauf_s=0) is None
+    assert CB.lage() == {}, "gescheiterter Start als laufend gefuehrt"
+    # Ein Schreiber, der in open() haengt (ffmpeg startet nie), endet mit beenden().
+    _Browser.faellt = False
+    CB.starten("w205c", _Browser, "/bin/x", "u", "1,1", d, fps=20, anlauf_s=0)
+    schreiber = CB._LAUF["w205c"]["faeden"][1]
+    CB.beenden("w205c")
+    schreiber.join(3)
+    assert not schreiber.is_alive(), "Schreiber-Faden bleibt in open() haengen"
+
+    # (6) Fehlende Emoji-Schriften: Python (Bot) und Shell (Installer/update.sh).
+    class _Erg:
+        def __init__(self, out):
+            self.stdout = out
+    with _mock.patch.object(Z.shutil, "which", return_value="/usr/bin/fc-list"), \
+         _mock.patch.object(Z.subprocess, "run",
+                            side_effect=[_Erg("DejaVu Sans\n"), _Erg("")]) as lauf:
+        assert Z.emoji_pakete_fehlen() == ["fonts-noto-color-emoji", "fonts-symbola"]
+    assert lauf.call_args_list[1][0][0] == ["/usr/bin/fc-list", ":charset=1f339:outline=true"], \
+        "geprueft an einem Zeichen, das DejaVu selbst hat"
+    with _mock.patch.object(Z.shutil, "which", return_value="/usr/bin/fc-list"), \
+         _mock.patch.object(Z.subprocess, "run",
+                            side_effect=[_Erg("x: Noto Color Emoji:style=Regular\n"),
+                                         _Erg("Symbola\n")]):
+        assert Z.emoji_pakete_fehlen() == []
+    with _mock.patch.object(Z.shutil, "which", return_value=None):
+        assert Z.emoji_pakete_fehlen() == ["fonts-noto-color-emoji", "fonts-symbola"]
+    Z._EMOJI["gemeldet"] = False
+    with _mock.patch.object(Z, "emoji_pakete_fehlen", return_value=["fonts-symbola"]), \
+         _mock.patch.object(Z.log, "warning") as w:
+        Z.emoji_hinweis("Test")
+        Z.emoji_hinweis("Test")
+    assert w.call_count == 1 and "sudo apt install" in w.call_args[0][0] \
+        and "fonts-symbola" in w.call_args[0][-1], w.call_args
+    Z._EMOJI["gemeldet"] = False
+    # Shell: die Paketdatenbank entscheidet (dpkg-query); ohne sie nichts
+    # vorschlagen — sonst installierte update.sh bei jedem Lauf neu.
+    bin_d = _ph.verzeichnis()
+    dq = _os.path.join(bin_d, "dpkg-query")
+    with open(dq, "w") as f:
+        f.write('#!/bin/sh\nfor a; do p="$a"; done\n'
+                'case "$p" in fonts-symbola) printf "install ok installed";; '
+                '*) printf "unknown ok not-installed";; esac\n')
+    _os.chmod(dq, 0o755)
+    r = _sp.run(["bash", "-c", ". tools/lib/system.sh; nc_emoji_pakete apt; nc_emoji_pakete dnf"],
+                capture_output=True, text=True,
+                env=dict(_os.environ, PATH=bin_d + ":" + _os.environ.get("PATH", "")))
+    assert r.stdout.split() == ["fonts-noto-color-emoji"], (r.stdout, r.stderr)
+    leer = _ph.verzeichnis()
+    r = _sp.run(["/bin/bash", "-c", ". tools/lib/system.sh; nc_emoji_pakete apt; echo rc=$?"],
+                capture_output=True, text=True, env=dict(_os.environ, PATH=leer))
+    assert r.stdout.split() == ["rc=0"], ("ohne dpkg-query vorgeschlagen", r.stdout, r.stderr)
+    for skript in ("tools/installer.sh", "tools/update.sh"):
+        zeilen = [zl.strip() for zl in open(skript, encoding="utf-8").read().splitlines()]
+        assert any(zl.startswith("for _k in $(nc_emoji_pakete") for zl in zeilen), skript
+    # Der Bot sagt es einmal laut — die Update-Funktion installiert keine Pakete.
+    bot = open("bot.py", encoding="utf-8").read()
+    assert bot.count("_nc_schriftzeichen.emoji_hinweis(") == 2
+    # Schalter RESTREAM_CHAT_BILD, an der Startbedingung des Restreams.
+    with _mock.patch.dict(_os.environ, {"RESTREAM_CHAT_BILD": "0"}):
+        assert not CB.an()
+    for wert in ("", "1", "ja"):
+        with _mock.patch.dict(_os.environ, {"RESTREAM_CHAT_BILD": wert}):
+            assert CB.an(), wert
+    assert '_restream_layout_mode() == "studio" and _nc_chatbild.an()):' in bot
+    ok("v5.9-W205: Chat-Kasten aus Chromium (Emoji farbig) — Daten je Quelle, Routen, "
+       "Filtergraph an der Stelle des Text-Chats, ffmpeg-Eingang nur im Studio, "
+       "Lebenszyklus, fehlende Emoji-Schriften laut")
+
+
+def _test_v59_w206_ein_totes_ziel_reisst_nicht_mit():
+    """v5.9-W206: ein totes Ziel baut den Multistream nicht endlos neu auf.
+
+    Log des Betreibers vom 13.11.: „youtube meldet offline trotz laufendem
+    Prozess — Neuaufbau (2. … 7. Versuch)" im Sechs-Minuten-Takt, und jedes
+    Mal „Sendebruecke beendet — Broken pipe": der tee-Neuaufbau riss Kick und
+    Twitch mit ab. Nachgestellt mit dem echten Waechter."""
+    from nc import restream_guard as G
+    g = G.RestreamGuard(G.GuardConfig(startup_grace_s=0, misses_before_action=3))
+    t = [1000.0]
+
+    def runde(ergebnis):
+        t[0] += 120
+        return g.evaluate(7, running=True, desired=True, source_live=True,
+                          platform_results=dict(ergebnis), now=t[0])
+    g.note_started(7, t[0])
+    lage = {"kick": G.LIVE, "twitch": G.LIVE, "youtube": G.OFFLINE}
+    # (1) Erstes Mal: YouTube tot, die anderen senden -> EIN Neuaufbau.
+    runde(lage), runde(lage)
+    d = runde(lage)
+    assert d["action"] == G.ACT_RESTART and d["dead"] == ["youtube"], d
+    g.note_restart(7, t[0], dead=d["dead"])
+    # (2) Wieder tot: kein zweiter Neuaufbau, sondern aufgegeben — einmal gemeldet.
+    for _ in range(2):
+        assert runde(lage)["action"] == G.ACT_NONE
+    d = runde(lage)
+    assert d["action"] == G.ACT_NONE and d["neu_aufgegeben"] == ["youtube"], d
+    assert "youtube aufgegeben" in d["reason"] and "kick, twitch senden weiter" in d["reason"], d
+    for _ in range(10):        # eine Stunde spaeter: still, kein Neuaufbau
+        d = runde(lage)
+        assert d["action"] == G.ACT_NONE and d["neu_aufgegeben"] == [], d
+    assert g.snapshot()[7]["targets"]["youtube"]["aufgegeben"] is True
+    # (3) YouTube sendet wieder (Schluessel getauscht): Versuche zurueck.
+    runde({"kick": G.LIVE, "twitch": G.LIVE, "youtube": G.LIVE})
+    assert g.snapshot()[7]["targets"]["youtube"]["aufgegeben"] is False
+    for _ in range(2):
+        runde(lage)
+    assert runde(lage)["action"] == G.ACT_RESTART, "nach Erholung keine neue Chance"
+    # (4) Sendet KEIN Ziel mehr: Neuaufbau wie bisher, aufgegeben oder nicht.
+    g2 = G.RestreamGuard(G.GuardConfig(startup_grace_s=0, misses_before_action=1))
+    g2.note_started(8, 0)
+    tot = {"kick": G.OFFLINE, "youtube": G.OFFLINE}
+    d = g2.evaluate(8, running=True, desired=True, source_live=True,
+                    platform_results=tot, now=500)
+    assert d["action"] == G.ACT_RESTART and sorted(d["dead"]) == ["kick", "youtube"], d
+    g2.note_restart(8, 500, dead=d["dead"])
+    d = g2.evaluate(8, running=True, desired=True, source_live=True,
+                    platform_results=tot, now=5000)
+    assert d["action"] == G.ACT_RESTART, "ohne lebendes Ziel muss neu aufgebaut werden"
+    # (5) Ein einzelnes Ziel (nur Kick): wie bisher.
+    g3 = G.RestreamGuard(G.GuardConfig(startup_grace_s=0, misses_before_action=1))
+    g3.note_started(9, 0)
+    d = g3.evaluate(9, running=True, desired=True, source_live=True,
+                    platform_results={"kick": G.OFFLINE}, now=500)
+    assert d["action"] == G.ACT_RESTART
+    # (6) Abhilfe je Plattform; der Bot meldet sie und zaehlt die Versuche je Ziel.
+    assert "Automatisch starten" in G.abhilfe("youtube") and "Twitch" in G.abhilfe("twitch")
+    assert G.abhilfe("x")
+    bot = open("bot.py", encoding="utf-8").read()
+    assert "_RESTREAM_GUARD.note_restart(rid, now, dead=d[\"dead\"])" in bot
+    assert "_nc_guard.abhilfe(_p)" in bot and 'd.get("neu_aufgegeben")' in bot
+    ok("v5.9-W206: ein totes Ziel (YouTube) baut den Multistream hoechstens einmal neu "
+       "auf, danach aufgegeben mit Abhilfe; ohne lebendes Ziel wie bisher")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -38935,7 +39828,8 @@ def _test_v55_w196_azrael_an_qwen():
     b = _thr.Thread(target=_warte, args=(_llm.RANG["gespraech"], "gespraech", 0.1))
     a.start(); b.start()
     _t.sleep(0.3)
-    assert slot.lage() == {"belegt": True, "wartend": 2}
+    # v5.9-W202: lage() nennt dazu, wie viele Plaetze gerade rechnen.
+    assert slot.lage() == {"belegt": True, "in_arbeit": 1, "wartend": 2}
     slot.freigeben()
     a.join(5); b.join(5)
     assert reihenfolge == ["gespraech", "nebenbei"], \
@@ -40132,6 +41026,13 @@ def main():
     _test_v58_w199_abwehrlage()
     _test_v58_w199_geocache_anreichern()
     _test_v58_w199_zusammenschnitt_nicht_nach_telegram()
+    _test_v58_w200_telegram_antworten()
+    _test_v59_w201_ki_wahl()
+    _test_v59_w202_plaetze_und_budget()
+    _test_v59_w203_sendebild_zeichen()
+    _test_v59_w204_restream_liste()
+    _test_v59_w205_chatbild()
+    _test_v59_w206_ein_totes_ziel_reisst_nicht_mit()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

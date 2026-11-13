@@ -92,6 +92,10 @@ class GuardConfig:
     restart_backoff_s: float = 60.0
     restart_backoff_max_s: float = 900.0
     verify_interval_s: float = 120.0
+    # v5.9-W206: so oft darf EIN totes Ziel den ganzen Restream neu aufbauen,
+    # solange ein anderes Ziel nachweislich sendet. Danach gilt es als
+    # aufgegeben (bis zum naechsten Start von aussen) — siehe evaluate().
+    neuaufbau_je_ziel: int = 1
 
 
 @dataclass
@@ -101,6 +105,8 @@ class TargetState:
     last_result: str = UNKNOWN
     last_seen_live: float = 0.0
     confirmed: bool = False        # war seit dem Start mindestens einmal live
+    neuaufbauten: int = 0          # v5.9-W206: Neuaufbauten, die DIESES Ziel ausloeste
+    aufgegeben: bool = False       # v5.9-W206: kein Neuaufbau mehr wegen dieses Ziels
 
 
 @dataclass
@@ -185,13 +191,44 @@ class RestreamGuard:
                 t.misses = 0
                 t.confirmed = True
                 t.last_seen_live = now
+                # Sendet ein aufgegebenes Ziel wieder (Betreiber hat den
+                # Schluessel getauscht), bekommt es seine Versuche zurueck.
+                t.aufgegeben = False
+                t.neuaufbauten = 0
             elif result == OFFLINE:
                 t.misses += 1
                 if t.misses >= self.cfg.misses_before_action:
                     dead.append(platform)
             # UNKNOWN: Regel 3 — kein Beweis, Zaehler bleibt unveraendert.
 
+        # v5.9-W206: ein totes Ziel reisst die anderen nicht endlos mit.
+        # Bei tee laesst sich kein einzelnes Ziel neu verbinden — ein
+        # Neuaufbau beendet ALLE. Beim Betreiber am 13.11.: YouTube ging nicht
+        # live, der Waechter baute siebenmal im Sechs-Minuten-Takt neu auf,
+        # und jedes Mal brach Kick mit ab (Broken pipe, Pausenbild, Neustart
+        # unter Volllast). Sendet ein anderes Ziel nachweislich, bekommt das
+        # tote `neuaufbau_je_ziel` Versuche; danach ist es aufgegeben, und
+        # die Ziele, die laufen, bleiben in Ruhe. Erst wenn KEIN Ziel mehr
+        # sendet, wird wie bisher neu aufgebaut.
+        lebende = [p for p, r in platform_results.items() if r == LIVE]
+        neu_aufgegeben = []
+        if lebende:
+            for p in list(dead):
+                t = st.target(p)
+                if t.aufgegeben:
+                    dead.remove(p)
+                elif t.neuaufbauten >= self.cfg.neuaufbau_je_ziel:
+                    t.aufgegeben = True
+                    neu_aufgegeben.append(p)
+                    dead.remove(p)
+        aufgegeben = sorted(p for p, t in st.targets.items() if t.aufgegeben)
+
         if not dead:
+            if aufgegeben:
+                return self._r(ACT_NONE,
+                               "%s aufgegeben — %s senden weiter"
+                               % (", ".join(aufgegeben), ", ".join(sorted(lebende)) or "keins"),
+                               st, aufgegeben=aufgegeben, neu_aufgegeben=neu_aufgegeben)
             return self._r(ACT_NONE, "alle Ziele bestaetigt", st)
 
         if st.last_restart and now - st.last_restart < st.backoff_s:
@@ -204,9 +241,15 @@ class RestreamGuard:
                        f"{', '.join(dead)} meldet offline trotz laufendem Prozess",
                        st, dead=dead)
 
-    def note_restart(self, rid: int, now: float):
-        """Nach einem ausgeloesten Neustart aufrufen: Backoff hochsetzen."""
+    def note_restart(self, rid: int, now: float, dead=None):
+        """Nach einem ausgeloesten Neustart aufrufen: Backoff hochsetzen.
+
+        `dead` (v5.9-W206): die Ziele, deretwegen neu aufgebaut wurde — ihre
+        Versuche zaehlen fuer die Regel „ein totes Ziel reisst die anderen
+        nicht endlos mit"."""
         st = self.state(rid)
+        for p in dead or ():
+            st.target(p).neuaufbauten += 1
         st.restarts += 1
         st.last_restart = now
         st.backoff_s = (self.cfg.restart_backoff_s if not st.backoff_s
@@ -219,10 +262,11 @@ class RestreamGuard:
         st = self.state(rid)
         st.backoff_s = 0.0
 
-    def _r(self, action, reason, st, dead=None):
+    def _r(self, action, reason, st, dead=None, aufgegeben=None, neu_aufgegeben=None):
         return {"action": action, "reason": reason, "dead": dead or [],
+                "aufgegeben": aufgegeben or [], "neu_aufgegeben": neu_aufgegeben or [],
                 "detail": {p: {"result": t.last_result, "misses": t.misses,
-                               "confirmed": t.confirmed}
+                               "confirmed": t.confirmed, "aufgegeben": t.aufgegeben}
                            for p, t in st.targets.items()},
                 "restarts": st.restarts,
                 "backoff_s": round(st.backoff_s)}
@@ -234,6 +278,7 @@ class RestreamGuard:
                       "targets": {p: {"result": t.last_result,
                                       "misses": t.misses,
                                       "confirmed": t.confirmed,
+                                      "aufgegeben": t.aufgegeben,
                                       "last_seen_live": t.last_seen_live}
                                   for p, t in s.targets.items()}}
                 for rid, s in self._states.items()}
@@ -255,3 +300,20 @@ def classify(status: dict) -> str:
     if v is None:
         return UNKNOWN
     return LIVE if v else OFFLINE
+
+
+def abhilfe(platform: str) -> str:
+    """Was der Betreiber tun kann, wenn ein Ziel trotz Neuaufbau nicht live
+    geht (v5.9-W206). Der haeufigste Fall ist kein Fehler des Bots."""
+    p = str(platform or "").lower()
+    if p == "youtube":
+        return ("YouTube nimmt den Strom an, startet die Sendung aber nicht: im "
+                "YouTube Studio den Stream-Schluessel pruefen und „Automatisch "
+                "starten\" fuer den Stream einschalten — oder YouTube im Deck "
+                "(Restream › Ziele) abschalten.")
+    if p == "twitch":
+        return ("Twitch-Stream-Schluessel pruefen (Twitch › Creator-Dashboard), "
+                "oder Twitch im Deck abschalten.")
+    if p == "kick":
+        return "Kick-Stream-Schluessel und Ingest-Adresse pruefen (Kick › Creator)."
+    return "Stream-Schluessel dieses Ziels pruefen oder das Ziel im Deck abschalten."

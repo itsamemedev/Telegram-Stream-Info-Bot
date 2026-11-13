@@ -803,6 +803,32 @@ def list_models_sync(timeout: float = 6.0) -> List[str]:
     return out
 
 
+def abhilfe(kind) -> str:
+    """Was der Betreiber bei diesem Fehler tut — Klartext, eine Zeile.
+
+    v5.9-W202: auf der Brain-Seite stand „RuntimeError: freeai: auth" und
+    sonst nichts. Das ist dieselbe Art Meldung wie ein blankes „HTTP 403"
+    (W81): richtig und nutzlos. Leer bei Faellen ohne Handgriff."""
+    llm7 = bool((os.getenv("LLM7_TOKEN", "") or os.getenv("LLM7_API_KEY", "")).strip())
+    poll = bool((os.getenv("POLLINATIONS_API_KEY", "")
+                 or os.getenv("POLLINATIONS_TOKEN", "")).strip())
+    if kind == "auth":
+        if not llm7:
+            return ("alle freien Cloud-Basen verlangen einen Schluessel — kostenloses "
+                    "Token unter token.llm7.io holen und als LLM7_TOKEN eintragen "
+                    "(Deck › Einstellungen oder .env)"
+                    + ("" if poll else ", oder POLLINATIONS_API_KEY"))
+        return ("LLM7_TOKEN ist gesetzt und wird trotzdem abgelehnt — Token unter "
+                "token.llm7.io erneuern" + ("" if poll else ", oder POLLINATIONS_API_KEY setzen"))
+    if kind == "rate_limit":
+        return ("alle freien Basen drosseln gerade (HTTP 429)"
+                + ("" if llm7 else " — mit LLM7_TOKEN (kostenlos, token.llm7.io) steigt "
+                   "die Grenze bei llm7.io von 30 auf 120 Anfragen je Minute"))
+    if kind in ("net", "timeout"):
+        return "keine freie Cloud-Basis erreichbar — Netz bzw. Tunnel (RECORD_PROXY) pruefen"
+    return ""
+
+
 def diagnose() -> str:
     """Einzeiler fuer /diag und das Dashboard: Zustand aller Basen."""
     parts = []

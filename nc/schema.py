@@ -611,6 +611,11 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
         "tw_key": txt_long,
         "yt_ingest": txt_long,
         "yt_key": txt_long,
+        # v5.9-W204: woher die Zeile kommt — leer = im Deck angelegt,
+        # 'tracking' = aus den Trackings (Telegram/Discord) abgeglichen,
+        # 'tracking-ruht' = Nutzer wird nicht mehr getrackt (nc/restreamliste.py).
+        # Neue Spalte, alte Bedeutung unveraendert: kein Schemastand-Sprung.
+        "herkunft": txt_long,
     })
 
     # Migration: recordings.file_size (für Quality-Score + Bandwidth-Calc)

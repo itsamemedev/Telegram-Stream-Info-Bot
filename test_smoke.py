@@ -552,6 +552,207 @@ def main():
         _cs._db_conn = _echt
     ok("W199: Highlight-Radar \u2014 Lesefehler 503 ohne Schreiben, nicht genannte Felder bleiben")
 
+    # \u2500\u2500 v5.8-W200: AZRAEL antwortet in Telegram auf Antworten
+    #
+    # Der Betreiber: \u201eIn Telegram antwortet das Brain nicht auf
+    # Antwort-Nachrichten." Hier OHNE Redis (das Paket fehlt im Rauchtest) \u2014
+    # genau die Lage, in der bisher jede Antwort auf den Bot still verworfen
+    # wurde. Erst die Entscheidung im echten Handler, dann _run_ai_call bis
+    # zum LLM: kommt der Zusammenhang an, und wird die Antwort gemerkt?
+    import asyncio as _aio
+    import types as _ty
+    from nc import tgantwort as _tga
+    assert _aio.run(m.get_redis()) is None, "Rauchtest soll ohne Redis laufen"
+    _rufe = []
+
+    async def _ruf(update, context, text, file_obj=None, mime_hint="", vorher=""):
+        _rufe.append((text, vorher))
+
+    async def _brain_ruf(update, b, q, vorher=""):
+        # v5.9-W201: eine Antwort auf /brain geht an das Brain, nicht an AZRAEL.
+        _rufe.append(("brain", q, vorher))
+    _echt = (m._run_ai_call, m._is_authorized, m._brain_fragen)
+    m._run_ai_call, m._is_authorized, m._brain_fragen = _ruf, (lambda u: True), _brain_ruf
+    BOT_ID = 4242
+
+    class _Bot:
+        username = "NachtwacheBot"     # v5.9-W201: der @-Name zaehlt als Ansprache
+
+        async def get_me(self):
+            return _ty.SimpleNamespace(id=BOT_ID)
+
+    def _upd(text, chat_typ="supergroup", bezug=None, thema=None):
+        msg = _ty.SimpleNamespace(text=text, chat_id=-100, reply_to_message=bezug,
+                                  message_thread_id=thema,
+                                  is_topic_message=thema is not None)
+        return _ty.SimpleNamespace(message=msg, effective_chat=_ty.SimpleNamespace(
+            id=-100, type=chat_typ), effective_user=_ty.SimpleNamespace(id=7))
+
+    def _vom_bot(text, mid, kopf=False):
+        return _ty.SimpleNamespace(text=text, message_id=mid,
+                                   from_user=_ty.SimpleNamespace(id=BOT_ID),
+                                   forum_topic_created=(_ty.SimpleNamespace() if kopf else None))
+    _ctx = _ty.SimpleNamespace(bot=_Bot())
+    try:
+        faelle = (
+            # Antwort auf eine KI-Antwort in der Gruppe, ohne Verlauf
+            (_upd("und warum?", bezug=_vom_bot("Weil X.\n\n\u2014 2.1s \u00b7 qwen", 50)),
+             [("und warum?", "Weil X.")]),
+            # Thema: Bezug auf den Themen-Kopf ist keine Antwort \u2014 Ansprache zaehlt
+            (_upd("@Azrael wer ist anna?", bezug=_vom_bot(None, 77, kopf=True), thema=77),
+             [("wer ist anna?", "")]),
+            # Thema ohne Namen: keine Antwort (sonst kommentiert AZRAEL jede Zeile)
+            (_upd("geiler stream", bezug=_vom_bot(None, 77, kopf=True), thema=77), []),
+            # Antwort auf einen anderen Nutzer mit Namen
+            (_upd("azrael, stimmt das?", bezug=_ty.SimpleNamespace(
+                text="die erde ist flach", message_id=60, forum_topic_created=None,
+                from_user=_ty.SimpleNamespace(id=9))), [("stimmt das?", "")]),
+            # Antwort auf eine Live-Meldung ohne Namen: still
+            (_upd("geil", bezug=_vom_bot("\ud83d\udd34 @anna ist LIVE", 61)), []),
+            # dieselbe im Privatchat: weiterreden
+            (_upd("wie lange schon?", chat_typ="private", bezug=_vom_bot("\ud83d\udd34 @anna ist LIVE", 62)),
+             [("wie lange schon?", "\ud83d\udd34 @anna ist LIVE")]),
+            # v5.9-W201: Antwort auf eine /brain-Antwort -> weiter ueber das Brain
+            (_upd("und morgen?", bezug=_vom_bot("\U0001f9e0 [llm \u00b7 lokal] Heute 3 Lives.", 63)),
+             [("brain", "und morgen?", "Heute 3 Lives.")]),
+            # v5.9-W201: der @-Name des Bots ist eine Ansprache (Datenschutzmodus)
+            (_upd("@NachtwacheBot wer ist live?"), [("wer ist live?", "")]),
+        )
+        for upd, soll in faelle:
+            del _rufe[:]
+            _aio.run(m._tg_ki_dialog(upd, _ctx))
+            assert _rufe == soll, (upd.message.text, _rufe, soll)
+        # Beide registrierten Handler fuehren dorthin.
+        del _rufe[:]
+        _aio.run(m.on_azrael_mention(_upd("hallo", chat_typ="private"), _ctx))
+        _aio.run(m.on_ai_reply(_upd("und warum?", bezug=_vom_bot("Weil X.\n\n\u2014 2.1s \u00b7 qwen", 50)), _ctx))
+        assert _rufe == [("hallo", ""), ("und warum?", "Weil X.")], _rufe
+    finally:
+        m._run_ai_call, m._is_authorized, m._brain_fragen = _echt
+
+    # _run_ai_call bis zum LLM: der Zusammenhang steht vor der Frage, und die
+    # Antwort-Nachricht wird gemerkt (auch eine lange, in Stuecken).
+    # ANKER GEWANDERT (v5.9-W201): _run_ai_call spricht ueber _azrael_ki (wie
+    # AZRAEL im Stream), nicht mehr ueber llm_chat — die Attrappe sitzt dort.
+    _gesehen = {}
+
+    async def _llm(messages, model, timeout, zweck):
+        _gesehen["m"] = messages
+        _gesehen["zweck"] = zweck
+        from nc import kiwahl as _kw
+        _kw.herkunft_setzen("lokal")
+        return "Darum.", None
+
+    class _Antwort:
+        def __init__(self, mid):
+            self.message_id = mid
+
+        async def edit_text(self, *a, **k):
+            return self
+
+    class _Nachricht:
+        async def reply_text(self, *a, **k):
+            _gesehen.setdefault("antworten", []).append(a[0] if a else k.get("text"))
+            return _Antwort(901)
+
+    class _Bot2:
+        async def send_chat_action(self, *a, **k):
+            return True
+    _echt2 = m._azrael_ki
+    m._azrael_ki = _llm
+    _bearbeitet = []
+    _Antwort.edit_text = lambda self, *a, **k: _aio.sleep(0, _bearbeitet.append(a[0] if a else k.get("text")))
+    try:
+        upd = _ty.SimpleNamespace(message=_Nachricht(), effective_chat=_ty.SimpleNamespace(id=-100),
+                                  effective_user=_ty.SimpleNamespace(id=7))
+        _aio.run(m._run_ai_call(upd, _ty.SimpleNamespace(bot=_Bot2()), "und warum?",
+                                vorher="Weil X."))
+    finally:
+        m._azrael_ki = _echt2
+    rollen = [(x["role"], x["content"]) for x in _gesehen["m"][1:]]
+    assert rollen == [("assistant", "Weil X."), ("user", "und warum?")], rollen
+    assert _gesehen["zweck"] == "gespraech", "Telegram ist ein Gespraech, keine Reaktion"
+    assert _tga.gemerkt(-100, 901), "die KI-Antwort wurde nicht gemerkt"
+    # v5.9-W201: der Fuss nennt, wer WIRKLICH geantwortet hat — nicht das
+    # eingestellte Cloud-Modell.
+    fuss = [t for t in _bearbeitet if t and "Darum." in t]
+    assert fuss and " \u00b7 lokal" in fuss[-1], _bearbeitet
+    assert _tga.ist_ki_antwort(-100, _ty.SimpleNamespace(message_id=999, text=fuss[-1])), \
+        "der neue Fuss wird als KI-Antwort nicht mehr erkannt"
+    # v5.9-W201: die Wahl im Deck. „lokal" fragt NIE die Cloud (auch nicht,
+    # wenn das lokale Modell schweigt), „free" nie das lokale Modell — und die
+    # Herkunft sagt, wer es war. Ueber die echten Wege des Bots.
+    import time as _zeit
+    import brain.llm as _bl
+    from nc import kiwahl as _kw
+    _wege = []
+
+    def _lok(self, backend, msgs, t, mt):
+        _wege.append(backend)
+        raise RuntimeError("lokal tot")
+
+    def _frei_s(messages, model=None, timeout=None):
+        _wege.append("freeai")
+        return "frei", None
+
+    async def _frei_a(messages, model=None, timeout=None):
+        _wege.append("freeai")
+        return "frei", None
+    _alt_deck = dict(_kw._DECK)
+    _echt3 = (m._nc_freeai.chat_sync, m._nc_freeai.chat, _bl.LLMRuntime._call, _kw.lokal_stand)
+    m._nc_freeai.chat_sync, m._nc_freeai.chat, _bl.LLMRuntime._call = _frei_s, _frei_a, _lok
+    # Das lokale Modell „laeuft": sonst ginge auch Auto gleich in die Cloud,
+    # und „free" waere von Auto nicht zu unterscheiden.
+    _kw.lokal_stand = lambda messen=False: True
+    try:
+        _frage = [{"role": "user", "content": "x"}]
+        for weg, ruf in (("sync", lambda: m.llm_chat_sync(_frage)),
+                         ("async", lambda: _aio.run(m.llm_chat(_frage)))):
+            del _wege[:]
+            _kw._DECK.update(t=_zeit.monotonic(), wert="lokal")
+            txt, err = ruf()
+            assert txt is None and str(err).startswith("lokal:"), (weg, txt, err)
+            assert "freeai" not in _wege and "llamacpp" in _wege, (weg, _wege)
+            del _wege[:]
+            _kw._DECK.update(t=_zeit.monotonic(), wert="free")
+            txt, err = ruf()
+            assert txt == "frei" and _wege == ["freeai"], (weg, txt, _wege)
+            assert _kw.herkunft() == "free", (weg, _kw.herkunft())
+    finally:
+        (m._nc_freeai.chat_sync, m._nc_freeai.chat, _bl.LLMRuntime._call,
+         _kw.lokal_stand) = _echt3
+        _kw._DECK.clear()
+        _kw._DECK.update(_alt_deck)
+    ok("W200/W201: Telegram \u2014 Antwort auf AZRAEL ohne Redis, Themen-Kopf keine Antwort, "
+       "Ansprache im Thema und als Antwort auf andere, Meldungen nur mit Grund, "
+       "/brain-Antworten zurueck ans Brain, @-Name als Ansprache, Fuss mit Herkunft")
+
+    # v5.9-W204: der Abgleich Trackings -> Restream-Liste ueber den echten Bot.
+    # Ist die Ausschlussliste nicht lesbar, wird NICHTS eingetragen — sonst
+    # kaeme jeder im Deck geloeschte Nutzer bei gesperrter Datenbank zurueck.
+    from nc import restreamliste as _rl
+    _gerufen = []
+
+    def _abgl(conn, jetzt, aus=()):
+        _gerufen.append(list(aus))
+        return {"neu": [], "ruht": [], "wieder": []}
+    _echt4 = (m._nc_cfgstore.lesen, _rl.abgleichen)
+    try:
+        _rl.abgleichen = _abgl
+        m._nc_cfgstore.lesen = lambda k, fehlt=None: (_ for _ in ()).throw(RuntimeError("locked"))
+        try:
+            m._restream_liste_abgleichen()
+            raise AssertionError("Abgleich ohne lesbare Ausschlussliste gelaufen")
+        except RuntimeError:
+            pass
+        assert _gerufen == [], _gerufen
+        m._nc_cfgstore.lesen = lambda k, fehlt=None: ["anna"]
+        assert m._restream_liste_abgleichen() == {"neu": [], "ruht": [], "wieder": []}
+        assert _gerufen == [["anna"]], _gerufen
+    finally:
+        m._nc_cfgstore.lesen, _rl.abgleichen = _echt4
+    ok("W204: Restream-Liste \u2014 ohne lesbaren Ausschluss kein Abgleich, sonst mit")
+
     print("test_smoke OK \u2014 %d Vertraege gruen" % PASS)
 
 

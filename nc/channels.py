@@ -80,6 +80,26 @@ def configure_chat(lines=None, width=None):
     if width is not None: _CHAT_WIDTH = int(width)
 
 
+def chat_eintraege(anzahl=None, source_user=None):
+    """Die juengsten Chat-Eintraege fuer EIN Sendebild, als Daten.
+
+    v5.9-W205: fuer den Chat-Kasten, den Chromium zeichnet (Emoji farbig).
+    Derselbe Filter wie _chat_block: Kick, Twitch und YouTube sind der eigene
+    Kanal und laufen ueberall mit, TikTok nur aus der Quelle dieses Restreams
+    (V37-P6) — sonst stuenden fremde Chats im Sendebild."""
+    items = list(RESTREAM_CHAT)
+    if source_user:
+        # Ohne Gross-/Kleinschreibung: der Name kommt hier aus der Adresse des
+        # Kastens, im Ring aus dem Listener — TikTok unterscheidet sie nicht.
+        su = clean_username(source_user).lower()
+        items = [m for m in items
+                 if m.get("src") in ("kick", "twitch", "youtube")
+                 or (m.get("origin") or "").lower() == su]
+    n = int(anzahl or _CHAT_LINES)
+    return [{"src": m.get("src") or "", "who": m.get("who") or "", "text": m.get("text") or ""}
+            for m in items[-n:]]
+
+
 def _chat_block(maxlines=None, width=None, source_user=None):
     # V37-P6: source_user filtert den globalen Ring auf EINE Restream-Quelle
     # (Kick-Zeilen laufen überall mit — eigener Kanal). Nötig, seit P5b

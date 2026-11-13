@@ -52,7 +52,8 @@ A second run on a finished setup does nothing. Rebuild:
 | `LLM_MODELL_SHA256` | empty | empty = from Hugging Face; set = checked against this value |
 | `LLM_MODELL_VERZ` | `/opt/models` | |
 | `LLM_THREADS` | `4` | recordings have priority |
-| `LLM_KONTEXT` | `8192` | |
+| `LLM_KONTEXT` | `8192` | **per slot** — llama-server gets `-c KONTEXT × SLOTS` |
+| `LLM_PLAETZE` | `4` | answers at the same time (`-np`, v5.9). The bot reads the number from the server (`/props`). Every slot beyond the first costs about 680 MB of KV cache (q8_0); the RAM pre-check counts it |
 | `IK_LLAMA_DIR` / `IK_LLAMA_REF` | `/opt/ik_llama.cpp` / `main` | |
 | `BRAIN_LLAMACPP_URL` | `http://127.0.0.1:8080` | the port comes from here — same as before |
 
@@ -84,9 +85,11 @@ MemoryMax=13G        # model size + 4 GB, computed by the tool
 
 **TRADE-OFF** (no GPU, 8 cores, ffmpeg has priority):
 
-- 14B on the CPU is **slow** — roughly a few tokens per second. The hourly
-  budget (`BRAIN_LLM_MAX_CALLS_H`) and the timeout (`BRAIN_LLM_TIMEOUT_S=300`)
-  therefore stay as they are.
+- 14B on the CPU is **slow** — roughly a few tokens per second. Several slots
+  (`LLM_PLAETZE`) still help: generation is bound by memory bandwidth, and four
+  answers in one step read the weights once. Since v5.9 there is no hourly cap
+  by default (`BRAIN_LLM_MAX_CALLS_H=0`); the timeout
+  (`BRAIN_LLM_TIMEOUT_S=300`) stays.
 - Memory tight? A smaller quantisation (see above) or `-c 6144` via
   `LLM_KONTEXT`.
 - Recordings stutter under AI load? Do **not** raise to `-t 6` — the 4-core

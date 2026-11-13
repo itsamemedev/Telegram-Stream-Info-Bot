@@ -383,6 +383,14 @@ if [ "$W_SYSTEM" = 1 ]; then
       esac
     fi
   done
+  # v5.9-W205: Emoji-Schriften — Chromium (Sendebild, farbig) und libass
+  # (Aufnahmen, Umriss). Ohne sie je Emoji ein Kaestchen.
+  for _k in $(nc_emoji_pakete); do
+    if nc_paket_verfuegbar "$_k" || nc_quellen_leer; then
+      warn "Emoji-Schrift fehlt — Paket: %s" "$_k"
+      SYS_PAKETE="$SYS_PAKETE $_k"
+    fi
+  done
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
