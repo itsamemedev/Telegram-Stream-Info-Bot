@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **27.568 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
+`bot.py` hat **27.575 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -41,7 +41,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 390 Routen (34 in `bot.py`, 356 in
+`find` antwortet aus `.claude/INDEX.md` — 391 Routen (34 in `bot.py`, 357 in
 `nc/routes/`), 67 Slash-Commands, 639 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
@@ -71,9 +71,9 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  216 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  217 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           40 Flask-Blueprints mit 356 weiteren API-Routen
+    nc/routes/           41 Flask-Blueprints mit 357 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -1358,7 +1358,7 @@ müssen deshalb einzeln verifizierbar und rückrollbar sein.
 |---|---|
 | `nc-navigation` | **Zuerst.** Etwas finden, ohne den Monolithen zu durchsuchen |
 | `nightcrawler` | Änderungen an `bot.py`, `nc/`, `brain/` — Anker-Patching, Validierung |
-| `html-templates` | `templates/*.html`, `website/*.html` — vier Deck-Themen (Messing, Blaupause, Kontrast, Phosphor), Prüfkette |
+| `html-templates` | `templates/*.html`, `website/*.html` — fünf Deck-Themen (Messing, Blaupause, Kontrast, Phosphor, Leitstand), Übersicht als Leitstand, Prüfkette |
 | `nc-betrieb` | Deploy, systemd, Log-Lesen, Rollback, CrowdSec, Kick-Störungen |
 | `nc-datenbank` | SQL und Schema unter SQLite **und** MariaDB |
 | `nc-ki-backends` | `nc/freeai`, `brain/llm`, AZRAEL, Tier-Modell, Budget |

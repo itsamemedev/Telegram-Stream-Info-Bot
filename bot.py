@@ -674,6 +674,8 @@ from nc.routes import streamer as _nc_routes_streamer        # v4.1-W5: Streamer
 from nc.routes import i18n as _nc_routes_i18n                # v4.1-W6: Sprachwahl
 from nc.routes import schriften as _nc_routes_schriften      # v4.2-W111: Schriften lokal statt Google
 from nc.routes import lagebild as _nc_routes_lagebild        # v4.2-W112: lebende Übersicht
+from nc.routes import leitstand as _nc_routes_leitstand      # v5.10-W207: jeder Tab als Tafel
+from nc import leitstand as _nc_leitstand                     # v5.10-W207: Ton/Moment je Ereignis
 from nc.routes import twitch as _nc_routes_twitch            # v4.1-W8: Twitch-OAuth
 from nc.routes import youtube as _nc_routes_youtube          # v4.1-W8: YouTube-OAuth
 from nc.routes import kick as _nc_routes_kick                # v4.1-W9: Kick-OAuth, Kanal, Sendecheck
@@ -12132,9 +12134,13 @@ def _browser_push(kind, severity, title, body=""):
     if not _PUSH_SUBS:
         return
     try:
-        evt = json.dumps({"ts": round(_time_mod.time(), 1), "kind": str(kind),
-                          "severity": str(severity), "title": str(title)[:140],
-                          "body": str(body)[:240]}, ensure_ascii=False)
+        # v5.10-W207: Ton und Schluesselmoment entscheidet nc.leitstand —
+        # derselbe Massstab wie fuer die Ereignisse, die die Übersicht beim
+        # Laden aus dem Protokoll holt.
+        evt = json.dumps(dict({"ts": round(_time_mod.time(), 1), "kind": str(kind),
+                               "severity": str(severity), "title": str(title)[:140],
+                               "body": str(body)[:240]},
+                              **_nc_leitstand.ereignis(kind, severity)), ensure_ascii=False)
     except Exception:
         return
     with _PUSH_LOCK:
@@ -27541,6 +27547,7 @@ dashboard_app.register_blueprint(_nc_routes_streamer.bp)   # v4.1-W5
 dashboard_app.register_blueprint(_nc_routes_i18n.bp)       # v4.1-W6
 dashboard_app.register_blueprint(_nc_routes_schriften.bp)  # v4.2-W111
 dashboard_app.register_blueprint(_nc_routes_lagebild.bp)  # v4.2-W112
+dashboard_app.register_blueprint(_nc_routes_leitstand.bp)  # v5.10-W207
 dashboard_app.register_blueprint(_nc_routes_twitch.bp)     # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_youtube.bp)    # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_kick.bp)       # v4.1-W9

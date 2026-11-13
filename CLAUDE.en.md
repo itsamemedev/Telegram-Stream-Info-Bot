@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **27,568 lines / 1.4 MB ≈ 290,000 tokens**. That file is **never**
+`bot.py` has **27,575 lines / 1.4 MB ≈ 290,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -291,7 +291,7 @@ individually verifiable and roll-back-able.
 |---|---|
 | `nc-navigation` | **First.** Find something without searching the monolith |
 | `nightcrawler` | Changes to `bot.py`, `nc/`, `brain/` — anchor patching, validation |
-| `html-templates` | `templates/*.html`, `website/*.html` — four deck themes (Messing, Blaupause, Kontrast, Phosphor), verification chain |
+| `html-templates` | `templates/*.html`, `website/*.html` — five deck themes (Messing, Blaupause, Kontrast, Phosphor, Leitstand), overview as control room, verification chain |
 | `nc-betrieb` | Deployment, systemd, reading logs, rollback, CrowdSec, Kick outages |
 | `nc-datenbank` | SQL and schema under SQLite **and** MariaDB |
 | `nc-ki-backends` | `nc/freeai`, `brain/llm`, AZRAEL, the tier model, budget |

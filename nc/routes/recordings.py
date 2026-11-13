@@ -32,7 +32,7 @@ import signal as _signal_mod
 import subprocess
 import threading
 import time as _time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from flask import Blueprint, jsonify, request
@@ -47,6 +47,7 @@ from nc import meldetakt as _takt            # v4.2-W91: laut werden, ohne zu fl
 from nc import aufnahmesitzung as _sitzung   # v4.2-W44: die Sitzungs-Rechnung, bot-frei
 from nc.dbwrap import db_conn
 from nc import sicherpfad as _nc_sicherpfad   # v4.2-W149: Loeschen nur im Aufnahmeordner
+from nc import stats as _nc_stats             # v5.10-W207: Tageszaehlung, geteilt mit dem Leitstand
 from nc import trackingdb as _nc_trackingdb   # v4.0-W117: Tags direkt statt ueber nc.ctx
 from nc.archive import compute_recording_fingerprint, _retention_match
 from nc.ffdiag import _rec_quality
@@ -535,23 +536,12 @@ def api_recordings_daily():
        je Kalendertag serverseitig gezählt: exakt und backend-agnostisch (dieselbe
        parametrisierte Datumsfenster-Technik wie _public_stats)."""
     days = _arg_int("days", 14, 1, 90)
-    out = []
-    total = 0
+    # v5.10-W207: die Zaehlung steht in nc.stats.aufnahmen_je_tag (nur nicht
+    # geloeschte Aufnahmen, ein Datumsfenster je Tag) — der Leitstand der
+    # Übersicht liest dieselbe Funktion.
     try:
-        with db_conn() as conn:
-            for i in range(days - 1, -1, -1):
-                d0 = (datetime.now(timezone.utc) - timedelta(days=i)).date()
-                lo = datetime(d0.year, d0.month, d0.day,
-                              tzinfo=timezone.utc).isoformat()
-                hi = (datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc)
-                      + timedelta(days=1)).isoformat()
-                n = conn.execute(
-                    "SELECT COUNT(*) AS n FROM recordings "
-                    "WHERE deleted_at IS NULL AND created_at >= ? AND created_at < ?",
-                    (lo, hi)).fetchone()["n"]
-                n = int(n or 0)
-                total += n
-                out.append({"day": d0.isoformat(), "count": n})
+        out = _nc_stats.aufnahmen_je_tag(days)
+        total = sum(d["count"] for d in out)
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_recordings_daily"), days=[]), 500
     return jsonify(ok=True, days=out, total=total,

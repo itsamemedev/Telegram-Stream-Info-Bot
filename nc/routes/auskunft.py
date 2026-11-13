@@ -486,10 +486,9 @@ def api_highlights():
     """v4.0-W22: erkannte Highlight-Momente + aktuelle Chat-Lage."""
     cfg = _nc_cfgnorm.normalize_highlights(_cfg_get("highlights", None))
     hits = list(_nc_highlights.zustand().get("hits") or [])[-40:]
+    raten = _nc_highlights.chat_raten()      # v5.10-W207: eine Rechnung fuer Radar und Leitstand
     return jsonify(ok=True, enabled=cfg["enabled"], min_score=cfg["min_score"],
-                   now=time.time(),
-                   rate=round(len(_nc_highlights.zustand().get("events") or []) / 20.0 * 60.0, 1),
-                   base=round(len(_nc_highlights.zustand().get("base") or []) / 600.0 * 60.0, 1),
+                   now=time.time(), rate=raten["rate"], base=raten["basis"],
                    count=len(hits), items=list(reversed(hits)))
 
 

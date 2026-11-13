@@ -21179,8 +21179,12 @@ def _test_v42_w112_lagebild():
     # Der Takt bricht bei reduzierter Bewegung, verdeckter Uebersicht oder
     # verstecktem Tab ab — gemessen an der Zeile, die mit dem Abbruch BEGINNT.
     takt = js[js.index("function takt("):js.index("function kick(")]
-    zeile = [z.strip() for z in takt.splitlines() if z.strip().startswith("if(CURRENT_VIEW!==OWNVIEW")]
-    assert zeile and all(t in zeile[0] for t in ("document.hidden", "reduce", "raf=null;return;")), zeile
+    # ANKER GEWANDERT (v5.10-W208): ncSicht(OWNVIEW) statt CURRENT_VIEW —
+    # alle Ansichten stehen auf einer Seite; ncSicht prueft Sichtbarkeit UND
+    # document.hidden (Definition unten mitgeprueft).
+    zeile = [z.strip() for z in takt.splitlines() if z.strip().startswith("if(!ncSicht(OWNVIEW)")]
+    assert zeile and all(t in zeile[0] for t in ("reduce", "raf=null;return;")), zeile
+    assert "function ncSicht(v){ return !!_LS_SICHT[v] && !document.hidden; }" in h
     # Bei reduzierter Bewegung stehen die Waechter sofort am Ziel, ohne Spur.
     setze = js[js.index("function setze("):js.index("function zielVon(")]
     assert any(z.strip().startswith("if(reduce){") and "s.x=z.x" in z and "s.spur=[]" in z
@@ -21563,8 +21567,8 @@ def _test_v42_w116_lagebild_in_echtzeit():
     # solange die Uebersicht vorn und der Tab sichtbar ist.
     for ms, ruf in (("2000", "laden();"), ("1000", "tafel(false);")):
         treffer = [z for z in zeilen if ("},%s);" % ms) in z and ruf in z]
-        assert treffer and all("CURRENT_VIEW===OWNVIEW" in z and "!document.hidden" in z
-                               for z in treffer), (ms, treffer)
+        # ANKER GEWANDERT (v5.10-W208): ncSicht deckt beides ab (sichtbar + Tab vorn).
+        assert treffer and all("ncSicht(OWNVIEW)" in z for z in treffer), (ms, treffer)
     # Jeder Waechter hat einen Arbeitsplatz: die Bahn haengt an ortXY, nicht
     # an einer Kreisbahn um den Kern.
     zv = js[js.index("function zielVon("):js.index("function fortschritt(")]
@@ -35044,7 +35048,10 @@ def _test_v56_w198_mcp_deck():
     assert leiste.index('data-view="einstellungen"') < leiste.index('data-view="mcp"'), \
         "der Reiter steht nicht hinter den Einstellungen"
     assert h.count('id="view-mcp"') == 1
-    va, vb = h.index('<div class="view" id="view-mcp">'), h.index('<div class="view" id="view-brain">')
+    # ANKER GEWANDERT (v5.10-W208): die Ansichten stehen in Tab-Reihenfolge,
+    # jede in ihrem Bereich — die Ansicht endet mit dem Bereich, nicht vor „brain".
+    va = h.index('<div class="view" id="view-mcp">')
+    vb = h.index("</section>", va)
     assert h.index('<main id="hauptinhalt"') < va < vb < h.index("</main>"), \
         "die Ansicht steht ausserhalb des Hauptinhalts"
     ansicht = h[va:vb]
@@ -35054,7 +35061,9 @@ def _test_v56_w198_mcp_deck():
     # laeuft in einem frueheren Script-Block (W115) — ohne Anstoss bliebe die
     # Ansicht nach dem Neuladen leer. Ob er wirkt, prueft die Probe unten.
     lade = h.index("VIEW_LOADERS['mcp']=mcpLaden;", a)
-    js = h[a:h.index("\n", h.index("CURRENT_VIEW==='mcp'", lade))]
+    # ANKER GEWANDERT (v5.10-W208): kein Anstoss mehr — der Bereich laedt per
+    # ncBereichLaden nach DOMContentLoaded; die Probe unten ruft den Lader so.
+    js = h[a:h.index("\n", lade)] + "\nVIEW_LOADERS.mcp();"
     # Jede Element-ID, die das Skript liest, steht genau einmal im Markup.
     ids = set(_re.findall(r"\$\('#((?:pnl_)?mcp_\w+)'\)", js))
     assert {"mcp_liste", "mcp_webui", "mcp_f_token", "mcp_f_token_weg", "pnl_mcp_form"} <= ids, ids
@@ -35095,7 +35104,7 @@ const $=s=>els[s];
 const T=s=>s, ago=()=>'5m';
 let toasts=[], aufrufe=[], antworten=[], fragen=[], ja=false, klicks=[];
 const toast=(m,k)=>{ toasts.push([k||'',m]); };
-let CURRENT_VIEW='mcp'; const VIEW_LOADERS={};
+let CURRENT_VIEW='mcp'; const VIEW_LOADERS={}; const ncSicht=v=>v===CURRENT_VIEW;
 const apiGet=async p=>{ aufrufe.push(['GET',p]); return antworten.shift(); };
 const apiPost=async (p,b)=>{ aufrufe.push(['POST',p,JSON.parse(JSON.stringify(b))]); return antworten.shift(); };
 const apiDel=async p=>{ aufrufe.push(['DELETE',p]); return antworten.shift(); };
@@ -38102,6 +38111,333 @@ def _test_v59_w206_ein_totes_ziel_reisst_nicht_mit():
        "auf, danach aufgegeben mit Abhilfe; ohne lebendes Ziel wie bisher")
 
 
+def _test_v510_w207_leitstand_lage():
+    """v5.10-W207: die Übersicht als Leitstand — WAS jede Tab-Tafel zeigt.
+
+    Der Betreiber: „So habe ich mir die Übersicht vorgestellt … Bedenke, dass
+    alle anderen Tabs integriert werden müssen." Die Lage jeder Tafel, das Ziel
+    jeder Wächter-Drohne und ob ein Ereignis ein Schlüsselmoment ist,
+    entscheidet nc/leitstand.py — hier festgehalten, nicht im JavaScript."""
+    import re as _re
+    from nc import leitstand as L, lagebild as LB
+    # (1) Jeder Tab der Leiste hat eine Tafel — in derselben Reihenfolge.
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    tabs = _re.findall(r'<div class="tab[^"]*" data-view="([a-z]+)"', h)
+    assert tabs[0] == "overview" and len(tabs) == 10, tabs
+    assert [t for t, _n, _k in L.TAFELN] == tabs[1:], "ein Tab ohne Tafel (oder falsche Reihenfolge)"
+    for t in tabs[1:]:
+        assert 'id="ls_t_%s" data-tab="%s"' % (t, t) in h, "Tafel %s fehlt im Deck" % t
+    # (2) Nichts gelesen ist nicht dasselbe wie nichts da (W99): ohne Quellen
+    #     ist JEDE Tafel unbekannt — keine steht ruhig gruen da.
+    leer = L.bauen({}, {}, 1.0)
+    assert {t["lage"] for t in leer["tafeln"]} == {"unbekannt"}, leer["tafeln"]
+    assert leer["zahl"]["unbekannt"] == 9
+    # Eine gescheiterte Quelle kostet nur ihre Tafel.
+    teil = L.tafeln({"zaehler": {"trackings": 3, "live": 0}, "lagebild": {}},
+                    {"zaehler": True, "lagebild": True, "system": False})
+    lage = {t["tab"]: t["lage"] for t in teil}
+    assert lage["system"] == "unbekannt" and lage["wall"] == "ok", lage
+    # (3) Restream: gestoert schlaegt langsam schlaegt gesund; keiner = ruht.
+    lb = {"ziele": [{"name": "a", "live": True, "aufnahme": False, "restream": "gesund"},
+                    {"name": "b", "live": True, "aufnahme": True, "restream": "gestoert"}]}
+    g = {"restream": True, "lagebild": True}
+    rs = L.tafeln({"lagebild": lb, "restream": [{"user": "@A", "speed": 1.0, "ntargets": 2}]}, g)[0]
+    assert rs["lage"] == "fehler" and rs["grund"] == "gestoert" and rs["wert"] == 2, rs
+    assert [x["name"] for x in rs["daten"]["spuren"]] == ["b", "a"], "Stoerung nicht vorn"
+    lb["ziele"][1]["restream"] = "langsam"
+    assert L.tafeln({"lagebild": lb, "restream": []}, g)[0]["lage"] == "warn"
+    ruht = L.tafeln({"lagebild": {}, "restream": []}, g)[0]
+    assert (ruht["lage"], ruht["grund"], ruht["wert"]) == ("ok", "ruht", 0), ruht
+
+    def tafel(tab, roh, *quellen):
+        return next(t for t in L.tafeln(roh, {q: True for q in quellen}) if t["tab"] == tab)
+    # (4) System: Platte vor Last; Ringfarben aus denselben Grenzen.
+    sysroh = {"last": {"state": "busy", "per_core": 1.1, "avg": {"1m": 9}}, "kerne": 8,
+              "speicher_prozent": 50, "platte_prozent": 96, "swap_pct": 0}
+    st = tafel("system", {"system": sysroh}, "system")
+    assert (st["lage"], st["grund"]) == ("fehler", "platte_voll"), st
+    assert st["daten"]["stufen"] == {"cpu": "warn", "ram": "ok", "platte": "fehler"}, st
+    sysroh.update(platte_prozent=50, last={"state": "overloaded", "per_core": 2})
+    assert tafel("system", {"system": sysroh}, "system")["grund"] == "ueberlast"
+    sysroh.update(last={"state": "ok", "per_core": 0.2}, speicher_prozent=90, swap_pct=85)
+    assert tafel("system", {"system": sysroh}, "system")["grund"] == "speicher_knapp"
+    assert tafel("system", {"system": {}}, "system")["lage"] == "unbekannt", "keine Messung ist kein ruhiges System"
+    # (5) Brain: Bruecke vor Waechter vor Wahl; „lokal" ohne Server ist eine Warnung.
+    ag = [{"name": "disk", "lage": "taetig"}, {"name": "x", "lage": "ruht", "ueberfaellig": True}]
+    b = tafel("brain", {"ki": {"bruecke_ok": False}, "lagebild": {"agenten": ag}}, "ki", "lagebild")
+    assert b["grund"] == "bruecke" and b["lage"] == "fehler", b
+    b = tafel("brain", {"ki": {"bruecke_ok": True}, "lagebild": {"agenten": ag}}, "ki", "lagebild")
+    assert b["grund"] == "waechter_ueberfaellig" and b["wert"] == "2/2", b
+    b = tafel("brain", {"ki": {"bruecke_ok": True, "wahl": "lokal", "lokal_oben": False},
+                        "lagebild": {"agenten": ag[:1]}}, "ki", "lagebild")
+    assert b["grund"] == "lokal_aus", b
+    b = tafel("brain", {"ki": {"bruecke_ok": True, "llm": {"belegt": True, "wartend": 2}},
+                        "lagebild": {"agenten": [{"name": "y", "lage": "fehler"}]}}, "ki", "lagebild")
+    assert b["grund"] == "waechter_fehler", b
+    assert tafel("brain", {"ki": {"bruecke_ok": True, "llm": {"wartend": 1}}}, "ki")["grund"] == "denkt"
+    # (6) Community: eingerichtet und getrennt ist eine Stoerung, ohne Token Absicht.
+    assert tafel("discord", {"community": {"discord_konfiguriert": True}}, "community")["lage"] == "warn"
+    assert tafel("discord", {"community": {}}, "community")["lage"] == "aus"
+    hype = tafel("discord", {"community": {"discord_verbunden": True, "chat_rate": 9, "chat_basis": 2}}, "community")
+    assert hype["grund"] == "chat_hype" and hype["lage"] == "aktiv", hype
+    # (7) Betrieb, Insights, Einstellungen, MCP.
+    d = LB.dienste({"encode": {"laeuft": [], "wartet": [{"s": 5000}]}}, {"encode": True})
+    be = tafel("betrieb", {"lagebild": {"dienste": d}}, "lagebild")
+    assert be["lage"] == "warn" and be["grund"] == "encode:stau", be
+    ruhig = [{"name": "encode", "lage": "ok", "grund": "leer"}, {"name": "tunnel", "lage": "aus", "grund": "kein_proxy"}]
+    assert tafel("betrieb", {"lagebild": {"dienste": ruhig}}, "lagebild")["grund"] == "ruhig"
+    ins = tafel("insights", {"insights": {"quote": 30, "versuche": 40, "tage": [{"count": 2}, {"count": 5}]}}, "insights")
+    assert ins["lage"] == "warn" and ins["daten"]["heute"] == 5 and ins["daten"]["ring"] == "warn", ins
+    assert tafel("insights", {"insights": {"quote": 0, "versuche": 2}}, "insights")["lage"] == "ok", \
+        "zwei Versuche sind keine Aussage ueber die Quote"
+    assert tafel("einstellungen", {"einstellungen": {"neustart": ["A"]}}, "einstellungen")["grund"] == "neustart_noetig"
+    assert tafel("mcp", {"mcp": {"anzahl": 0}}, "mcp")["lage"] == "aus"
+    w = tafel("mcp", {"mcp": {"anzahl": 2, "aktiv": 1, "webui": {"gefunden": True, "abhilfe": "x"}}}, "mcp")
+    assert w["grund"] == "webui_fehlt" and w["wert"] == "1/2", w
+    # (8) Drohnen fliegen dorthin, wo der Waechter arbeitet — eine abgeschaltete nie.
+    ags = [{"name": "restream_sentinel", "lage": "taetig", "ort": "ziel", "ziel": "b"},
+           {"name": "recording", "lage": "ruht", "ort": "ziel", "ziel": "b"},
+           {"name": "disk", "lage": "ruht", "ort": "platte"},
+           {"name": "toxicity", "lage": "ruht", "ort": "chat"},
+           {"name": "scout", "lage": "aus", "ort": "kern"},
+           {"name": "neu", "lage": "ruht", "ort": "irgendwo"}]
+    ziel = {x["name"]: x["tafel"] for x in L.drohnen({"lagebild": {"agenten": ags}}, LB.ORT)}
+    assert ziel == {"restream_sentinel": "restream", "recording": "wall", "disk": "system",
+                    "toxicity": "discord", "scout": None, "neu": "system"}, ziel
+    # (9) Ereignisse: Warnungen sind Momente, Alltag nicht.
+    assert L.ereignis("watchdog.loop_lag", "warning") == {"ton": "warn", "moment": True, "tafel": "system"}
+    assert L.ereignis("restream.start", "info") == {"ton": "gut", "moment": True, "tafel": "restream"}
+    assert L.ereignis("recording.saved", "info")["moment"] is False, "eine Aufnahme ist Alltag, kein Moment"
+    assert L.ereignis("x.y", "ERROR") == {"ton": "fehler", "moment": True, "tafel": None}
+    assert L.ereignis("tracking.restart", "info") == {"ton": "info", "moment": False, "tafel": "wall"}
+    ev = L.ereignisse([{"kind": "a", "summary": "s" * 400}] * 30)
+    assert len(ev) == L.MAX_EREIGNISSE and len(ev[0]["summary"]) == 160
+    # (10) Die Lieferkette zeigt dieselbe Lage wie die Tafeln.
+    voll = L.bauen({"lagebild": lb, "zaehler": {"trackings": 9, "live": 2}, "restream": [],
+                    "insights": {"tage": [{"count": 4}]}}, {"lagebild": True, "zaehler": True,
+                                                             "restream": True, "insights": True}, 5.0)
+    k = {x["name"]: x for x in voll["kette"]}
+    assert list(k) == list(L.KETTE), list(k)
+    t = {x["tab"]: x for x in voll["tafeln"]}
+    assert k["live"]["lage"] == t["wall"]["lage"] == "aktiv" and k["live"]["wert"] == 2
+    assert k["restream"]["lage"] == t["restream"]["lage"] and k["erfassen"]["wert"] == 9
+    assert k["archiv"]["wert"] == 4 and k["kodieren"]["lage"] == "unbekannt"
+    ok("v5.10-W207: Leitstand — jeder Tab eine Tafel, ungelesen ist unbekannt, Lage/Drohnen/"
+       "Momente aus nc/leitstand.py")
+
+
+def _test_v510_w207_leitstand_route_und_deck():
+    """v5.10-W207: /api/leitstand — eine Quelle, die scheitert, kostet ihre Tafel
+    und meldet sich; das Deck zeichnet nur, was die Route liefert."""
+    import logging as _logging
+    from flask import Flask
+    from nc.routes import leitstand as R
+    from nc import stats as S
+    from nc.dbwrap import db_conn
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    zaehl = {"n": 0}
+
+    def zaehler():
+        zaehl["n"] += 1
+        return {"trackings": 4, "live": 1}
+
+    def kaputt():
+        raise RuntimeError("Datenbank gesperrt")
+    echt = R.QUELLEN
+    meld = []
+
+    class _H(_logging.Handler):
+        def emit(self, rec):
+            meld.append(rec.getMessage())
+    hd = _H()
+    _logging.getLogger("TikTokBot").addHandler(hd)
+    try:
+        R._CACHE.clear()
+        R.QUELLEN = (("zaehler", zaehler, 60), ("system", kaputt, 60))
+        c = app.test_client()
+        d = c.get("/api/leitstand").get_json()
+        d2 = c.get("/api/leitstand").get_json()
+        assert zaehl["n"] == 1, "die Quelle wurde trotz Gueltigkeit erneut gefragt"
+        assert d["quellen"] == {"zaehler": True, "system": False}, d["quellen"]
+        t = {x["tab"]: x for x in d["tafeln"]}
+        assert t["system"]["lage"] == "unbekannt" and t["wall"]["wert"] == 1, t["wall"]
+        assert d2["tafeln"] == d["tafeln"]
+        assert any("Quelle system nicht lesbar" in m and "Datenbank gesperrt" in m for m in meld), meld
+        # Ein Fehler wird nicht so lange gemerkt wie ein Erfolg.
+        assert R._CACHE["system"][0] - R._CACHE["zaehler"][0] < -50
+    finally:
+        R.QUELLEN = echt
+        R._CACHE.clear()
+        _logging.getLogger("TikTokBot").removeHandler(hd)
+    # Die echten Quellen gegen eine EIGENE Testdatenbank: im Gesamtlauf zeigt
+    # db_conn() am Ende der Suite auf ein Verzeichnis, das ein frueherer Vertrag
+    # schon aufgeraeumt hat (im Einzellauf faellt das nie auf). Danach wird die
+    # vorige Einstellung wiederhergestellt.
+    from nc import dbwrap as _dbw
+    _vorher = (_dbw.DB_PATH, _dbw.DB_BACKEND)
+    richte_testdatenbank_ein()
+    try:
+        _w207_echte_quellen(R, S, db_conn)
+    finally:
+        _dbw.configure_db(db_path=_vorher[0], backend=_vorher[1])
+    _w207_deck_pruefen()
+
+
+def _w207_echte_quellen(R, S, db_conn):
+    """Die echten Quellen: die datenbankgestuetzten liefern, der Rest darf
+    scheitern — aber nie mit einer Ausnahme nach aussen."""
+    with db_conn() as conn:
+        conn.execute("INSERT INTO recording_attempts (username, started_at, outcome) VALUES (?,?,?)",
+                     ("w207", "2026-01-01T00:00:00+00:00", "ok"))
+        # Die Testdatenbank traegt nur einen Auszug des Schemas — das
+        # Ereignisprotokoll legt dieser Vertrag selbst an.
+        conn.execute("CREATE TABLE IF NOT EXISTS event_log (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                     "ts TEXT NOT NULL, kind TEXT NOT NULL, severity TEXT DEFAULT 'info', "
+                     "summary TEXT, payload TEXT)")
+        conn.execute("INSERT INTO event_log (ts, kind, severity, summary) VALUES (?,?,?,?)",
+                     ("2026-11-13T10:00:00+00:00", "restream.start", "info", "W207 gestartet"))
+        spalten = {r[1] for r in conn.execute("PRAGMA table_info(recordings)").fetchall()}
+        if "deleted_at" not in spalten:
+            conn.execute("ALTER TABLE recordings ADD COLUMN deleted_at TEXT")
+    gelesen = {}
+    # Die Einstellungen brauchen Vorlage und Tabelle, die die Testdatenbank
+    # nicht hat — ihre Uebersicht steht hier als Attrappe.
+    echt_u = R._nc_einst.uebersicht
+    R._nc_einst.uebersicht = lambda: {"zahl": {"datenbank": 2}, "geschuetzt": 1,
+                                      "neustart": ["X"], "backend": "sqlite"}
+    try:
+        for name, fn, _ttl in R.QUELLEN:
+            daten, gelesen[name] = R._lesen(name, fn, 0)
+            if name == "ereignisse":
+                assert any(e["summary"] == "W207 gestartet" for e in daten), daten
+            if name == "einstellungen":
+                assert daten["neustart"] == ["X"] and daten["zahl"] == {"datenbank": 2}, daten
+    finally:
+        R._nc_einst.uebersicht = echt_u
+        R._CACHE.clear()
+    for name in ("zaehler", "insights", "ereignisse", "system", "einstellungen"):
+        assert gelesen[name], "Quelle %s scheitert gegen die Testdatenbank" % name
+    q = S.trefferquote()
+    with db_conn() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM recording_attempts").fetchone()[0]
+    assert q["total_attempts"] == n and 0 < q["successful"] <= n, q
+    tage = S.aufnahmen_je_tag(3)
+    assert len(tage) == 3 and tage[0]["day"] < tage[-1]["day"], tage
+
+
+def _w207_deck_pruefen():
+    """Das Deck: holt /api/leitstand, haengt am Live-Push, Bewegung abschaltbar."""
+    import json as _json
+    import re as _re
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    js = h[h.index("var ncLeitstand=(function(){"):h.index("async function loadOverview(")]
+    assert "apiGet('/api/leitstand')" in js and "gotoView(" in js
+    assert "if(window.ncLeitstand) ncLeitstand.ereignis(m);" in h, "Live-Ereignisse fehlen im Strom"
+    assert "nc_ls_ruhig" in js and "prefers-reduced-motion" in js
+    assert "th!=='kontrast'" in js, "das Kontrast-Thema muss still bleiben"
+    # Im Rumpf der Zeichenfunktion, nicht irgendwo: derselbe Ausdruck steht
+    # auch im Abruf, und dort beweist er nichts ueber die Animation.
+    bild = js[js.index("function bild(t){"):js.index("function anstossen(")]
+    assert "document.hidden" in bild and "if(!bewegt()||document.hidden||!cv)" in bild, \
+        "die Animation laeuft im Hintergrund weiter"
+    # Grenzwerte stehen in nc/leitstand.py, nicht im Zeichner: in den Ansichten
+    # kein Vergleich der Form „wert >= grenze" (Zahlen allein waeren auch
+    # SVG-Koordinaten — ein Vertrag, der die eigene Zeichnung als Befund liest).
+    vis = js.split("var VIS=")[1].split("/* ── Zeichnen")[0]
+    assert not _re.search(r"(?:>=|<=)\s*[\w.]+", vis), \
+        "Grenzwert im JS — die Lage entscheidet nc/leitstand.py"
+    _c0 = h.index("/* ═══ v5.10-W207: LEITSTAND")
+    css = h[_c0:h.index("</style>", _c0)]
+    # Das Style-Element darf nicht vor dem Themenblock enden — ein woertliches
+    # schliessendes Style-Tag in einem Kommentar schloss es einmal vorzeitig,
+    # und das ganze CSS stand als Text auf der Seite (Klammerbilanz: gruen).
+    _s0 = h.rindex("<style>", 0, _c0)
+    assert h.index("</style>", _s0) > h.index('html[data-theme="leitstand"]{'), \
+        "Leitstand-CSS endet vorzeitig — steht ein schliessendes Style-Tag im Kommentar?"
+    assert "@media (prefers-reduced-motion:reduce)" in css and '.ls-strom{display:none}' in css
+    # Das Leitstand-Thema: alle Farben >= AA auf dem Panel, Rot bleibt rot.
+    blk = _re.search(r'html\[data-theme="leitstand"\]\{(.*?)\n\}', h, _re.S)
+    tok = dict(_re.findall(r"--([a-z0-9-]+):\s*(#[0-9A-Fa-f]{6})\s*;", blk.group(1)))
+
+    def _lum(x):
+        c = [int(x.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    for name in ("text", "text-dim", "text-faint", "neon", "neon-dim", "cyan", "magenta",
+                 "amber", "red", "ok"):
+        la, lb = _lum(tok[name]), _lum(tok["panel-solid"])
+        assert (max(la, lb) + .05) / (min(la, lb) + .05) >= 4.5, name
+    rot = [int(tok["red"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    assert rot[0] > rot[1] * 1.5
+    assert "leitstand" in _json.loads(_re.search(r"var NC_THEMEN=(\[[^\]]*\]);", h).group(1))
+    # Der Live-Push traegt dieselbe Einstufung wie das Protokoll.
+    bot = open("bot.py", encoding="utf-8").read()
+    assert "**_nc_leitstand.ereignis(kind, severity)" in bot
+    assert "register_blueprint(_nc_routes_leitstand.bp)" in bot
+    ok("v5.10-W207: /api/leitstand — Quellen einzeln abgesichert und gecacht, Ausfall laut; "
+       "Deck zeichnet nur, Bewegung abschaltbar, Leitstand-Thema >= AA")
+
+
+def _test_v510_w208_eine_seite():
+    """v5.10-W208: alle Ansichten auf EINER Seite — die Tab-Leiste springt nur.
+
+    Der Betreiber: „Wieso denn noch mehr Panels, wenn man doch mehrere in die
+    Übersicht einbauen kann? Wie in dem Video." Jede Ansicht ist ein Bereich
+    der Übersichtsseite: Kopf, Tafel, dann ihre echten Panels im Mauerwerk-
+    Raster. Ob ein Bereich pollt, haengt an seiner Sichtbarkeit (ncSicht),
+    nicht mehr an einer „aktiven" Ansicht — es koennen mehrere zugleich zu
+    sehen sein."""
+    import re as _re
+    from nc import leitstand as L
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    tabs = _re.findall(r'<div class="tab[^"]*" data-view="([a-z]+)"', h)
+    # (1) Jeder Tab ausser der Übersicht ist ein Bereich, in Tab-Reihenfolge,
+    #     und darin stehen Kopf, Tafel und die Ansicht in dieser Folge.
+    assert _re.findall(r'<section class="ls-bereich" id="ls_b_(\w+)" data-bereich="\1"', h) == tabs[1:], \
+        "Bereiche fehlen oder stehen nicht in der Reihenfolge der Tab-Leiste"
+    for v in tabs[1:]:
+        s = h.index('<section class="ls-bereich" id="ls_b_%s"' % v)
+        blk = h[s:h.index("</section>", s)]
+        pos = [blk.find('id="ls_bkopf_%s"' % v), blk.find('id="ls_t_%s"' % v), blk.find('id="view-%s"' % v)]
+        assert -1 not in pos and pos == sorted(pos), (v, pos)
+    assert 'id="view-overview" data-bereich="overview"' in h
+    # (2) Kein Poller fragt mehr, welche Ansicht „aktiv" ist (ohne Kommentare gemessen).
+    code = _re.sub(r"/\*.*?\*/", "", h, flags=_re.S)
+    assert not _re.search(r"CURRENT_VIEW\s*[!=]==", code), _re.findall(r".{40}CURRENT_VIEW\s*[!=]==.{30}", code)[:3]
+    assert "function ncSicht(v){ return !!_LS_SICHT[v] && !document.hidden; }" in h
+    # (3) Geladen wird beim ersten Naehern, und erst nach DOMContentLoaded —
+    #     dann sind auch die Lader spaeterer Script-Bloecke eingetragen.
+    dcl = h[h.index("document.addEventListener('DOMContentLoaded', function(){\n  const start=_viewFromHash()"):]
+    dcl = dcl[:dcl.index("\n});")]
+    assert "_LS_SICHT[v]=e.isIntersecting; if(e.isIntersecting) ncBereichLaden(v);" in dcl
+    assert "if(_LS_GELADEN[v]||!VIEW_LOADERS[v]) return;" in h
+    tab = h[h.index("$$('.tab').forEach(tab=>{"):h.index("function _viewFromHash(){")]
+    assert "ncSpringen(el)" in tab and "ncBereichLaden(v)" in tab, "Tab springt nicht zum Bereich"
+    spr = h[h.index("function ncSpringen(el){"):h.index("$$('.tab').forEach(tab=>{")]
+    # Ohne weiches Scrollen und nachgefuehrt — sonst landet der Sprung daneben.
+    assert "behavior:'auto'" in spr and "smooth" not in spr and "setTimeout(nachfuehren" in spr
+    # (4) Mauerwerk: jedes Feld traegt so viele Zeilen, wie es hoch ist — und
+    #     neue Panels (innerHTML) werden mitgemessen.
+    m = h[h.index("var ncSeite=(function(){"):h.index("async function loadOverview(")]
+    assert "new ResizeObserver(" in m and "ro.observe(el)" in m and "new MutationObserver(" in m
+    assert "el.style.gridRowEnd='span '+n" in m
+    css = h[h.index("/* ═══ v5.10-W208"):h.index("/* v5.10-W207: LEITSTAND als Thema")]
+    assert ".ls-bereich>.view{display:contents!important}" in css
+    assert "#hauptinhalt>#view-overview{display:block" in css, "die Übersicht verschwaende beim Scrollen"
+    # (5) Die Leinwand liegt fest im Fenster, direkt im Hauptinhalt — nicht
+    #     seitenhoch (zehn Bereiche waeren ueber 16 Mio. Pixel).
+    haupt = h[h.index('<main id="hauptinhalt"'):h.index('<div class="view active" id="view-overview"')]
+    assert '<canvas class="ls-strom" id="ls_strom"' in haupt
+    assert ".ls-strom{position:fixed;inset:0;width:100vw;height:100vh;" in h
+    # (6) Jedes Glied der Lieferkette nennt einen Bereich, den es gibt.
+    kette = L.bauen({}, {}, 1.0)["kette"]
+    assert all(g["tab"] in tabs for g in kette), [(g["name"], g["tab"]) for g in kette]
+    assert {g["name"]: g["tab"] for g in kette}["restream"] == "restream"
+    ok("v5.10-W208: alle Ansichten auf einer Seite — Bereiche in Tab-Reihenfolge, laden beim "
+       "Naehern, pollen nur sichtbar, Mauerwerk-Raster, Leinwand im Fenster")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -38232,13 +38568,18 @@ def _test_v57_w198_reiter_anstoss():
     wenn sie beim Start wiederhergestellt wird. Fuer „Einstellungen" im Browser
     gemessen: 0 statt 6420 Zeichen nach dem Neuladen. Geprueft an Zeilen, die
     mit dem Code BEGINNEN (kein Treffer in Kommentaren)."""
-    z = open("templates/dashboard.html", encoding="utf-8").read().splitlines()
+    # ANKER GEWANDERT (v5.10-W208): statt eines Anstosses je Reiter laedt jeder
+    # Bereich ueber ncBereichLaden — erst nach DOMContentLoaded, wenn ALLE
+    # Lader eingetragen sind. Geprueft: der Lader wird dort gerufen, nicht vorher.
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    z = h.splitlines()
     for view, lader in (("einstellungen", "einstLoad"), ("mcp", "mcpLaden")):
         reg = [i for i, l in enumerate(z) if l.startswith("VIEW_LOADERS['%s']=%s;" % (view, lader))]
-        an = [i for i, l in enumerate(z)
-              if l.startswith("try{ if(CURRENT_VIEW==='%s') %s(); }" % (view, lader))]
-        assert len(reg) == 1 and len(an) == 1, (view, reg, an)
-        assert an[0] > reg[0], "%s: Anstoss vor der Lader-Zeile" % view
+        assert len(reg) == 1, (view, reg)
+    dcl = h[h.index("document.addEventListener('DOMContentLoaded', function(){\n  const start=_viewFromHash()"):]
+    dcl = dcl[:dcl.index("\n});")]
+    assert "ncBereichLaden(v)" in dcl and "IntersectionObserver" in dcl, dcl[:300]
+    assert "if(_LS_GELADEN[v]||!VIEW_LOADERS[v]) return;" in h
     ok("v5.7-w198: Einstellungen und MCP laden nach dem Neuladen (Startanstoss hinter dem Lader)")
 
 
@@ -41033,6 +41374,9 @@ def main():
     _test_v59_w204_restream_liste()
     _test_v59_w205_chatbild()
     _test_v59_w206_ein_totes_ziel_reisst_nicht_mit()
+    _test_v510_w207_leitstand_lage()
+    _test_v510_w207_leitstand_route_und_deck()
+    _test_v510_w208_eine_seite()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

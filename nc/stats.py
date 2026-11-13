@@ -157,6 +157,40 @@ def get_activity_pulse(minutes: int = 60) -> list:
     return list(buckets.values())
 
 
+def aufnahmen_je_tag(tage: int = 14) -> list:
+    """Aufnahmen je Kalendertag (UTC) ueber die letzten `tage` Tage, aelteste
+       zuerst: [{"day": "2026-11-13", "count": 4}, ...].
+
+       v5.10-W207: aus api_recordings_daily hierher, weil der Leitstand der
+       Übersicht dieselbe Zahl braucht — zwei Abfragen fuer dieselbe Zahl
+       zaehlen frueher oder spaeter verschieden. Je Tag ein parametrisiertes
+       Datumsfenster: exakt und backend-agnostisch (SQLite und MariaDB)."""
+    out = []
+    with db_conn() as conn:
+        for i in range(tage - 1, -1, -1):
+            d0 = (datetime.now(timezone.utc) - timedelta(days=i)).date()
+            lo = datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc)
+            n = conn.execute(
+                "SELECT COUNT(*) AS n FROM recordings "
+                "WHERE deleted_at IS NULL AND created_at >= ? AND created_at < ?",
+                (lo.isoformat(), (lo + timedelta(days=1)).isoformat())).fetchone()["n"]
+            out.append({"day": d0.isoformat(), "count": int(n or 0)})
+    return out
+
+
+def trefferquote() -> dict:
+    """Anteil der Aufnahmeversuche, die gelungen sind (gesamt).
+       v5.10-W207: aus api_insights_catch_rate, aus demselben Grund."""
+    with db_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN outcome='ok' THEN 1 ELSE 0 END) AS ok "
+            "FROM recording_attempts").fetchone()
+    total, ok = int(row["total"] or 0), int(row["ok"] or 0)
+    return {"total_attempts": total, "successful": ok,
+            "catch_rate": round(100.0 * ok / total, 1) if total else 0.0}
+
+
 def get_lives_heatmap(username: str) -> dict:
     """24x7 grid: für welche (weekday, hour) gab es bisher live-Detektionen.
        Datenquelle: recording_attempts (alle, auch fehlgeschlagene), weil
