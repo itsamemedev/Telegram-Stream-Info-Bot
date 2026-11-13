@@ -34972,6 +34972,280 @@ def _test_v51_w185_sendebruecke_meldungen():
     ok("W185: Broken pipe einmal je Abbruch, TimeoutError ohne Text bekommt einen")
 
 
+def _test_v56_w198_mcp_deck():
+    """v5.6-W198: der MCP-Reiter im Deck.
+
+    Der Betreiber: „Ich hätte gern den Tab im Dashboard, um MCPs verwalten zu
+    können." Gesichert wird, was die Oberflaeche NICHT darf: fremde Daten
+    eines MCP-Servers (Werkzeugnamen, Beschreibungen, Version, Grund) roh ins
+    DOM setzen; einen Wert ungeschuetzt in einen Inline-Handler legen; ein
+    Token ins DOM schreiben oder im Feld liegen lassen; ohne Rueckfrage
+    loeschen oder mit Token exportieren; einen zweiten Test starten, solange
+    der erste laeuft; einen Ladefehler als leere Liste ausgeben (W99); einen
+    Link aus der Adresse bauen, die der Server meldet."""
+    import json as _json
+    import re as _re
+    import shutil as _sh
+    import subprocess as _sp
+
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # (1) Reiter und Ansicht: vorhanden, direkt nach den Einstellungen, im
+    # Hauptinhalt, und der Loader ist eingetragen.
+    reiter = '<div class="tab" data-view="mcp"><span class="num">09</span>MCP</div>'
+    assert h.count(reiter) == 1, "MCP-Reiter fehlt in der Tab-Leiste"
+    leiste = h[h.index('<div class="tabs" id="tabs">'):h.index("<!-- ============ VIEWS ============ -->")]
+    assert leiste.index('data-view="einstellungen"') < leiste.index('data-view="mcp"'), \
+        "der Reiter steht nicht hinter den Einstellungen"
+    assert h.count('id="view-mcp"') == 1
+    va, vb = h.index('<div class="view" id="view-mcp">'), h.index('<div class="view" id="view-brain">')
+    assert h.index('<main id="hauptinhalt"') < va < vb < h.index("</main>"), \
+        "die Ansicht steht ausserhalb des Hauptinhalts"
+    ansicht = h[va:vb]
+    a = h.index("var _MCP={")
+    assert "VIEW_LOADERS['mcp']=mcpLaden;" in h[a:], "der Loader ist nicht eingetragen"
+    # Bis zum Ende der Anstoss-Zeile: die Tab-Wiederherstellung beim Start
+    # laeuft in einem frueheren Script-Block (W115) — ohne Anstoss bliebe die
+    # Ansicht nach dem Neuladen leer. Ob er wirkt, prueft die Probe unten.
+    lade = h.index("VIEW_LOADERS['mcp']=mcpLaden;", a)
+    js = h[a:h.index("\n", h.index("CURRENT_VIEW==='mcp'", lade))]
+    # Jede Element-ID, die das Skript liest, steht genau einmal im Markup.
+    ids = set(_re.findall(r"\$\('#((?:pnl_)?mcp_\w+)'\)", js))
+    assert {"mcp_liste", "mcp_webui", "mcp_f_token", "mcp_f_token_weg", "pnl_mcp_form"} <= ids, ids
+    for i in ids:
+        assert h.count('id="%s"' % i) == 1 and ('id="%s"' % i) in ansicht, "ID fehlt/doppelt: %s" % i
+    # Was die Ansicht im Markup aufruft, gibt es im Skript.
+    for f in set(_re.findall(r'on(?:click|submit|change)="(\w+)\(', ansicht)):
+        assert ("function %s(" % f) in js, "Markup ruft %s(), das Skript kennt sie nicht" % f
+    # Das Token-Feld ist ein Passwortfeld ohne Wert im Markup.
+    tok = _re.search(r'<input[^>]*id="mcp_f_token"[^>]*>', ansicht).group(0)
+    assert 'type="password"' in tok and "value=" not in tok, tok
+    # Kein zweiter Maskierer im Block — es gibt genau ein esc() im Deck.
+    assert not _re.search(r"(?:const|let|var|function)\s+esc\w*\s*[=(]", js), "eigener Maskierer im MCP-Block"
+
+    if not _sh.which("node"):
+        print("  (kein node — Verhaltensprobe des MCP-Reiters uebersprungen)")
+        ok("v5.6-W198: MCP-Reiter verdrahtet (ohne Verhaltensprobe)")
+        return
+
+    # (2) Verhalten — mit dem ECHTEN esc/escJs des Decks und nur den IDs,
+    # die im Markup stehen (ein Tippfehler in einer ID wirft hier).
+    i = h.index("const esc = s =>")
+    esc_src = h[i:h.index("\n", i)]
+    k = h.index("const escJs = s =>")
+    escjs_src = h[k:h.index("}[c]));", k) + len("}[c]));")]
+    markup_ids = sorted(set(_re.findall(r'id="((?:pnl_)?mcp_\w+)"', ansicht)))
+    prog = esc_src + "\n" + escjs_src + "\n" + r"""
+const IDS=""" + _json.dumps(markup_ids) + r""";
+const els={};
+IDS.forEach(function(id){
+  const kl=new Set(id==='mcp_liste'||id==='mcp_webui'?['skel']:[]);
+  els['#'+id]={id, innerHTML:'', textContent:'', value:'', checked:false, disabled:false,
+    placeholder:'', style:{}, attrs:{'aria-busy':'true'},
+    classList:{remove:c=>kl.delete(c), contains:c=>kl.has(c), add:c=>kl.add(c)},
+    removeAttribute(n){ delete this.attrs[n]; }, focus(){}, scrollIntoView(){}, querySelector(){ return null; }};
+});
+const $=s=>els[s];
+const T=s=>s, ago=()=>'5m';
+let toasts=[], aufrufe=[], antworten=[], fragen=[], ja=false, klicks=[];
+const toast=(m,k)=>{ toasts.push([k||'',m]); };
+let CURRENT_VIEW='mcp'; const VIEW_LOADERS={};
+const apiGet=async p=>{ aufrufe.push(['GET',p]); return antworten.shift(); };
+const apiPost=async (p,b)=>{ aufrufe.push(['POST',p,JSON.parse(JSON.stringify(b))]); return antworten.shift(); };
+const apiDel=async p=>{ aufrufe.push(['DELETE',p]); return antworten.shift(); };
+const confirm=t=>{ fragen.push(t); return ja; };
+const document={createElement:t=>({tag:t, click(){ klicks.push(this.href); }, remove(){}}), body:{appendChild(){}}};
+const BOESE_ID="x');alert(5);('";
+const S1={id:'a1', name:'<img src=x onerror=alert(1)>', url:'http://x/"><script>alert(2)</script>',
+  aktiv:true, notiz:'<b>notiz</b>', token_gesetzt:true, token:'GEHEIM-LEAK', geaendert:'2026-11-13T10:00:00Z',
+  letzter_test:{ok:true, zeit:'2026-11-13T10:00:00Z', dauer_ms:42, protokoll:'2025-06-18<svg onload=alert(8)>',
+    server:{name:'<i>srv</i>', version:'1<u>'}, http:200, grund:'',
+    werkzeuge:[{name:'<img src=x onerror=alert(3)>', beschreibung:'<script>alert(4)</script>'}]}};
+const S2={id:BOESE_ID, name:'zwei', url:'http://127.0.0.1:3000/mcp', aktiv:false, notiz:'', token_gesetzt:false,
+  letzter_test:{ok:false, zeit:'2026-11-13T10:00:00Z', dauer_ms:5000, protokoll:null, server:null,
+    werkzeuge:[], grund:'<b>Zeitueberschreitung</b>', http:null}};
+const S3={id:'b3', name:'drei', url:'http://127.0.0.1:4000/mcp', aktiv:true, notiz:'', token_gesetzt:false, letzter_test:null};
+const LAGE={anzahl:3, aktiv:2, webui:{gefunden:true, webui:'llamacpp', mcp_proxy:false,
+  adresse:'javascript:alert(6)//127.0.0.1:8080', abhilfe:'<img src=y onerror=alert(7)>'}};
+const voll=()=>({ok:true, server:JSON.parse(JSON.stringify([S1,S2,S3])), lage:JSON.parse(JSON.stringify(LAGE))});
+const dom=()=>Object.values(els).map(e=>[e.innerHTML,e.textContent,e.placeholder].join('\n')).join('\n');
+antworten=[voll()];
+""" + js + r"""
+(async()=>{
+  const aus={};
+  await new Promise(r=>setTimeout(r,0));
+  aus.anstoss=aufrufe.slice(); aus.loader=(VIEW_LOADERS.mcp===mcpLaden);
+  aus.liste=els['#mcp_liste'].innerHTML; aus.webui=els['#mcp_webui'].innerHTML;
+  aus.tag=els['#mcp_tag'].textContent; aus.wtag=els['#mcp_webui_tag'].textContent;
+  aus.skel=els['#mcp_liste'].classList.contains('skel');
+  aus.dom1=dom();
+  // Test laeuft: Knopf gesperrt, ein zweiter Klick startet nichts.
+  let freigeben; aufrufe=[];
+  antworten=[new Promise(r=>{ freigeben=r; })];
+  const lauf=mcpTesten('b3');
+  aus.waehrend=els['#mcp_liste'].innerHTML;
+  await mcpTesten('b3');
+  aus.zweiter=aufrufe.slice();
+  freigeben({ok:true, test:{ok:true, zeit:'2026-11-13T10:01:00Z', dauer_ms:7, protokoll:'2025-06-18',
+    server:{name:'s',version:'1'}, http:200, grund:'', werkzeuge:[{name:'w_eins',beschreibung:'tut was'}]}});
+  await lauf;
+  aus.danach=els['#mcp_liste'].innerHTML; aus.toast_test=toasts.slice(-1);
+  antworten=[{ok:false, error:'kaputt', __http:500}];
+  await mcpTesten('b3');
+  aus.nach_fehler=els['#mcp_liste'].innerHTML; aus.toast_fehler=toasts.slice(-1);
+  // Loeschen nur nach Rueckfrage.
+  aufrufe=[]; fragen=[]; ja=false;
+  await mcpLoeschen('a1');
+  aus.loeschen_nein={aufrufe:aufrufe.slice(), fragen:fragen.slice()};
+  ja=true; aufrufe=[]; antworten=[{ok:true}, voll()];
+  await mcpLoeschen('a1');
+  aus.loeschen_ja=aufrufe.slice();
+  // Export: mit Token nur nach Rueckfrage, ohne Token ohne.
+  fragen=[]; klicks=[]; ja=false;
+  mcpExport(true); aus.export_nein={klicks:klicks.slice(), fragen:fragen.length};
+  mcpExport(false); aus.export_ohne={klicks:klicks.slice(), fragen:fragen.length};
+  ja=true; klicks=[]; mcpExport(true); aus.export_mit=klicks.slice();
+  // Token: nie im DOM, nach dem Speichern aus dem Feld, leer = unveraendert.
+  mcpBearbeiten('a1');
+  aus.bearbeiten={ph:els['#mcp_f_token'].placeholder, weg:els['#mcp_f_token_weg'].disabled,
+    name:els['#mcp_f_name'].value, wert:els['#mcp_f_token'].value};
+  els['#mcp_f_token'].value='NEU-GEHEIM-999';
+  aufrufe=[]; antworten=[{ok:true, server:S1}, voll()];
+  await mcpSpeichern({preventDefault(){}});
+  aus.speichern={aufrufe:aufrufe.slice(), feld:els['#mcp_f_token'].value, dom:dom()};
+  mcpBearbeiten('a1'); aufrufe=[]; antworten=[{ok:true, server:S1}, voll()];
+  await mcpSpeichern({preventDefault(){}});
+  aus.unveraendert=aufrufe[0];
+  mcpBearbeiten('a1'); els['#mcp_f_token'].value='WIRD-VERWORFEN';
+  els['#mcp_f_token_weg'].checked=true; mcpTokenWeg();
+  aus.weg_feld={disabled:els['#mcp_f_token'].disabled, wert:els['#mcp_f_token'].value};
+  aufrufe=[]; antworten=[{ok:true, server:S1}, voll()];
+  await mcpSpeichern({preventDefault(){}});
+  aus.weg=aufrufe[0];
+  mcpNeu(false); els['#mcp_f_name'].value=''; els['#mcp_f_url'].value='http://y';
+  aufrufe=[]; await mcpSpeichern({preventDefault(){}});
+  aus.pflicht={aufrufe:aufrufe.slice(), msg:els['#mcp_f_msg'].textContent};
+  els['#mcp_f_name'].value='neu'; aufrufe=[]; antworten=[{ok:true, server:S3}, voll()];
+  await mcpSpeichern({preventDefault(){}});
+  aus.neu=aufrufe[0];
+  aufrufe=[]; antworten=[{ok:true, server:S1}, voll()];
+  await mcpAktiv('a1', false);
+  aus.aktiv=aufrufe[0];
+  // Leer und Ladefehler sind zwei Saetze.
+  antworten=[{ok:true, server:[], lage:{anzahl:0, aktiv:0, webui:{gefunden:false, webui:null,
+    mcp_proxy:false, adresse:'', abhilfe:'LLM_WEBUI=llamacpp setzen'}}}];
+  await mcpLaden();
+  aus.leer={liste:els['#mcp_liste'].innerHTML, webui:els['#mcp_webui'].innerHTML};
+  antworten=[voll()]; await mcpLaden();
+  antworten=[{ok:false, error:'TypeError: Failed to fetch', __neterr:true}];
+  await mcpLaden();
+  aus.netz={liste:els['#mcp_liste'].innerHTML, tag:els['#mcp_tag'].textContent};
+  antworten=['<!doctype html><title>404 Not Found</title>'];
+  await mcpLaden(); aus.html404=els['#mcp_liste'].innerHTML;
+  antworten=[{ok:false, error:'Datenbank gesperrt', __http:503}];
+  await mcpLaden(); aus.server_fehler=els['#mcp_liste'].innerHTML;
+  antworten=[{ok:true, server:[], lage:{anzahl:0, aktiv:0, webui:{gefunden:true, webui:'none',
+    mcp_proxy:false, adresse:'http://127.0.0.1:8080', abhilfe:''}}}];
+  await mcpLaden(); aus.aus_webui=els['#mcp_webui'].innerHTML;
+  console.log(JSON.stringify(aus));
+})().catch(e=>{ console.error(e && e.stack || e); process.exit(3); });
+"""
+    out = _sp.run(["node", "-e", prog], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr[-2000:]
+    aus = _json.loads(out.stdout)
+
+    # Anstoss beim Start (Tab-Wiederherstellung) und Loader.
+    assert aus["anstoss"] == [["GET", "/api/mcp/server"]], aus["anstoss"]
+    assert aus["loader"] is True
+    L, W = aus["liste"], aus["webui"]
+    assert not aus["skel"], "das Skelett bleibt nach dem Laden stehen"
+    # Fremde Daten kommen maskiert an — kein einziges rohes Tag.
+    for roh in ("<img", "<script", "<svg", "<i>", "<u>", "<b>notiz", "<b>Zeit"):
+        assert roh not in L and roh not in W, "roh im DOM: %s" % roh
+    assert "&lt;img src=x onerror=alert(3)&gt;" in L, "Werkzeugname nicht (oder anders) maskiert"
+    assert "&lt;script&gt;alert(4)&lt;/script&gt;" in L, "Werkzeugbeschreibung nicht maskiert"
+    assert "&lt;img src=y onerror=alert(7)&gt;" in W, "Abhilfe nicht maskiert"
+    # Ein Wert im Inline-Handler geht durch escJs: kein rohes Hochkomma.
+    assert "x');alert(5)" not in L, "Kennung roh im Handler"
+    assert r"mcpTesten('x\x27);alert(5);(\x27')" in L, "Kennung nicht per escJs im Handler"
+    # Jeder Handler hat genau EIN JS-Literal, und darin kein rohes Zeichen,
+    # das es beenden koennte.
+    handler = _re.findall(r'\son\w+="([^"]*)"', L)
+    assert len(handler) >= 12, handler
+    for hd in handler:
+        assert _re.fullmatch(r"\w+\('(?:[^'\\<>&]|\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|\\[rn])*'"
+                             r"(?:,this\.(?:checked|open))?\)", hd), hd
+    # Token nie im DOM — auch nicht, wenn ein Server das Feld je mitschickte.
+    assert "GEHEIM-LEAK" not in aus["dom1"]
+    assert "Token gesetzt" in L and "ohne Token" in L
+    assert "Werkzeuge: 1" in L and "Test ok" in L and "Test fehlgeschlagen" in L \
+        and "noch nicht getestet" in L
+    assert aus["tag"] == "3 Server · 2 aktiv" and aus["wtag"] == "MCP-Reiter da · Proxy aus", \
+        (aus["tag"], aus["wtag"])
+    # Der Link geht ans lokale Tunnelende, nie an die gemeldete Adresse.
+    assert _re.findall(r'href="([^"]*)"', W) == ["http://127.0.0.1:8080/"], W
+    assert "ssh -L 8080:127.0.0.1:8080 user@host" in W and "MCP-Proxy aus" in W, W
+
+    # Waehrend des Tests: gesperrt, mit Zustand; der zweite Klick fragt nicht.
+    def knopf(html, kennung):
+        m = _re.search(r'<button[^>]*data-mcp-test="%s"([^>]*)>([^<]*)<' % _re.escape(kennung), html)
+        assert m, (kennung, html[:300])
+        return m.group(1), m.group(2)
+    attr, text = knopf(aus["waehrend"], "b3")
+    assert "disabled" in attr and text == "Test läuft …", (attr, text)
+    assert "disabled" not in knopf(aus["waehrend"], "a1")[0], "ein fremder Test-Knopf ist mitgesperrt"
+    assert aus["zweiter"] == [["POST", "/api/mcp/server/b3/test", {}]], aus["zweiter"]
+    attr, text = knopf(aus["danach"], "b3")
+    assert "disabled" not in attr and text == "Testen", (attr, text)
+    assert "w_eins" in aus["danach"] and aus["toast_test"][0][0] == "ok", aus["toast_test"]
+    assert "disabled" not in knopf(aus["nach_fehler"], "b3")[0], "nach einem Fehler bleibt der Knopf gesperrt"
+    assert aus["toast_fehler"][0][0] == "err" and "kaputt" in aus["toast_fehler"][0][1]
+
+    # Loeschen: ohne Ja nichts, mit Ja genau der eine Aufruf.
+    assert aus["loeschen_nein"]["aufrufe"] == [] and len(aus["loeschen_nein"]["fragen"]) == 1, \
+        aus["loeschen_nein"]
+    assert "MCP-Server löschen?" in aus["loeschen_nein"]["fragen"][0]
+    assert aus["loeschen_ja"] == [["DELETE", "/api/mcp/server/a1"], ["GET", "/api/mcp/server"]], \
+        aus["loeschen_ja"]
+
+    # Export: mit Token nur nach Ja; ohne Token ohne Rueckfrage.
+    assert aus["export_nein"] == {"klicks": [], "fragen": 1}, aus["export_nein"]
+    assert aus["export_ohne"] == {"klicks": ["/api/mcp/export"], "fragen": 1}, aus["export_ohne"]
+    assert aus["export_mit"] == ["/api/mcp/export?mit_token=1"], aus["export_mit"]
+
+    # Token: Feld leer beim Bearbeiten, eingetippt -> gesendet, danach weg.
+    assert aus["bearbeiten"] == {"ph": "gesetzt — leer lassen heißt unverändert", "weg": False,
+                                 "name": "<img src=x onerror=alert(1)>", "wert": ""}, aus["bearbeiten"]
+    sp = aus["speichern"]
+    assert sp["aufrufe"][0][:2] == ["POST", "/api/mcp/server/a1"] \
+        and sp["aufrufe"][0][2]["token"] == "NEU-GEHEIM-999", sp["aufrufe"]
+    assert sp["feld"] == "", "das Token bleibt nach dem Speichern im Feld"
+    assert "NEU-GEHEIM-999" not in sp["dom"] and "GEHEIM-LEAK" not in sp["dom"], "Token im DOM"
+    assert "token" not in aus["unveraendert"][2], ("leer muss unveraendert heissen", aus["unveraendert"])
+    assert aus["weg_feld"] == {"disabled": True, "wert": ""}, aus["weg_feld"]
+    assert aus["weg"][2].get("token") == "", ("„Token entfernen“ schickt kein leeres Token", aus["weg"])
+    assert aus["pflicht"]["aufrufe"] == [] and "Pflicht" in aus["pflicht"]["msg"], aus["pflicht"]
+    assert aus["neu"][:2] == ["POST", "/api/mcp/server"] and "token" not in aus["neu"][2] \
+        and aus["neu"][2]["name"] == "neu", aus["neu"]
+    assert aus["aktiv"][:2] == ["POST", "/api/mcp/server/a1"] and aus["aktiv"][2]["aktiv"] is False \
+        and "token" not in aus["aktiv"][2], ("der Schalter darf das Token nicht anfassen", aus["aktiv"])
+
+    # Nichts da und nichts geladen sind zwei Saetze — und nach einem Fehler
+    # steht keine alte Liste mehr, als waere sie aktuell.
+    assert "Noch kein MCP-Server eingetragen." in aus["leer"]["liste"] \
+        and "nicht abrufbar" not in aus["leer"]["liste"], aus["leer"]
+    assert "href=" not in aus["leer"]["webui"] and "LLM_WEBUI=llamacpp setzen" in aus["leer"]["webui"], \
+        "ohne llama-server ein Link ins Leere"
+    for fall, grund in ((aus["netz"]["liste"], "Bot nicht erreichbar"), (aus["html404"], "kein JSON"),
+                        (aus["server_fehler"], "Datenbank gesperrt")):
+        assert "MCP-Server sind nicht abrufbar." in fall and grund in fall, fall
+        assert "Noch kein" not in fall and "drei" not in fall, ("Fehler sieht aus wie Liste", fall)
+    assert aus["netz"]["tag"] == "Ladefehler"
+    assert "href=" not in aus["aus_webui"], "abgeschaltete Oberflaeche verlinkt"
+    ok("v5.6-W198: MCP-Reiter — fremde Daten maskiert, Token nie im DOM, Loeschen und "
+       "Export mit Token nur nach Rueckfrage, Test-Knopf gesperrt, Leer und Fehler getrennt")
+
+
 def _test_v51_w186_lagebild_dienste():
     """v5.1-W186: das Lagebild zeigt die Teile seit v5.0 — und WAS es zeigt,
     entscheidet nc/lagebild.py, nicht das JavaScript."""
@@ -39223,6 +39497,7 @@ def main():
     _test_v51_w183_pruefschlange_und_vortritt()
     _test_v51_w184_raumkennung()
     _test_v51_w185_sendebruecke_meldungen()
+    _test_v56_w198_mcp_deck()
     _test_v51_w186_lagebild_dienste()
     _test_v56_w198_mcp_protokoll()
     _test_v56_w198_mcp_frist_und_deckel()

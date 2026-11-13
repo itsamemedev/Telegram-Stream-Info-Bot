@@ -2500,6 +2500,27 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
 }
 
 
+/* v5.6-W198: MCP-Verwaltung. Nur Raster und Umbruch — Farben kommen aus den
+   Tokens, damit alle vier Themen stimmen. Adressen, Werkzeugnamen und der
+   SSH-Befehl brechen ueberall um: eine lange URL schob die Zeile auf 390 px
+   sonst ueber den Rand. */
+.mcp-raster{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px}
+.mcp-feld{display:flex;flex-direction:column;gap:4px;min-width:0;font-size:11px;letter-spacing:.06em;color:var(--text-faint)}
+.mcp-feld .field{width:100%;box-sizing:border-box}
+/* Die globale Feldregel kennt nur text/number — ohne diese Zeile stand das
+   Token-Feld niedriger und dunkler neben den anderen drei. */
+.mcp-feld input[type=password]{padding:9px 12px;border-radius:8px;border:1px solid var(--border);
+  background:var(--sunken-2);color:var(--text);font-size:12.5px}
+.mcp-zeile{flex-wrap:wrap}
+.mcp-zeile .mcp-kopf{flex:1 1 260px;min-width:0}
+.mcp-zeile .mcp-knoepfe{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start}
+.mcp-url{font-family:var(--mono);font-size:11px;color:var(--text-dim);overflow-wrap:anywhere}
+.mcp-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.mcp-wz{margin:6px 0 0;padding-left:18px}
+.mcp-wz li{margin:4px 0;overflow-wrap:anywhere}
+.mcp-cmd{display:block;margin:6px 0;padding:8px 10px;font-family:var(--mono);font-size:12px;color:var(--text);
+  background:var(--sunken-2);border:1px solid var(--border);white-space:pre-wrap;overflow-wrap:anywhere}
+
 /* v4.1-W6: Sprachumschalter in der Topbar */
 .i18n-switch{background:var(--panel,#0b1016);color:var(--fg,#e8e6e3);
   border:1px solid var(--line,#233);border-radius:6px;padding:.25rem .4rem;
@@ -2691,6 +2712,7 @@ document.addEventListener("DOMContentLoaded",function(){
     <div class="tab" data-view="betrieb"><span class="num">06</span>Betrieb</div>
     <div class="tab" data-view="insights"><span class="num">07</span>Insights</div>
     <div class="tab" data-view="einstellungen"><span class="num">08</span>Einstellungen</div>
+    <div class="tab" data-view="mcp"><span class="num">09</span>MCP</div>
   </div>
 
 
@@ -3365,6 +3387,57 @@ document.addEventListener("DOMContentLoaded",function(){
           <button class="btn" type="button" id="es_neustart" hidden onclick="updRestart()"></button>
         </div>
         <div id="es_liste"></div>
+      </div>
+    </div>
+  </div>
+  <!-- v5.6-W198: MCP-Server verwalten. Die Liste haelt der Bot (/api/mcp/server);
+       die Chat-Oberflaeche von llama-server (--webui llamacpp) fuehrt ihre
+       eigene im Browser. Der Inhalt entsteht in mcpLaden(), hier stehen nur
+       die Rahmen. Das Formular schickt ein Token nur, wenn eines eingetippt
+       ist — leer heisst beim Bearbeiten „unveraendert", nicht „loeschen". -->
+  <div class="view" id="view-mcp">
+    <div class="panel mb" id="pnl_mcp_webui">
+      <div class="head"><h3>▚ llama-Oberfläche</h3><span class="tag" id="mcp_webui_tag">…</span>
+        <div class="spacer"></div>
+        <button class="btn sm" type="button" onclick="mcpLaden()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div id="mcp_webui" class="skel" aria-busy="true"><i></i><i></i><i></i></div>
+      </div>
+    </div>
+    <div class="panel mb" id="pnl_mcp_server">
+      <div class="head"><h3>▚ MCP-Server</h3><span class="tag" id="mcp_tag">…</span>
+        <div class="spacer"></div>
+        <button class="btn sm" type="button" onclick="mcpNeu(true)">＋ Server anlegen</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:12px;line-height:1.6;margin-bottom:10px">Server, die der Bot kennt und prüfen kann. Ein Test fragt den Server nach Protokoll, Namen und Werkzeugen. Die llama-Oberfläche führt eine eigene Liste im Browser — diese hier lässt sich als Datei sichern.</div>
+        <div id="mcp_liste" class="skel" aria-busy="true"><i></i><i></i><i></i></div>
+        <div class="btnrow mt">
+          <button class="btn sm" type="button" onclick="mcpExport(false)">⬇ Export (ohne Token)</button>
+          <button class="btn sm danger" type="button" onclick="mcpExport(true)">⬇ Export mit Token</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel mb" id="pnl_mcp_form">
+      <div class="head"><h3 id="mcp_f_titel">▚ Server anlegen</h3></div>
+      <div class="body">
+        <form id="mcp_form" onsubmit="mcpSpeichern(event)" autocomplete="off" novalidate>
+          <input type="hidden" id="mcp_f_id" value="">
+          <div class="mcp-raster">
+            <label class="mcp-feld"><span>Name</span><input class="field" id="mcp_f_name" type="text" maxlength="120" spellcheck="false"></label>
+            <label class="mcp-feld"><span>Adresse</span><input class="field" id="mcp_f_url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:3000/mcp"></label>
+            <label class="mcp-feld"><span>Token</span><input class="field" id="mcp_f_token" type="password" autocomplete="new-password" spellcheck="false"></label>
+            <label class="mcp-feld"><span>Notiz</span><input class="field" id="mcp_f_notiz" type="text" maxlength="300"></label>
+          </div>
+          <div class="btnrow mt">
+            <label class="chk"><input type="checkbox" id="mcp_f_aktiv" checked> aktiv</label>
+            <label class="chk"><input type="checkbox" id="mcp_f_token_weg" onchange="mcpTokenWeg()" disabled> Token entfernen</label>
+          </div>
+          <div class="btnrow mt">
+            <button class="btn" type="submit" id="mcp_f_speichern">Speichern</button>
+            <button class="btn" type="button" onclick="mcpNeu(false)">Abbrechen</button>
+          </div>
+          <div id="mcp_f_msg" role="status" style="margin-top:8px;font-size:12px"></div>
+        </form>
       </div>
     </div>
   </div>
@@ -6971,6 +7044,283 @@ async function einstUebernehmen(){
 }
 VIEW_LOADERS['einstellungen']=einstLoad;
 T('Einstellungen');   /* der Reiter steht als HTML da — so kommt das Wort in den Katalog */
+
+/* v5.6-W198: MCP-Server verwalten. Der Betreiber: „Ich hätte gern den Tab im
+   Dashboard, um MCPs verwalten zu können.“ llama-server zeigt mit
+   --webui llamacpp eine Chat-Oberflaeche mit eigenem MCP-Reiter, speichert
+   deren Server aber im Browser. Hier steht die Liste, die der Bot kennt,
+   prueft und als Datei ausgibt (Backend: /api/mcp/*).
+
+   Was ein MCP-Server liefert — Name, Version, Protokoll, Werkzeugnamen und
+   Beschreibungen —, kommt von einem FREMDEN Rechner und ist feindliche
+   Eingabe. Jede Stelle geht deshalb durch esc(), jeder Wert in einem
+   Inline-Handler durch escJs() (W118: esc() allein reicht dort nicht). Ein
+   Token erreicht das DOM nie: der Server schickt nur token_gesetzt, die
+   Zeile liest ausschliesslich benannte Felder, und das Passwortfeld wird
+   nach dem Speichern geleert.
+
+   „Nichts da“ und „nichts geladen“ sind zwei Saetze (W99): eine leere Liste
+   erklaert, wie man einen Server anlegt; ein Ladefehler nennt den Grund und
+   zeigt keine alte Liste weiter, als waere sie aktuell. */
+var _MCP={d:null, fehler:null, laeuft:{}, offen:{}, bereit:false};
+function _mcpPfad(id){ return '/api/mcp/server/'+encodeURIComponent(String(id)); }
+function _mcpServer(id){
+  var l=(_MCP.d&&_MCP.d.server)||[];
+  for(var i=0;i<l.length;i++){ if(l[i]&&String(l[i].id)===String(id)) return l[i]; }
+  return null;
+}
+function _mcpOk(d){ return !!(d&&typeof d==='object'&&d.ok); }
+function _mcpGrund(d){
+  if(!d) return T('keine Antwort');
+  // Ein 404 von Flask kommt als HTML: dann laeuft ein Bot-Stand ohne diese
+  // Schnittstelle — typisch nach einem Update ohne Neustart.
+  if(typeof d!=='object') return T('Antwort ist kein JSON — fehlt die MCP-Schnittstelle? Nach einem Update den Dienst neu starten.');
+  if(d.__neterr) return T('Bot nicht erreichbar');
+  if(d.error) return String(d.error);
+  if(d.__http) return 'HTTP '+d.__http;
+  return T('unbekannter Fehler');
+}
+function _mcpFertig(e){ if(!e) return; e.classList.remove('skel'); e.removeAttribute('aria-busy'); }
+function _mcpOffen(id, offen){ if(offen) _MCP.offen[String(id)]=true; else delete _MCP.offen[String(id)]; }
+
+/* Der Kasten zur llama-Oberflaeche. Der Link oeffnet das LOKALE Ende des
+   Tunnels und wird nur aus der Portnummer gebaut — nie aus der Adresse, die
+   der Server meldet: ein href aus fremdem Text waere ein javascript:-Loch. */
+function mcpWebuiHtml(lage){
+  var w=(lage&&lage.webui)||null;
+  if(!w) return '<div class="empty">'+esc(T('Keine Angaben zur llama-Oberfläche.'))+'</div>';
+  var adr=String(w.adresse||'');
+  var mp=/:(\d{2,5})(?:[/?#]|$)/.exec(adr);
+  var port=mp?mp[1]:'8080';
+  var mh=/^[a-z][a-z0-9+.-]*:[/][/](\[[0-9a-f:.]+\]|[a-z0-9.-]+)/i.exec(adr);
+  var ziel=mh?mh[1]:'127.0.0.1';
+  if(ziel==='0.0.0.0'||ziel==='localhost'||ziel==='[::]') ziel='127.0.0.1';
+  var arten={llamacpp:['ok',T('llamacpp — MCP-Reiter vorhanden')],
+             auto:['warn',T('auto — Vorgabe des Programms, MCP-Reiter nicht sicher')],
+             none:['bad',T('abgeschaltet')]};
+  var ui=Object.prototype.hasOwnProperty.call(arten, w.webui)?arten[w.webui]:['warn',T('unbekannt')];
+  var h='<div class="mcp-chips" style="margin-top:0">';
+  h+='<span class="lk-chip '+(w.gefunden?'ok':'bad')+'">llama-server: '+esc(w.gefunden?T('gefunden'):T('nicht gefunden'))+'</span>';
+  h+='<span class="lk-chip '+ui[0]+'">--webui: '+esc(ui[1])+'</span>';
+  h+='<span class="lk-chip '+(w.mcp_proxy?'ok':'warn')+'">'+esc(w.mcp_proxy?T('MCP-Proxy an'):T('MCP-Proxy aus'))+'</span>';
+  h+='</div>';
+  h+='<div style="margin-top:10px;font-size:12px"><span class="faint">'+esc(T('Adresse auf dem Server'))+':</span> '
+    +'<span class="mcp-url">'+esc(adr||'—')+'</span></div>';
+  if(w.abhilfe) h+='<div class="kc-row sev-medium" style="margin-top:10px;overflow-wrap:anywhere">'+esc(w.abhilfe)+'</div>';
+  // Ohne laufende Oberflaeche fuehrten Tunnel und Link ins Leere — dann
+  // steht nur die Abhilfe da.
+  if(!w.gefunden||w.webui==='none') return h;
+  h+='<div style="margin-top:12px;font-size:12px;line-height:1.6">';
+  h+='<div class="faint">'+esc(T('Vom eigenen Rechner aus über einen SSH-Tunnel erreichbar. Wer das Deck schon über einen Tunnel öffnet, hängt das -L an denselben Aufruf an.'))+'</div>';
+  h+='<code class="mcp-cmd">'+esc('ssh -L '+port+':'+ziel+':'+port+' user@host')+'</code>';
+  h+='<div class="faint">'+esc(T('Danach im Browser öffnen. Den Reiter „MCP“ hat die Oberfläche selbst — sie speichert ihre Server im Browser, nicht auf dem Server.'))+'</div>';
+  h+='<div class="btnrow mt"><a class="btn sm" href="'+esc('http://127.0.0.1:'+port+'/')+'" target="_blank" rel="noopener noreferrer">↗ '
+    +esc(T('Oberfläche öffnen'))+' (127.0.0.1:'+esc(port)+')</a></div>';
+  return h+'</div>';
+}
+function _mcpWebuiTag(lage){
+  var w=(lage&&lage.webui)||null;
+  if(!w) return '—';
+  if(!w.gefunden) return T('nicht gefunden');
+  if(w.webui==='none') return T('abgeschaltet');
+  if(w.webui!=='llamacpp') return T('MCP-Reiter unsicher');
+  return T('MCP-Reiter da')+' · '+(w.mcp_proxy?T('Proxy an'):T('Proxy aus'));
+}
+
+/* Ergebnis des letzten Tests: Abzeichen in die Chip-Zeile, Grund und
+   Werkzeuge darunter. Die Werkzeugliste bleibt offen, wenn die Liste neu
+   gezeichnet wird (_MCP.offen) — sonst klappte jeder Test sie wieder zu. */
+function _mcpTest(id, t){
+  if(!t) return {chips:'<span class="lk-chip aus">'+esc(T('noch nicht getestet'))+'</span>', unten:''};
+  var chips='<span class="lk-chip '+(t.ok?'ok':'bad')+'">'+esc(t.ok?T('Test ok'):T('Test fehlgeschlagen'))+'</span>';
+  var meta=[];
+  if(t.server&&typeof t.server==='object') meta.push(String(t.server.name||'')+(t.server.version?' '+t.server.version:''));
+  if(t.protokoll) meta.push(T('Protokoll')+' '+t.protokoll);
+  if(t.http!=null) meta.push('HTTP '+t.http);
+  if(t.dauer_ms!=null) meta.push(t.dauer_ms+' ms');
+  if(t.zeit) meta.push('⏱ '+ago(t.zeit));
+  if(meta.length) chips+='<span class="faint mono" style="font-size:11px;overflow-wrap:anywhere">'+esc(meta.join(' · '))+'</span>';
+  var wz=Array.isArray(t.werkzeuge)?t.werkzeuge:[];
+  var unten='';
+  if(!t.ok&&t.grund) unten+='<div class="kc-d" style="color:var(--red);overflow-wrap:anywhere">'+esc(t.grund)+'</div>';
+  if(wz.length){
+    unten+=`<details style="margin-top:6px"${_MCP.offen[id]?' open':''} ontoggle="_mcpOffen('${escJs(id)}',this.open)">`
+      +'<summary style="cursor:pointer;font-size:12px">'+esc(T('Werkzeuge'))+': '+wz.length+'</summary><ul class="mcp-wz">'
+      +wz.map(function(x){
+        x=x||{};
+        return '<li><b class="mono">'+esc(x.name||'')+'</b>'
+          +(x.beschreibung?'<div class="kc-d">'+esc(x.beschreibung)+'</div>':'')+'</li>';
+      }).join('')+'</ul></details>';
+  } else if(t.ok){
+    unten+='<div class="kc-d">'+esc(T('Der Server meldet keine Werkzeuge.'))+'</div>';
+  }
+  return {chips:chips, unten:unten};
+}
+function _mcpZeile(s){
+  s=s||{};
+  var id=String(s.id==null?'':s.id), t=s.letzter_test||null, lauf=!!_MCP.laeuft[id];
+  var tz=_mcpTest(id, t);
+  var h='<div class="kc-row mcp-zeile'+(!t?'':(t.ok?' sev-info':' sev-high'))+'" data-mcp-id="'+esc(id)+'">';
+  h+='<div class="mcp-kopf"><div class="kc-t" style="overflow-wrap:anywhere">'+esc(s.name||'')+'</div>';
+  h+='<div class="mcp-url">'+esc(s.url||'')+'</div>';
+  if(s.notiz) h+='<div class="kc-d" style="overflow-wrap:anywhere">'+esc(s.notiz)+'</div>';
+  h+='<div class="mcp-chips">';
+  h+=`<label class="chk"><input type="checkbox"${s.aktiv?' checked':''} onchange="mcpAktiv('${escJs(id)}',this.checked)"> `+esc(T('aktiv'))+'</label>';
+  h+='<span class="lk-chip '+(s.token_gesetzt?'aktiv':'aus')+'">'+esc(s.token_gesetzt?T('Token gesetzt'):T('ohne Token'))+'</span>';
+  h+=tz.chips+'</div>'+tz.unten+'</div>';
+  h+='<div class="mcp-knoepfe">';
+  h+=`<button class="btn sm" type="button" data-mcp-test="${esc(id)}" onclick="mcpTesten('${escJs(id)}')"${lauf?' disabled aria-busy="true"':''}>`
+    +esc(lauf?T('Test läuft …'):T('Testen'))+'</button>';
+  h+=`<button class="btn sm" type="button" onclick="mcpBearbeiten('${escJs(id)}')">`+esc(T('Bearbeiten'))+'</button>';
+  h+=`<button class="btn sm danger" type="button" onclick="mcpLoeschen('${escJs(id)}')">`+esc(T('Löschen'))+'</button>';
+  return h+'</div></div>';
+}
+function mcpListeHtml(liste){
+  if(!Array.isArray(liste)||!liste.length)
+    return '<div class="empty">'+esc(T('Noch kein MCP-Server eingetragen.'))+'<br>'
+      +esc(T('Mit „Server anlegen“ einen hinzufügen — Name und Adresse genügen, ein Token nur, wenn der Server eines verlangt.'))+'</div>';
+  return liste.map(_mcpZeile).join('');
+}
+function mcpZeigen(){
+  var li=$('#mcp_liste'), wu=$('#mcp_webui'), tag=$('#mcp_tag'), wtag=$('#mcp_webui_tag');
+  if(!li) return;
+  _mcpFertig(li); _mcpFertig(wu);
+  if(!_MCP.d){
+    li.innerHTML='<div class="kc-row sev-high" role="alert"><div><div class="kc-t">'+esc(T('MCP-Server sind nicht abrufbar.'))
+      +'</div><div class="kc-d" style="overflow-wrap:anywhere">'+esc(_MCP.fehler||T('unbekannter Fehler'))+'</div></div></div>';
+    if(wu) wu.innerHTML='<div class="empty">'+esc(T('Lage der llama-Oberfläche nicht abrufbar.'))+'</div>';
+    if(tag) tag.textContent=T('Ladefehler');
+    if(wtag) wtag.textContent='—';
+    return;
+  }
+  var d=_MCP.d, L=d.lage||{};
+  li.innerHTML=mcpListeHtml(d.server);
+  if(wu) wu.innerHTML=mcpWebuiHtml(L);
+  if(tag) tag.textContent=(L.anzahl!=null?L.anzahl:d.server.length)+' '+T('Server')+' · '
+    +(L.aktiv!=null?L.aktiv:d.server.filter(function(s){return s&&s.aktiv;}).length)+' '+T('aktiv');
+  if(wtag) wtag.textContent=_mcpWebuiTag(L);
+}
+async function mcpLaden(){
+  if(!$('#mcp_liste')) return;
+  if(!_MCP.bereit){ _MCP.bereit=true; mcpNeu(false); }
+  var d=await apiGet('/api/mcp/server');
+  if(_mcpOk(d)&&Array.isArray(d.server)){ _MCP.d=d; _MCP.fehler=null; }
+  else { _MCP.d=null; _MCP.fehler=_mcpGrund(d); }
+  mcpZeigen();
+}
+
+/* Formular. Leer heisst beim Bearbeiten „Token unveraendert“ — geloescht
+   wird nur ueber das Kaestchen, das dann auch das Feld sperrt. */
+function _mcpFormMsg(text, art){
+  var m=$('#mcp_f_msg'); if(!m) return;
+  m.textContent=text||'';
+  m.style.color=art==='err'?'var(--red)':(art==='ok'?'var(--neon)':'var(--text-faint)');
+}
+function _mcpFormZeigen(){
+  var p=$('#pnl_mcp_form'); if(!p) return;
+  // Zugeklappt (W120)? Dann ueber den Kopf aufklappen, damit der
+  // gespeicherte Klappzustand mitzieht.
+  if(p.classList.contains('zu')){ var k=p.querySelector('.head'); if(k) k.click(); }
+  try{ p.scrollIntoView({behavior:'smooth', block:'start'}); }catch(e){}
+  var n=$('#mcp_f_name'); if(n) n.focus();
+}
+function mcpNeu(zeigen){
+  if(!$('#mcp_f_id')) return;
+  $('#mcp_f_id').value=''; $('#mcp_f_name').value=''; $('#mcp_f_url').value=''; $('#mcp_f_notiz').value='';
+  $('#mcp_f_aktiv').checked=true;
+  var tok=$('#mcp_f_token'); tok.value=''; tok.disabled=false; tok.placeholder=T('nur wenn der Server eines verlangt');
+  var weg=$('#mcp_f_token_weg'); weg.checked=false; weg.disabled=true;
+  $('#mcp_f_titel').textContent=T('▚ Server anlegen');
+  _mcpFormMsg('');
+  if(zeigen) _mcpFormZeigen();
+}
+function mcpBearbeiten(id){
+  var s=_mcpServer(id);
+  if(!s){ toast(T('Server nicht mehr in der Liste — neu geladen.'),'warn'); mcpLaden(); return; }
+  $('#mcp_f_id').value=String(s.id);
+  $('#mcp_f_name').value=s.name||''; $('#mcp_f_url').value=s.url||''; $('#mcp_f_notiz').value=s.notiz||'';
+  $('#mcp_f_aktiv').checked=!!s.aktiv;
+  var tok=$('#mcp_f_token'); tok.value=''; tok.disabled=false;
+  tok.placeholder=s.token_gesetzt?T('gesetzt — leer lassen heißt unverändert'):T('nicht gesetzt');
+  var weg=$('#mcp_f_token_weg'); weg.checked=false; weg.disabled=!s.token_gesetzt;
+  $('#mcp_f_titel').textContent=T('▚ Server bearbeiten')+' · '+(s.name||'');
+  _mcpFormMsg('');
+  _mcpFormZeigen();
+}
+function mcpTokenWeg(){
+  var weg=$('#mcp_f_token_weg'), tok=$('#mcp_f_token');
+  if(weg.checked){ tok.value=''; tok.disabled=true; } else tok.disabled=false;
+}
+async function mcpSpeichern(ev){
+  if(ev&&ev.preventDefault) ev.preventDefault();
+  var id=$('#mcp_f_id').value, tok=$('#mcp_f_token'), weg=$('#mcp_f_token_weg');
+  var body={name:$('#mcp_f_name').value.trim(), url:$('#mcp_f_url').value.trim(),
+            aktiv:!!$('#mcp_f_aktiv').checked, notiz:$('#mcp_f_notiz').value.trim()};
+  if(!body.name||!body.url){ _mcpFormMsg(T('Name und Adresse sind Pflicht.'),'err'); return; }
+  // Fehlt der Schluessel, bleibt das Token unveraendert; ein leeres loescht es.
+  if(id&&weg.checked) body.token='';
+  else if(tok.value.trim()) body.token=tok.value.trim();
+  var knopf=$('#mcp_f_speichern'); knopf.disabled=true; _mcpFormMsg(T('Speichert …'));
+  var d=await apiPost(id?_mcpPfad(id):'/api/mcp/server', body);
+  knopf.disabled=false;
+  if(!_mcpOk(d)){
+    var g=_mcpGrund(d);
+    _mcpFormMsg(T('Nicht gespeichert')+': '+g,'err'); toast(T('Speichern fehlgeschlagen')+': '+g,'err');
+    return;
+  }
+  // mcpNeu() leert auch das Passwortfeld — das Token bleibt nicht stehen.
+  toast(id?T('Gespeichert'):T('Server angelegt'),'ok');
+  mcpNeu(false);
+  _mcpFormMsg(T('Gespeichert'),'ok');
+  await mcpLaden();
+}
+async function mcpAktiv(id, an){
+  var s=_mcpServer(id); if(!s){ mcpLaden(); return; }
+  // Ohne token-Schluessel: das Token bleibt, wie es ist.
+  var d=await apiPost(_mcpPfad(id),{name:s.name, url:s.url, notiz:s.notiz||'', aktiv:!!an});
+  if(!_mcpOk(d)) toast(T('Nicht umgeschaltet')+': '+_mcpGrund(d),'err');
+  else toast(an?T('Server aktiviert'):T('Server deaktiviert'),'ok');
+  await mcpLaden();
+}
+async function mcpTesten(id){
+  id=String(id);
+  if(_MCP.laeuft[id]) return;        // ein Doppelklick startet keinen zweiten Test
+  _MCP.laeuft[id]=true; mcpZeigen();
+  var d=null;
+  try{ d=await apiPost(_mcpPfad(id)+'/test',{}); }
+  finally{ delete _MCP.laeuft[id]; }
+  if(_mcpOk(d)&&d.test){
+    var s=_mcpServer(id); if(s) s.letzter_test=d.test;
+    toast(d.test.ok?T('Test erfolgreich'):T('Test fehlgeschlagen')+': '+(d.test.grund||''), d.test.ok?'ok':'err');
+  } else toast(T('Test nicht ausführbar')+': '+_mcpGrund(d),'err');
+  mcpZeigen();
+}
+async function mcpLoeschen(id){
+  var s=_mcpServer(id);
+  if(!confirm(T('MCP-Server löschen?')+'\n\n'+((s&&s.name)||String(id)))) return;
+  var d=await apiDel(_mcpPfad(id));
+  if(!_mcpOk(d)){ toast(T('Löschen fehlgeschlagen')+': '+_mcpGrund(d),'err'); return; }
+  toast(T('Gelöscht'),'ok');
+  if($('#mcp_f_id').value===String(id)) mcpNeu(false);
+  await mcpLaden();
+}
+/* Export als Datei. Mit Token nur nach Rueckfrage: die Datei traegt dann
+   die Zugangsschluessel im Klartext. Geladen wird ueber einen Link, damit
+   der Browser die Datei speichert — der Inhalt geht nie durchs DOM. */
+function mcpExport(mitToken){
+  if(mitToken&&!confirm(T('Export mit Token?')+'\n\n'
+      +T('Die Datei enthält dann die Zugangsschlüssel aller Server im Klartext. Nur auf einem vertrauenswürdigen Rechner speichern und nicht weitergeben.'))) return;
+  var a=document.createElement('a');
+  a.href='/api/mcp/export'+(mitToken?'?mit_token=1':'');
+  a.download=mitToken?'mcp-server-mit-token.json':'mcp-server.json';
+  a.rel='noopener';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+VIEW_LOADERS['mcp']=mcpLaden;
+/* Die Tab-Wiederherstellung beim Start klickt in einem FRUEHEREN Script-Block
+   — dort ist dieser Loader noch nicht eingetragen (wie W115 fuer die
+   Uebersicht). Ohne den Anstoss bliebe die Ansicht nach dem Neuladen leer. */
+try{ if(CURRENT_VIEW==='mcp') mcpLaden(); }catch(e){}
 
 /* v4.2-W144: liest Prometheus den Bot wirklich, und ist Grafana da? Die
    Gruende kommen uebersetzt vom Server (nc/beobachtungslage.py). */
