@@ -508,6 +508,50 @@ def main():
         assert _soll in _namen, "Selbsttest prueft %s nicht mehr" % _soll
     ok("W197: Selbsttest-Bericht uebersteht die Diagnose-Folgezeilen, alle Abschnitte erreichbar")
 
+    # \u2500\u2500 v5.8-W199: der Highlight-Radar liest streng, bevor er schreibt
+    #
+    # /api/highlights/config las ueber _highlight_cfg() \u2014 nachsichtig: bei
+    # gesperrter Datenbank die .env-Vorgaben \u2014 und schrieb das Ganze zurueck.
+    # Ein Klick auf \u201eaus" setzte so Schwelle und Abklingzeit still zurueck.
+    # Gegen die echte App und die echte Datenbank, nur das LESEN faellt aus.
+    import sqlite3 as _sq3
+    import nc.cfgstore as _cs
+    _echt = _cs._db_conn
+    _gesperrt = {"an": False}
+
+    class _Leser:
+        def __init__(self, conn):
+            self._c = conn
+
+        def execute(self, sql, *a):
+            if _gesperrt["an"] and sql.lstrip().upper().startswith("SELECT"):
+                raise _sq3.OperationalError("database is locked")
+            return self._c.execute(sql, *a)
+
+        def commit(self):
+            self._c.commit()
+
+    @_cl.contextmanager
+    def _db():
+        with _echt() as _conn:
+            yield _Leser(_conn)
+    _cs.set_("highlights", {"enabled": True, "min_score": 70, "min_msgs": 9, "cooldown_s": 33})
+    _cs._db_conn = _db
+    try:
+        _gesperrt["an"] = True
+        r = client.post("/api/highlights/config", json={"enabled": False})
+        _gesperrt["an"] = False
+        assert r.status_code == 503, (r.status_code, r.get_data(as_text=True)[:200])
+        assert _cs.lesen("highlights") == {"enabled": True, "min_score": 70, "min_msgs": 9,
+                                           "cooldown_s": 33}, _cs.lesen("highlights")
+        r = client.post("/api/highlights/config", json={"enabled": False})
+        assert r.status_code == 200, r.status_code
+        assert _cs.lesen("highlights") == {"enabled": False, "min_score": 70, "min_msgs": 9,
+                                           "cooldown_s": 33}, _cs.lesen("highlights")
+    finally:
+        _cs._db_conn = _echt
+    ok("W199: Highlight-Radar \u2014 Lesefehler 503 ohne Schreiben, nicht genannte Felder bleiben")
+
     print("test_smoke OK \u2014 %d Vertraege gruen" % PASS)
 
 

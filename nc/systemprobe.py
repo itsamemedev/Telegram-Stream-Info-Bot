@@ -55,7 +55,11 @@ def cached_probe(key, fn, *args, **kwargs):
     if hat and hat[1] > jetzt:
         return hat[0]
     wert = fn(*args, **kwargs)
-    _CACHE[key] = (wert, jetzt + TTL)
+    # v5.8-W199: die Uhr beim SCHREIBEN (W103). Mit dem `jetzt` von vor der
+    # Sonde war ein Eintrag nach einer zaehen Sonde (Redis nimmt an, antwortet
+    # aber langsam) schon abgelaufen, als er geschrieben wurde — und dann
+    # prueft genau im Stoerfall jeder Aufruf neu.
+    _CACHE[key] = (wert, _time.monotonic() + TTL)
     return wert
 
 

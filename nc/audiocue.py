@@ -24,9 +24,16 @@ def configure(*, tone=None, freq=None, ms=None, vol=None, gap_ms=None, duck=None
             _VORGABEN[name] = wert
 
 
-def config():
-    """Die geltende Ton-Konfiguration: gespeicherter Wert vor .env-Vorgabe."""
+def aus_bestand(saved):
+    """Die Ton-Konfiguration aus einem gespeicherten Wert (oder None) und den
+    .env-Vorgaben. v5.8-W199: getrennt von config(), damit die Route sie auf
+    den STRENG gelesenen Bestand anwenden kann (nc/cfgstore.aendern)."""
     return _cfgnorm.normalize_audio(
-        _cfgstore.get("audio.cue", None),
+        saved,
         _VORGABEN["tone"], _VORGABEN["freq"], _VORGABEN["ms"],
         _VORGABEN["vol"], _VORGABEN["gap_ms"], _VORGABEN["duck"])
+
+
+def config():
+    """Die geltende Ton-Konfiguration: gespeicherter Wert vor .env-Vorgabe."""
+    return aus_bestand(_cfgstore.get("audio.cue", None))

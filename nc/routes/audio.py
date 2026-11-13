@@ -55,22 +55,30 @@ def api_audio_config():
                           "Restream-Start (steckt in der ffmpeg-Kette).")
         return jsonify(ok=True, **c)
     d = request.get_json(silent=True) or {}
-    new = dict(_nc_audiocue.config())
+    wunsch = {}
     if "tone" in d:
-        new["tone"] = bool(d["tone"])
+        wunsch["tone"] = bool(d["tone"])
     for key, lo, hi in (("freq", 100.0, 4000.0), ("vol", 0.0, 1.0), ("duck", 0.1, 1.0)):
         if key in d:
             try:
-                new[key] = max(lo, min(hi, float(d[key])))
+                wunsch[key] = max(lo, min(hi, float(d[key])))
             except (TypeError, ValueError):
                 return jsonify(ok=False, error=f"{key} " + _t("ungueltig")), 400
     for key, lo, hi in (("ms", 20, 1000), ("gap_ms", 0, 1000)):
         if key in d:
             try:
-                new[key] = max(lo, min(hi, int(d[key])))
+                wunsch[key] = max(lo, min(hi, int(d[key])))
             except (TypeError, ValueError):
                 return jsonify(ok=False, error=f"{key} " + _t("ungueltig")), 400
-    _nc_cfgstore.set_("audio.cue", new)
+    # v5.8-W199: streng gelesen. Mit config() — nachsichtig — schrieb ein
+    # Klick bei gesperrter Datenbank die .env-Vorgaben über jeden
+    # gespeicherten Wert, den er nicht nannte (nc/cfgstore.aendern).
+    try:
+        new = _nc_cfgstore.aendern("audio.cue",
+                                   lambda alt: {**_nc_audiocue.aus_bestand(alt), **wunsch},
+                                   fehlt={}, art=dict)
+    except Exception as e:
+        return jsonify(ok=False, error=_nc_fehlertext.nach_aussen(e, "api_audio_cue")), 503
     return jsonify(ok=True, **new)
 
 

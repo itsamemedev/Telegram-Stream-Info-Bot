@@ -12,7 +12,8 @@ from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc import marketing as _nc_marketing
 from nc.util import _loop_not_ready
-from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
+from nc import cfgstore as _nc_cfgstore
+from nc.cfgstore import set_ as _cfg_set
 
 from nc import ctx as _ctx
 
@@ -77,25 +78,32 @@ def api_marketing_toggle():
 @bp.route("/api/marketing/config", methods=["POST"])
 def api_marketing_config():
     payload = request.get_json(silent=True) or {}
-    stored = _cfg_get("marketing.config", {}) or {}
+    neu = {}
     for k in ("auto", "only_when_live"):
         if k in payload:
-            stored[k] = bool(payload[k])
+            neu[k] = bool(payload[k])
     if "targets" in payload and isinstance(payload["targets"], list):
-        stored["targets"] = [t for t in payload["targets"] if t in _nc_marketing.TARGETS]
+        neu["targets"] = [t for t in payload["targets"] if t in _nc_marketing.TARGETS]
     for k in ("cadence_hours", "min_gap_hours"):
         if k in payload:
             try:
-                stored[k] = max(0.5, float(payload[k]))
+                neu[k] = max(0.5, float(payload[k]))
             except (TypeError, ValueError):
                 return jsonify(ok=False, error=f"{k} muss eine Zahl sein"), 400
     for k in ("quiet_start", "quiet_end"):
         if k in payload:
             try:
-                stored[k] = int(payload[k]) % 24
+                neu[k] = int(payload[k]) % 24
             except (TypeError, ValueError):
                 return jsonify(ok=False, error=f"{k} muss 0-23 sein"), 400
-    _cfg_set("marketing.config", stored)
+    # v5.8-W199: erst prüfen, dann streng lesen und in EINEM Schritt anwenden.
+    # get(…, {}) machte aus einer gesperrten Datenbank ein Zurücksetzen aller
+    # Felder, die dieser Klick nicht nannte (nc/cfgstore.aendern).
+    try:
+        stored = _nc_cfgstore.aendern("marketing.config", lambda alt: {**alt, **neu},
+                                      fehlt={}, art=dict)
+    except Exception as e:
+        return jsonify(ok=False, error=_nc_fehlertext.nach_aussen(e, "api_marketing_config")), 503
     return jsonify(ok=True, config=stored)
 
 

@@ -11480,7 +11480,9 @@ def _quick_validate_proxy(proxy):
             return c[1]
     ok, _lat = _test_proxy(proxy)
     with _PROXY_PREFLIGHT_LOCK:
-        _PROXY_PREFLIGHT_CACHE[proxy] = (now, ok)
+        # v5.8-W199: Zeitstempel nach der Probe (W103) — sie darf
+        # _PROXY_TEST_TIMEOUT dauern, und um die waere der Eintrag sonst kuerzer.
+        _PROXY_PREFLIGHT_CACHE[proxy] = (_time_mod.monotonic(), ok)
         if len(_PROXY_PREFLIGHT_CACHE) > 256:        # klein halten (FIFO)
             _PROXY_PREFLIGHT_CACHE.pop(next(iter(_PROXY_PREFLIGHT_CACHE)), None)
     return ok
@@ -20703,16 +20705,24 @@ def api_debug_threads():
 
 @dashboard_app.route("/api/highlights/config", methods=["POST"])
 def api_highlights_config():
-    new = dict(_highlight_cfg())
     d = request.get_json(silent=True) or {}
+    wunsch = {}
     if "enabled" in d:
-        new["enabled"] = bool(d["enabled"])
+        wunsch["enabled"] = bool(d["enabled"])
     if "min_score" in d:
         try:
-            new["min_score"] = max(20, min(95, int(d["min_score"])))
+            wunsch["min_score"] = max(20, min(95, int(d["min_score"])))
         except (TypeError, ValueError):
             return jsonify(ok=False, error="min_score ungueltig"), 400
-    _cfg_set("highlights", new)
+    # v5.8-W199: streng gelesen. _highlight_cfg() liest nachsichtig — bei
+    # gesperrter Datenbank schrieb ein Klick die .env-Vorgaben ueber jeden
+    # gespeicherten Wert, den er nicht nannte (nc/cfgstore.aendern).
+    try:
+        new = _nc_cfgstore.aendern(
+            "highlights", lambda alt: {**_nc_cfgnorm.normalize_highlights(alt), **wunsch},
+            fehlt={}, art=dict)
+    except Exception as e:
+        return jsonify(ok=False, error=_fehler_text(e, "api_highlights_config")), 503
     return jsonify(ok=True, **new)
 
 

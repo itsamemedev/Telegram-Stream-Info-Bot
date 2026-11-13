@@ -12,6 +12,7 @@ Outcome-Mengen und der learned_params-Leser wandern mit hierher.
 
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from nc.dbwrap import db_conn
@@ -683,14 +684,64 @@ _{ts}_
             "learned":   len(learned),
             "summary":   summary,
         })
-        manifest = manifest[:20]
+        manifest = manifest[:SCHNAPPSCHUESSE_BEHALTEN]
         with open(manifest_path, "w", encoding="utf-8") as mf:
             json.dump(manifest, mf, ensure_ascii=False, indent=2)
+        schnappschuesse_kappen(bdir)
 
     except Exception:
         pass   # Self-Repro optional — kein Crash wenn Permissions fehlen
 
     return files
+
+
+# v5.8-W199: so viele bot_vN.py bleiben liegen — dieselbe Zahl, die das
+# Manifest schon immer behielt.
+SCHNAPPSCHUESSE_BEHALTEN = 20
+_SCHNAPPSCHUSS_RE = re.compile(r"^bot_v(\d+)\.py$")
+
+
+def schnappschuesse(bdir):
+    """[(version, pfad)] der bot_vN.py in bdir, neueste zuerst — nach ZAHL.
+
+    Nach Namen sortiert stuende bot_v9.py vor bot_v10.py; die Route zeigte so
+    ab dem zehnten Zyklus die falschen als neueste (v5.8-W199)."""
+    if not os.path.isdir(bdir):
+        namen = []                   # noch kein Zyklus gelaufen: nichts angelegt
+    else:
+        try:
+            namen = os.listdir(bdir)
+        except OSError as e:
+            log.warning("Evolution: %s nicht lesbar (%s) — alte Schnappschuesse "
+                        "bleiben liegen.", bdir, e)
+            namen = []
+    treffer = []
+    for n in namen:
+        m = _SCHNAPPSCHUSS_RE.match(n)
+        if m:
+            treffer.append((int(m.group(1)), os.path.join(bdir, n)))
+    return sorted(treffer, reverse=True)
+
+
+def schnappschuesse_kappen(bdir, behalten=SCHNAPPSCHUESSE_BEHALTEN):
+    """Alte bot_vN.py ueber die `behalten` neuesten hinaus entfernen. -> Anzahl.
+
+    v5.8-W199. Jeder Zyklus (Vorgabe alle 6 h, dazu jeder Klick im Deck)
+    schreibt eine VOLLE Kopie des Monolithen, 1,4 MB. Das Manifest wurde auf
+    20 gekuerzt, die Dateien nie: rund 6 MB am Tag, 2 GB im Jahr, auf genau
+    der Platte, die der disk-guard fuer Aufnahmen freihalten soll."""
+    weg = 0
+    for _version, pfad in schnappschuesse(bdir)[behalten:]:
+        try:
+            os.remove(pfad)
+            weg += 1
+        except OSError as e:
+            log.warning("Evolution: alter Schnappschuss %s nicht entfernt (%s) — "
+                        "build/ waechst weiter.", os.path.basename(pfad), e)
+    if weg:
+        log.info("Evolution: %d alte Schnappschuesse entfernt (es bleiben die %d neuesten).",
+                 weg, behalten)
+    return weg
 
 
 def cycle(trigger="auto"):

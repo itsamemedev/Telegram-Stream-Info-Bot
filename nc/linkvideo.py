@@ -32,6 +32,7 @@ import tempfile
 from urllib.parse import urlsplit
 
 from nc import kindprozess as _kind
+from nc import sicherpfad as _nc_sicherpfad
 
 _log = logging.getLogger("TikTokBot")
 
@@ -201,6 +202,15 @@ async def holen(url, limit_mb) -> dict:
         _log.warning("Link-Video %s: %s", url, erg["grund"])
         return erg
     pfad, erg["titel"] = ausgabe_lesen(out.decode("utf-8", "replace"))
+    # v5.8-W199 (SEC): nur eine Datei aus dem EIGENEN Arbeitsordner geht
+    # hinaus. Die Ausgabe ist kein vertrauenswuerdiger Kanal — sie traegt
+    # neben dem Pfad auch fremden Text (den Titel). Was ausserhalb liegt,
+    # wird nicht gesendet, sondern laut verworfen.
+    if pfad and not _nc_sicherpfad.unter(erg["ordner"], pfad):
+        _log.error("Link-Video %s: yt-dlp nannte eine Datei ausserhalb des "
+                   "Arbeitsordners — verworfen, nichts gesendet.", url)
+        erg["grund"] = "die Ausgabe von yt-dlp war nicht eindeutig — nichts gesendet"
+        return erg
     if rc != 0 or not pfad or not os.path.isfile(pfad):
         erg["grund"] = grund(err.decode("utf-8", "replace"))
         return erg

@@ -11,7 +11,6 @@ Reihenfolge aus W117 — erst den Kern loesen, dann die Routen; der Kontext
 waechst dabei um null Eintraege.
 """
 
-import glob
 import json
 import os
 
@@ -219,7 +218,8 @@ def api_evolution_snapshots():
             pass
     # Fallback: build/-Ordner nach bot_v*.py scannen
     if not snapshots:
-        for p in sorted(glob.glob(os.path.join(bdir, "bot_v*.py")), reverse=True)[:10]:
+        # v5.8-W199: nach Versionsnummer, nicht nach Namen (bot_v9 > bot_v10).
+        for _v, p in _nc_evolution.schnappschuesse(bdir)[:10]:
             snapshots.append({
                 "file": os.path.basename(p),
                 "size_kb": round(os.path.getsize(p) / 1024, 1),
