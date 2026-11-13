@@ -45,6 +45,13 @@ _SPERRE = threading.Lock()
 
 FOLGE = "folge"          # Antwort auf AZRAEL: weiterreden, mit Zusammenhang
 ANSPRACHE = "ansprache"  # neue Frage an AZRAEL
+BRAIN = "brain"          # Antwort auf eine /brain-Antwort: weiter ueber das Brain
+
+# v5.9-W201: so beginnt jede Antwort von /brain (_brain_fragen) und die
+# Uebersicht ohne Frage. Der Betreiber meinte mit „antwortet nicht auf
+# Antwort-Nachrichten" genau diese — eine Antwort darauf geht zurueck an das
+# Brain (Router-Kaskade), nicht an AZRAELs Chat.
+_BRAIN_KOPF = re.compile(r"^🧠 (?:\[[^\]\n]{1,60}\] ?|Brain:)")
 
 
 def merken(chat_id, message_id):
@@ -95,24 +102,51 @@ def ohne_fuss(text) -> str:
     return _FUSS.sub("", text or "").strip()
 
 
-def angesprochen(text) -> bool:
-    """Steht der Name im Text? „Azrael", „@Azrael", „azrael," — nicht „Mazrael"."""
-    return bool(_NAME.search(text or ""))
+def ist_brain_antwort(bezug) -> bool:
+    """Ist `bezug` (eine Bot-Nachricht) eine Antwort von /brain?"""
+    return bool(bezug is not None and _BRAIN_KOPF.match(getattr(bezug, "text", None) or ""))
 
 
-def frage_ohne_namen(text) -> str:
+def ohne_brain_kopf(text) -> str:
+    """„🧠 [llm · lokal] Antwort" -> „Antwort" — als Zusammenhang fuer die Folgefrage."""
+    return _BRAIN_KOPF.sub("", text or "", count=1).strip()
+
+
+def _bot_muster(bot_name):
+    n = str(bot_name or "").strip().lstrip("@")
+    return re.compile(r"@%s\b" % re.escape(n), re.I) if n else None
+
+
+def angesprochen(text, bot_name=None) -> bool:
+    """Steht der Name im Text? „Azrael", „@Azrael", „azrael," — nicht „Mazrael".
+
+    v5.9-W201: auch der @-Name des Bots selbst. Mit Telegrams
+    Datenschutzmodus (Vorgabe fuer Bots) erreichen Gruppennachrichten den Bot
+    NUR, wenn sie ihn so nennen — wer ihn so ansprach, bekam nie eine Antwort."""
+    t = text or ""
+    muster = _bot_muster(bot_name)
+    return bool(_NAME.search(t) or (muster and muster.search(t)))
+
+
+def frage_ohne_namen(text, bot_name=None) -> str:
     """Den Namen aus der Frage nehmen, sonst antwortet die KI auf sich selbst."""
-    frage = re.sub(r"(?<![\w@])@?azrael\b[:,]?\s*", "", text or "", flags=re.I).strip()
+    frage = re.sub(r"(?<![\w@])@?azrael\b[:,]?\s*", "", text or "", flags=re.I)
+    muster = _bot_muster(bot_name)
+    if muster:
+        frage = re.sub(muster.pattern + r"[:,]?\s*", "", frage, flags=re.I)
+    frage = frage.strip()
     return frage or (text or "").strip()
 
 
-def entscheiden(text, privat, antwort_auf_bot, ki_antwort, verlauf_da):
-    """FOLGE, ANSPRACHE oder None (nicht antworten).
+def entscheiden(text, privat, antwort_auf_bot, ki_antwort, verlauf_da,
+                brain_antwort=False, bot_name=None):
+    """FOLGE, ANSPRACHE, BRAIN oder None (nicht antworten).
 
     antwort_auf_bot: die Nachricht antwortet wirklich auf eine Bot-Nachricht
     (echte_antwort(), nicht der Themen-Kopf).
 
     - Befehle haben Vorrang: „/…" nie.
+    - Antwort auf eine /brain-Antwort: weiter ueber das Brain (BRAIN), immer.
     - Antwort auf eine KI-Antwort: immer weiterreden — auch ohne Verlauf und
       auch von jemand anderem. Dafuer antwortet man darauf.
     - Antwort auf eine ANDERE Bot-Nachricht (Live-Meldung, Aufnahme, Alarm):
@@ -124,9 +158,11 @@ def entscheiden(text, privat, antwort_auf_bot, ki_antwort, verlauf_da):
     if not t or t.startswith("/"):
         return None
     if antwort_auf_bot:
-        if ki_antwort or verlauf_da or privat or angesprochen(t):
+        if brain_antwort:
+            return BRAIN
+        if ki_antwort or verlauf_da or privat or angesprochen(t, bot_name):
             return FOLGE
         return None
-    if privat or angesprochen(t):
+    if privat or angesprochen(t, bot_name):
         return ANSPRACHE
     return None

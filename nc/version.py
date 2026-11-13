@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.8.1"
-CODENAME = "Nachlese"
+VERSION = "5.9.0"
+CODENAME = "Schaltpult"
 RELEASE = "2026.11"
 
 
@@ -24,11 +24,21 @@ def build_stamp():
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
     {
-        "version": "5.8.1",
+        "version": "5.9.0",
         "date": "2026-11",
-        "title": "Nachlese",
-        # Fehlerbehebung: AZRAEL antwortet in Telegram auf Antworten (W200).
+        "title": "Schaltpult",
+        # Nebenversion: Telegram-Antworten (W200), eine KI-Wahl mit Herkunft
+        # (W201), mehrere Inferenz-Plaetze ohne Stundendeckel (W202),
+        # Sendebild ohne Kaestchen (W203). 5.8.1 wurde nie veroeffentlicht.
         "highlights": [
+            "Eine KI-Wahl fuer alles: Lokal, Free oder Auto im KI-Cockpit des Decks — gilt fuer Deck, Telegram und AZRAEL im Stream; „Lokal“ heisst nur das Modell auf dem Server, ohne stillen Wechsel in die Cloud",
+            "Jede KI-Antwort sagt, woher sie kommt: Abzeichen lokal / free / Claude im Deck-Chat, in Bericht, Datenfrage, Diagnose und KI-Log; in Telegram steht es im Fuss",
+            "AZRAEL spricht in Telegram ueber denselben Weg wie im Stream — vorher landete Telegram still bei der freien Cloud-KI",
+            "Mehrere Inferenz-Plaetze: das lokale Modell rechnet bis zu vier Antworten zugleich (LLM_PLAETZE, llama-server --parallel); /brain wartet auf einen freien Platz statt „Slot belegt“, die Warteschlange ist begrenzt",
+            "Kein Stundendeckel mehr per Vorgabe (war 30/h, beim Betreiber 894 Ablehnungen) — die Plaetze begrenzen; die Cloud wartet nicht mehr hinter dem lokalen Platz",
+            "freeai-Fehler mit Abhilfe: „auth“ nennt jetzt LLM7_TOKEN (kostenlos, token.llm7.io), die Brain-Seite zeigt eine gestoerte Cloud-Reserve statt „UP“",
+            "Antwort auf eine /brain-Antwort geht zurueck an das Brain, mit Zusammenhang; der @-Name des Bots zaehlt als Ansprache",
+            "Sendebild ohne Kaestchen: Emoji und Zeichen, die die drawtext-Schrift nicht hat, werden vor dem Schreiben entfernt",
             "AZRAEL antwortet in Telegram wieder auf Antworten: eine Antwort auf seine Nachricht brauchte bisher einen Verlauf in Redis — ohne Redis, nach einer Stunde oder bei einem anderen Nutzer blieb es still",
             "In Themen-Gruppen galt jede Nachricht als Antwort auf den Bot (Bezug auf den Themen-Kopf) — dort antwortete AZRAEL weder auf Antworten noch auf „@Azrael …“",
             "Eine Antwort auf einen anderen Nutzer mit „@Azrael …“ wird jetzt beantwortet",

@@ -36,6 +36,7 @@ llama-server kann das nur mit einem multimodalen Modell plus ``--mmproj``,
 und der Chat-Pfad hier reicht Bilder nicht im OpenAI-Format durch.
 """
 
+import contextvars
 import logging
 import os
 import shutil
@@ -197,7 +198,13 @@ _NEBENBEI = ("dead-air", "director", "hype", "proaktiv", "proactive", "recap-aut
 
 
 def azrael_wahl() -> str:
-    """AZRAEL_LLM zur Laufzeit -> lokal / auto / cloud."""
+    """AZRAEL_LLM zur Laufzeit -> lokal / auto / cloud.
+
+    v5.9-W201: die Wahl im Deck (deck_wahl) geht vor — sie gilt fuer Deck,
+    Telegram und AZRAEL zugleich. Ohne sie bleibt alles wie in W196."""
+    deck = deck_wahl()
+    if deck:
+        return {LOKAL: LOKAL, FREE: CLOUD, AUTO: AUTO}[deck]
     roh = os.getenv("AZRAEL_LLM", "").strip()
     if not roh:
         return LOKAL if lokal_installiert() else AUTO
@@ -299,3 +306,135 @@ def llm_zeiten() -> dict:
             "abgewiesen": {"budget": st.get("budget_denied", 0),
                            "reserve": st.get("reserve_denied", 0),
                            "belegt": st.get("busy_denied", 0)}}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# v5.9-W201: EINE Wahl fuer Deck, Telegram und AZRAEL — und wer geantwortet hat.
+#
+# Der Betreiber: „Azrael nutzt in Telegram eine free AI. Und im gesamten
+# Dashboard sollte man zwischen lokaler und free AI unterscheiden koennen."
+# Nachgesehen: es gab DREI Schalter (AI_PROVIDER fuer Chat und Deck,
+# REACTION_AI_PROVIDER fuer die Reaktions-Engine, AZRAEL_LLM fuer die
+# Persona), alle nur in der .env, und Telegram fragte AZRAEL_LLM gar nicht.
+# Keine Antwort sagte, woher sie kam — der Fuss in Telegram nannte das
+# EINGESTELLTE Modell, nicht das, das geantwortet hatte.
+#
+# Jetzt: ki.wahl in app_config, im Deck umschaltbar, mit Vorrang vor allen
+# drei. lokal = nur das lokale Modell (kein Claude, kein stiller Wechsel in
+# die Cloud), free = nur die freie Cloud-KI (nc.freeai, kein Claude), auto =
+# die bisherige Kette. Leer = nicht gesetzt: dann gelten die .env-Schalter
+# wie bisher — ein Update aendert nichts, bevor der Betreiber waehlt.
+# ─────────────────────────────────────────────────────────────────────────
+
+DECK_SCHLUESSEL = "ki.wahl"
+FREE = "free"
+DECK_WERTE = (LOKAL, FREE, AUTO)
+# Die Wahl wird bei jeder KI-Anfrage gelesen; die Reaktions-Engine fragt im
+# Sekundenbereich. Fuenf Sekunden Puffer sind fuer einen Klick im Deck
+# unmerklich und sparen die Datenbank.
+DECK_CACHE_S = 5.0
+_DECK = {"t": -1e9, "wert": ""}
+
+
+def deck_wahl(jetzt=None) -> str:
+    """Die im Deck gesetzte Wahl ("lokal" | "free" | "auto") oder "" (nicht gesetzt).
+
+    Nachsichtig gelesen: bei einem Datenbankfehler "" — dann gelten die
+    .env-Schalter. Das ist hier die sichere Seite: eine gesperrte Datenbank
+    soll AZRAEL nicht stumm schalten."""
+    jetzt = time.monotonic() if jetzt is None else jetzt
+    if jetzt - _DECK["t"] < DECK_CACHE_S:
+        return _DECK["wert"]
+    from nc import cfgstore
+    roh = str(cfgstore.get(DECK_SCHLUESSEL, "") or "").strip().lower()
+    wert = roh if roh in DECK_WERTE else ""
+    _DECK.update(t=jetzt, wert=wert)
+    return wert
+
+
+def deck_setzen(wert) -> str:
+    """Die Wahl im Deck setzen. "" hebt sie auf (dann gilt die .env). Wirft ValueError."""
+    w = str(wert or "").strip().lower()
+    if w not in DECK_WERTE + ("",):
+        raise ValueError("KI-Wahl muss lokal, free, auto oder leer sein")
+    from nc import cfgstore
+    cfgstore.set_(DECK_SCHLUESSEL, w)
+    _DECK.update(t=time.monotonic(), wert=w)
+    log.info("KI-Wahl im Deck: %s.", w or "aufgehoben (es gilt die .env)")
+    return w
+
+
+def brain_kette(wahl=None):
+    """Die Backends fuer brain.llm.chat zur Wahl: lokal -> ["llamacpp"],
+    free -> ["freeai"], sonst None (die konfigurierte Kette)."""
+    w = deck_wahl() if wahl is None else wahl
+    return {LOKAL: ["llamacpp"], FREE: ["freeai"]}.get(w)
+
+
+# Wer hat geantwortet? Je Aufruf (ContextVar folgt dem awaitenden Task bzw.
+# dem Thread der Flask-Anfrage — zwei gleichzeitige Anfragen ueberschreiben
+# sich nicht), dazu Zaehler seit dem Start fuer das Deck.
+HERKUNFT = ("lokal", "free", "claude")
+_ALIAS_HERKUNFT = {"lokal": "lokal", "llamacpp": "lokal", "brain": "lokal",
+                   "free": "free", "freeai": "free", "cloud": "free",
+                   "claude": "claude", "anthropic": "claude"}
+_HERKUNFT = contextvars.ContextVar("ki_herkunft", default="")
+HERKUNFT_ZAEHLER = {"lokal": 0, "free": 0, "claude": 0}
+
+
+def herkunft_von(wert) -> str:
+    """Backend- oder Wegname -> "lokal" | "free" | "claude" | ""."""
+    return _ALIAS_HERKUNFT.get(str(wert or "").strip().lower(), "")
+
+
+def herkunft_setzen(wert) -> str:
+    """Nach einer Antwort: wer war es? Zaehlt mit. -> die normalisierte Herkunft."""
+    h = herkunft_von(wert)
+    _HERKUNFT.set(h)
+    if h:
+        HERKUNFT_ZAEHLER[h] += 1
+    return h
+
+
+def herkunft_loeschen():
+    """Vor einer Anfrage: kein Rest aus der vorigen im selben Faden."""
+    _HERKUNFT.set("")
+
+
+def herkunft() -> str:
+    return _HERKUNFT.get()
+
+
+def etikett(herkunft_wert, modell="") -> str:
+    """„lokal · qwen3-14b" — fuer den Telegram-Fuss und die Ablage."""
+    h = herkunft_von(herkunft_wert)
+    name = {"lokal": "lokal", "free": "free", "claude": "Claude"}.get(h, "?")
+    m = str(modell or "").strip()
+    return "%s · %s" % (name, m) if m else name
+
+
+def beschriftung(herkunft_wert, angefragt="") -> str:
+    """Das Etikett einer Antwort fuer Fuss, Chat und KI-Log — mit dem Modell,
+    das WIRKLICH geantwortet hat: lokal das geladene Modell, free das
+    angefragte, Claude ohne Namen (der steht im Deck unter KI-Schluessel).
+    Unbekannte Herkunft (Fehler): das angefragte Modell wie bisher."""
+    h = herkunft_von(herkunft_wert)
+    if h == "lokal":
+        return etikett(h, lokales_modell() or "llama.cpp")
+    if h == "free":
+        return etikett(h, angefragt)
+    if h == "claude":
+        return etikett(h)
+    return str(angefragt or "")
+
+
+def deck_lage() -> dict:
+    """Fuer den Umschalter im Deck: Wahl, was sie bewirkt, lokaler Server, Zaehler."""
+    wahl = deck_wahl()
+    oben = lokal_stand()
+    return {"wahl": wahl, "azrael": azrael_wahl(),
+            "chat": wahl or normal(os.getenv("AI_PROVIDER", "auto")),
+            "lokal_oben": oben, "lokal_installiert": lokal_installiert(),
+            "lokal_modell": lokales_modell() if oben else None,
+            "zaehler": dict(HERKUNFT_ZAEHLER)}
+

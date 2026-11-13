@@ -556,7 +556,6 @@ import os, re, sys, json, html, asyncio, logging, threading, shutil, glob, io, s
 import time as _time_mod                  # B4: war mid-file bei Z. 3554 — wird in get_cookie_health() benutzt
 _BOOT_TS = _time_mod.time()               # F82: Prozess-Start für /api/health-Uptime
 import collections as _collections        # B4: war mid-file bei Z. 1175
-import contextvars                       # v5.5-W196: welcher KI-Weg antwortete (je Aufruf)
 import atexit                            # v4.2-W97: Log-Schleuse am Prozessende leeren
 import signal as _signal_mod              # B4: war function-local — zentral importiert
 from datetime import datetime, timezone, timedelta
@@ -3985,6 +3984,9 @@ async def llm_chat(messages: List[dict],
        Vertrag unverändert: (text, error_kind). Vision-Anfragen (images) gehen
        direkt an freeai — die Brain-Runtime ist text-only."""
     timeout = AI_TIMEOUT if timeout is None else timeout
+    _gewaehlt = await _ki_nach_deckwahl(messages, model, timeout, "Chat")
+    if _gewaehlt is not None:
+        return _gewaehlt
     # v4.0-W64: Claude zuerst, sobald ein Anthropic-Key gesetzt ist. Auth-Fehler
     # NICHT still verschlucken (der Betreiber soll den falschen Key merken);
     # transiente Fehler (rate/unreachable) fallen auf die keyless Kette zurück.
@@ -3994,6 +3996,7 @@ async def llm_chat(messages: List[dict],
             _nc_claude.chat_sync, messages, _akey, _anthropic_model(model),
             timeout if (timeout and timeout > 0) else 60)
         if _txt:
+            _nc_kiwahl.herkunft_setzen("claude")
             return (_txt, None)
         if _err == "auth":
             return (None, "auth")
@@ -4014,11 +4017,89 @@ async def llm_chat(messages: List[dict],
                 timeout if (timeout and timeout > 0) else 3600,
                 None, ["llamacpp"])
             if _res.get("ok"):
+                _nc_kiwahl.herkunft_setzen("lokal")
                 return (_res["text"], None)
             _ki_rueckfall_melden("Chat", _res.get("error"))
         except Exception as _e:
             _ki_rueckfall_melden("Chat", "%s: %s" % (type(_e).__name__, _e))
-    return await _nc_freeai.chat(messages, model=model, timeout=timeout)
+    return await _nur_free(messages, model, timeout)
+
+
+async def _ki_nach_deckwahl(messages, model, timeout, weg):
+    """v5.9-W201: die eine Wahl aus dem Deck (nc/kiwahl.deck_wahl) geht vor.
+
+    -> (text, fehler), wenn sie entscheidet (lokal oder free), sonst None —
+    dann laeuft die bisherige Kette des Aufrufers. Loescht vorher die
+    Herkunft, damit kein Rest der vorigen Anfrage im Fuss steht.
+
+    Die aeussere Grenze bei „lokal" umfasst das Warten auf einen freien Platz
+    (W202): mit timeout+10 allein schnitt sie eine Antwort ab, die nach dem
+    Warten gerade fertig wurde, und der Faden hielt den Platz trotzdem."""
+    _nc_kiwahl.herkunft_loeschen()
+    wahl = _nc_kiwahl.deck_wahl()
+    if wahl == _nc_kiwahl.LOKAL:
+        vorr = "reaktion" if weg == "Reaktion" else "gespraech"
+        return await asyncio.wait_for(
+            asyncio.to_thread(_nur_lokal_sync, messages, timeout, weg),
+            timeout=(timeout or AI_TIMEOUT) + _nc_kiwahl.wartezeit(vorr) + 10)
+    if wahl == _nc_kiwahl.FREE:
+        return await _nur_free(messages, model, timeout)
+    return None
+
+
+async def _nur_free(messages, model, timeout):
+    """v5.9-W201: die freie Cloud-KI (nc.freeai) — und merken, dass sie es war."""
+    txt, err = await _nc_freeai.chat(messages, model=model, timeout=timeout)
+    if txt:
+        _nc_kiwahl.herkunft_setzen("free")
+    return txt, err
+
+
+def _nur_free_sync(messages, model, timeout):
+    txt, err = _nc_freeai.chat_sync(messages, model=model, timeout=timeout)
+    if txt:
+        _nc_kiwahl.herkunft_setzen("free")
+    return txt, err
+
+
+def _nur_lokal_sync(messages, timeout, weg):
+    """v5.9-W201: nur das lokale Modell — fuer die Wahl „lokal" im Deck.
+
+    Kein Claude, kein Rueckfall in die Cloud: wer „lokal" waehlt, will wissen,
+    dass nichts hinausgeht. Scheitert es, kommt der Grund zurueck (der
+    Aufrufer zeigt ihn) und steht gedrosselt im Log. Bilder kann der lokale
+    Pfad nicht (nc/kiwahl.py) — das ist hier ein Grund, keine Umleitung."""
+    if any(m.get("images") for m in messages):
+        return None, "lokal: das lokale Modell sieht keine Bilder (KI-Wahl im Deck auf Auto oder Free)"
+    # v5.9-W202: wer fragt, wartet auf einen freien Platz (Gespraech); eine
+    # Reaktion kuerzer. Ohne das hiess jede Frage bei belegtem Platz sofort
+    # „belegt" — und bei „lokal" gibt es keinen Ausweg in die Cloud.
+    vorr = "reaktion" if weg == "Reaktion" else "gespraech"
+    try:
+        from brain import get_brain
+        res = get_brain().llm.chat(messages, timeout if (timeout and timeout > 0) else 3600,
+                                   None, ["llamacpp"], vorrang=vorr,
+                                   warten_s=_nc_kiwahl.wartezeit(vorr))
+    except Exception as e:
+        grund = "%s: %s" % (type(e).__name__, e)
+    else:
+        if res.get("ok"):
+            _nc_kiwahl.herkunft_setzen("lokal")
+            try:
+                _nc_usage.record("brain", "llama.cpp", _nc_usage.estimate_tokens(messages),
+                                 _nc_usage.estimate_tokens(res.get("text", "")))
+            except Exception as e:
+                log.debug("Zaehlung lokal (%s): %s", weg, e)
+            return res["text"], None
+        grund = res.get("error") or "keine Antwort"
+    laut, weg_n = _nc_meldetakt.melden("ki-nur-lokal", weg + ":" + str(grund).split(":")[0][:40],
+                                       _time_mod.monotonic())
+    if laut:
+        log.warning("KI (%s): KI-Wahl 'lokal' — das lokale Modell antwortet nicht (%s); "
+                    "bewusst kein Wechsel in die Cloud. Abhilfe: `systemctl status "
+                    "llama-server`, oder im Deck (KI) auf Auto/Free stellen.%s",
+                    weg, grund, _nc_meldetakt.zusatz(weg_n))
+    return None, "lokal: %s" % grund
 
 
 def _ki_rueckfall_melden(weg, grund):
@@ -4054,12 +4135,20 @@ async def llm_list_models() -> Optional[List[str]]:
 def llm_chat_sync(messages, model=None, timeout=None):
     """Blockierender Chat für Flask-Routen/Threads. Claude → lokal → freeai."""
     timeout = AI_TIMEOUT if timeout is None else timeout
+    # v5.9-W201: die eine Wahl aus dem Deck geht vor (nc/kiwahl.deck_wahl).
+    _nc_kiwahl.herkunft_loeschen()
+    _wahl = _nc_kiwahl.deck_wahl()
+    if _wahl == _nc_kiwahl.LOKAL:
+        return _nur_lokal_sync(messages, timeout, "Deck")
+    if _wahl == _nc_kiwahl.FREE:
+        return _nur_free_sync(messages, model, timeout)
     # v4.0-W64: Claude zuerst (Dashboard/ENV-Key), sonst Brain → keyless.
     _akey = _anthropic_key()
     if _akey:
         _txt, _err = _nc_claude.chat_sync(messages, _akey, _anthropic_model(model),
                                           timeout if (timeout and timeout > 0) else 60)
         if _txt:
+            _nc_kiwahl.herkunft_setzen("claude")
             return (_txt, None)
         if _err == "auth":
             return (None, "auth")
@@ -4072,6 +4161,7 @@ def llm_chat_sync(messages, model=None, timeout=None):
                 messages, timeout if (timeout and timeout > 0) else 3600,
                 backends=["llamacpp"])     # v4.2-W177: Cloud folgt unten
             if _res.get("ok"):
+                _nc_kiwahl.herkunft_setzen("lokal")
                 # v4.0-W93: Brain-LLM (llama.cpp) liefert keine Tokens → schätzen.
                 try:
                     _nc_usage.record("brain", "llama.cpp",
@@ -4083,7 +4173,7 @@ def llm_chat_sync(messages, model=None, timeout=None):
             _ki_rueckfall_melden("Chat-sync", _res.get("error"))
         except Exception as _e:
             _ki_rueckfall_melden("Chat-sync", "%s: %s" % (type(_e).__name__, _e))
-    return _nc_freeai.chat_sync(messages, model=model, timeout=timeout)
+    return _nur_free_sync(messages, model, timeout)
 
 
 # v4.2-W4: beide Wege (brain, nc.freeai) liegen ausserhalb des Bots — er war
@@ -4129,6 +4219,10 @@ async def ai_chat(messages, model=None, timeout=None, zweck=None):
     # V37-B92: Zeitbudget IMMER begrenzen — die Reaction-Engine läuft in der
     # live-react-Loop; ein hängendes Backend darf sie nie blockieren.
     timeout = timeout if (timeout and timeout > 0) else REACTION_AI_TIMEOUT
+    _gewaehlt = await _ki_nach_deckwahl(messages, model or REACTION_AI_MODEL, timeout,
+                                        "Reaktion")
+    if _gewaehlt is not None:
+        return _gewaehlt
     # v4.0-W65: Claude zuerst, sobald ein Anthropic-Key gesetzt ist (auch die
     # Reaction-Engine läuft dann über Claude). Auth-Fehler → keine stille
     # Rückkehr auf keyless; transiente Fehler fallen auf die Kette zurück.
@@ -4147,7 +4241,7 @@ async def ai_chat(messages, model=None, timeout=None, zweck=None):
             on_error=_claude_grund)
         if _ctxt:
             _CLAUDE_PAUSE["bis"] = 0.0        # es geht wieder
-            _KI_WEG.set("claude")
+            _nc_kiwahl.herkunft_setzen("claude")
             return (_ctxt, None)
         if _cerr == "auth":
             return (None, "auth")
@@ -4193,27 +4287,24 @@ async def ai_chat(messages, model=None, timeout=None, zweck=None):
                                   None, ["llamacpp"]),
                 timeout=timeout + 10)
             if _res.get("ok"):
-                _KI_WEG.set("lokal")
+                _nc_kiwahl.herkunft_setzen("lokal")
                 return (_res["text"], None)
             _react_warn("brainfb", "Reaction-AI brain fehlgeschlagen (%s) → freeai."
                         % _res.get("error"))
         except Exception as _e:
-            # Budget oder belegter Slot sind kein Defekt, sondern die Bremse
-            # aus brain/llm.py (Concurrency 1, Stundenbudget) — eigener
-            # Schluessel, damit sie echte Ausfaelle nicht ueberdeckt.
+            # Deckel oder belegte Plaetze sind kein Defekt, sondern die Bremse
+            # aus brain/llm.py (Inferenz-Plaetze, optionaler Stundendeckel) —
+            # eigener Schluessel, damit sie echte Ausfaelle nicht ueberdeckt.
             _react_warn("brainbudget" if type(_e).__name__ == "BudgetExhausted"
                         else "brainfb",
                         "Reaction-AI lokal nicht verfuegbar (%s) → Cloud." % _e)
     # V37: einziger Cloud-Pfad = nc.freeai (keyless, Basen-Rotation, 429-Backoff)
-    _KI_WEG.set("cloud")
-    return await _nc_freeai.chat(messages, model=model or REACTION_AI_MODEL,
-                                 timeout=timeout)
+    return await _nur_free(messages, model or REACTION_AI_MODEL, timeout)
 
 
-# v5.5-W196: welcher Weg die letzte ai_chat-Antwort lieferte — je Aufruf, nicht
-# global (ein ContextVar folgt dem awaitenden Task; zwei gleichzeitige Aufrufe
-# ueberschreiben sich nicht).
-_KI_WEG = contextvars.ContextVar("ki_weg", default="")
+# v5.5-W196 stand hier _KI_WEG (welcher Weg die letzte ai_chat-Antwort
+# lieferte). v5.9-W201: die Herkunft liegt in nc/kiwahl.py — dort lesen sie
+# auch die Deck-Routen, ohne Umweg ueber den Bot.
 
 
 async def _azrael_ki(messages, model, timeout, zweck):
@@ -4223,12 +4314,14 @@ async def _azrael_ki(messages, model, timeout, zweck):
     wird nur gezaehlt, wer geantwortet hat. Beides steht in /healthz
     (`sparen.azrael_ki`), damit „mit wem spricht man eigentlich?" eine
     nachsehbare Antwort hat."""
+    _nc_kiwahl.herkunft_loeschen()
     if (_nc_kiwahl.azrael_wahl() == _nc_kiwahl.LOKAL
             and not any(m.get("images") for m in messages)):
         return await _azrael_lokal(messages, _nc_kiwahl.vorrang(zweck))
-    _KI_WEG.set("")
     txt, err = await ai_chat(messages, model=model, timeout=timeout)
-    _nc_kiwahl.weg_zaehlen(_KI_WEG.get() or "cloud" if txt else "verworfen", err or "")
+    # AZRAEL_WEG fuehrt die Cloud seit W196 als "cloud" (/healthz liest es so).
+    _h = {"free": "cloud"}.get(_nc_kiwahl.herkunft(), _nc_kiwahl.herkunft())
+    _nc_kiwahl.weg_zaehlen((_h or "cloud") if txt else "verworfen", err or "")
     return txt, err
 
 
@@ -4254,6 +4347,7 @@ async def _azrael_lokal(messages, vorr):
     if not res.get("ok"):
         return _azrael_schweigt_melden(vorr, res.get("error") or "keine Antwort")
     _nc_kiwahl.weg_zaehlen("lokal")
+    _nc_kiwahl.herkunft_setzen("lokal")
     return res["text"], None
 
 
@@ -6234,21 +6328,45 @@ async def _run_ai_call(update, context, prompt_text: str,
     started = datetime.now(timezone.utc)
     # FIX: vorher AI_TIMEOUT (120s) -> killte langsame Modelle (claude-fable auf CPU braucht laenger).
     # Jetzt wie die Dashboard-AI: grosszuegiger Timeout, der praktisch nur bei totaler Stille greift.
-    response, err_kind = await llm_chat(messages, model=use_model, timeout=AI_STREAM_TIMEOUT)
+    # v5.9-W201: AZRAEL in Telegram spricht ueber denselben Weg wie im Stream
+    # (_azrael_ki: AZRAEL_LLM bzw. die Wahl im Deck). Vorher llm_chat — das
+    # fragte AZRAEL_LLM nie und landete still bei der freien Cloud-KI.
+    response, err_kind = await _azrael_ki(messages, use_model, AI_STREAM_TIMEOUT, "gespraech")
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
     duration_ms = int(elapsed * 1000)
+    _etikett = _nc_kiwahl.beschriftung(_nc_kiwahl.herkunft(), use_model)
+
+    if response is None and str(err_kind or "").startswith("lokal"):
+        # Wahl „lokal" und das lokale Modell schwieg: sagen, statt fremd zu antworten.
+        # Zwei Literale ohne Backslash: i18n_extract sammelt nur solche ein
+        # (ein „\n" im Literal hielt den Satz aus dem Katalog).
+        await msg.edit_text(
+            "⚠️ <b>%s</b>\n<i>%s</i>\n<code>%s</code>" % (
+                _nc_i18n.t("Lokales Modell antwortet nicht"),
+                _nc_i18n.t("Die KI-Wahl steht auf „lokal“ — bewusst ohne Wechsel in die "
+                           "Cloud. Im Deck (KI) auf Auto oder Free stellen, oder "
+                           "llama-server prüfen."),
+                safe(str(err_kind)[6:160])),
+            parse_mode=ParseMode.HTML)
+        add_ai_log_entry(chat_id, user_id, prompt_text, None, "lokal", duration_ms,
+                         error=str(err_kind)[:200], file_kind=file_kind, file_size=file_size)
+        return
 
     if response is None:
         err_text_map = {
             "net":        "Kein LLM erreichbar (Brain-Runtime + freeai-Basen). Netz/llama-server prüfen.",
             "timeout":    f"LLM hat länger als {AI_TIMEOUT}s gebraucht — Backend zu langsam oder hängt.",
-            "rate_limit": "freeai: alle Basen im Rate-Limit (429) — kurz warten, Rotation läuft.",
-            "auth":       "freeai: Base verlangt API-Key (FREEAI_BASES 'url|key' setzen oder Base wechseln).",
+            # v5.9-W202: Abhilfe aus nc.freeai — dort steht, welcher Schluessel fehlt.
+            "rate_limit": "freeai: " + _nc_freeai.abhilfe("rate_limit") + ".",
+            "auth":       "freeai: " + _nc_freeai.abhilfe("auth") + ".",
             "http":       "LLM-HTTP-Fehler. Siehe debug.log.",
             "empty":      "LLM lieferte leere Antwort. Siehe debug.log.",
         }.get(err_kind, "Unbekannter Fehler.")
+        # Kopf uebersetzt, Grund als Text: ein f-String durch t() trifft nie
+        # einen Katalogeintrag und bliebe in jeder Sprache deutsch.
         await msg.edit_text(
-            _nc_i18n.t(f"⚠️ <b>AI nicht verfügbar</b>\n<i>{err_text_map}</i>"),
+            "⚠️ <b>%s</b>\n<i>%s</i>" % (_nc_i18n.t("AI nicht verfügbar"),
+                                         safe(_nc_i18n.t(err_text_map))),
             parse_mode=ParseMode.HTML)
         add_ai_log_entry(chat_id, user_id, prompt_text, None, use_model, duration_ms,
                          error=err_kind, file_kind=file_kind, file_size=file_size)
@@ -6263,13 +6381,16 @@ async def _run_ai_call(update, context, prompt_text: str,
         if r is not None: await r.incr("ai_calls_total")
     except Exception: pass
 
-    # Persist log row
-    add_ai_log_entry(chat_id, user_id, prompt_text, response, use_model, duration_ms,
+    # Persist log row — mit der Herkunft (lokal/free/Claude) im Modellfeld,
+    # damit der KI-Log im Deck sie zeigt (v5.9-W201).
+    add_ai_log_entry(chat_id, user_id, prompt_text, response, _etikett, duration_ms,
                      error=None, file_kind=file_kind, file_size=file_size)
 
-    # Antwort als plain text + Footer
+    # Antwort als plain text + Footer. v5.9-W201: der Fuss nennt, WER
+    # geantwortet hat — vorher das eingestellte Modell, auch wenn die Cloud
+    # antwortete.
     file_marker = f" · {file_kind}" if file_kind else ""
-    footer = f"\n\n— {elapsed:.1f}s · {use_model}{file_marker}"
+    footer = f"\n\n— {elapsed:.1f}s · {_etikett}{file_marker}"
     chunks = split_for_telegram(response + footer, 4000)
     # v5.8-W200: jede Nachricht, die einen Teil der Antwort traegt, merken —
     # eine Antwort darauf ist ein Weiterreden (nc/tgantwort.py). Der Fuss steht
@@ -7631,17 +7752,36 @@ async def _tg_ki_dialog(update, context):
     if bezug is not None and getattr(bezug, "from_user", None) is not None:
         me = await context.bot.get_me()
         an_bot = bezug.from_user.id == me.id
-    ki = an_bot and _nc_tgantwort.ist_ki_antwort(msg.chat_id, bezug)
+    brain = an_bot and _nc_tgantwort.ist_brain_antwort(bezug)
+    ki = an_bot and not brain and _nc_tgantwort.ist_ki_antwort(msg.chat_id, bezug)
     verlauf = False
-    if an_bot and not ki:
+    if an_bot and not ki and not brain:
         # Nur fragen, wenn es entscheidet: Redis ist optional und langsam weg.
         verlauf = bool(await ai_history_load(chat.id, update.effective_user.id))
-    art = _nc_tgantwort.entscheiden(msg.text, privat, an_bot, ki, verlauf)
-    if art == _nc_tgantwort.FOLGE:
-        await _run_ai_call(update, context, _nc_tgantwort.frage_ohne_namen(msg.text)[:2000],
+    name = _tg_botname(context.bot)
+    art = _nc_tgantwort.entscheiden(msg.text, privat, an_bot, ki, verlauf,
+                                    brain_antwort=brain, bot_name=name)
+    frage = _nc_tgantwort.frage_ohne_namen(msg.text, name)
+    if art == _nc_tgantwort.BRAIN:
+        from brain import get_brain
+        await _brain_fragen(update, get_brain(), frage[:2000],
+                            vorher=_nc_tgantwort.ohne_brain_kopf(bezug.text or "")[:3000])
+    elif art == _nc_tgantwort.FOLGE:
+        await _run_ai_call(update, context, frage[:2000],
                            vorher=_nc_tgantwort.ohne_fuss(bezug.text or "")[:3000])
     elif art == _nc_tgantwort.ANSPRACHE:
-        await _run_ai_call(update, context, _nc_tgantwort.frage_ohne_namen(msg.text)[:600])
+        await _run_ai_call(update, context, frage[:600])
+
+
+def _tg_botname(bot):
+    """Der @-Name des Bots, oder "" (vor initialize() kennt python-telegram-bot
+    ihn noch nicht und wirft RuntimeError)."""
+    try:
+        return getattr(bot, "username", "") or ""
+    except RuntimeError as e:
+        log.info("Telegram: Bot-Name noch nicht bekannt (%s) — Ansprache nur ueber "
+                 "„Azrael“.", e)
+        return ""
 
 
 # Telegram nimmt von Bots hoechstens 50 MB je Datei an; 48 laesst Platz fuer
@@ -24125,28 +24265,61 @@ async def brain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Entscheidungen 24h: {o.get('decisions_24h', '?')}"
                 f"{warn_lines}\n\nFrage stellen: /brain <frage>")
             return
-        # B120: Payload-Key war "question", der Handler in brain_bridge
-        # liest "prompt" -> jede Frage lief in Unhandled und die Antwort
-        # fiel auf den Default-String "keine Antwort" zurueck.
-        res = await asyncio.to_thread(b.router.route, "ask", {"prompt": q})
-        if not res.get("ok"):
-            # B120: Statt stumpf "keine Antwort" den echten Grund zeigen —
-            # der Router-Trace sagt, WELCHER Tier warum passen musste.
-            why = []
-            for t in (res.get("trace") or []):
-                mark = t.get("skip") or t.get("error")
-                if mark and mark != "kein Handler":
-                    why.append(f"{t['tier']}: {mark}")
-            await update.message.reply_text(
-                "🧠 Keine Antwort — " + (res.get("error") or "unbekannt")
-                + (("\n\n" + "\n".join(why[:4])) if why else "")
-                + "\n\nLLM-Status: /brain (ohne Argumente)")
-            return
-        _r = res.get("result")
-        txt = (_r.get("text") if isinstance(_r, dict) else None) or _r or "keine Antwort"
-        await update.message.reply_text(_nc_i18n.t(f"🧠 [{res.get('tier', '?')}] {str(txt)[:3500]}"))
+        await _brain_fragen(update, b, q)
     except Exception as e:
         await update.message.reply_text(_nc_i18n.t(f"❌ Brain nicht verfügbar: {e}"))
+
+
+# v5.9-W202: /brain wartet jetzt auf einen freien Platz (bis rund 90 s) und
+# rechnet dann bis BRAIN_LLM_TIMEOUT_S. Im Default-Pool hielte jede Frage
+# einen Thread fest, den DNS und Netz brauchen (W47) — bei 800 Mitgliedern
+# genuegt eine Welle Fragen. Ein eigener, begrenzter Pool; die Warteschlange
+# der Plaetze (brain/llm.py) weist den Rest sofort ab.
+_BRAIN_FRAGEN_POOL = _cf_thread.ThreadPoolExecutor(max_workers=16,
+                                                   thread_name_prefix="brainfrage")
+
+
+async def _brain_fragen(update, b, q, vorher=""):
+    """Eine Frage an das Brain (Router-Kaskade) und die Antwort in Telegram.
+
+    v5.9-W201 aus brain_cmd geloest: eine Antwort AUF eine /brain-Antwort
+    laeuft ueber denselben Weg, mit der beantworteten Nachricht als
+    Zusammenhang (`vorher`). Die Antwort beginnt mit „🧠 [Stufe · Herkunft]" —
+    daran erkennt nc/tgantwort.py sie wieder (nicht an gemerkten Kennungen:
+    die fuehren zu AZRAEL), und der Betreiber sieht, ob lokal oder free
+    geantwortet hat."""
+    # B120: Payload-Key war "question", der Handler in brain_bridge
+    # liest "prompt" -> jede Frage lief in Unhandled und die Antwort
+    # fiel auf den Default-String "keine Antwort" zurueck.
+    nutzlast = {"prompt": q}
+    if vorher:
+        nutzlast["vorher"] = vorher
+    try:
+        await update.message.chat.send_action("typing")
+    except Exception as _e:
+        log.debug("brain: Tipp-Anzeige nicht gesendet: %s", _e)
+    res = await asyncio.get_running_loop().run_in_executor(
+        _BRAIN_FRAGEN_POOL, b.router.route, "ask", nutzlast)
+    if not res.get("ok"):
+        # B120: Statt stumpf "keine Antwort" den echten Grund zeigen —
+        # der Router-Trace sagt, WELCHER Tier warum passen musste.
+        why = []
+        for t in (res.get("trace") or []):
+            mark = t.get("skip") or t.get("error")
+            if mark and mark != "kein Handler":
+                why.append(f"{t['tier']}: {mark}")
+        await update.message.reply_text(
+            "🧠 Keine Antwort — " + (res.get("error") or "unbekannt")
+            + (("\n\n" + "\n".join(why[:4])) if why else "")
+            + "\n\nLLM-Status: /brain (ohne Argumente)")
+        return
+    _r = res.get("result")
+    txt = (_r.get("text") if isinstance(_r, dict) else None) or _r or "keine Antwort"
+    _herk = _nc_kiwahl.herkunft_von(_r.get("backend")) if isinstance(_r, dict) else ""
+    if _herk:
+        _nc_kiwahl.herkunft_setzen(_herk)
+    _stufe = res.get("tier", "?") + (" · " + _nc_kiwahl.etikett(_herk) if _herk else "")
+    await update.message.reply_text("🧠 [%s] %s" % (_stufe, str(txt)[:3500]))
 
 
 async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -26997,7 +27170,10 @@ _nc_reccmd.configure(
     RECORD_403_YTDLP=RECORD_403_YTDLP,
     STREAM_URL_MIN_TTL=_STREAM_URL_MIN_TTL)
 
-_nc_ovtext.configure(gift_source=OVERLAY_GIFT_SOURCE)
+# v5.9-W203: dieselbe Schrift wie drawtext — damit die Overlay-Dateien nur
+# Zeichen tragen, die sie hat (Emoji im Chat waren Kaestchen im Sendebild).
+_nc_ovtext.configure(gift_source=OVERLAY_GIFT_SOURCE,
+                     schrift=lambda: _nc_rscmd.schriftart(RESTREAM_FONT))
 
 _nc_cookies_datei.configure(
     datei=COOKIE_FILE, log=log,

@@ -12,7 +12,11 @@
 #
 #   -t 4        4 der 8 Kerne — ffmpeg und Whisper brauchen den Rest; Nice=10
 #               und CPUWeight=50: Restreams haben immer Vorrang vor der KI.
-#   -c 8192     4096 reicht nicht fuer Verlauf + Frage + 1024-Token-Antwort (W110).
+#   -np 4       vier Antworten zugleich (LLM_PLAETZE, v5.9-W202) — der Bot liest
+#               die Zahl beim Server (/props) und haelt sich daran.
+#   -c 32768    8192 je Platz x 4 Plaetze: llama-server teilt -c auf die Plaetze
+#               auf, und 4096 je Platz reicht nicht fuer Verlauf + Frage +
+#               1024-Token-Antwort (W110).
 #   -ngl 0      reiner CPU-Betrieb; die Vorgabe von ik_llama.cpp ist 999.
 #   -rtr        Gewichte beim Laden verschraenkt umpacken — schneller auf der CPU,
 #               legt das Modell dafuer ganz in den RAM (daher MemoryMax).
@@ -35,10 +39,10 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/ik_llama.cpp/build/bin/llama-server -m /opt/models/Qwen3-14B-Uncensored.Q4_K_M.gguf -a qwen3-14b-uncensored.q4_k_m --host 127.0.0.1 --port 8080 -t 4 -c 8192 -ngl 0 -rtr --jinja --no-warmup
+ExecStart=/opt/ik_llama.cpp/build/bin/llama-server -m /opt/models/Qwen3-14B-Uncensored.Q4_K_M.gguf -a qwen3-14b-uncensored.q4_k_m --host 127.0.0.1 --port 8080 -t 4 -np 4 -c 32768 -ngl 0 -rtr --jinja --no-warmup
 Nice=10
 CPUWeight=50
-MemoryMax=13G
+MemoryMax=15G
 Restart=always
 RestartSec=5
 

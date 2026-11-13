@@ -2334,6 +2334,13 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
   background:var(--sunken);border:1px solid var(--border);border-left:3px solid var(--border);
   border-radius:4px;font-size:12px;line-height:1.45}
 .kc-row .kc-t{font-weight:600;color:var(--text)}
+/* v5.9-W201: Herkunft einer KI-Antwort — lokal / free / Claude */
+.ki-chip{display:inline-block;font-size:10px;line-height:1.5;padding:0 6px;margin-right:6px;
+  border:1px solid currentColor;border-radius:999px;letter-spacing:.06em;text-transform:uppercase;
+  vertical-align:middle;white-space:nowrap}
+.ki-chip.ki-lokal{color:var(--neon)}
+.ki-chip.ki-free{color:var(--amber)}
+.ki-chip.ki-claude{color:var(--cyan)}
 .kc-row .kc-d{color:var(--text-faint);font-size:11px;margin-top:2px}
 .kc-row.sev-high,.kc-row.prio-high{border-left-color:var(--red)}
 .kc-row.sev-medium,.kc-row.prio-medium{border-left-color:var(--amber)}
@@ -3511,6 +3518,20 @@ document.addEventListener("DOMContentLoaded",function(){
           angeschlossen.
         </div>
 
+        <!-- v5.9-W201: EINE Wahl fuer Deck, Telegram und AZRAEL im Stream -->
+        <div class="kc-sub">KI-WAHL <span class="tag" id="kc_wahl_tag">…</span></div>
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:8px">
+          Gilt für Deck, Telegram und AZRAEL im Stream. Lokal heißt nur das Modell auf diesem Server — ohne stillen Ausweg in die Cloud. Free ist die Gratis-Cloud, Auto fragt erst lokal und dann die Cloud.
+        </div>
+        <div class="btnrow" role="radiogroup" aria-label="KI-Wahl" id="kc_wahl_btns"
+             style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn sm" data-wahl="lokal" role="radio" aria-checked="false" onclick="kiWahlSetzen('lokal')">Lokal</button>
+          <button class="btn sm" data-wahl="free" role="radio" aria-checked="false" onclick="kiWahlSetzen('free')">Free</button>
+          <button class="btn sm" data-wahl="auto" role="radio" aria-checked="false" onclick="kiWahlSetzen('auto')">Auto</button>
+          <button class="btn sm" data-wahl="" role="radio" aria-checked="false" onclick="kiWahlSetzen('')" title="Keine Wahl im Deck: es gilt die .env">wie .env</button>
+        </div>
+        <div id="kc_wahl_lage" class="faint" style="font-size:11px;line-height:1.55;margin-bottom:20px"></div>
+
         <div class="head" style="border:0;padding:0;margin-bottom:8px">
           <h3 style="font-size:12px">Statusbericht</h3><div class="spacer"></div>
           <select id="kc_report_period" onchange="loadKiReport()" aria-label="Zeitraum"
@@ -4418,7 +4439,55 @@ async function loadBrainStatus(){
    Verdrahtet bisher verwaiste Backends: /api/ai/{report,anomalies,
    recommendations,segments,query,diagnose}, /api/ai-log,
    /api/evolution/{history,run,changelog}, /api/brain/growth. */
+/* v5.9-W201: wer hat geantwortet — lokal (Modell auf dieser Box), free
+   (Gratis-Cloud) oder Claude. Der Server sagt es als ki_weg; gespeicherte
+   Antworten tragen es vorn im Modellfeld („lokal · qwen3…"). */
+function kiWegAus(m){
+  const s=String(m||'').toLowerCase();
+  if(s.startsWith('lokal')) return 'lokal';
+  if(s.startsWith('free')) return 'free';
+  if(s.startsWith('claude')) return 'claude';
+  return '';
+}
+function kiChip(weg){
+  const lab={lokal:T('lokal'),free:T('free'),claude:'Claude'}[weg];
+  if(!lab) return '';
+  return '<span class="ki-chip ki-'+weg+'" title="'+esc(T('Antwort von:')+' '+lab)+'">'+esc(lab)+'</span>';
+}
+async function loadKiWahl(){
+  const lage=$('#kc_wahl_lage'), tag=$('#kc_wahl_tag');
+  if(!lage) return;
+  const d=await apiGet('/api/ki/wahl');
+  if(!d||!d.ok){
+    // Nicht verschweigen: ein leerer Kasten saehe aus wie „nichts gewaehlt".
+    lage.textContent=T('KI-Wahl nicht lesbar')+((d&&d.error)?': '+d.error:'.');
+    if(tag) tag.textContent='—';
+    return;
+  }
+  document.querySelectorAll('#kc_wahl_btns [data-wahl]').forEach(b=>{
+    const an=b.dataset.wahl===(d.wahl||'');
+    b.classList.toggle('on',an); b.setAttribute('aria-checked',an?'true':'false');
+  });
+  if(tag) tag.textContent=d.wahl?d.wahl:T('wie .env');
+  const z=d.zaehler||{};
+  let h=esc(T('Lokales Modell:'))+' ';
+  if(d.lokal_oben===true) h+='<b style="color:var(--neon)">'+esc(T('läuft'))+'</b>'+(d.lokal_modell?' · '+esc(d.lokal_modell):'');
+  else if(d.lokal_oben===false) h+='<b style="color:var(--red)">'+esc(T('antwortet nicht'))+'</b>';
+  else h+=esc(T('noch nicht geprüft'));
+  if(!d.lokal_installiert && d.lokal_oben!==true) h+=' · '+esc(T('nicht installiert'));
+  if(d.wahl==='lokal' && d.lokal_oben===false)
+    h+='<br><b style="color:var(--amber)">'+esc(T('Lokal gewählt, aber das Modell antwortet nicht — KI-Antworten fallen aus, bis es läuft.'))+'</b>';
+  h+='<br>'+esc(T('Antworten seit Start:'))+' '+kiChip('lokal')+fmtNum(z.lokal||0)+' '+kiChip('free')+fmtNum(z.free||0)+' '+kiChip('claude')+fmtNum(z.claude||0);
+  lage.innerHTML=h;
+}
+async function kiWahlSetzen(w){
+  const d=await apiPost('/api/ki/wahl',{wahl:w});
+  if(!d||!d.ok){ toast(T('KI-Wahl nicht gespeichert')+((d&&d.error)?': '+d.error:''),'err'); return; }
+  toast(T('KI-Wahl:')+' '+(d.wahl||T('wie .env')),'ok');
+  loadKiWahl();
+}
 async function loadKiCockpit(){
+  loadKiWahl();
   loadKiReport();
   loadKiAnomalies();
   loadKiRecs();
@@ -4439,7 +4508,7 @@ async function loadKiReport(){
     metricCell(fmtNum(s.successes), 'Erfolge')+
     metricCell((s.success_rate!=null?s.success_rate+'%':'—'), 'Quote')+
     metricCell(fmtNum(s.stored_mb)+' MB', 'gespeichert');
-  if(txt) txt.textContent=d.report||'';
+  if(txt) txt.innerHTML=kiChip(d.ki_weg)+esc(d.report||'');
 }
 function metricCell(v,l){
   return '<div class="metric"><span class="v">'+esc(v)+'</span><span class="l">'+esc(l)+'</span></div>';
@@ -4494,7 +4563,7 @@ async function askKiQuery(){
      cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr></thead><tbody>'+
      rows.slice(0,50).map(r=>'<tr>'+cols.map(c=>'<td>'+esc(r[c])+'</td>').join('')+'</tr>').join('')+
      '</tbody></table></div><div class="faint" style="font-size:10.5px;margin-top:4px">'+
-     d.row_count+' Zeile(n)'+(d.source?' · '+esc(d.source):'')+'</div>';
+     d.row_count+' Zeile(n)'+(d.source?' · '+esc(d.source):'')+(d.ki_weg?' · '+kiChip(d.ki_weg):'')+'</div>';
   out.innerHTML=h;
 }
 async function runKiDiagnose(){
@@ -4506,7 +4575,8 @@ async function runKiDiagnose(){
   if(btn){ btn.disabled=false; btn.textContent='Selbst-Diagnose starten'; }
   if(!d||!d.ok){ out.innerHTML='<div class="kc-row sev-high"><div class="kc-t">'+esc((d&&d.error)||'Diagnose nicht verfügbar')+'</div></div>'; return; }
   const t=d.diagnosis||d.text||d.response||d.advice||'';
-  out.innerHTML='<div class="kc-code" style="white-space:pre-wrap">'+esc(t)+'</div>';
+  out.innerHTML=(d.ki_weg?'<div style="margin-bottom:4px">'+kiChip(d.ki_weg)+'</div>':'')+
+    '<div class="kc-code" style="white-space:pre-wrap">'+esc(t)+'</div>';
 }
 async function loadKiEvolution(){
   const box=$('#kc_evo_history');
@@ -5106,7 +5176,7 @@ async function loadKiAiLog(){
   if(!rows.length){ box.innerHTML='<div class="faint" style="font-size:11px">Noch keine KI-Aufrufe.</div>'; return; }
   box.innerHTML=rows.slice(0,25).map(r=>
     '<div class="kc-logline'+(r.error?' err':'')+'">'+
-    '<span class="m">'+esc(r.model||'—')+'</span>'+
+    '<span class="m">'+kiChip(kiWegAus(r.model))+esc(r.model||'—')+'</span>'+
     '<span class="p" title="'+esc(r.prompt||'')+'">'+esc(r.prompt||'')+'</span>'+
     '<span class="faint" style="font-size:10px">'+(r.duration_ms!=null?r.duration_ms+'ms':'')+'</span></div>').join('');
 }
@@ -8026,7 +8096,7 @@ function aiMsgHtml(m){
   const isU=m.role==='user', err=!!m.error;
   const av=isU?'YOU':'AI';
   let meta='';
-  if(!isU && (m.model||m.duration_ms!=null)) meta=`<div class="ai-meta">${esc(m.model||'')}${m.duration_ms!=null?' · '+(m.duration_ms/1000).toFixed(1)+'s':''}</div>`;
+  if(!isU && (m.model||m.duration_ms!=null)) meta=`<div class="ai-meta">${kiChip(m.ki_weg||kiWegAus(m.model))}${esc(m.model||'')}${m.duration_ms!=null?' · '+(m.duration_ms/1000).toFixed(1)+'s':''}</div>`;
   let think='';
   if(!isU && !err && m.thinking && m.thinking.trim()) think=`<details class="ai-think-box"><summary>🧠 Gedankengang</summary><div class="ai-think-c">${esc(m.thinking)}</div></details>`;
   const body=err ? esc(m.error) : (isU?('<p>'+esc(m.content).replace(/\n/g,'<br>')+'</p>'):aiMd(m.content));

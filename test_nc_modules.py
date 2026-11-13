@@ -729,8 +729,9 @@ def _test_routes_ai():
     app = Flask(__name__)
     app.register_blueprint(rt.bp)
     regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
-    assert len(regeln) == 24, "24 Regeln erwartet, %d" % len(regeln)
-    ok("routes.ai: 24 Regeln registriert")
+    # ANKER GEWANDERT (v5.9-W201): 26 — dazu kam /api/ki/wahl (GET und POST).
+    assert len(regeln) == 26, "26 Regeln erwartet, %d" % len(regeln)
+    ok("routes.ai: 26 Regeln registriert")
 
     q = open("nc/routes/ai.py", encoding="utf-8").read()
 
@@ -20914,7 +20915,9 @@ def _test_v42_w110_lokales_llm_zuerst():
                      if z.strip() and not z.strip().startswith("#")
                      and (z.startswith("ExecStart") or z.startswith("  ")))
     assert "--embedding" not in exec_, exec_
-    assert "-c 8192" in exec_, exec_
+    # ANKER GEWANDERT (v5.9-W202): 8192 je Platz, vier Plaetze — llama-server
+    # teilt -c auf die Plaetze auf. Die Aussage („genug Kontext") bleibt.
+    assert "-np 4" in exec_ and "-c 32768" in exec_, exec_
 
     ok("W110: lokales llama.cpp zuerst (auto), Modellliste lokal, ein Ort fuer "
        "die Wahl, kein Ollama-Rat, Brain-Panel rendert, Unit ohne --embeddings")
@@ -31787,8 +31790,9 @@ def _test_v42_w177_brain_verwoben():
                         or (_ast.unparse(n.func).endswith("to_thread") and n.args
                             and _ast.unparse(n.args[0]).endswith("llm.chat")))]
         # ANKER GEWANDERT (v5.5-W196): vier Stellen — dazu kam _azrael_lokal.
+        # v5.9-W201: fuenf — dazu kam _nur_lokal_sync (die Wahl „lokal" im Deck).
         # Die Aussage gilt unveraendert je Stelle (Schleife darunter).
-        assert len(stellen) == 4, [_ast.unparse(s)[:80] for s in stellen]
+        assert len(stellen) == 5, [_ast.unparse(s)[:80] for s in stellen]
         for s in stellen:
             assert "['llamacpp']" in _ast.unparse(s), _ast.unparse(s)[:160]
 
@@ -34351,11 +34355,14 @@ def _test_v51_w181_ikllama_umstieg():
         teile = befehl[0][len("ExecStart="):].split()
         assert teile[0] == "/opt/ik_llama.cpp/build/bin/llama-server", "Pfad in der Unit traegt die Testwurzel"
         flags = " ".join(teile[1:])
+        # ANKER GEWANDERT (v5.9-W202): -np 4 und -c 32768 (8192 je Platz);
+        # MemoryMax traegt den KV-Cache der drei weiteren Plaetze (je rund
+        # 680 MB in q8_0 -> 2 GB) — 5G wurden 7G.
         for soll in ("-m /opt/models/" + datei, "--host 127.0.0.1", "--port 8080", "-t 4",
-                     "-c 8192", "-ngl 0", "-rtr", "--jinja", "--no-warmup"):
+                     "-np 4", "-c 32768", "-ngl 0", "-rtr", "--jinja", "--no-warmup"):
             assert (" " + soll + " ") in (" " + flags + " "), (soll, flags)
         assert "--embedding" not in flags, "W110: --embeddings macht den Chat tot"
-        assert "MemoryMax=5G" in text, "Speicherdeckel folgt nicht der Modellgroesse"
+        assert "MemoryMax=7G" in text, "Speicherdeckel folgt nicht Modell und Plaetzen"
         assert "Nice=10" in text and "CPUWeight=50" in text
         assert "Chat-Probe beantwortet" in r.stdout, r.stdout
 
@@ -37291,6 +37298,385 @@ def _test_v58_w200_telegram_antworten():
        "Kennung, Antwort auf AZRAEL ohne Verlauf, Meldungen nur mit Ansprache")
 
 
+def _test_v59_w201_ki_wahl():
+    """v5.9-W201: EINE KI-Wahl fuer Deck, Telegram und AZRAEL — und wer antwortet.
+
+    Der Betreiber: „Azrael nutzt in Telegram eine free AI. Und im gesamten
+    Dashboard sollte man zwischen lokaler und free AI unterscheiden koennen."
+    Es gab drei Schalter nur in der .env, und keine Antwort sagte, woher sie
+    kam. Geprueft: die Wahl im Deck (app_config ki.wahl) geht vor, ein
+    falscher Wert wird abgewiesen, „free" heisst fuer AZRAEL „cloud" und fuer
+    das Brain nur freeai, „lokal" nur llamacpp; die Herkunft je Aufruf und das
+    Etikett nennen, wer WIRKLICH geantwortet hat; die Route nimmt nur JSON."""
+    import os as _os
+    from unittest import mock as _mock
+    from flask import Flask
+    from nc import kiwahl as K
+    import nc.routes.ai as RA
+    lage, roh, zurueck = _w199_speicher()
+    alt_deck = dict(K._DECK)
+    try:
+        K._DECK.update(t=-1e9, wert="")
+        # (1) Ohne Wahl: die .env gilt (AZRAEL_LLM), das Brain bekommt keine Einschraenkung.
+        with _mock.patch.dict(_os.environ, {"AZRAEL_LLM": "lokal"}):
+            assert K.deck_wahl() == "" and K.azrael_wahl() == K.LOKAL
+            assert K.brain_kette() is None
+            # (2) Die Wahl im Deck geht vor — fuer AZRAEL, das Brain und den Chat.
+            assert K.deck_setzen("FREE ") == K.FREE
+            assert K.azrael_wahl() == K.CLOUD, "free im Deck, AZRAEL bleibt lokal"
+            assert K.brain_kette() == ["freeai"]
+            assert roh(K.DECK_SCHLUESSEL) == "free", "die Wahl steht nicht in app_config"
+            K.deck_setzen("lokal")
+            assert K.azrael_wahl() == K.LOKAL and K.brain_kette() == ["llamacpp"]
+            K.deck_setzen("auto")
+            assert K.azrael_wahl() == K.AUTO and K.brain_kette() is None
+            # Ein unbekannter Wert in der Tabelle zaehlt nicht als Wahl.
+            from nc import cfgstore as C
+            C.set_(K.DECK_SCHLUESSEL, "claude")
+            K._DECK.update(t=-1e9)
+            assert K.deck_wahl() == "", "unbekannter Wert als Wahl genommen"
+            for falsch in ("claude", "cloud", 3):
+                try:
+                    K.deck_setzen(falsch)
+                    raise AssertionError("ungueltige Wahl angenommen: %r" % falsch)
+                except ValueError:
+                    pass
+            K.deck_setzen("")
+            assert K.deck_wahl() == "" and K.azrael_wahl() == K.LOKAL, "aufheben wirkt nicht"
+            # Gesperrte Datenbank beim Lesen: die .env gilt, AZRAEL wird nicht stumm.
+            K._DECK.update(t=-1e9)
+            lage["lesen_gesperrt"] = True
+            assert K.deck_wahl() == "" and K.azrael_wahl() == K.LOKAL
+            lage["lesen_gesperrt"] = False
+
+        # (3) Herkunft je Aufruf und das Etikett.
+        z0 = dict(K.HERKUNFT_ZAEHLER)
+        K.herkunft_loeschen()
+        assert K.herkunft() == ""
+        assert K.herkunft_setzen("llamacpp") == "lokal" and K.herkunft() == "lokal"
+        assert K.herkunft_setzen("freeai") == "free"
+        assert K.HERKUNFT_ZAEHLER["lokal"] == z0["lokal"] + 1
+        assert K.HERKUNFT_ZAEHLER["free"] == z0["free"] + 1
+        assert K.herkunft_setzen("gibtsnicht") == "" and K.HERKUNFT_ZAEHLER == {
+            "lokal": z0["lokal"] + 1, "free": z0["free"] + 1, "claude": z0["claude"]}
+        with _mock.patch.object(K, "lokales_modell", return_value="qwen3-14b"):
+            assert K.beschriftung("lokal", "openai") == "lokal · qwen3-14b", \
+                "lokal nennt das angefragte Cloud-Modell statt des geladenen"
+        assert K.beschriftung("free", "openai") == "free · openai"
+        assert K.beschriftung("claude", "claude-x") == "Claude"
+        assert K.beschriftung("", "openai") == "openai", "Fehlerfall: wie bisher"
+
+        # (4) Die Route: lesen, setzen, nur JSON, falscher Wert 400.
+        app = Flask(__name__)
+        app.register_blueprint(RA.bp)
+        cl = app.test_client()
+        with _mock.patch.object(K, "lokal_stand", return_value=True), \
+             _mock.patch.object(K, "lokales_modell", return_value="qwen3-14b"):
+            j = cl.post("/api/ki/wahl", json={"wahl": "lokal"}).get_json()
+            assert j["ok"] and j["wahl"] == "lokal" and j["azrael"] == "lokal", j
+            assert j["lokal_oben"] is True and j["lokal_modell"] == "qwen3-14b", j
+            assert set(j["zaehler"]) == {"lokal", "free", "claude"}, j
+            assert cl.get("/api/ki/wahl").get_json()["wahl"] == "lokal"
+            r = cl.post("/api/ki/wahl", json={"wahl": "claude"})
+            assert r.status_code == 400 and roh(K.DECK_SCHLUESSEL) == "lokal", r.get_json()
+            r = cl.post("/api/ki/wahl", data={"wahl": "free"})
+            assert r.status_code == 400 and roh(K.DECK_SCHLUESSEL) == "lokal", \
+                "ein Formular (fremde Seite) setzt die KI-Wahl"
+            # Schreibfehler: 503, nicht 200.
+            with _mock.patch.object(K, "deck_setzen", side_effect=RuntimeError("locked")):
+                assert cl.post("/api/ki/wahl", json={"wahl": "free"}).status_code == 503
+
+        # (5) Das Deck zeigt die Herkunft: die Routen geben ki_weg mit, das
+        # Deck hat den Umschalter und die Abzeichen.
+        quelle = open("nc/routes/ai.py", encoding="utf-8").read()
+        for route in ("/api/ai/conversations/<int:conv_id>/messages", "/api/ai/diagnose",
+                      "/api/ai/ask", "/api/ai/report", "/api/ai/query"):
+            i = quelle.index("\ndef ", quelle.index('"%s"' % route)) + 1
+            rumpf = rumpf_ab(quelle, i)
+            assert "ki_weg" in rumpf and "_nc_kiwahl.herkunft()" in rumpf, route
+        html = open("templates/dashboard.html", encoding="utf-8").read()
+        assert 'id="kc_wahl_btns"' in html and "kiWahlSetzen('lokal')" in html \
+            and "kiWahlSetzen('free')" in html and "kiWahlSetzen('auto')" in html
+        for anker in ("kiChip(d.ki_weg)+esc(d.report", "kiChip(kiWegAus(r.model))",
+                      "kiChip(m.ki_weg||kiWegAus(m.model))", "kiChip(d.ki_weg):''"):
+            assert anker in html, anker
+    finally:
+        K._DECK.clear()
+        K._DECK.update(alt_deck)
+        zurueck()
+    ok("v5.9-W201: KI-Wahl im Deck geht vor (lokal/free/auto), ungueltig abgewiesen, "
+       "Herkunft je Aufruf, Etikett mit dem echten Modell, Route nur JSON")
+
+
+def _test_v59_w202_plaetze_und_budget():
+    """v5.9-W202: mehrere Inferenz-Plaetze, kein Stundendeckel per Vorgabe,
+    die Cloud wartet nicht hinter dem lokalen Platz.
+
+    Beim Betreiber (800 Mitglieder): „Slot belegt" 22-mal, 894
+    Budget-Ablehnungen bei 30/h, und /brain kam bei belegtem Platz gar nicht
+    erst bei der Cloud an — der eine Platz galt auch fuer freeai."""
+    import os as _os
+    import threading as _th
+    import time as _ti
+    import json as _js
+    from unittest import mock as _mock
+    import brain.llm as L
+    from nc import freeai as FA
+
+    # (1) Plaetze: zwei frei, der dritte nicht; Eigeninitiative laesst den letzten frei.
+    pl = L._Vorrangslot()
+    assert pl.erwerben(L.RANG["reaktion"], 0, kapazitaet=2)
+    assert not pl.erwerben(L.RANG["nebenbei"], 0, kapazitaet=L.LLMRuntime._plaetze_fuer(
+        L.RANG["nebenbei"], 2)), "Eigeninitiative nahm den letzten Platz"
+    assert pl.erwerben(L.RANG["gespraech"], 0, kapazitaet=2), "zweiter Platz nicht vergeben"
+    assert not pl.erwerben(L.RANG["gespraech"], 0, kapazitaet=2)
+    assert pl.lage() == {"belegt": True, "in_arbeit": 2, "wartend": 0}
+    pl.freigeben()
+    pl.freigeben()
+    pl.freigeben()                      # ueberzaehlig: nie negativ
+    assert pl.lage()["in_arbeit"] == 0
+    assert L.LLMRuntime._plaetze_fuer(L.RANG["nebenbei"], 1) == 1, \
+        "mit einem Platz darf die Eigeninitiative ihn weiter nehmen"
+
+    # (2) Warteschlange begrenzt: wer nach max_wartend kommt, wartet nicht.
+    pl2 = L._Vorrangslot()
+    assert pl2.erwerben(0, 0, 1)
+    faeden = [_th.Thread(target=pl2.erwerben, args=(0, 1.5, 1)) for _ in range(3)]
+    for f in faeden:
+        f.start()
+    for _ in range(100):
+        if pl2.lage()["wartend"] == 3:
+            break
+        _ti.sleep(0.01)
+    t0 = _ti.monotonic()
+    assert not pl2.erwerben(0, 5.0, 1, max_wartend=3)
+    assert _ti.monotonic() - t0 < 1.0, "die Warteschlange waechst ohne Grenze"
+    pl2.freigeben()
+    for f in faeden:
+        f.join(5)
+
+    # (3) Zahl der Plaetze: erzwungen, vom Server gemeldet, sonst 1.
+    rt = L.LLMRuntime()
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_PLAETZE": "3"}):
+        assert rt.plaetze() == 3
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_PLAETZE": "99"}):
+        assert rt.plaetze() == L.MAX_PLAETZE
+
+    class _Antw:
+        def __init__(self, daten):
+            self.daten = daten
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, *a):
+            return _js.dumps(self.daten).encode()
+    gefragt = []
+
+    def _oeffne(req, timeout=None):
+        gefragt.append(req.full_url.rsplit("/", 1)[-1])
+        if req.full_url.endswith("/props"):
+            return _Antw({"total_slots": 4})
+        raise AssertionError("nach /props noch gefragt")
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_PLAETZE": "auto"}), \
+         _mock.patch.object(L.urllib.request, "urlopen", _oeffne):
+        assert rt.plaetze() == 1, "ohne Messung eine erfundene Zahl"
+        assert rt.plaetze(messen=True) == 4 and gefragt == ["props"]
+        assert rt.plaetze(messen=True) == 4 and gefragt == ["props"], "misst bei jedem Aufruf"
+    rt2 = L.LLMRuntime()
+
+    def _oeffne2(req, timeout=None):
+        if req.full_url.endswith("/props"):
+            return _Antw({"default_generation_settings": {}})      # aelterer Server
+        return _Antw([{"id": 0}, {"id": 1}])
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_PLAETZE": "viel"}), \
+         _mock.patch.object(L.urllib.request, "urlopen", _oeffne2):
+        assert rt2.plaetze(messen=True) == 2, "Rueckweg ueber /slots fehlt"
+
+    # (4) Kein Stundendeckel per Vorgabe; mit Deckel wie bisher.
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_BACKEND": "llamacpp",
+                                        "BRAIN_LLM_PLAETZE": "1"}):
+        _os.environ.pop("BRAIN_LLM_MAX_CALLS_H", None)
+        rt3 = L.LLMRuntime()
+        with _mock.patch.object(L.LLMRuntime, "_call", lambda self, b, m, t, mt: "ok"):
+            for _ in range(40):
+                assert rt3.chat([{"role": "user", "content": "x"}])["ok"]
+            b = rt3.budget()
+            assert b == {"used_h": 40, "max_h": 0, "remaining": None}, b
+            _os.environ["BRAIN_LLM_MAX_CALLS_H"] = "40"
+            try:
+                rt3.chat([{"role": "user", "content": "x"}])
+                raise AssertionError("gesetzter Deckel wirkt nicht")
+            except L.BudgetExhausted as e:
+                assert "40/40" in str(e), e
+
+    # (5) Die Cloud wartet nicht hinter dem lokalen Platz.
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_BACKEND": "auto",
+                                        "BRAIN_LLM_PLAETZE": "1"}):
+        _os.environ.pop("BRAIN_LLM_MAX_CALLS_H", None)
+        rt4 = L.LLMRuntime()
+        gerufen = []
+
+        def _call(self, backend, m, t, mt):
+            gerufen.append(backend)
+            return "aus " + backend
+        assert rt4._slot.erwerben(0, 0, 1)            # jemand rechnet lokal
+        with _mock.patch.object(L.LLMRuntime, "_call", _call):
+            r = rt4.chat([{"role": "user", "content": "x"}])
+            assert r["ok"] and r["backend"] == "freeai" and gerufen == ["freeai"], (r, gerufen)
+            assert rt4.stats()["busy_denied"] == 1
+            assert rt4._slot.lage()["in_arbeit"] == 1, "die Cloud hat einen Platz belegt/freigegeben"
+            try:
+                rt4.chat([{"role": "user", "content": "x"}], backends=["llamacpp"])
+                raise AssertionError("nur lokal, alle Plaetze belegt: kein BudgetExhausted")
+            except L.BudgetExhausted as e:
+                assert "Plaetze belegt" in str(e), e
+        rt4._slot.freigeben()
+
+        # Cloud scheitert bei belegtem Platz: beide Gruende, mit Abhilfe.
+        def _call_tot(self, backend, m, t, mt):
+            raise RuntimeError("freeai: auth (" + FA.abhilfe("auth") + ")")
+        assert rt4._slot.erwerben(0, 0, 1)
+        with _mock.patch.object(L.LLMRuntime, "_call", _call_tot):
+            r = rt4.chat([{"role": "user", "content": "x"}])
+        rt4._slot.freigeben()
+        assert not r["ok"] and "Plaetze belegt" in r["error"] and "LLM7_TOKEN" in r["error"], r
+
+    # (6) Abhilfe fuer freeai — „auth" allein sagt nicht, was zu tun ist.
+    with _mock.patch.dict(_os.environ, {"LLM7_TOKEN": "", "LLM7_API_KEY": "",
+                                        "POLLINATIONS_API_KEY": "", "POLLINATIONS_TOKEN": ""}):
+        a = FA.abhilfe("auth")
+        assert "token.llm7.io" in a and "LLM7_TOKEN" in a and "POLLINATIONS_API_KEY" in a, a
+        assert "LLM7_TOKEN" in FA.abhilfe("rate_limit")
+        assert "RECORD_PROXY" in FA.abhilfe("net") and FA.abhilfe("timeout")
+        assert FA.abhilfe("empty") == "" and FA.abhilfe(None) == ""
+    with _mock.patch.dict(_os.environ, {"LLM7_TOKEN": "abc", "POLLINATIONS_API_KEY": "x"}):
+        a = FA.abhilfe("auth")
+        assert "erneuern" in a and "POLLINATIONS_API_KEY" not in a, a
+        assert "LLM7_TOKEN" not in FA.abhilfe("rate_limit"), "Rat zu einem Token, das schon gesetzt ist"
+
+    # Der Weg ueber das Brain (/brain, Brain-Seite) traegt die Abhilfe mit.
+    with _mock.patch.object(FA, "chat_sync", lambda *a, **k: (None, "auth")), \
+         _mock.patch.dict(_os.environ, {"LLM7_TOKEN": "", "LLM7_API_KEY": ""}):
+        try:
+            L.LLMRuntime()._call("freeai", [{"role": "user", "content": "x"}], 5, 10)
+            raise AssertionError("freeai ohne Text ohne Fehler")
+        except RuntimeError as e:
+            assert str(e).startswith("freeai: auth (") and "LLM7_TOKEN" in str(e), e
+
+    # (7) Die Reserve in der Cloud: „UP" mit lauter Fehlern ist gestoert.
+    rt5 = L.LLMRuntime()
+    basen = [{"url": "a", "last_error": {"kind": "rate_limit", "ts": 9}},
+             {"url": "b", "last_error": {"kind": "auth", "ts": 1}}]
+    with _mock.patch.dict(_os.environ, {"BRAIN_LLM_BACKEND": "auto"}), \
+         _mock.patch.object(L.LLMRuntime, "_probe", lambda self, b: {"up": False}), \
+         _mock.patch.object(FA, "alive_sync", lambda t=3.0: True), \
+         _mock.patch.object(FA, "bases_status", lambda: basen):
+        h = rt5.health()
+        assert h["freeai"]["gestoert"] == "auth" and "LLM7_TOKEN" in h["freeai"]["abhilfe"], h
+        basen[1] = {"url": "b", "last_error": None}
+        rt5._health_cache = None
+        assert "gestoert" not in rt5.health()["freeai"], "eine gesunde Base macht die Reserve nicht gestoert"
+
+    # (8) /brain wartet als Gespraech, im eigenen Pool; Reaktionen warten nicht.
+    import ast as _ast
+    br = open("brain_bridge.py", encoding="utf-8").read()
+    baum = _ast.parse(br)
+    rufe = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+            and _ast.unparse(n.func) == "_llm_guarded"]
+    assert any(any(k.arg == "vorrang" and _ast.unparse(k.value) == "'gespraech'"
+                   for k in r.keywords) for r in rufe), "llm_ask fragt nicht als Gespraech"
+    g = br[br.index("def _llm_guarded"):]
+    g = g[:g.index("def llm_ask")]
+    assert "warten_s=(_kiwahl.wartezeit(vorrang)" in g and 'if vorrang == "gespraech" else 0.0' in g
+    bot = open("bot.py", encoding="utf-8").read()
+    i = bot.index("async def _brain_fragen")
+    assert "run_in_executor(\n        _BRAIN_FRAGEN_POOL, b.router.route" in rumpf_ab(bot, i), \
+        "/brain wartet im Default-Pool (W47: dort lebt DNS)"
+    ok("v5.9-W202: mehrere Plaetze (vom Server gelesen), Eigeninitiative laesst einen "
+       "frei, Warteschlange begrenzt, kein Stundendeckel per Vorgabe, Cloud ohne Platz, "
+       "freeai mit Abhilfe, /brain wartet als Gespraech im eigenen Pool")
+
+
+def _test_v59_w203_sendebild_zeichen():
+    """v5.9-W203: im Sendebild nur Zeichen, die die drawtext-Schrift hat.
+
+    Screenshot des Betreibers: hinter fast jeder Chatzeile ein Kaestchen —
+    die Emoji der Zuschauer, gezeichnet in DejaVu, das keine hat. drawtext
+    kennt keine zweite Schrift, also muessen sie vor der Datei heraus."""
+    import os as _os
+    from nc import schriftzeichen as Z
+    from nc import overlaytext as O
+
+    # (1) Tabelle lesen: das fc-query-Format, ein kaputtes Format ergibt keine.
+    assert Z._bereiche("20-7e a0-2e9 300") == [(0x20, 0x7E), (0xA0, 0x2E9), (0x300, 0x300)]
+    assert Z._bereiche("") is None
+    for kaputt in ("20-zz", "20-7e 30-zz"):
+        try:
+            Z._bereiche(kaputt)
+            raise AssertionError("halbe Tabelle angenommen: %r" % kaputt)
+        except ValueError:
+            pass
+    # Grenzen der binaeren Suche: erster, letzter, zwischen zwei Bereichen.
+    tb = Z._bereiche("41-43 61")
+    assert [Z._in(c, tb) for c in (0x40, 0x41, 0x43, 0x44, 0x61, 0x62)] == \
+        [False, True, True, False, True, False]
+
+    # (2) Mit Tabelle: genau die Zeichen der Schrift.
+    schrift = "/attrappe/Schrift.ttf"
+    Z._TABELLEN[schrift] = Z._bereiche("20-7e a0-17f 400-4ff 2580-25ff")
+    try:
+        t = "▸ Luna  gut 🙏 im Krankenhaus❤️ 漢字 привет █░\r\n● ok"
+        assert Z.zeichenbar(t, schrift) == "▸ Luna  gut  im Krankenhaus  привет █░\n● ok", \
+            repr(Z.zeichenbar(t, schrift))
+    finally:
+        Z._TABELLEN.pop(schrift, None)
+
+    # (3) Ohne Tabelle: die Vermutung nimmt Emoji, Variantenwaehler, Verbinder,
+    # private Zeichen und Steuerzeichen — nie einen Buchstaben.
+    v = Z.zeichenbar("Ä ß é ж ✓ ♥ 👍🏽 ❤️ 👨‍👩‍👧 1️⃣  \x07\r€", None)
+    assert v == "Ä ß é ж ✓ ♥  ❤  1  €", repr(v)
+
+    # (4) Die echte Schrift fragen (fc-query), wenn es sie gibt.
+    import shutil as _sh
+    echt = next((p for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+                 if _os.path.isfile(p)), None)
+    if echt and _sh.which("fc-query"):
+        Z._TABELLEN.pop(echt, None)
+        Z._abfragen(echt)
+        assert Z.tabelle(echt), "fc-query lieferte keine Tabelle"
+        assert Z.zeichenbar("Krankenhaus🙏 ▸ █", echt) == "Krankenhaus ▸ █"
+    else:
+        print("    (kein fc-query/DejaVu — echte Tabelle nicht gefragt)")
+
+    # (5) Der Schreibweg: jede Overlay-Datei laeuft durch den Filter.
+    d = _ph.verzeichnis()
+    alt = O._SCHRIFT
+    try:
+        ziel = _os.path.join(d, "chat.txt")
+        O.configure(schrift=lambda: None)
+        O.ov_atomic_write(ziel, "▸ coco  danke 🙏\r")
+        assert open(ziel, encoding="utf-8").read() == "▸ coco  danke ", "Emoji im Sendebild"
+
+        def _kaputt():
+            raise OSError("weg")
+        O.configure(schrift=_kaputt)
+        O.ov_atomic_write(ziel, "noch da 🙏")
+        assert open(ziel, encoding="utf-8").read() == "noch da ", \
+            "eine unbestimmbare Schrift legt das Overlay lahm"
+    finally:
+        O._SCHRIFT = alt
+    # Der Bot reicht dieselbe Schrift herein wie drawtext.
+    bot = open("bot.py", encoding="utf-8").read()
+    assert "_nc_ovtext.configure(gift_source=OVERLAY_GIFT_SOURCE,\n                     schrift=lambda: _nc_rscmd.schriftart(RESTREAM_FONT))" in bot
+    ok("v5.9-W203: Sendebild — nur Zeichen der drawtext-Schrift (fc-query), ohne "
+       "Tabelle Emoji/Verbinder/Steuerzeichen raus, jede Overlay-Datei gefiltert")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -39017,7 +39403,8 @@ def _test_v55_w196_azrael_an_qwen():
     b = _thr.Thread(target=_warte, args=(_llm.RANG["gespraech"], "gespraech", 0.1))
     a.start(); b.start()
     _t.sleep(0.3)
-    assert slot.lage() == {"belegt": True, "wartend": 2}
+    # v5.9-W202: lage() nennt dazu, wie viele Plaetze gerade rechnen.
+    assert slot.lage() == {"belegt": True, "in_arbeit": 1, "wartend": 2}
     slot.freigeben()
     a.join(5); b.join(5)
     assert reihenfolge == ["gespraech", "nebenbei"], \
@@ -40215,6 +40602,9 @@ def main():
     _test_v58_w199_geocache_anreichern()
     _test_v58_w199_zusammenschnitt_nicht_nach_telegram()
     _test_v58_w200_telegram_antworten()
+    _test_v59_w201_ki_wahl()
+    _test_v59_w202_plaetze_und_budget()
+    _test_v59_w203_sendebild_zeichen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

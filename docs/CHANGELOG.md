@@ -9,11 +9,80 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
-## [5.8.1] — 2026-11-13 · „Nachlese" (W200)
+## [5.9.0] — 2026-11-13 · „Schaltpult" (W200–W203)
 
-Der Betreiber: „In Telegram antwortet das Brain nicht auf Antwort-Nachrichten."
+Der Betreiber, in vier Meldungen: „In Telegram antwortet das Brain nicht auf
+Antwort-Nachrichten." — „Dir ist klar, dass ich den /brain-Befehl meinte?
+AZRAEL nutzt in Telegram eine free AI. Und im gesamten Dashboard sollte man
+zwischen lokaler und free AI unterscheiden können." — „/brain meint, der Slot
+wäre belegt. Wir brauchen mehrere Slots bei über 800 Mitgliedern." — „Das
+Budget für die LLM reicht bei weitem nicht mehr aus." Dazu ein Screenshot des
+Sendebilds mit Kästchen hinter fast jeder Chatzeile. 5.8.1 (nur W200) wurde
+nie veröffentlicht und geht hier auf.
 
-### Behoben
+### Neu — eine KI-Wahl, und jede Antwort sagt, woher sie kommt (W201)
+
+- **Drei Schalter, keiner im Deck.** `AI_PROVIDER` (Chat und Deck),
+  `REACTION_AI_PROVIDER` (Reaktions-Engine) und `AZRAEL_LLM` (Persona) standen
+  nur in der `.env`, und **Telegram fragte `AZRAEL_LLM` gar nicht** — `_run_ai_call`
+  lief über `llm_chat` und landete still bei der freien Cloud-KI. Jetzt eine
+  Wahl im KI-Cockpit (`app_config` `ki.wahl`, `/api/ki/wahl`): **Lokal** = nur
+  das Modell auf dem Server (kein Claude, kein stiller Wechsel in die Cloud —
+  scheitert es, sagt Telegram das), **Free** = nur `nc.freeai`, **Auto** = die
+  bisherige Kette. Ohne Wahl gelten die `.env`-Schalter wie bisher. Telegram
+  spricht über `_azrael_ki`, denselben Weg wie AZRAEL im Stream.
+- **Der Fuß nannte das eingestellte Modell, nicht das, das geantwortet hat.**
+  Die Herkunft wird je Aufruf gemerkt (`nc.kiwahl.herkunft`, ContextVar) und
+  steht im Telegram-Fuß (`— 3.2s · lokal · qwen3-14b`), im Deck-Chat, in
+  Bericht, Datenfrage, Diagnose und KI-Log als Abzeichen lokal / free / Claude.
+- **Antwort auf eine /brain-Antwort** ging an AZRAELs Chat oder nirgends hin.
+  Sie geht jetzt zurück an das Brain (Router-Kaskade), die beantwortete
+  Nachricht als Zusammenhang. Der `@`-Name des Bots zählt als Ansprache — mit
+  Telegrams Datenschutzmodus erreichen Gruppennachrichten den Bot nur so.
+
+### Behoben — mehrere Plätze, kein Stundendeckel, Cloud ohne Platz (W202)
+
+- **Ein Platz für 800 Mitglieder.** `brain/llm.py` ließ genau eine Inferenz zu,
+  und `/brain` wartete nicht: jede Frage während einer Rechnung hieß „Slot
+  belegt" (22-mal gezählt). Jetzt so viele Plätze, wie llama-server meldet
+  (`/props` → `total_slots`, ersatzweise `/slots`); `tools/ikllama.sh` startet
+  ihn mit `-np LLM_PLAETZE` (Vorgabe 4) und `-c KONTEXT × PLAETZE`, prüft den
+  RAM dafür und rechnet den KV-Cache der weiteren Plätze in `MemoryMax`.
+  `/brain` fragt als Gespräch und wartet auf einen freien Platz, in einem
+  eigenen Pool (W47: im Default-Pool lebt DNS); die Warteschlange ist auf drei
+  je Platz begrenzt, Eigeninitiative bekommt nie den letzten freien Platz.
+- **Der Platz galt auch für die Cloud.** Der Slot wurde vor der ganzen Kette
+  genommen — war er belegt, kam `/brain` gar nicht erst bei freeai an. Er gilt
+  jetzt nur dem lokalen Modell.
+- **Stundendeckel 30.** Beim Betreiber 894 Ablehnungen; bei rund 46 s je
+  Antwort schafft ein Platz ohnehin nur rund 78 in der Stunde. Vorgabe jetzt
+  `BRAIN_LLM_MAX_CALLS_H=0` (kein Deckel); die Kerne schützen die Plätze und
+  die Unit (`Nice=10`, `CPUWeight=50`). Ein gesetzter Deckel wirkt wie bisher.
+- **„freeai: auth" ohne Rat.** `nc.freeai.abhilfe()` nennt den Handgriff
+  (kostenloses `LLM7_TOKEN` von token.llm7.io, `POLLINATIONS_API_KEY`), auf der
+  Brain-Seite, in Telegram und im Router-Grund. Die Brain-Seite zeigte die
+  Cloud-Reserve als „UP", während jede Antwort an `auth` scheiterte — tragen
+  alle Basen einen Fehler, steht dort jetzt „GESTÖRT" mit Abhilfe.
+
+### Behoben — Kästchen im Sendebild (W203)
+
+- drawtext zeichnet das Sendebild in **einer** Schrift (DejaVu) und kennt keinen
+  Rückfall: jedes Emoji der Zuschauer wurde ein Kästchen. Eine Emoji-Schrift
+  nachzuinstallieren hilft drawtext nicht. `nc/schriftzeichen.py` liest die
+  Zeichentabelle der Schrift (`fc-query`, einmal, im Hintergrund) und
+  `ov_atomic_write` nimmt alles heraus, was sie nicht hat; ohne Tabelle eine
+  vorsichtige Vermutung (Emoji-Ebene, Variantenwähler, Verbinder, private
+  Zeichen, Steuerzeichen — nie ein Buchstabe).
+
+### Offen
+
+- **Restream ohne Bild und Ton.** Der Screenshot zeigt das Pausenbild der
+  Sendebrücke: der Raum ist live (der Chat läuft), aber die Quelle liefert
+  kein Bild. Der Code dieser Wege ist seit 5.7 unverändert; die Ursache steht
+  im Log (`Restream #… liefert seit … kein Bild`, `Zubringer`, `yt-dlp`,
+  `geschuetzt`). Ohne diese Zeilen wäre jede Änderung geraten.
+
+### Behoben — Telegram-Antworten (W200)
 
 - **Eine Antwort auf AZRAEL brauchte einen Verlauf in Redis.** `on_ai_reply`
   (F19) antwortete nur, wenn für genau diesen Chat und diesen Nutzer ein
@@ -47,6 +116,17 @@ Der Betreiber: „In Telegram antwortet das Brain nicht auf Antwort-Nachrichten.
 - 11 Mutationsproben, alle gefangen. Eine entwischte zunächst: der Vertrag
   prüfte den Themen-Kopf nur zusammen mit `is_topic_message`, sodass die
   Prüfung über das Dienstfeld ungeprüft blieb.
+- W201–W203: drei neue Verträge (KI-Wahl samt Route, Plätze/Deckel/Cloud,
+  Sendebild-Zeichen) und zwei im Rauchtest gegen den echten Bot (Wahl „lokal"
+  fragt nie die Cloud, „free" nie lokal; /brain-Antwort zurück ans Brain,
+  `@`-Name, Fuß mit Herkunft). 35 Mutationsproben, alle gefangen — drei
+  entwischten zunächst und haben die Verträge geschärft: ein Formular statt
+  JSON wurde mit falscher Kodierung geschickt, eine halbe Zeichentabelle fiel
+  nur zufällig auf, und „free" war von „auto" nicht zu unterscheiden, solange
+  das lokale Modell im Test nicht lief.
+- Anker gewandert: der W177-Vertrag zählt fünf statt vier `llm.chat`-Stellen
+  (dazu kam `_nur_lokal_sync`), W181/W110 erwarten `-np 4 -c 32768` und
+  `MemoryMax=7G`, W196 liest `in_arbeit` in `lage()`.
 
 ## [5.8.0] — 2026-11-13 · „Nachlese" (W199)
 

@@ -290,6 +290,9 @@ canvas{width:100%; display:block}
 "use strict";
 /* NIGHTCRAWLER AI-Brain-Dashboard — Vanilla JS, keine Dependencies.
    Pollt /api/brain/* alle 10s; Schreibaktionen (Toggles, Fragen) sofort. */
+/* v5.9-W202: der Uebersetzer laedt per defer NACH diesem Block — bis dahin
+   gibt T() den deutschen Text zurueck, statt mit ReferenceError abzubrechen. */
+if (typeof window.T !== "function") window.T = function (s) { return s; };
 
 const $ = (s) => document.querySelector(s);
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g,
@@ -638,20 +641,30 @@ async function loadLLM() {
                                              : "LLM OFFLINE"))
          + (_ms ? " · " + Math.round(_ms) + "ms" : ""));
   }
-  pill($("#p-budget"), b.remaining > 5 ? "ok"
-       : (b.remaining ? "warn" : "bad"),
-       `BUDGET ${b.used_h}/${b.max_h}`);
+  /* v5.9-W202: ohne Stundendeckel (Vorgabe) ist max_h 0 und remaining null —
+     dann zaehlt die Pille nur, und die Plaetze sind die Grenze. */
+  if (b.max_h) {
+    pill($("#p-budget"), b.remaining > 5 ? "ok"
+         : (b.remaining ? "warn" : "bad"),
+         `BUDGET ${b.used_h}/${b.max_h}`);
+  } else {
+    pill($("#p-budget"), "ok", `LOKAL ${b.used_h}/h · ` + T("ohne Deckel"));
+  }
   const s = await api("/llm/stats");
+  const _pl = s.slot || {};
   $("#llm-tbl tbody").innerHTML = `
     <tr><td>Backend-Kette</td><td class="num">${esc(h.backend_conf)}</td></tr>
     <tr><td>ik_llama.cpp</td><td class="${_lok.up ? "okc" : "err"}">
       ${_lok.up ? "UP · " + _lok.ms + " ms" + (_lok.modell ? " · " + esc(_lok.modell) : "")
                 : "DOWN (" + esc(_lok.error || "?") + ")"}</td></tr>
-    <tr><td>${"Reserve in der Cloud"}</td><td class="${_cloud.up ? "okc" : "err"}">
-      ${_cloud.up ? "UP" : (h.freeai ? "DOWN" : "nicht in der Kette")}</td></tr>
+    <tr><td>${"Reserve in der Cloud"}</td><td class="${_cloud.up && !_cloud.gestoert ? "okc" : "err"}">
+      ${_cloud.gestoert ? T("GESTÖRT") + " · " + esc(_cloud.gestoert)
+                          + (_cloud.abhilfe ? " — " + esc(_cloud.abhilfe) : "")
+        : (_cloud.up ? "UP" : (h.freeai ? "DOWN" : T("nicht in der Kette")))}</td></tr>
+    <tr><td>${T("Inferenz-Plätze")}</td><td class="num">${_pl.plaetze || 1} · ${T("in Arbeit")} ${_pl.in_arbeit || 0} · ${T("wartend")} ${_pl.wartend || 0}</td></tr>
     <tr><td>Antworten OK</td><td class="num">${s.ok}</td></tr>
     <tr><td>Budget-Ablehnungen</td><td>${s.budget_denied}</td></tr>
-    <tr><td>Slot belegt</td><td>${s.busy_denied}</td></tr>`;
+    <tr><td>${T("Abgewiesen: alle Plätze belegt")}</td><td>${s.busy_denied}</td></tr>`;
 }
 
 /* ---------------- Fragen ---------------- */
@@ -661,7 +674,7 @@ function showAnswer(res) {
     const r = res.result;
     el.innerHTML = esc(r.text || JSON.stringify(r)) +
       `<span class="meta">Tier: ${esc(res.tier)} · ${res.ms} ms` +
-      `${r.backend ? " · " + esc(r.backend) : ""}</span>`;
+      `${r.backend ? " · " + esc({llamacpp: T("lokal"), freeai: "free"}[r.backend] || r.backend) : ""}</span>`;
   } else {
     const skips = (res.trace || [])
       .map((t) => `<b>${esc(t.tier)}</b>: ${esc(t.skip || t.error || "—")}`)

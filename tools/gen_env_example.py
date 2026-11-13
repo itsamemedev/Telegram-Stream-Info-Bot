@@ -479,6 +479,14 @@ def _umbruch(text, breite):
 # Quelltext nicht mehr liest, bricht den Generator ab (siehe main): sonst
 # erklaert die Vorlage still einen Schalter, den es nicht gibt.
 ERKLAERUNG = {
+    "BRAIN_LLM_MAX_CALLS_H":
+        "v5.9-W202: Stundendeckel fuer lokale Antworten. 0 (Vorgabe) = keiner — "
+        "die Inferenz-Plaetze und die Unit (Nice/CPUWeight) schuetzen die "
+        "Kerne. Der alte Deckel 30 schaltete die KI bei vielen Mitgliedern ab.",
+    "BRAIN_LLM_PLAETZE":
+        "v5.9-W202: wie viele Antworten das lokale Modell gleichzeitig rechnet. "
+        "auto (Vorgabe) = so viele, wie llama-server meldet (sein --parallel, "
+        "von tools/ikllama.sh aus LLM_PLAETZE gesetzt); eine Zahl erzwingt sie.",
     "BRAIN_LLM_DENKEN":
         "v5.1-W181: darf das lokale Modell (Qwen3) vor der Antwort denken? "
         "0 (Vorgabe) schickt enable_thinking=false und /no_think mit — auf "

@@ -930,7 +930,7 @@ Die CPU meldet kein AVX2 — ik_llama.cpp laeuft, aber deutlich langsamer.	The C
 Dienst: %s ist aktuell	Service: %s is up to date
 Dieses Werkzeug richtet den Server lokal ein (127.0.0.1). Laeuft das LLM auf einem anderen Rechner, gehoert es dort eingerichtet — oder BRAIN_LLAMACPP_URL auf http://127.0.0.1:8080 setzen.	This tool sets up the server locally (127.0.0.1). If the LLM runs on another machine, set it up there — or set BRAIN_LLAMACPP_URL to http://127.0.0.1:8080.
 Download abgebrochen — erneut aufrufen setzt fort (%s.teil).	Download interrupted — running again resumes it (%s.teil).
-Ein kleineres Modell passt: LLM_MODELL_DATEI=Qwen3-14B-Uncensored.Q3_K_M.gguf (rund 7 GB) oder .Q2_K.gguf (rund 6 GB) in die .env, dann erneut. Wer es trotzdem will: --trotz-ram.	A smaller model fits: LLM_MODELL_DATEI=Qwen3-14B-Uncensored.Q3_K_M.gguf (about 7 GB) or .Q2_K.gguf (about 6 GB) in the .env, then again. To proceed anyway: --trotz-ram.
+Jeder Platz ueber den ersten kostet rund %s MB: LLM_PLAETZE senken (jetzt %s). Oder ein kleineres Modell: LLM_MODELL_DATEI=Qwen3-14B-Uncensored.Q3_K_M.gguf (rund 7 GB) oder .Q2_K.gguf (rund 6 GB) in die .env, dann erneut. Wer es trotzdem will: --trotz-ram.	Every slot beyond the first costs about %s MB: lower LLM_PLAETZE (now %s). Or a smaller model: LLM_MODELL_DATEI=Qwen3-14B-Uncensored.Q3_K_M.gguf (about 7 GB) or .Q2_K.gguf (about 6 GB) in the .env, then run again. To do it anyway: --trotz-ram.
 Einrichtung fortsetzen?	Continue the setup?
 Einrichtung unvollstaendig. Fortsetzen: sudo bash tools/ikllama.sh	Setup incomplete. Continue: sudo bash tools/ikllama.sh
 Fortsetzen: bash tools/update.sh --ik-llama	Continue: bash tools/update.sh --ik-llama
@@ -984,7 +984,7 @@ Pruefe SHA-256 …	Checking SHA-256 …
 Pruefen: ss -ltnp | grep :%s — den Prozess beenden und erneut aufrufen.	Check: ss -ltnp | grep :%s — stop the process and run again.
 Quellen liessen sich nicht aktualisieren — der vorhandene Bau bleibt.	Sources could not be updated — the existing build stays.
 SHA-256 stimmt nicht: %s statt %s — Datei wird entfernt, erneut aufrufen laedt neu.	SHA-256 mismatch: %s instead of %s — file is removed, running again downloads anew.
-Server: %s  (127.0.0.1:%s, %s Threads, Kontext %s)	Server: %s  (127.0.0.1:%s, %s threads, context %s)
+Server: %s  (127.0.0.1:%s, %s Threads, %s Plaetze, Kontext %s je Platz)	Server: %s  (127.0.0.1:%s, %s threads, %s slots, context %s per slot)
 Umstieg steht aus: altes llama.cpp statt ik_llama.cpp. Einrichten: sudo bash tools/ikllama.sh	Switch pending: old llama.cpp instead of ik_llama.cpp. Set up: sudo bash tools/ikllama.sh
 Umstieg: bash tools/update.sh --ik-llama  (oder sudo bash tools/ikllama.sh)	Switch: bash tools/update.sh --ik-llama  (or sudo bash tools/ikllama.sh)
 Unit nicht entfernbar: %s	Cannot remove unit: %s
@@ -1056,3 +1056,4 @@ Datenbank: Vorgabe ist MariaDB — ein eigener Server, auf dem der Betrieb laeuf
 MariaDB ist die Vorgabe fuer neue Installationen: ein eigener Server, der mit dem C-Treiber weniger CPU kostet. Der Umzug stoppt den Bot kurz, legt Server, Datenbank und Nutzer an, zieht jede Tabelle um, zaehlt nach und stellt erst dann die .env um. Die SQLite-Datei bleibt liegen — Rueckweg: DB_BACKEND=sqlite.	MariaDB is the default for new installations: its own server that costs less CPU with the C driver. The move stops the bot briefly, sets up server, database and user, moves every table, counts again and only then switches .env. The SQLite file stays — way back: DB_BACKEND=sqlite.
 MariaDB liess sich nicht einrichten — DB_BACKEND steht schon vorher auf mariadb; vor dem Start pruefen.	MariaDB could not be set up — DB_BACKEND was already set to mariadb before; check before starting.
 MariaDB liess sich nicht einrichten — die Installation bleibt bei SQLite. Spaeter: bash tools/update.sh --mariadb	MariaDB could not be set up — the installation stays on SQLite. Later: bash tools/update.sh --mariadb
+LLM_PLAETZE muss zwischen 1 und 16 liegen: %s	LLM_PLAETZE must be between 1 and 16: %s

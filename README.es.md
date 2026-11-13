@@ -59,14 +59,14 @@
 | | | |
 |---|---|---|
 | **🔍 Detectar** — sondeo adaptativo con histéresis anti-parpadeo; cada fila del panel dice cuándo se comprobó por última vez | **⏺️ Grabar** — grabador en tres etapas (ffmpeg → streamlink → yt-dlp) con comprobación previa, control de la pista de audio y detección de bloqueos | **📡 Retransmitir** — Kick, Twitch y YouTube a la vez, verificación de destinos contra las API de las plataformas |
-| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 386 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
+| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 388 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
 
 ```mermaid
 flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 27.322 líneas"]:::core
+    BOT["bot.py<br/>monolito · 27.498 líneas"]:::core
     BOT -->|configure| NC["nc/ — 185 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
@@ -320,6 +320,24 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
+## 🆕 Novedades en v5.9
+
+**“Pupitre”** — una elección de IA, varias plazas, respuestas que dicen su origen:
+
+- **Una elección de IA para todo:** Local, Free o Auto en la cabina de IA;
+  vale para el panel, Telegram y AZRAEL en el stream. «Local» es solo el
+  modelo del servidor, sin paso silencioso a la nube.
+- **Cada respuesta dice de dónde viene:** distintivo local / free / Claude en
+  el panel; en Telegram va en el pie.
+- **Varias plazas de inferencia:** hasta cuatro respuestas a la vez
+  (`LLM_PLAETZE`); `/brain` espera una plaza libre en lugar de «slot
+  ocupado». Ya no hay tope por hora por defecto, y la nube no espera detrás
+  de la plaza local.
+- **Telegram:** AZRAEL responde a las respuestas (también sin Redis y en
+  grupos con temas); una respuesta a `/brain` vuelve al brain.
+- **Imagen de emisión sin cuadros:** los emoji que la fuente no tiene se
+  quitan antes de drawtext.
+
 ## 🆕 Novedades en v5.8
 
 **“Rebusca”** — caza de errores con seguridad, limpieza, reducción del monolito:
@@ -330,12 +348,10 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
   todos los demás horarios. Ahora se lee de forma estricta y se escribe bajo bloqueo.
 - **`build/` acotado:** cada ciclo de evolución guardaba una copia completa del
   monolito (unos 2 GB al año, en cada copia de seguridad) — ahora como mucho 20.
-- **5.8.1: AZRAEL responde a las respuestas en Telegram** — también sin Redis,
-  en grupos con temas y cuando otra persona le responde.
 - **El resumen ya no va a Telegram:** el vídeo “Highlights & Memes” tras cada
   grabación va solo a Discord — a Telegram solo con `MEME_REEL_TELEGRAM=1`.
 - **Limpieza:** 27 reenvíos muertos y un módulo muerto eliminados;
-  lista de bloqueos y ataques SSH a `nc/abwehrlage.py`. `bot.py` 27.956 → 27.322 líneas.
+  lista de bloqueos y ataques SSH a `nc/abwehrlage.py`. `bot.py` se redujo de 27.956 a 27.322.
 
 ## 🆕 Novedades en v5.7
 
@@ -432,8 +448,8 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.8.1** — “Rebusca” (2026.11) |
-| Rutas Flask | 386 (34 en `bot.py` · 352 en `nc/routes/`) |
+| Versión actual | **5.9.0** — “Pupitre” (2026.11) |
+| Rutas Flask | 388 (34 en `bot.py` · 354 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |
 | Variables de configuración | ~577 |
