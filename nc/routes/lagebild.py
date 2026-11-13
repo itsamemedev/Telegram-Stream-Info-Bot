@@ -64,6 +64,14 @@ def _agenten():
 
 @bp.route("/api/lagebild")
 def api_lagebild():
+    return jsonify(daten())
+
+
+def daten() -> dict:
+    """Das Lagebild als dict. v5.10-W207: herausgeloest, weil der Leitstand
+    der Übersicht (nc/routes/leitstand.py) dieselben Ziele, Waechter und
+    Dienste liest — ein zweiter Weg zu denselben Rohdaten zaehlte frueher oder
+    spaeter anders."""
     quellen = {}
     trackings, restreams, agenten, zustand = [], [], [], {}
     try:
@@ -88,6 +96,6 @@ def api_lagebild():
     # nur ihre Zeile und steht gedrosselt im Log.
     roh, gelesen = _nc_lagebild.dienste_lesen(
         lambda name, e: _ausfall("dienst:" + name, e))
-    return jsonify(_nc_lagebild.bauen(trackings, restreams, agenten, zustand,
-                                      time.time(), quellen=quellen,
-                                      dienste_roh=roh, dienste_gelesen=gelesen))
+    return _nc_lagebild.bauen(trackings, restreams, agenten, zustand,
+                              time.time(), quellen=quellen,
+                              dienste_roh=roh, dienste_gelesen=gelesen)

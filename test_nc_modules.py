@@ -38102,6 +38102,255 @@ def _test_v59_w206_ein_totes_ziel_reisst_nicht_mit():
        "auf, danach aufgegeben mit Abhilfe; ohne lebendes Ziel wie bisher")
 
 
+def _test_v510_w207_leitstand_lage():
+    """v5.10-W207: die Übersicht als Leitstand — WAS jede Tab-Tafel zeigt.
+
+    Der Betreiber: „So habe ich mir die Übersicht vorgestellt … Bedenke, dass
+    alle anderen Tabs integriert werden müssen." Die Lage jeder Tafel, das Ziel
+    jeder Wächter-Drohne und ob ein Ereignis ein Schlüsselmoment ist,
+    entscheidet nc/leitstand.py — hier festgehalten, nicht im JavaScript."""
+    import re as _re
+    from nc import leitstand as L, lagebild as LB
+    # (1) Jeder Tab der Leiste hat eine Tafel — in derselben Reihenfolge.
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    tabs = _re.findall(r'<div class="tab[^"]*" data-view="([a-z]+)"', h)
+    assert tabs[0] == "overview" and len(tabs) == 10, tabs
+    assert [t for t, _n, _k in L.TAFELN] == tabs[1:], "ein Tab ohne Tafel (oder falsche Reihenfolge)"
+    for t in tabs[1:]:
+        assert 'id="ls_t_%s" data-tab="%s"' % (t, t) in h, "Tafel %s fehlt im Deck" % t
+    # (2) Nichts gelesen ist nicht dasselbe wie nichts da (W99): ohne Quellen
+    #     ist JEDE Tafel unbekannt — keine steht ruhig gruen da.
+    leer = L.bauen({}, {}, 1.0)
+    assert {t["lage"] for t in leer["tafeln"]} == {"unbekannt"}, leer["tafeln"]
+    assert leer["zahl"]["unbekannt"] == 9
+    # Eine gescheiterte Quelle kostet nur ihre Tafel.
+    teil = L.tafeln({"zaehler": {"trackings": 3, "live": 0}, "lagebild": {}},
+                    {"zaehler": True, "lagebild": True, "system": False})
+    lage = {t["tab"]: t["lage"] for t in teil}
+    assert lage["system"] == "unbekannt" and lage["wall"] == "ok", lage
+    # (3) Restream: gestoert schlaegt langsam schlaegt gesund; keiner = ruht.
+    lb = {"ziele": [{"name": "a", "live": True, "aufnahme": False, "restream": "gesund"},
+                    {"name": "b", "live": True, "aufnahme": True, "restream": "gestoert"}]}
+    g = {"restream": True, "lagebild": True}
+    rs = L.tafeln({"lagebild": lb, "restream": [{"user": "@A", "speed": 1.0, "ntargets": 2}]}, g)[0]
+    assert rs["lage"] == "fehler" and rs["grund"] == "gestoert" and rs["wert"] == 2, rs
+    assert [x["name"] for x in rs["daten"]["spuren"]] == ["b", "a"], "Stoerung nicht vorn"
+    lb["ziele"][1]["restream"] = "langsam"
+    assert L.tafeln({"lagebild": lb, "restream": []}, g)[0]["lage"] == "warn"
+    ruht = L.tafeln({"lagebild": {}, "restream": []}, g)[0]
+    assert (ruht["lage"], ruht["grund"], ruht["wert"]) == ("ok", "ruht", 0), ruht
+
+    def tafel(tab, roh, *quellen):
+        return next(t for t in L.tafeln(roh, {q: True for q in quellen}) if t["tab"] == tab)
+    # (4) System: Platte vor Last; Ringfarben aus denselben Grenzen.
+    sysroh = {"last": {"state": "busy", "per_core": 1.1, "avg": {"1m": 9}}, "kerne": 8,
+              "speicher_prozent": 50, "platte_prozent": 96, "swap_pct": 0}
+    st = tafel("system", {"system": sysroh}, "system")
+    assert (st["lage"], st["grund"]) == ("fehler", "platte_voll"), st
+    assert st["daten"]["stufen"] == {"cpu": "warn", "ram": "ok", "platte": "fehler"}, st
+    sysroh.update(platte_prozent=50, last={"state": "overloaded", "per_core": 2})
+    assert tafel("system", {"system": sysroh}, "system")["grund"] == "ueberlast"
+    sysroh.update(last={"state": "ok", "per_core": 0.2}, speicher_prozent=90, swap_pct=85)
+    assert tafel("system", {"system": sysroh}, "system")["grund"] == "speicher_knapp"
+    assert tafel("system", {"system": {}}, "system")["lage"] == "unbekannt", "keine Messung ist kein ruhiges System"
+    # (5) Brain: Bruecke vor Waechter vor Wahl; „lokal" ohne Server ist eine Warnung.
+    ag = [{"name": "disk", "lage": "taetig"}, {"name": "x", "lage": "ruht", "ueberfaellig": True}]
+    b = tafel("brain", {"ki": {"bruecke_ok": False}, "lagebild": {"agenten": ag}}, "ki", "lagebild")
+    assert b["grund"] == "bruecke" and b["lage"] == "fehler", b
+    b = tafel("brain", {"ki": {"bruecke_ok": True}, "lagebild": {"agenten": ag}}, "ki", "lagebild")
+    assert b["grund"] == "waechter_ueberfaellig" and b["wert"] == "2/2", b
+    b = tafel("brain", {"ki": {"bruecke_ok": True, "wahl": "lokal", "lokal_oben": False},
+                        "lagebild": {"agenten": ag[:1]}}, "ki", "lagebild")
+    assert b["grund"] == "lokal_aus", b
+    b = tafel("brain", {"ki": {"bruecke_ok": True, "llm": {"belegt": True, "wartend": 2}},
+                        "lagebild": {"agenten": [{"name": "y", "lage": "fehler"}]}}, "ki", "lagebild")
+    assert b["grund"] == "waechter_fehler", b
+    assert tafel("brain", {"ki": {"bruecke_ok": True, "llm": {"wartend": 1}}}, "ki")["grund"] == "denkt"
+    # (6) Community: eingerichtet und getrennt ist eine Stoerung, ohne Token Absicht.
+    assert tafel("discord", {"community": {"discord_konfiguriert": True}}, "community")["lage"] == "warn"
+    assert tafel("discord", {"community": {}}, "community")["lage"] == "aus"
+    hype = tafel("discord", {"community": {"discord_verbunden": True, "chat_rate": 9, "chat_basis": 2}}, "community")
+    assert hype["grund"] == "chat_hype" and hype["lage"] == "aktiv", hype
+    # (7) Betrieb, Insights, Einstellungen, MCP.
+    d = LB.dienste({"encode": {"laeuft": [], "wartet": [{"s": 5000}]}}, {"encode": True})
+    be = tafel("betrieb", {"lagebild": {"dienste": d}}, "lagebild")
+    assert be["lage"] == "warn" and be["grund"] == "encode:stau", be
+    ruhig = [{"name": "encode", "lage": "ok", "grund": "leer"}, {"name": "tunnel", "lage": "aus", "grund": "kein_proxy"}]
+    assert tafel("betrieb", {"lagebild": {"dienste": ruhig}}, "lagebild")["grund"] == "ruhig"
+    ins = tafel("insights", {"insights": {"quote": 30, "versuche": 40, "tage": [{"count": 2}, {"count": 5}]}}, "insights")
+    assert ins["lage"] == "warn" and ins["daten"]["heute"] == 5 and ins["daten"]["ring"] == "warn", ins
+    assert tafel("insights", {"insights": {"quote": 0, "versuche": 2}}, "insights")["lage"] == "ok", \
+        "zwei Versuche sind keine Aussage ueber die Quote"
+    assert tafel("einstellungen", {"einstellungen": {"neustart": ["A"]}}, "einstellungen")["grund"] == "neustart_noetig"
+    assert tafel("mcp", {"mcp": {"anzahl": 0}}, "mcp")["lage"] == "aus"
+    w = tafel("mcp", {"mcp": {"anzahl": 2, "aktiv": 1, "webui": {"gefunden": True, "abhilfe": "x"}}}, "mcp")
+    assert w["grund"] == "webui_fehlt" and w["wert"] == "1/2", w
+    # (8) Drohnen fliegen dorthin, wo der Waechter arbeitet — eine abgeschaltete nie.
+    ags = [{"name": "restream_sentinel", "lage": "taetig", "ort": "ziel", "ziel": "b"},
+           {"name": "recording", "lage": "ruht", "ort": "ziel", "ziel": "b"},
+           {"name": "disk", "lage": "ruht", "ort": "platte"},
+           {"name": "toxicity", "lage": "ruht", "ort": "chat"},
+           {"name": "scout", "lage": "aus", "ort": "kern"},
+           {"name": "neu", "lage": "ruht", "ort": "irgendwo"}]
+    ziel = {x["name"]: x["tafel"] for x in L.drohnen({"lagebild": {"agenten": ags}}, LB.ORT)}
+    assert ziel == {"restream_sentinel": "restream", "recording": "wall", "disk": "system",
+                    "toxicity": "discord", "scout": None, "neu": "system"}, ziel
+    # (9) Ereignisse: Warnungen sind Momente, Alltag nicht.
+    assert L.ereignis("watchdog.loop_lag", "warning") == {"ton": "warn", "moment": True, "tafel": "system"}
+    assert L.ereignis("restream.start", "info") == {"ton": "gut", "moment": True, "tafel": "restream"}
+    assert L.ereignis("recording.saved", "info")["moment"] is False, "eine Aufnahme ist Alltag, kein Moment"
+    assert L.ereignis("x.y", "ERROR") == {"ton": "fehler", "moment": True, "tafel": None}
+    assert L.ereignis("tracking.restart", "info") == {"ton": "info", "moment": False, "tafel": "wall"}
+    ev = L.ereignisse([{"kind": "a", "summary": "s" * 400}] * 30)
+    assert len(ev) == L.MAX_EREIGNISSE and len(ev[0]["summary"]) == 160
+    # (10) Die Lieferkette zeigt dieselbe Lage wie die Tafeln.
+    voll = L.bauen({"lagebild": lb, "zaehler": {"trackings": 9, "live": 2}, "restream": [],
+                    "insights": {"tage": [{"count": 4}]}}, {"lagebild": True, "zaehler": True,
+                                                             "restream": True, "insights": True}, 5.0)
+    k = {x["name"]: x for x in voll["kette"]}
+    assert list(k) == list(L.KETTE), list(k)
+    t = {x["tab"]: x for x in voll["tafeln"]}
+    assert k["live"]["lage"] == t["wall"]["lage"] == "aktiv" and k["live"]["wert"] == 2
+    assert k["restream"]["lage"] == t["restream"]["lage"] and k["erfassen"]["wert"] == 9
+    assert k["archiv"]["wert"] == 4 and k["kodieren"]["lage"] == "unbekannt"
+    ok("v5.10-W207: Leitstand — jeder Tab eine Tafel, ungelesen ist unbekannt, Lage/Drohnen/"
+       "Momente aus nc/leitstand.py")
+
+
+def _test_v510_w207_leitstand_route_und_deck():
+    """v5.10-W207: /api/leitstand — eine Quelle, die scheitert, kostet ihre Tafel
+    und meldet sich; das Deck zeichnet nur, was die Route liefert."""
+    import json as _json
+    import logging as _logging
+    import re as _re
+    from flask import Flask
+    from nc.routes import leitstand as R
+    from nc import stats as S
+    from nc.dbwrap import db_conn
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    zaehl = {"n": 0}
+
+    def zaehler():
+        zaehl["n"] += 1
+        return {"trackings": 4, "live": 1}
+
+    def kaputt():
+        raise RuntimeError("Datenbank gesperrt")
+    echt = R.QUELLEN
+    meld = []
+
+    class _H(_logging.Handler):
+        def emit(self, rec):
+            meld.append(rec.getMessage())
+    hd = _H()
+    _logging.getLogger("TikTokBot").addHandler(hd)
+    try:
+        R._CACHE.clear()
+        R.QUELLEN = (("zaehler", zaehler, 60), ("system", kaputt, 60))
+        c = app.test_client()
+        d = c.get("/api/leitstand").get_json()
+        d2 = c.get("/api/leitstand").get_json()
+        assert zaehl["n"] == 1, "die Quelle wurde trotz Gueltigkeit erneut gefragt"
+        assert d["quellen"] == {"zaehler": True, "system": False}, d["quellen"]
+        t = {x["tab"]: x for x in d["tafeln"]}
+        assert t["system"]["lage"] == "unbekannt" and t["wall"]["wert"] == 1, t["wall"]
+        assert d2["tafeln"] == d["tafeln"]
+        assert any("Quelle system nicht lesbar" in m and "Datenbank gesperrt" in m for m in meld), meld
+        # Ein Fehler wird nicht so lange gemerkt wie ein Erfolg.
+        assert R._CACHE["system"][0] - R._CACHE["zaehler"][0] < -50
+    finally:
+        R.QUELLEN = echt
+        R._CACHE.clear()
+        _logging.getLogger("TikTokBot").removeHandler(hd)
+    # Die echten Quellen gegen die Testdatenbank: die vier datenbankgestuetzten
+    # liefern, der Rest darf hier scheitern — aber nie mit einer Ausnahme nach aussen.
+    with db_conn() as conn:
+        conn.execute("INSERT INTO recording_attempts (username, started_at, outcome) VALUES (?,?,?)",
+                     ("w207", "2026-01-01T00:00:00+00:00", "ok"))
+        # Die Testdatenbank traegt nur einen Auszug des Schemas — das
+        # Ereignisprotokoll legt dieser Vertrag selbst an.
+        conn.execute("CREATE TABLE IF NOT EXISTS event_log (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                     "ts TEXT NOT NULL, kind TEXT NOT NULL, severity TEXT DEFAULT 'info', "
+                     "summary TEXT, payload TEXT)")
+        conn.execute("INSERT INTO event_log (ts, kind, severity, summary) VALUES (?,?,?,?)",
+                     ("2026-11-13T10:00:00+00:00", "restream.start", "info", "W207 gestartet"))
+        spalten = {r[1] for r in conn.execute("PRAGMA table_info(recordings)").fetchall()}
+        if "deleted_at" not in spalten:
+            conn.execute("ALTER TABLE recordings ADD COLUMN deleted_at TEXT")
+    gelesen = {}
+    # Die Einstellungen brauchen Vorlage und Tabelle, die die Testdatenbank
+    # nicht hat — ihre Uebersicht steht hier als Attrappe.
+    echt_u = R._nc_einst.uebersicht
+    R._nc_einst.uebersicht = lambda: {"zahl": {"datenbank": 2}, "geschuetzt": 1,
+                                      "neustart": ["X"], "backend": "sqlite"}
+    try:
+        for name, fn, _ttl in R.QUELLEN:
+            daten, gelesen[name] = R._lesen(name, fn, 0)
+            if name == "ereignisse":
+                assert any(e["summary"] == "W207 gestartet" for e in daten), daten
+            if name == "einstellungen":
+                assert daten["neustart"] == ["X"] and daten["zahl"] == {"datenbank": 2}, daten
+    finally:
+        R._nc_einst.uebersicht = echt_u
+        R._CACHE.clear()
+    for name in ("zaehler", "insights", "ereignisse", "system", "einstellungen"):
+        assert gelesen[name], "Quelle %s scheitert gegen die Testdatenbank" % name
+    q = S.trefferquote()
+    with db_conn() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM recording_attempts").fetchone()[0]
+    assert q["total_attempts"] == n and 0 < q["successful"] <= n, q
+    tage = S.aufnahmen_je_tag(3)
+    assert len(tage) == 3 and tage[0]["day"] < tage[-1]["day"], tage
+    # Das Deck: holt /api/leitstand, haengt am Live-Push, Bewegung abschaltbar.
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    js = h[h.index("var ncLeitstand=(function(){"):h.index("async function loadOverview(")]
+    assert "apiGet('/api/leitstand')" in js and "gotoView(" in js
+    assert "if(window.ncLeitstand) ncLeitstand.ereignis(m);" in h, "Live-Ereignisse fehlen im Strom"
+    assert "nc_ls_ruhig" in js and "prefers-reduced-motion" in js
+    assert "th!=='kontrast'" in js, "das Kontrast-Thema muss still bleiben"
+    # Im Rumpf der Zeichenfunktion, nicht irgendwo: derselbe Ausdruck steht
+    # auch im Abruf, und dort beweist er nichts ueber die Animation.
+    bild = js[js.index("function bild(t){"):js.index("function anstossen(")]
+    assert "CURRENT_VIEW!=='overview'||document.hidden" in bild, "die Animation laeuft im Hintergrund weiter"
+    # Grenzwerte stehen in nc/leitstand.py, nicht im Zeichner: in den Ansichten
+    # kein Vergleich der Form „wert >= grenze" (Zahlen allein waeren auch
+    # SVG-Koordinaten — ein Vertrag, der die eigene Zeichnung als Befund liest).
+    vis = js.split("var VIS=")[1].split("/* ── Zeichnen")[0]
+    assert not _re.search(r"(?:>=|<=)\s*[\w.]+", vis), \
+        "Grenzwert im JS — die Lage entscheidet nc/leitstand.py"
+    _c0 = h.index("/* ═══ v5.10-W207: LEITSTAND")
+    css = h[_c0:h.index("</style>", _c0)]
+    # Das Style-Element darf nicht vor dem Themenblock enden — ein woertliches
+    # schliessendes Style-Tag in einem Kommentar schloss es einmal vorzeitig,
+    # und das ganze CSS stand als Text auf der Seite (Klammerbilanz: gruen).
+    _s0 = h.rindex("<style>", 0, _c0)
+    assert h.index("</style>", _s0) > h.index('html[data-theme="leitstand"]{'), \
+        "Leitstand-CSS endet vorzeitig — steht ein schliessendes Style-Tag im Kommentar?"
+    assert "@media (prefers-reduced-motion:reduce)" in css and '.ls-strom{display:none}' in css
+    # Das Leitstand-Thema: alle Farben >= AA auf dem Panel, Rot bleibt rot.
+    blk = _re.search(r'html\[data-theme="leitstand"\]\{(.*?)\n\}', h, _re.S)
+    tok = dict(_re.findall(r"--([a-z0-9-]+):\s*(#[0-9A-Fa-f]{6})\s*;", blk.group(1)))
+
+    def _lum(x):
+        c = [int(x.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    for name in ("text", "text-dim", "text-faint", "neon", "neon-dim", "cyan", "magenta",
+                 "amber", "red", "ok"):
+        la, lb = _lum(tok[name]), _lum(tok["panel-solid"])
+        assert (max(la, lb) + .05) / (min(la, lb) + .05) >= 4.5, name
+    rot = [int(tok["red"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    assert rot[0] > rot[1] * 1.5
+    assert "leitstand" in _json.loads(_re.search(r"var NC_THEMEN=(\[[^\]]*\]);", h).group(1))
+    # Der Live-Push traegt dieselbe Einstufung wie das Protokoll.
+    bot = open("bot.py", encoding="utf-8").read()
+    assert "**_nc_leitstand.ereignis(kind, severity)" in bot
+    assert "register_blueprint(_nc_routes_leitstand.bp)" in bot
+    ok("v5.10-W207: /api/leitstand — Quellen einzeln abgesichert und gecacht, Ausfall laut; "
+       "Deck zeichnet nur, Bewegung abschaltbar, Leitstand-Thema >= AA")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -41033,6 +41282,8 @@ def main():
     _test_v59_w204_restream_liste()
     _test_v59_w205_chatbild()
     _test_v59_w206_ein_totes_ziel_reisst_nicht_mit()
+    _test_v510_w207_leitstand_lage()
+    _test_v510_w207_leitstand_route_und_deck()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

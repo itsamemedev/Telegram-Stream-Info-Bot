@@ -9,6 +9,75 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.10.0] — 2026-11-13 · „Leitstand" (W207)
+
+Der Betreiber schickte ein Video eines dichten Leitstands — viele kleine
+Panels, die gleichzeitig leben, Lichtströme dazwischen, Agenten, die
+herumfliegen, ein „Schlüsselmoment", wenn etwas passiert — und schrieb: „So
+habe ich mir die Übersicht im Dashboard vorgestellt … und nicht das, was du da
+fabriziert hast. Bedenke, dass alle anderen Tabs integriert werden müssen."
+
+### Neu — die Übersicht als Leitstand
+
+- **Jeder Tab ist eine Tafel.** Bis hierher zeigte die Übersicht Kennzahlen,
+  das Lagebild und drei Kacheln mit Links; von Control, Streams, Community,
+  System, AZRAEL, Betrieb, Insights, Einstellungen und MCP sah man auf ihr
+  nichts. Jetzt steht jeder der neun Tabs als eigene Tafel da — mit seiner
+  Lage (Farbe und Satz), seinem Hauptwert und einer kleinen Live-Ansicht:
+  Restream-Spuren mit Tempo-Verlauf, die Live-Wand mit REC-Marken, der
+  Chat-Puls, drei Ringe für CPU/RAM/Platte samt den größten CPU-Fressern, das
+  Wächternetz mit KI-Wahl und Herkunftszählern, die Dienste-Schlangen, 14 Tage
+  Aufnahmen mit Trefferquote, der Konfigurationsstand und die MCP-Verbindungen.
+  Ein Klick führt in den Tab.
+- **Die Lieferkette einer Sendung** als Leiste: Erfassen → Live → Aufnahme →
+  Kodieren → Versand → Restream → Archiv, jedes Glied mit Zahl und Lage.
+- **Ereignisstrom und Schlüsselmomente.** Was der Bot protokolliert (Restream
+  gestartet/aufgegeben, Watchdog, Highlight-Clip …), läuft live über den
+  vorhandenen Push (SSE) in einen Strom; Warnungen, Fehler, ein gestarteter
+  Restream und ein Hype-Clip springen als Schlüsselmoment auf und lassen die
+  zugehörige Tafel aufleuchten. Eine gesicherte Aufnahme ist Alltag und
+  bleibt im Strom.
+- **Bewegung mit Bedeutung.** In den Fugen zwischen den Tafeln laufen
+  Lichtströme, die mit der Last (Live, Aufnahme, Kodieren, Versand, Restream)
+  dichter und schneller werden. Die Wächter aus `brain/agents.py` fliegen als
+  Drohnen zu der Tafel, an der sie arbeiten (der Platten-Wächter zum System,
+  die Restream-Wache zum Restream), mit Namen und Zustand; ein abgeschalteter
+  parkt im Hangar. Der Knopf „Ruhig" hält alles an (gemerkt im Browser); bei
+  reduzierter Bewegung und im Kontrast-Thema steht es von selbst. Die
+  Animation läuft nur, solange die Übersicht sichtbar ist.
+- **Thema „Leitstand"** (◈): Leuchtblau und Violett auf Nachtblau, die
+  Anmutung aus dem Video. Jede Farbe ≥ AA auf dem Panel, im Vertrag
+  nachgerechnet; Rot bleibt Rot. Messing bleibt die Vorgabe.
+- **Die Kopfkacheln ziehen nach.** Sie standen nur beim Betreten der Übersicht
+  frisch und dann still, während daneben alles lebte — jetzt alle 24 s, mit
+  Verlaufslinie.
+
+### Warum die Lage in Python entschieden wird
+
+Dieselbe Regel wie beim Lagebild (W112): eine Animation ist eine Aussage.
+`nc/leitstand.py` entscheidet die Lage jeder Tafel, die Ringfarben, wohin eine
+Drohne fliegt und ob ein Ereignis ein Schlüsselmoment ist; das JS zeichnet nur.
+Ein Vertrag prüft, dass in den Ansichten kein Grenzwertvergleich steht.
+**Nichts geladen ist nicht dasselbe wie nichts da** (W99): eine Quelle, die
+nicht antwortet, macht ihre Tafel „unbekannt" (gestrichelt), nie „ok".
+
+`GET /api/leitstand` (`nc/routes/leitstand.py`) holt alles in einem Aufruf —
+neun Einzelrouten hießen neun Datenbank- und Brain-Zugriffe je 8-s-Takt. Jede
+Quelle ist einzeln abgesichert, hat ihre eigene Gültigkeit (Ereignisse 5 s,
+Einstellungen 60 s, 14-Tage-Zählung 120 s) und meldet einen Ausfall gedrosselt
+ins Log; ein Fehlschlag wird nur 5 s gemerkt. Die Rohdaten kommen aus
+denselben Funktionen, die die Tabs lesen — Lagebild, Restream-Gesundheit,
+Tageszählung (`nc.stats.aufnahmen_je_tag`), Trefferquote
+(`nc.stats.trefferquote`), Chat-Puls (`nc.highlights.chat_raten`): eine zweite
+Abfrage für dieselbe Zahl zählt früher oder später anders. Der Live-Push trägt
+dieselbe Einstufung (`ton`, `moment`, `tafel`) wie das Protokoll.
+
+### Geprüft
+
+Zwei Verträge (`_test_v510_w207_*`), 23 Mutationsproben. Gerendert im echten
+Chromium mit Beispieldaten in Leitstand, Messing und Blaupause, auf 1680, 1280
+und 390 px (kein Querscrollen).
+
 ## [5.9.0] — 2026-11-13 · „Schaltpult" (W200–W206)
 
 Der Betreiber, in vier Meldungen: „In Telegram antwortet das Brain nicht auf

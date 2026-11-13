@@ -94,3 +94,13 @@ def zustand():
        Auskunfts-Route liest hier im Sekundentakt und soll nicht bei jedem
        Zugriff pruefen muessen."""
     return STATE["obj"] if STATE["obj"] is not None else {}
+
+
+def chat_raten(window_s=20.0, base_s=600.0):
+    """Nachrichten je Minute: jetzt (Fenster) und im Mittel (Basis).
+
+    v5.10-W207: dieselbe Rechnung wie /api/highlights, an einer Stelle —
+    der Leitstand der Übersicht zeigt daraus den Chat-Puls."""
+    z = zustand()
+    return {"rate": round(len(z.get("events") or []) / window_s * 60.0, 1),
+            "basis": round(len(z.get("base") or []) / base_s * 60.0, 1)}

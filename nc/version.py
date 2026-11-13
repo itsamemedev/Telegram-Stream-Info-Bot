@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.9.0"
-CODENAME = "Schaltpult"
+VERSION = "5.10.0"
+CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,21 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.10.0",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Nebenversion: die Übersicht als Leitstand (W207).
+        "highlights": [
+            "Die Übersicht ist ein Leitstand: jeder der neun Tabs steht als eigene Tafel da — Lage, Hauptwert und eine kleine Live-Ansicht; ein Klick fuehrt hinein",
+            "Live-Ansichten je Tafel: Restream-Spuren mit Tempo-Verlauf, Live-Wand mit REC, Chat-Puls, CPU/RAM/Platte samt groessten CPU-Fressern, Waechternetz mit KI-Wahl, Dienste-Schlangen, 14 Tage Aufnahmen, Konfigurationsstand, MCP",
+            "Die Lieferkette einer Sendung als Leiste: Erfassen, Live, Aufnahme, Kodieren, Versand, Restream, Archiv — jedes Glied mit Zahl und Lage",
+            "Ereignisstrom live ueber den Push; Warnungen, Fehler, ein gestarteter Restream und ein Hype-Clip springen als Schluesselmoment auf und lassen ihre Tafel aufleuchten",
+            "Bewegung mit Bedeutung: Lichtstroeme werden mit der Last dichter, die Waechter fliegen als Drohnen zu der Tafel, an der sie arbeiten; „Ruhig“ haelt alles an, reduzierte Bewegung und Kontrast-Thema stehen von selbst",
+            "Neues Thema „Leitstand“: Leuchtblau und Violett auf Nachtblau, jede Farbe mindestens AA",
+            "Eine Quelle, die nicht antwortet, zeigt ihre Tafel als „unbekannt“, nie als ruhig — und meldet sich im Log",
+        ],
+    },
     {
         "version": "5.9.0",
         "date": "2026-11",

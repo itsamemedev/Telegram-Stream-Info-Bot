@@ -1425,7 +1425,7 @@ body{padding-top:46px}   /* Platz für die fixe Sendeleiste */
   background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--cyan) 6%,transparent),transparent);
   animation:smsweep 5.5s linear infinite}
 @keyframes smsweep{to{transform:translateY(calc(100% + 480px))}}
-.studio-feed{max-height:250px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 8px;background:rgba(4,8,12,0.5)}
+.studio-feed{max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 8px;background:rgba(4,8,12,0.5)}
 .feed-line{font-size:var(--fs-xs);line-height:1.7;display:flex;gap:7px;align-items:baseline;min-width:0}
 .feed-line .who{color:var(--neon);font-weight:600;white-space:nowrap}
 .feed-line .txt{color:var(--text);overflow-wrap:anywhere;min-width:0}
@@ -2534,6 +2534,247 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
   font:inherit;font-size:.8rem;cursor:pointer}
 .i18n-switch:focus-visible{outline:2px solid var(--accent,#e8c86a);outline-offset:1px}
 </style>
+<style>
+/* v5.10-W207: eigener Block — der W67-Politur-Block reicht bis zum Ende
+   seines Style-Elements und verbietet dort Layout-Umbau; der Leitstand IST einer. */
+/* ═══ v5.10-W207: LEITSTAND — die Übersicht als dichter Kommandostand ═══
+   Jeder Tab ist eine Tafel. Die Farbe einer Tafel kommt aus ihrer Lage
+   (--ls-c), und die Lage entscheidet nc/leitstand.py, nicht dieses CSS.
+   Bewegung (Lichtströme, Drohnen, Puls) hängt an .ls ohne .ruhig und steht
+   bei reduzierter Bewegung und im Kontrast-Thema von selbst. */
+.ls{position:relative;isolation:isolate}
+.ls>*:not(.ls-strom){position:relative;z-index:1}
+.ls-strom{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;display:block}
+.ls.ruhig .ls-strom{display:none}
+.ls-kopf{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:stretch;margin-bottom:10px}
+.ls-marke{display:flex;flex-direction:column;justify-content:center;gap:4px;padding:8px 12px;
+  border:1px solid var(--border);background:var(--panel);min-width:190px}
+.ls-titel{font:700 13px/1.1 var(--display);letter-spacing:.16em;color:var(--neon)}
+.ls-unter{font-size:10px;color:var(--text-faint);letter-spacing:.06em}
+.ls-kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+.ls-kpi{position:relative;padding:8px 10px 4px;border:1px solid var(--border);background:var(--panel);
+  min-width:0;overflow:hidden}
+.ls-kpi .l{font:600 9px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--text-faint)}
+.ls-kpi .v{font-size:22px;margin:4px 0 2px}
+.ls-spark{display:block;width:100%;height:22px;overflow:visible}
+.ls-spark path{fill:none;stroke:currentColor;stroke-width:1.4;vector-effect:non-scaling-stroke;opacity:.85}
+.ls-spark path.f{fill:currentColor;stroke:none;opacity:.10}
+.ls-rechts{display:flex;flex-direction:column;align-items:flex-end;justify-content:space-between;gap:6px;
+  padding:6px 10px;border:1px solid var(--border);background:var(--panel)}
+.ls-live{display:inline-flex;align-items:center;gap:6px;font:700 11px/1 var(--mono);letter-spacing:.14em;color:var(--text-faint)}
+.ls-live i{width:8px;height:8px;border-radius:50%;background:var(--text-faint)}
+.ls-live[data-an="1"]{color:var(--red)}
+.ls-live[data-an="1"] i{background:var(--red);animation:ls-blink 1.4s steps(2,end) infinite}
+.ls-uhr{font-size:15px;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:.06em}
+.ls-stand{font-size:10px;color:var(--text-dim);max-width:220px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ls-stand.warn{color:var(--amber)} .ls-stand.bad{color:var(--red)}
+#ls_ruhig[aria-pressed="true"]{color:var(--neon);border-color:var(--neon)}
+
+/* Lieferkette: sieben Glieder, links nach rechts */
+.ls-kette{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;list-style:none;margin:0 0 34px;padding:0}
+.ls-kette li{--ls-c:var(--text-faint);position:relative;display:flex;align-items:center;gap:8px;min-width:0;
+  padding:7px 18px 7px 14px;background:color-mix(in srgb,var(--ls-c) 9%,var(--panel));
+  border-top:1px solid color-mix(in srgb,var(--ls-c) 45%,transparent);
+  border-bottom:1px solid color-mix(in srgb,var(--ls-c) 45%,transparent);
+  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 50%,calc(100% - 10px) 100%,0 100%,10px 50%);
+  font:600 10px/1.1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim)}
+.ls-kette li:first-child{clip-path:polygon(0 0,calc(100% - 10px) 0,100% 50%,calc(100% - 10px) 100%,0 100%)}
+.ls-kette .n{color:var(--ls-c)}
+.ls-kette .w{margin-left:auto;font-size:15px;letter-spacing:0;color:var(--text);font-variant-numeric:tabular-nums}
+.ls-kette .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Lagefarbe — eine Stelle fuer Tafeln, Kette und Drohnen-Legende */
+[data-lage="ok"]{--ls-c:var(--neon)}
+[data-lage="aktiv"]{--ls-c:var(--cyan)}
+[data-lage="warn"]{--ls-c:var(--amber)}
+[data-lage="fehler"]{--ls-c:var(--red)}
+[data-lage="aus"],[data-lage="unbekannt"]{--ls-c:var(--text-faint)}
+
+/* Raster: 12 Spalten, Tafeln je 3, Lagebild 6 x 2 */
+/* Die Fugen zwischen den Reihen sind breit: dort laufen die Lichtstroeme und
+   halten sich die Drohnen auf — ueber den Tafeln verdeckten sie Werte. */
+.ls-raster{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:34px 12px;grid-auto-flow:row dense}
+.ls-raster>.ls-feld{margin:0;min-width:0}
+/* Lagebild links ueber drei Reihen, daneben sechs Tafeln; darunter die
+   restlichen drei und der Ereignisstrom in einer Reihe. */
+.ls-lagebild{grid-column:span 6;grid-row:span 3}
+.ls-tafel{grid-column:span 3}
+.ls-strom-liste{grid-column:span 3}
+.ls-w6{grid-column:span 6}
+.ls-w12{grid-column:1/-1}
+.ls-paar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.ls-paar>.panel{margin:0}
+
+.ls-tafel{--ls-c:var(--text-faint);position:relative;display:flex;flex-direction:column;min-height:226px;
+  padding:10px 12px 9px;cursor:pointer;background:var(--panel);
+  border:1px solid color-mix(in srgb,var(--ls-c) 30%,var(--border));
+  background-image:
+    linear-gradient(var(--ls-c),var(--ls-c)),linear-gradient(var(--ls-c),var(--ls-c)),
+    linear-gradient(var(--ls-c),var(--ls-c)),linear-gradient(var(--ls-c),var(--ls-c)),
+    linear-gradient(var(--ls-c),var(--ls-c)),linear-gradient(var(--ls-c),var(--ls-c)),
+    linear-gradient(var(--ls-c),var(--ls-c)),linear-gradient(var(--ls-c),var(--ls-c));
+  background-size:12px 2px,2px 12px,12px 2px,2px 12px,12px 2px,2px 12px,12px 2px,2px 12px;
+  background-position:0 0,0 0,100% 0,100% 0,0 100%,0 100%,100% 100%,100% 100%;
+  background-repeat:no-repeat;transition:border-color .4s,transform .2s}
+.ls-tafel[data-lage="unbekannt"]{border-style:dashed}
+.ls-tafel[data-lage="aus"]{opacity:.78}
+.ls-tafel:hover,.ls-tafel:focus-visible{border-color:var(--ls-c);outline:none;transform:translateY(-1px)}
+.ls-tafel:focus-visible{box-shadow:0 0 0 2px var(--ls-c)}
+.ls-tafel.blitz{animation:ls-blitz 1.6s ease-out 2}
+.ls-t-kopf{display:flex;align-items:baseline;gap:8px;min-width:0}
+.ls-nr{font:700 10px/1 var(--mono);color:var(--ls-c);border:1px solid color-mix(in srgb,var(--ls-c) 50%,transparent);padding:3px 4px}
+.ls-name{font:700 11px/1.2 var(--display);letter-spacing:.14em;text-transform:uppercase;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ls-kennung{font:10px/1 var(--mono);color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.ls-wert{font:700 20px/1 var(--mono);color:var(--ls-c);font-variant-numeric:tabular-nums;white-space:nowrap}
+.ls-t-vis{flex:1;min-height:118px;margin:8px 0 6px;position:relative}
+.ls-t-vis svg{display:block;width:100%;height:124px}
+.ls-t-fuss{display:flex;align-items:center;gap:7px;font:11px/1.35 var(--mono);color:var(--text-dim);min-width:0}
+.ls-pkt{flex:none;width:7px;height:7px;border-radius:50%;background:var(--ls-c)}
+.ls-tafel[data-lage="fehler"] .ls-pkt{animation:ls-blink 1s steps(2,end) infinite}
+.ls-satz{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Bausteine der Mini-Ansichten */
+.ls-zeilen{display:flex;flex-direction:column;gap:5px;font:11px/1.2 var(--mono)}
+.ls-zeile{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;color:var(--text-dim)}
+.ls-zeile b{color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ls-balken{grid-column:1/-1;height:4px;background:color-mix(in srgb,var(--border) 90%,transparent);overflow:hidden}
+.ls-balken i{display:block;height:100%;background:var(--ls-c);transition:width .8s}
+.ls-chips{display:flex;flex-wrap:wrap;gap:5px}
+.ls-chip{--ls-c:var(--text-faint);display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:3px 7px;
+  font:600 10px/1.2 var(--mono);color:var(--text);border:1px solid color-mix(in srgb,var(--ls-c) 50%,transparent);
+  background:color-mix(in srgb,var(--ls-c) 10%,transparent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ls-chip i{flex:none;width:6px;height:6px;border-radius:50%;background:var(--ls-c)}
+.ls-chip em{font-style:normal;color:var(--red);font-size:9px;letter-spacing:.08em}
+.ls-leer{display:flex;align-items:center;justify-content:center;height:100%;min-height:100px;
+  font:11px/1.4 var(--mono);color:var(--text-faint);text-align:center;border:1px dashed var(--border)}
+.ls-mitte{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.ls-svg-text{font-family:var(--mono);font-size:9px;fill:var(--text-faint)}
+.ls-svg-wert{font-family:var(--mono);font-weight:700;font-size:13px;fill:var(--text)}
+
+/* Ereignisstrom */
+.ls-ev{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;max-height:200px;overflow-y:auto;
+  font:11px/1.35 var(--mono)}
+.ls-ev li{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:7px;padding:4px 2px;
+  border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent);color:var(--text-dim)}
+.ls-ev li.faint{display:block;border:0}
+.ls-ev .z{color:var(--text-faint);font-variant-numeric:tabular-nums}
+.ls-ev .k{color:var(--cyan)}
+.ls-ev li[data-ton="gut"] .k{color:var(--neon)}
+.ls-ev li[data-ton="warn"] .k{color:var(--amber)}
+.ls-ev li[data-ton="fehler"] .k{color:var(--red)}
+.ls-ev .s{grid-column:1/-1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ls-ev li.neu{animation:ls-rein .6s ease-out}
+
+/* Schlüsselmoment */
+.ls>.ls-moment{--ls-c:var(--cyan);position:absolute;left:50%;top:150px;z-index:6;transform:translateX(-50%);
+  min-width:min(420px,92vw);max-width:min(620px,94vw);padding:10px 16px 12px;
+  background:var(--panel-solid,var(--panel));border:1px solid var(--ls-c);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--ls-c) 25%,transparent),0 18px 40px -18px rgba(0,0,0,.9);
+  animation:ls-auf .35s ease-out}
+.ls>.ls-moment[data-ton="gut"]{--ls-c:var(--neon)}
+.ls>.ls-moment[data-ton="warn"]{--ls-c:var(--amber)}
+.ls>.ls-moment[data-ton="fehler"]{--ls-c:var(--red)}
+.ls-moment .mk{font:700 10px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ls-c)}
+.ls-moment .mt{font:800 21px/1.15 var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--text);
+  margin:6px 0 4px;overflow-wrap:anywhere}
+.ls-moment .ms{font:11px/1.3 var(--mono);color:var(--text-dim)}
+
+/* Terminalzeile */
+.ls-terminal{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:10px;padding:7px 10px;
+  background:var(--sunken-2,var(--sunken));border:1px solid var(--border);font-size:11px}
+.ls-terminal .sysdiag{margin:0;gap:4px 10px}
+.ls-terminal .sysdiag .sd{padding:0;border:0;background:none}
+.ls-prompt{color:var(--neon)}
+/* Der Prompt ist Zierde, kein Text — im CSS, damit er nicht im Uebersetzungskatalog landet. */
+.ls-prompt::before{content:"nightcrawler@leitstand:~$"}
+.ls-cursor{color:var(--neon);animation:ls-blink 1.1s steps(2,end) infinite}
+
+@keyframes ls-blink{50%{opacity:0}}
+@keyframes ls-rein{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
+@keyframes ls-auf{from{opacity:0;transform:translate(-50%,-8px) scale(.97)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes ls-blitz{0%{box-shadow:0 0 0 2px var(--ls-c)}100%{box-shadow:0 0 0 14px transparent}}
+.ls.ruhig *{animation:none!important}
+@media (prefers-reduced-motion:reduce){
+  .ls-strom{display:none}
+  .ls *{animation:none!important;transition:none!important}
+}
+html[data-theme="kontrast"] .ls-strom{display:none}
+html[data-theme="kontrast"] .ls-tafel{border-width:2px}
+
+@media (max-width:1500px){
+  .ls-raster{grid-template-columns:repeat(8,minmax(0,1fr))}
+  .ls-lagebild,.ls-w6,.ls-w12{grid-column:span 8}
+  .ls-lagebild{grid-row:auto}
+  .ls-tafel,.ls-strom-liste{grid-column:span 4}
+  .ls-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+@media (max-width:1100px){
+  .ls-kopf{grid-template-columns:minmax(0,1fr)}
+  .ls-rechts{flex-direction:row;align-items:center;flex-wrap:wrap}
+  .ls-kette{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+@media (max-width:700px){
+  .ls-raster{grid-template-columns:minmax(0,1fr)}
+  .ls-raster>.ls-feld{grid-column:1/-1;grid-row:auto}
+  .ls-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ls-kette{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ls-paar{grid-template-columns:minmax(0,1fr)}
+}
+@media (pointer:coarse){.ls-tafel{min-height:220px} #ls_ruhig{min-height:44px;min-width:44px}}
+
+/* v5.10-W207: LEITSTAND als Thema — Neonblau und Violett auf Nachtblau, wie
+   der Betreiber es im Video gezeigt hat. Jede Text- und Signalfarbe >= AA
+   (4,5:1) auf dem Panel, im Vertrag nachgerechnet; Rot bleibt Rot. */
+html[data-theme="leitstand"]{
+  color-scheme: dark;
+
+  --bg:            #04060F;
+  --bg2:           #060A18;
+  --panel:         rgba(8,13,30,.84);
+  --panel-solid:   #080D1E;
+  --sunken:        #060A17;
+  --sunken-2:      #050813;
+  --sunken-3:      #04060F;
+  --grid-line:     rgba(92,214,255,.06);
+
+  --neon:          #5CD6FF;   /* Leuchtblau — Primaerakzent */
+  --neon-dim:      #4BA3D9;
+  --brass-deep:    #22396B;
+  --cyan:          #8EE3FF;   /* Information */
+  --magenta:       #C8A2FF;   /* Violett — Zweitakzent */
+  --amber:         #FFC25A;   /* Warnung */
+  --red:           #FF7A86;   /* Fehler */
+  --ok:            #7DF2C4;
+
+  --text:          #DCE8FF;
+  --text-dim:      #A3B6DD;
+  --text-faint:    #8296C2;
+
+  --border:        rgba(92,214,255,.20);
+  --border-bright: rgba(92,214,255,.50);
+
+  --glow:          0 0 10px rgba(92,214,255,.30);
+  --glow-cyan:     0 0 10px rgba(142,227,255,.26);
+  --glow-mag:      0 0 10px rgba(200,162,255,.26);
+  --glow-soft:     0 0 6px rgba(92,214,255,.36);
+  --shadow-card:   0 0 0 1px rgba(92,214,255,.08) inset,
+                   0 12px 32px -20px rgba(0,0,0,.95);
+  --bezel:         linear-gradient(90deg,
+                     transparent, rgba(92,214,255,.42) 18%,
+                     rgba(200,162,255,.72) 50%,
+                     rgba(92,214,255,.42) 82%, transparent);
+}
+html[data-theme="leitstand"] body{
+  background:radial-gradient(ellipse 120% 80% at 50% 0%, #0B1433 0%, var(--bg) 70%)}
+html[data-theme="leitstand"] .ls-tafel,
+html[data-theme="leitstand"] .ls-kpi{box-shadow:inset 0 0 24px -14px var(--ls-c,var(--neon))}
+html[data-theme="leitstand"] .ls-wert,
+html[data-theme="leitstand"] .ls-kpi .v,
+html[data-theme="leitstand"] .ls-titel{text-shadow:0 0 8px color-mix(in srgb,currentColor 55%,transparent)}
+html[data-theme="leitstand"] :focus-visible{outline:2px solid var(--neon);outline-offset:2px}
+
+</style>
 </head>
 <body>
 <!-- B128-A11y: Sprunglink. Ohne ihn muss sich ein Screenreader-Nutzer
@@ -2556,9 +2797,9 @@ if(typeof window.T!=='function') window.T=function(s){return s;};
 /* v4.2-W137: drei Themen im Kreis — Messing, Blaupause, Kontrast. Ohne
    gespeicherte Wahl entscheidet das System: erhoehter Kontrast schlaegt
    hell/dunkel, weil er eine Beduerfnis-Angabe ist und keine Geschmacksfrage. */
-var NC_THEMEN=["messing","blaupause","kontrast","phosphor"];
-var NC_THEMA_NAME={"messing":"Messing","blaupause":"Blaupause","kontrast":"Kontrast","phosphor":"Phosphor"};
-var NC_THEMA_ZEICHEN={"messing":"◐","blaupause":"◑","kontrast":"◒","phosphor":"◓"};
+var NC_THEMEN=["messing","blaupause","kontrast","phosphor","leitstand"];
+var NC_THEMA_NAME={"messing":"Messing","blaupause":"Blaupause","kontrast":"Kontrast","phosphor":"Phosphor","leitstand":"Leitstand"};
+var NC_THEMA_ZEICHEN={"messing":"◐","blaupause":"◑","kontrast":"◒","phosphor":"◓","leitstand":"◈"};
 (function(){try{var t=localStorage.getItem("nc-theme");if(NC_THEMEN.indexOf(t)<0){t=matchMedia("(prefers-contrast: more)").matches?"kontrast":(matchMedia("(prefers-color-scheme: light)").matches?"blaupause":"messing");}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
 function ncNaechstesThema(cur){
   var i=NC_THEMEN.indexOf(cur); return NC_THEMEN[(i+1)%NC_THEMEN.length];
@@ -2730,148 +2971,208 @@ document.addEventListener("DOMContentLoaded",function(){
        fokussierbar, ohne es in die Tab-Reihenfolge aufzunehmen. -->
   <main id="hauptinhalt" tabindex="-1">
   <div class="view active" id="view-overview">
-    <div class="grid mb" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px">
-      <div class="metric"><span class="v" id="ov_live" style="color:var(--red)">–</span><span class="l">Live jetzt</span></div>
-      <div class="metric"><span class="v" id="ov_track" style="color:var(--cyan)">–</span><span class="l">Getrackt</span></div>
-      <div class="metric"><span class="v" id="ov_rec" style="color:var(--neon)">–</span><span class="l">Aufnahmen</span></div>
-      <div class="metric"><span class="v" id="ov_chk" style="color:var(--amber)">–</span><span class="l">Checks</span></div>
-      <div class="metric"><span class="v" id="ov_usr" style="color:var(--magenta)">–</span><span class="l">Creator</span></div>
-      <div class="metric"><span class="v" id="ov_agents" style="color:var(--neon)">–</span><span class="l">Wächter aktiv</span></div>
-      <div class="metric"><span class="v" id="ov_health">–</span><span class="l">System-Health</span></div>
-    </div>
-
-    <!-- v4.0-W89: kompakte System-Diagnose aus /healthz (W88-Felder sichtbar). -->
-    <div class="sysdiag" id="ov_sysdiag" aria-label="System-Diagnose">
-      <span class="sd"><span class="sd-l">Uptime</span><span class="sd-v" id="sd_up">–</span></span>
-      <span class="sd"><span class="sd-l">Prozesse</span><span class="sd-v" id="sd_proc">–</span></span>
-      <span class="sd"><span class="sd-l">Loop-Stalls</span><span class="sd-v" id="sd_stall">–</span></span>
-      <span class="sd"><span class="sd-l">Zombies</span><span class="sd-v" id="sd_zomb">–</span></span>
-      <span class="sd"><span class="sd-l">DB</span><span class="sd-v" id="sd_db">–</span></span>
-    </div>
-
-    <!-- v4.0-W115: Software-Stand — bewusst die ERSTE Karte der Uebersicht.
-         Ein veralteter Stand ist kein Randthema: er entscheidet, ob ein
-         gemeldeter Fehler ueberhaupt noch existiert. Der Ablauf hier ist
-         vierstufig und jederzeit abbrechbar — pruefen, trocken rechnen,
-         einspielen, neu starten. Geschrieben wird erst nach Rueckfrage. -->
-    <div class="panel mb" id="pnl_ov_update">
-      <div class="head"><h3>◆ SOFTWARE-STAND</h3>
-        <span class="tag" id="up_tag">wird geprüft …</span>
-        <div class="spacer"></div>
-        <button class="btn sm" onclick="updCheck(true)" aria-label="Auf Aktualisierungen prüfen"
-                title="Auf Aktualisierungen prüfen">↻</button></div>
-      <div class="body">
-        <div class="sysdiag" id="up_diag" aria-label="Versionsstand">
-          <span class="sd"><span class="sd-l">Version</span><span class="sd-v" id="up_ver">–</span></span>
-          <span class="sd"><span class="sd-l">Hier</span><span class="sd-v mono" id="up_local">–</span></span>
-          <span class="sd"><span class="sd-l">Im Repo</span><span class="sd-v mono" id="up_remote">–</span></span>
-          <span class="sd"><span class="sd-l">Stand vom</span><span class="sd-v" id="up_date">–</span></span>
+    <!-- v5.10-W207: der LEITSTAND. Der Betreiber zeigte ein Video eines dichten
+         Leitstands und schrieb: „So habe ich mir die Übersicht vorgestellt …
+         Bedenke, dass alle anderen Tabs integriert werden müssen." Jeder der
+         neun Tabs steht jetzt als eigene Tafel da (ls_t_<tab>) und führt per
+         Klick hinein. WAS eine Tafel zeigt und welche Lage sie hat, entscheidet
+         nc/leitstand.py (GET /api/leitstand) — das JS zeichnet nur.
+         Die Bewegung hinter den Tafeln (ls_strom) trägt Bedeutung: die
+         Lichtströme laufen an der Lieferkette entlang und werden mit der Last
+         dichter, die Drohnen sind die Wächter aus brain/agents.py und fliegen
+         zu der Tafel, an der sie arbeiten. „Ruhig" schaltet die Bewegung ab;
+         bei reduzierter Bewegung und im Kontrast-Thema steht sie von selbst. -->
+    <div class="ls" id="ls">
+      <canvas class="ls-strom" id="ls_strom" aria-hidden="true"></canvas>
+      <div class="ls-kopf">
+        <div class="ls-marke">
+          <span class="ls-titel">NIGHTCRAWLER · LEITSTAND</span>
+          <span class="ls-unter mono" id="ls_unter">verbinde …</span>
         </div>
-        <div id="up_msg" class="faint" style="font-size:var(--fs-sm);margin-bottom:10px">
-          Verbindung zum Repo wird geprüft …</div>
-        <div class="bar cyan" id="up_bar" hidden role="progressbar" aria-valuemin="0"
-             aria-valuemax="100" aria-valuenow="0" aria-label="Fortschritt der Aktualisierung"><i style="width:0"></i></div>
-        <div id="up_detail"></div>
-        <div class="btnrow mt">
-          <button class="btn cyan" id="up_dry" onclick="updStart(true)">Trockenlauf</button>
-          <button class="btn" id="up_go" onclick="updApply()">Aktualisierung einspielen</button>
-          <button class="btn danger" id="up_rb" onclick="updRollback()" hidden>Zurückrollen</button>
-          <button class="btn" id="up_rs" onclick="updRestart()" hidden>Dienst neu starten</button>
+        <div class="ls-kpis" id="ls_kpis">
+        <div class="metric ls-kpi"><span class="l">Live jetzt</span><span class="v" id="ov_live" style="color:var(--red)">–</span><svg class="ls-spark" data-spark="live" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="metric ls-kpi"><span class="l">Getrackt</span><span class="v" id="ov_track" style="color:var(--cyan)">–</span><svg class="ls-spark" data-spark="track" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="metric ls-kpi"><span class="l">Aufnahmen</span><span class="v" id="ov_rec" style="color:var(--neon)">–</span><svg class="ls-spark" data-spark="rec" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="metric ls-kpi"><span class="l">Checks</span><span class="v" id="ov_chk" style="color:var(--amber)">–</span><svg class="ls-spark" data-spark="chk" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="metric ls-kpi"><span class="l">Creator</span><span class="v" id="ov_usr" style="color:var(--magenta)">–</span><svg class="ls-spark" data-spark="usr" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="metric ls-kpi"><span class="l">Wächter aktiv</span><span class="v" id="ov_agents" style="color:var(--neon)">–</span><svg class="ls-spark" data-spark="agents" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="metric ls-kpi"><span class="l">System-Health</span><span class="v" id="ov_health">–</span><svg class="ls-spark" data-spark="health" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        </div>
+        <div class="ls-rechts">
+          <span class="ls-live" id="ls_live" data-an="0"><i></i>LIVE</span>
+          <span class="ls-uhr mono" id="ls_uhr">--:--:--</span>
+          <span class="ls-stand mono" id="ls_stand" title="Software-Stand — Einzelheiten unten">Stand …</span>
+          <button class="btn sm" id="ls_ruhig" type="button" aria-pressed="false"
+                  onclick="ncLeitstand.ruhigUmschalten()">Ruhig</button>
+        </div>
+      </div>
+      <ol class="ls-kette" id="ls_kette" aria-label="Lieferkette einer Sendung"></ol>
+      <div class="ls-moment" id="ls_moment" role="status" aria-live="polite" hidden></div>
+      <div class="ls-raster" id="ls_raster">
+      <!-- v4.2-W112: das Lagebild statt der 3D-Kommandozentrale. Die zeigte die
+           Kennzahlen der Kacheln oben ein zweites Mal; hier steht, was gerade
+           passiert. Die Zuordnung der Waechter entscheidet nc/lagebild.py. -->
+      <div class="panel ls-feld ls-lagebild" id="pnl_ov_cc">
+        <div class="head"><h3>◆ NIGHTCRAWLER · LAGEBILD</h3>
+          <span class="tag" id="ov_cc_tag">…</span>
           <div class="spacer"></div>
-          <a class="btn sm" id="up_repo" href="https://github.com/itsamemedev/Telegram-Stream-Info-Bot"
-             target="_blank" rel="noopener">Repo ansehen</a>
-          <a class="btn sm" id="up_zip" href="#" download>Als ZIP laden</a>
-        </div>
-      </div>
-    </div>
-
-    <!-- v4.2-W112: das Lagebild statt der 3D-Kommandozentrale. Die zeigte die
-         Kennzahlen der Kacheln oben ein zweites Mal; hier steht, was gerade
-         passiert. Die Zuordnung der Waechter entscheidet nc/lagebild.py. -->
-    <div class="panel mb" id="pnl_ov_cc">
-      <div class="head"><h3>◆ NIGHTCRAWLER · LAGEBILD</h3>
-        <span class="tag" id="ov_cc_tag">…</span>
-        <div class="spacer"></div>
-        <button class="btn sm" onclick="loadOverview()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body" style="padding:0">
-        <!-- v4.2-W116: Status und Wächter im DOM, nicht im Bild — im Bild
-             überlagerten sie die Namen. Die Tafel zählt in Echtzeit. -->
-        <div class="lage-kopf" id="ov_lage_kopf" aria-live="polite"></div>
-        <!-- v5.1-W186: die Teile seit v5.0 — Lage und Grund aus nc/lagebild.py -->
-        <div class="lage-dienste" id="ov_lage_dienste" aria-label="Betriebsteile"></div>
-        <div class="lage-grid">
-          <div class="nc-cc-wrap" style="position:relative;overflow:hidden">
-            <canvas id="ov_cc" role="img" style="display:block;width:100%" aria-label="Lagebild"></canvas>
-          </div>
-          <div class="lage-tafel" id="ov_lage_tafel" aria-label="Wächter"></div>
-        </div>
-        <div class="lage-legende" aria-hidden="true">
-          <span><i style="background:var(--red)"></i>live</span>
-          <span><i class="ring" style="border-color:var(--neon)"></i>Aufnahme</span>
-          <span><i class="ring" style="border-color:var(--cyan)"></i>Restream gesund</span>
-          <span><i class="ring" style="border-color:var(--amber)"></i>langsam</span>
-          <span><i class="ring" style="border-color:var(--red)"></i>gestört</span>
-          <span><i class="ring" style="border-color:var(--cyan)"></i>Wächter: Ring = Zeit bis zum nächsten Lauf</span>
-          <span><i style="background:var(--neon)"></i>im Einsatz</span>
-          <span><i style="background:var(--amber)"></i>überfällig</span>
-        </div>
-        <div id="ov_lage_text" class="sr-only" aria-live="polite"></div>
-      </div>
-    </div>
-
-    <!-- v4.0-W90: Stream-Archiv — Bedeutungs-Suche über transkribierte Aufnahmen. -->
-    <div class="panel mb" id="pnl_ov_archive">
-      <div class="head"><h3>◆ STREAM-ARCHIV · FRAG DEIN ARCHIV</h3>
-        <span class="tag" id="arch_tag">…</span></div>
-      <div class="body">
-        <div class="arch-search">
-          <input id="arch_q" type="search" placeholder="Wonach suchst du? z. B. „als es um Politik ging"…"
-                 aria-label="Archiv durchsuchen" onkeydown="if(event.key==='Enter')archSearch()">
-          <button class="btn" onclick="archSearch()">Suchen</button>
-        </div>
-        <div id="arch_results" class="arch-results"><div class="empty">Noch keine Suche.</div></div>
-      </div>
-    </div>
-
-    <div class="grid mb" id="pnl_ov_stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
-      <div class="panel">
-        <div class="head"><h3>AUFNAHMEN · 14 TAGE</h3><span class="tag" id="rb_tag">…</span></div>
+          <button class="btn sm" onclick="loadOverview()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
         <div class="body" style="padding:0">
-          <div style="position:relative;overflow:hidden;border-radius:var(--r-sm)">
-            <canvas id="rb_canvas" style="display:block;width:100%" aria-label="3D-Balkendiagramm: Aufnahmen pro Tag"></canvas>
+          <!-- v4.2-W116: Status und Wächter im DOM, nicht im Bild — im Bild
+               überlagerten sie die Namen. Die Tafel zählt in Echtzeit. -->
+          <div class="lage-kopf" id="ov_lage_kopf" aria-live="polite"></div>
+          <!-- v5.1-W186: die Teile seit v5.0 — Lage und Grund aus nc/lagebild.py -->
+          <div class="lage-dienste" id="ov_lage_dienste" aria-label="Betriebsteile"></div>
+          <div class="lage-grid">
+            <div class="nc-cc-wrap" style="position:relative;overflow:hidden">
+              <canvas id="ov_cc" role="img" style="display:block;width:100%" aria-label="Lagebild"></canvas>
+            </div>
+            <div class="lage-tafel" id="ov_lage_tafel" aria-label="Wächter"></div>
           </div>
+          <div class="lage-legende" aria-hidden="true">
+            <span><i style="background:var(--red)"></i>live</span>
+            <span><i class="ring" style="border-color:var(--neon)"></i>Aufnahme</span>
+            <span><i class="ring" style="border-color:var(--cyan)"></i>Restream gesund</span>
+            <span><i class="ring" style="border-color:var(--amber)"></i>langsam</span>
+            <span><i class="ring" style="border-color:var(--red)"></i>gestört</span>
+            <span><i class="ring" style="border-color:var(--cyan)"></i>Wächter: Ring = Zeit bis zum nächsten Lauf</span>
+            <span><i style="background:var(--neon)"></i>im Einsatz</span>
+            <span><i style="background:var(--amber)"></i>überfällig</span>
+          </div>
+          <div id="ov_lage_text" class="sr-only" aria-live="polite"></div>
         </div>
       </div>
-      <div class="panel">
-        <div class="head"><h3>TREFFERQUOTE</h3><span class="tag" id="cg_tag">…</span></div>
-        <div class="body" style="padding:0">
-          <div style="position:relative;overflow:hidden;border-radius:var(--r-sm)">
-            <canvas id="cg_canvas" style="display:block;width:100%" aria-label="3D-Ring-Anzeige: Trefferquote"></canvas>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <div class="panel" id="pnl_ov_nav">
-      <div class="head"><h3>3D-ANSICHTEN · SCHNELLZUGRIFF</h3></div>
-      <div class="body">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
-          <div class="ov-navtile" role="button" tabindex="0" onclick="gotoView('brain')" onkeydown="if(event.key==='Enter')gotoView('brain')"
-               style="cursor:pointer;padding:16px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--sunken)">
-            <div style="font-family:var(--display,monospace);font-size:var(--fs-lg);color:var(--neon)">▚ AZRAEL BRAIN</div>
-            <div class="faint" style="font-size:var(--fs-sm);margin-top:4px">3D-Wissensnetz · drehbar</div>
-          </div>
-          <div class="ov-navtile" role="button" tabindex="0" onclick="gotoView('insights')" onkeydown="if(event.key==='Enter')gotoView('insights')"
-               style="cursor:pointer;padding:16px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--sunken)">
-            <div style="font-family:var(--display,monospace);font-size:var(--fs-lg);color:var(--cyan)">◍ ABWEHR-GLOBUS</div>
-            <div class="faint" style="font-size:var(--fs-sm);margin-top:4px">3D-Angriffskarte · Insights</div>
-          </div>
-          <div class="ov-navtile" role="button" tabindex="0" onclick="gotoView('betrieb')" onkeydown="if(event.key==='Enter')gotoView('betrieb')"
-               style="cursor:pointer;padding:16px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--sunken)">
-            <div style="font-family:var(--display,monospace);font-size:var(--fs-lg);color:var(--amber)">◆ BETRIEB</div>
-            <div class="faint" style="font-size:var(--fs-sm);margin-top:4px">Ressourcen · Wartung · News</div>
+      <div class="ls-tafel ls-feld" id="ls_t_restream" data-tab="restream" data-lage="unbekannt" role="button" tabindex="0">
+        <div class="ls-t-kopf"><span class="ls-nr">01</span><span class="ls-name" data-tabname="restream"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_restream">–</span></div>
+        <div class="ls-t-vis" id="ls_v_restream" aria-hidden="true"></div>
+        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_restream">wird geladen …</span></div>
+      </div>
+      <div class="ls-tafel ls-feld" id="ls_t_wall" data-tab="wall" data-lage="unbekannt" role="button" tabindex="0">
+        <div class="ls-t-kopf"><span class="ls-nr">02</span><span class="ls-name" data-tabname="wall"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_wall">–</span></div>
+        <div class="ls-t-vis" id="ls_v_wall" aria-hidden="true"></div>
+        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_wall">wird geladen …</span></div>
+      </div>
+      <div class="ls-tafel ls-feld" id="ls_t_discord" data-tab="discord" data-lage="unbekannt" role="button" tabindex="0">
+        <div class="ls-t-kopf"><span class="ls-nr">03</span><span class="ls-name" data-tabname="discord"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_discord">–</span></div>
+        <div class="ls-t-vis" id="ls_v_discord" aria-hidden="true"></div>
+        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_discord">wird geladen …</span></div>
+      </div>
+      <div class="ls-tafel ls-feld" id="ls_t_system" data-tab="system" data-lage="unbekannt" role="button" tabindex="0">
+        <div class="ls-t-kopf"><span class="ls-nr">04</span><span class="ls-name" data-tabname="system"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_system">–</span></div>
+        <div class="ls-t-vis" id="ls_v_system" aria-hidden="true"></div>
+        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_system">wird geladen …</span></div>
+      </div>
+      <div class="ls-tafel ls-feld" id="ls_t_brain" data-tab="brain" data-lage="unbekannt" role="button" tabindex="0">
+        <div class="ls-t-kopf"><span class="ls-nr">05</span><span class="ls-name" data-tabname="brain"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_brain">–</span></div>
+        <div class="ls-t-vis" id="ls_v_brain" aria-hidden="true"></div>
+        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_brain">wird geladen …</span></div>
+      </div>
+      <div class="ls-tafel ls-feld" id="ls_t_betrieb" data-tab="betrieb" data-lage="unbekannt" role="button" tabindex="0">
+        <div class="ls-t-kopf"><span class="ls-nr">06</span><span class="ls-name" data-tabname="betrieb"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_betrieb">–</span></div>
+        <div class="ls-t-vis" id="ls_v_betrieb" aria-hidden="true"></div>
+        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_betrieb">wird geladen …</span></div>
+      </div>
+      <div class="ls-tafel ls-feld" id="ls_t_insights" data-tab="insights" data-lage="unbekannt" role="button" tabindex="0">
+        <div class="ls-t-kopf"><span class="ls-nr">07</span><span class="ls-name" data-tabname="insights"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_insights">–</span></div>
+        <div class="ls-t-vis" id="ls_v_insights" aria-hidden="true"></div>
+        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_insights">wird geladen …</span></div>
+      </div>
+      <div class="ls-tafel ls-feld" id="ls_t_einstellungen" data-tab="einstellungen" data-lage="unbekannt" role="button" tabindex="0">
+        <div class="ls-t-kopf"><span class="ls-nr">08</span><span class="ls-name" data-tabname="einstellungen"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_einstellungen">–</span></div>
+        <div class="ls-t-vis" id="ls_v_einstellungen" aria-hidden="true"></div>
+        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_einstellungen">wird geladen …</span></div>
+      </div>
+      <div class="ls-tafel ls-feld" id="ls_t_mcp" data-tab="mcp" data-lage="unbekannt" role="button" tabindex="0">
+        <div class="ls-t-kopf"><span class="ls-nr">09</span><span class="ls-name" data-tabname="mcp"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_mcp">–</span></div>
+        <div class="ls-t-vis" id="ls_v_mcp" aria-hidden="true"></div>
+        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_mcp">wird geladen …</span></div>
+      </div>
+      <div class="panel ls-feld ls-strom-liste" id="pnl_ls_ereignisse">
+        <div class="head"><h3>◆ EREIGNISSTROM</h3><span class="tag" id="ls_ev_tag">live</span></div>
+        <div class="body"><ol class="ls-ev" id="ls_ev" aria-live="polite"><li class="faint">Noch keine Ereignisse.</li></ol></div>
+      </div>
+      <div class="ls-feld ls-w6 ls-paar" id="pnl_ov_stats">
+        <div class="panel">
+          <div class="head"><h3>AUFNAHMEN · 14 TAGE</h3><span class="tag" id="rb_tag">…</span></div>
+          <div class="body" style="padding:0">
+            <div style="position:relative;overflow:hidden;border-radius:var(--r-sm)">
+              <canvas id="rb_canvas" style="display:block;width:100%" aria-label="3D-Balkendiagramm: Aufnahmen pro Tag"></canvas>
+            </div>
           </div>
         </div>
+        <div class="panel">
+          <div class="head"><h3>TREFFERQUOTE</h3><span class="tag" id="cg_tag">…</span></div>
+          <div class="body" style="padding:0">
+            <div style="position:relative;overflow:hidden;border-radius:var(--r-sm)">
+              <canvas id="cg_canvas" style="display:block;width:100%" aria-label="3D-Ring-Anzeige: Trefferquote"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- v4.0-W115: Software-Stand — bewusst die ERSTE Karte der Uebersicht.
+           Ein veralteter Stand ist kein Randthema: er entscheidet, ob ein
+           gemeldeter Fehler ueberhaupt noch existiert. Der Ablauf hier ist
+           vierstufig und jederzeit abbrechbar — pruefen, trocken rechnen,
+           einspielen, neu starten. Geschrieben wird erst nach Rueckfrage. -->
+      <div class="panel ls-feld ls-w6" id="pnl_ov_update">
+        <div class="head"><h3>◆ SOFTWARE-STAND</h3>
+          <span class="tag" id="up_tag">wird geprüft …</span>
+          <div class="spacer"></div>
+          <button class="btn sm" onclick="updCheck(true)" aria-label="Auf Aktualisierungen prüfen"
+                  title="Auf Aktualisierungen prüfen">↻</button></div>
+        <div class="body">
+          <div class="sysdiag" id="up_diag" aria-label="Versionsstand">
+            <span class="sd"><span class="sd-l">Version</span><span class="sd-v" id="up_ver">–</span></span>
+            <span class="sd"><span class="sd-l">Hier</span><span class="sd-v mono" id="up_local">–</span></span>
+            <span class="sd"><span class="sd-l">Im Repo</span><span class="sd-v mono" id="up_remote">–</span></span>
+            <span class="sd"><span class="sd-l">Stand vom</span><span class="sd-v" id="up_date">–</span></span>
+          </div>
+          <div id="up_msg" class="faint" style="font-size:var(--fs-sm);margin-bottom:10px">
+            Verbindung zum Repo wird geprüft …</div>
+          <div class="bar cyan" id="up_bar" hidden role="progressbar" aria-valuemin="0"
+               aria-valuemax="100" aria-valuenow="0" aria-label="Fortschritt der Aktualisierung"><i style="width:0"></i></div>
+          <div id="up_detail"></div>
+          <div class="btnrow mt">
+            <button class="btn cyan" id="up_dry" onclick="updStart(true)">Trockenlauf</button>
+            <button class="btn" id="up_go" onclick="updApply()">Aktualisierung einspielen</button>
+            <button class="btn danger" id="up_rb" onclick="updRollback()" hidden>Zurückrollen</button>
+            <button class="btn" id="up_rs" onclick="updRestart()" hidden>Dienst neu starten</button>
+            <div class="spacer"></div>
+            <a class="btn sm" id="up_repo" href="https://github.com/itsamemedev/Telegram-Stream-Info-Bot"
+               target="_blank" rel="noopener">Repo ansehen</a>
+            <a class="btn sm" id="up_zip" href="#" download>Als ZIP laden</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- v4.0-W90: Stream-Archiv — Bedeutungs-Suche über transkribierte Aufnahmen. -->
+      <div class="panel ls-feld ls-w12" id="pnl_ov_archive">
+        <div class="head"><h3>◆ STREAM-ARCHIV · FRAG DEIN ARCHIV</h3>
+          <span class="tag" id="arch_tag">…</span></div>
+        <div class="body">
+          <div class="arch-search">
+            <input id="arch_q" type="search" placeholder="Wonach suchst du? z. B. „als es um Politik ging"…"
+                   aria-label="Archiv durchsuchen" onkeydown="if(event.key==='Enter')archSearch()">
+            <button class="btn" onclick="archSearch()">Suchen</button>
+          </div>
+          <div id="arch_results" class="arch-results"><div class="empty">Noch keine Suche.</div></div>
+        </div>
+      </div>
+
+      </div>
+      <!-- v4.0-W89: kompakte System-Diagnose aus /healthz — als Terminalzeile. -->
+      <div class="ls-terminal mono" aria-label="System-Diagnose">
+        <span class="ls-prompt" aria-hidden="true"></span>
+        <div class="sysdiag" id="ov_sysdiag" aria-label="System-Diagnose">
+          <span class="sd"><span class="sd-l">Uptime</span><span class="sd-v" id="sd_up">–</span></span>
+          <span class="sd"><span class="sd-l">Prozesse</span><span class="sd-v" id="sd_proc">–</span></span>
+          <span class="sd"><span class="sd-l">Loop-Stalls</span><span class="sd-v" id="sd_stall">–</span></span>
+          <span class="sd"><span class="sd-l">Zombies</span><span class="sd-v" id="sd_zomb">–</span></span>
+          <span class="sd"><span class="sd-l">DB</span><span class="sd-v" id="sd_db">–</span></span>
+        </div>
+        <span class="ls-cursor" aria-hidden="true">▌</span>
       </div>
     </div>
   </div>
@@ -4158,6 +4459,8 @@ function sseStart(){
     }
     // F99: jedes Event landet im Benachrichtigungs-Center (Historie)
     _notifPush(m);
+    // v5.10-W207: und im Ereignisstrom des Leitstands (Ton/Moment vom Server)
+    if(window.ncLeitstand) ncLeitstand.ereignis(m);
     const interesting = sev==='error' || sev==='warning' || _PUSH_TOAST_KINDS.test(m.kind||'');
     if(!interesting) return;
     const msg=(m.title||m.kind)+(m.body?(' — '+m.body):'');
@@ -13778,11 +14081,513 @@ var ncCatchGauge=(function(){
   return {start:start};
 })();
 
+/* v5.10-W207: ncLeitstand — die Übersicht als Leitstand.
+   Liest /api/leitstand (eine Anfrage für alle neun Tab-Tafeln), zeichnet je
+   Tafel eine kleine Live-Ansicht, die Lieferkette, den Ereignisstrom und
+   Schlüsselmomente — und dahinter Lichtströme und die Wächter als Drohnen.
+   WAS gezeigt wird (Lage, Grund, welche Tafel eine Drohne anfliegt, ob ein
+   Ereignis ein Schlüsselmoment ist), entscheidet nc/leitstand.py. Hier wird
+   nur gezeichnet und bewegt. */
+var ncLeitstand=(function(){
+  'use strict';
+  var TAKT_MS=8000, BILD_MS=40, MAX_VERLAUF=40, MOMENT_MS=6500;
+  var daten=null, poll=null, uhr=null, runde=0, gestartet=false, geladenAb=Date.now();
+  var verlauf={}, chatVerlauf=[], evSchluessel={}, evZahl=0, momente=[], momentZeit=null;
+  var ruhig=false, reduce=false;
+  try{ ruhig=localStorage.getItem('nc_ls_ruhig')==='1'; }catch(e){ /* privater Modus: dann eben bewegt */ }
+  try{ reduce=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){}
+
+  function $id(i){ return document.getElementById(i); }
+  function zahl(v,f){ return (v==null||v==='')?(f==null?'–':f):v; }
+  function prozent(v){ return v==null?'–':(Math.round(v)+'%'); }
+
+  /* ── Texte ────────────────────────────────────────────────────────────
+     Die Gründe kommen als Schlüssel aus nc/leitstand.py; hier steht nur der
+     Satz dazu. Jeder Satz läuft durch T() — Englisch und Spanisch aus dem
+     Katalog. */
+  function tabName(tab){
+    var t=document.querySelector('.tabs .tab[data-view="'+tab+'"]'); if(!t) return tab;
+    var k=t.cloneNode(true), n=k.querySelector('.num'); if(n) n.remove();
+    return (k.textContent||tab).trim();
+  }
+  var DNAME={}, DGRUND={}, KETTE={}, WAHL={};
+  function texte(){
+    DNAME={encode:T('Encode-Schlange'),upload:T('Upload-Schlange'),discord_aufnahme:T('Discord-Aufnahme'),
+      overlay:T('Overlay-Browser'),tunnel:T('Tunnelwache'),kick_chat:T('Kick-Chat'),spendenziel:T('Spendenziel')};
+    DGRUND={nicht_geladen:T('nicht geladen'),rohdaten_unlesbar:T('Daten unlesbar'),leer:T('leer'),
+      abgeschaltet:T('abgeschaltet'),nicht_verbunden:T('nicht verbunden'),bereit:T('bereit'),
+      anderer_modus:T('Text-Overlay'),browser_tot:T('Browser tot — Overlay friert ein'),
+      einzelschuss:T('Einzelschuss je Bild (teuer)'),kein_proxy:T('direkt, kein Proxy'),
+      fehler:T('Egress gestört'),noch_nicht_geprueft:T('noch nicht geprüft'),ok:T('steht'),
+      nicht_konfiguriert:T('nicht eingerichtet'),verbunden:T('verbunden'),kein_ziel:T('kein Ziel gesetzt'),
+      erreicht:T('erreicht'),laeuft:T('läuft'),stau:T('Stau'),sendet:T('sendet'),fenster_zu:T('wartet aufs Sendefenster'),
+      fehlversuch:T('Fehlversuch')};
+    KETTE={erfassen:T('Erfassen'),live:T('Live'),aufnahme:T('Aufnahme'),kodieren:T('Kodieren'),
+      versand:T('Versand'),restream:T('Restream'),archiv:T('Archiv')};
+    WAHL={lokal:T('LOKAL'),free:'FREE',auto:'AUTO',claude:'CLAUDE'};
+  }
+
+  function satz(t){
+    var d=t.daten||{}, g=t.grund||'';
+    if(t.lage==='unbekannt') return T('Quelle nicht lesbar — Grund steht im Log');
+    switch(t.tab){
+      case 'restream':
+        if(g==='ruht') return T('Kein Restream aktiv — die Auto-Liste wartet auf ein Live');
+        if(g==='gestoert') return (d.gestoert||1)+T(' gestört — ein Ziel ohne Bild');
+        if(g==='langsam') return (d.langsam||1)+T(' langsam — unter Echtzeit');
+        return t.wert+T(' senden — alle gesund');
+      case 'wall':
+        if(g==='niemand_live') return T('Niemand live')+' · '+zahl(d.getrackt,0)+T(' getrackt');
+        return d.live+T(' live · ')+d.aufnahme+T(' in Aufnahme');
+      case 'discord':
+        if(g==='discord_getrennt') return T('Discord-Bot eingerichtet, aber nicht verbunden');
+        if(g==='discord_aus') return T('Kein Discord-Bot eingerichtet');
+        if(g==='chat_hype') return T('Chat zieht an: ')+zahl(d.chat_rate,0)+T(' Nachrichten/min');
+        return zahl(d.server,'Discord')+T(' verbunden');
+      case 'system':
+        var s={platte_voll:T('Platte fast voll — Aufnahmen brechen gleich ab'),
+               platte_knapp:T('Platte wird knapp'),ueberlast:T('Überlast — mehr Last als Kerne'),
+               last_hoch:T('Last hoch'),speicher_voll:T('Speicher voll'),speicher_knapp:T('Speicher knapp'),
+               swap_hoch:T('Swap hoch — die Platte bremst')}[g];
+        return s||T('Ruhig — Last, Speicher und Platte im grünen Bereich');
+      case 'brain':
+        var b={bruecke:T('Brain-Brücke gestört'),waechter_fehler:T('Ein Wächter meldet Fehler'),
+               waechter_ueberfaellig:T('Wächter überfällig — der Brain-Takt steht'),
+               lokal_aus:T('„Lokal" gewählt, aber kein lokaler Server'),
+               denkt:T('AZRAEL denkt'),patrouille:T('Wächter im Einsatz')}[g];
+        return (b||T('Wach'))+(d.plaetze?(' · '+(d.belegt?d.belegt:0)+'/'+d.plaetze+T(' Plätze')):'');
+      case 'betrieb':
+        if(g==='ruhig') return T('Alle Dienste ruhig');
+        var p=g.split(':');
+        return (DNAME[p[0]]||p[0])+': '+(DGRUND[p[1]]||p[1]||'');
+      case 'insights':
+        if(g==='quote_niedrig') return T('Trefferquote niedrig: ')+d.quote+'% '+T('von ')+d.versuche;
+        return T('Trefferquote ')+d.quote+'% · '+T('heute ')+d.heute+T(' Aufnahmen');
+      case 'einstellungen':
+        if(g==='neustart_noetig') return d.neustart+T(' Änderung(en) wirken erst nach dem Neustart');
+        return zahl((d.zahl||{}).datenbank,0)+T(' im Deck gesetzt · Rest aus .env');
+      case 'mcp':
+        if(g==='keine_server') return T('Keine MCP-Server eingetragen');
+        if(g==='webui_fehlt') return T('Server eingetragen, Web-Oberfläche zeigt sie nicht');
+        return d.aktiv+T(' von ')+d.anzahl+T(' Servern aktiv');
+    }
+    return g;
+  }
+
+  /* ── kleine SVG-Bausteine ──────────────────────────────────────────── */
+  function ring(cx,cy,r,anteil,lage,beschr,wert){
+    var u=2*Math.PI*r, f=Math.max(0,Math.min(1,anteil||0));
+    return '<g data-lage="'+lage+'"><circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="var(--border)" stroke-width="5"/>'
+      +'<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="var(--ls-c)" stroke-width="5" stroke-linecap="round"'
+      +' stroke-dasharray="'+(u*f).toFixed(1)+' '+u.toFixed(1)+'" transform="rotate(-90 '+cx+' '+cy+')"/>'
+      +'<text x="'+cx+'" y="'+(cy+4)+'" text-anchor="middle" class="ls-svg-wert">'+esc(wert)+'</text>'
+      +'<text x="'+cx+'" y="'+(cy+r+13)+'" text-anchor="middle" class="ls-svg-text">'+esc(beschr)+'</text></g>';
+  }
+  function pfad(werte,b,h,unten){
+    if(!werte.length) return '';
+    var max=Math.max.apply(null,werte.concat([1])), n=werte.length, p='';
+    werte.forEach(function(v,i){ var x=n>1?(i/(n-1))*b:b/2, y=h-2-(v/max)*(h-4);
+      p+=(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1); });
+    return unten?(p+'L'+b+' '+h+'L0 '+h+'Z'):p;
+  }
+
+  /* Verlauf je Restream-Spur (Tempo über die letzten Abrufe): ein Einbruch
+     ist als Delle zu sehen, bevor die Lage auf „langsam" springt. */
+  var spurVerlauf={};
+  function spurMerken(sp){ (sp||[]).forEach(function(s){ if(s.speed==null) return;
+    var a=spurVerlauf[s.name]=(spurVerlauf[s.name]||[]); a.push(Number(s.speed)||0); if(a.length>MAX_VERLAUF) a.shift(); }); }
+  function spurLinie(n){ var a=spurVerlauf[n]||[]; if(a.length<2) return '';
+    return '<svg viewBox="0 0 200 18" preserveAspectRatio="none" style="grid-column:1/-1;height:18px;color:var(--ls-c)"><path d="'
+      +pfad(a,200,18)+'" fill="none" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/></svg>'; }
+
+  /* ── je Tafel eine Ansicht ─────────────────────────────────────────── */
+  var VIS={
+    restream:function(d){
+      var sp=d.spuren||[];
+      if(!sp.length) return '<div class="ls-leer">'+esc(T('Kein Restream aktiv'))+'</div>';
+      return '<div class="ls-zeilen">'+sp.map(function(s){
+        var v=Number(s.speed)||0;
+        return '<div class="ls-zeile" data-lage="'+(s.lage==='gestoert'?'fehler':s.lage==='langsam'?'warn':'aktiv')+'">'
+          +'<b>@'+esc(s.name)+'</b><span>'+(s.speed!=null?v.toFixed(2)+'×':'–')+' · '+esc(zahl(s.bitrate,'–'))+' · '
+          +s.ziele+T(' Ziele')+'</span><span class="ls-balken"><i style="width:'+Math.round(Math.min(1,v)*100)+'%"></i></span>'
+          +spurLinie(s.name)+'</div>';
+      }).join('')+(d.weitere?'<div class="faint">+'+d.weitere+'</div>':'')+'</div>';
+    },
+    wall:function(d){
+      var n=d.namen||[];
+      if(!n.length) return '<div class="ls-leer">'+esc(T('Niemand live'))+' · '+esc(zahl(d.getrackt,0))+esc(T(' getrackt'))+'</div>';
+      var g=Math.max(1,Number(d.getrackt)||1);
+      var anteil='<svg viewBox="0 0 200 12" preserveAspectRatio="none" style="height:10px;margin-bottom:8px">'
+        +'<rect x="0" y="2" width="200" height="8" fill="var(--border)"/>'
+        +'<rect x="0" y="2" width="'+(200*Math.min(1,d.live/g)).toFixed(1)+'" height="8" fill="var(--cyan)"/>'
+        +'<rect x="0" y="2" width="'+(200*Math.min(1,d.aufnahme/g)).toFixed(1)+'" height="8" fill="var(--red)"/></svg>'
+        +'<div class="ls-svg-text" style="font-size:10px;margin:-4px 0 8px;color:var(--text-faint)">'+esc(d.live)+' / '+esc(g)
+        +esc(T(' live · rot = in Aufnahme'))+'</div>';
+      return anteil+'<div class="ls-chips">'+n.map(function(x){
+        return '<span class="ls-chip" data-lage="'+(x.restream==='gestoert'?'fehler':x.restream==='langsam'?'warn':x.aufnahme?'ok':'aktiv')+'"><i></i>@'
+          +esc(x.name)+(x.aufnahme?' <em>REC</em>':'')+'</span>';
+      }).join('')+(d.weitere?'<span class="ls-chip">+'+d.weitere+'</span>':'')+'</div>';
+    },
+    discord:function(d){
+      var b=200,h=58, w=chatVerlauf.slice(-MAX_VERLAUF);
+      var svg='<svg viewBox="0 0 '+b+' '+h+'" preserveAspectRatio="none" style="height:58px;color:var(--magenta)">'
+        +(w.length>1?'<path d="'+pfad(w,b,h,true)+'" fill="currentColor" opacity=".12"/><path d="'+pfad(w,b,h)+'" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/>'
+          :'<line x1="0" y1="'+(h-2)+'" x2="'+b+'" y2="'+(h-2)+'" stroke="var(--border)" stroke-dasharray="3 4"/>')+'</svg>';
+      return svg+'<div class="ls-zeilen" style="margin-top:6px">'
+        +'<div class="ls-zeile"><span>'+esc(T('Mitglieder'))+'</span><b>'+esc(zahl(d.mitglieder))+'</b></div>'
+        +'<div class="ls-zeile"><span>'+esc(T('Bekannt · Stammgäste'))+'</span><b>'+esc(zahl(d.bekannt))+' · '+esc(zahl(d.stammgaeste))+'</b></div>'
+        +'<div class="ls-zeile"><span>'+esc(T('Chat je Minute'))+'</span><b>'+esc(zahl(d.chat_rate,0))+' / Ø '+esc(zahl(d.chat_basis,0))+'</b></div></div>';
+    },
+    system:function(d){
+      /* Die Ringfarben entscheidet nc/leitstand.py (stufen) — hier keine Grenzwerte. */
+      var st=d.stufen||{};
+      var svg='<svg viewBox="0 0 210 78" style="height:86px">'
+        +ring(35,32,22,(d.cpu||0)/100,st.cpu,'CPU',prozent(d.cpu))
+        +ring(105,32,22,(d.ram||0)/100,st.ram,'RAM',prozent(d.ram))
+        +ring(175,32,22,(d.platte||0)/100,st.platte,T('PLATTE'),prozent(d.platte))+'</svg>';
+      var f=(d.fresser||[]).map(function(x){ return '<div class="ls-zeile"><span>'+esc(x.name)+'</span><b>'+esc(Math.round(x.cpu||0))+'% CPU</b></div>'; }).join('');
+      return svg+'<div class="ls-zeilen">'+(f||'<div class="faint">'+esc(T('Last'))+' '+esc(zahl(d.load))+' · '+esc(zahl(d.kerne))+T(' Kerne')+'</div>')+'</div>';
+    },
+    brain:function(d){
+      var ags=(daten&&daten.drohnen)||[], n=ags.length, cx=70, cy=58, r=44;
+      var g='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="var(--border)" stroke-dasharray="2 4"/>'
+        +'<circle cx="'+cx+'" cy="'+cy+'" r="9" fill="none" stroke="var(--magenta)" stroke-width="1.5"/>'
+        +'<text x="'+cx+'" y="'+(cy+3)+'" text-anchor="middle" class="ls-svg-text" style="fill:var(--magenta)">AZ</text>';
+      ags.forEach(function(a,i){
+        var w=(i/Math.max(1,n))*Math.PI*2-Math.PI/2, x=cx+Math.cos(w)*r, y=cy+Math.sin(w)*r;
+        var l=a.lage==='fehler'?'fehler':a.ueberfaellig?'warn':a.lage==='taetig'?'aktiv':a.lage==='aus'?'aus':'ok';
+        if(a.lage==='taetig') g+='<line x1="'+cx+'" y1="'+cy+'" x2="'+x.toFixed(1)+'" y2="'+y.toFixed(1)+'" stroke="var(--cyan)" stroke-width="1" opacity=".7"/>';
+        g+='<circle data-lage="'+l+'" cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(a.lage==='taetig'?4.5:3)+'" fill="var(--ls-c)"><title>'+esc(a.name)+'</title></circle>';
+      });
+      var z=d.zaehler||{}, sum=(z.lokal||0)+(z.free||0)+(z.claude||0)||1;
+      var balken=['lokal','free','claude'].map(function(k,i){
+        return '<rect x="150" y="'+(26+i*20)+'" width="'+(56*(z[k]||0)/sum).toFixed(1)+'" height="6" fill="'+['var(--neon)','var(--cyan)','var(--magenta)'][i]+'"/>'
+          +'<text x="150" y="'+(22+i*20)+'" class="ls-svg-text">'+k+' '+(z[k]||0)+'</text>';
+      }).join('');
+      return '<svg viewBox="0 0 210 118">'+g+'<text x="150" y="10" class="ls-svg-wert" style="font-size:11px">'+esc(WAHL[d.wahl]||String(d.wahl||'–').toUpperCase())+'</text>'+balken
+        +(d.wartend?'<text x="150" y="98" class="ls-svg-text" style="fill:var(--amber)">'+d.wartend+' '+esc(T('wartend'))+'</text>':'')+'</svg>';
+    },
+    betrieb:function(d){
+      return '<div class="ls-zeilen">'+(d.dienste||[]).map(function(x){
+        return '<div class="ls-zeile" data-lage="'+esc(x.lage)+'"><span style="display:flex;align-items:center;gap:6px"><i class="ls-pkt"></i>'
+          +esc(DNAME[x.name]||x.name)+'</span><b style="font-weight:500;color:var(--text-dim)">'+esc(DGRUND[x.grund]||x.grund||'')+'</b></div>';
+      }).join('')+'</div>';
+    },
+    insights:function(d){
+      var t=d.tage||[], max=Math.max.apply(null,t.concat([1])), b=136, h=74, w=b/Math.max(1,t.length);
+      var bars=t.map(function(v,i){ var hh=Math.max(1,(v/max)*(h-14));
+        return '<rect x="'+(i*w+1).toFixed(1)+'" y="'+(h-hh).toFixed(1)+'" width="'+Math.max(1,w-2).toFixed(1)+'" height="'+hh.toFixed(1)
+          +'" fill="'+(i===t.length-1?'var(--neon)':'var(--cyan)')+'" opacity="'+(i===t.length-1?1:.55)+'"/>'; }).join('');
+      return '<svg viewBox="0 0 210 100">'+bars+'<text x="0" y="92" class="ls-svg-text">'+esc(T('Aufnahmen · 14 Tage'))+'</text>'
+        +ring(178,38,24,(d.quote||0)/100,d.ring||'unbekannt',T('Treffer'),prozent(d.quote))+'</svg>';
+    },
+    einstellungen:function(d){
+      var z=d.zahl||{}, ges=(z.datenbank||0)+(z.env||0)+(z.vorgabe||0)||1;
+      var seg=[['datenbank','var(--neon)'],['env','var(--cyan)'],['vorgabe','var(--border-bright,var(--border))']], x=0;
+      var r=seg.map(function(s){ var w=200*(z[s[0]]||0)/ges, o='<rect x="'+x.toFixed(1)+'" y="4" width="'+w.toFixed(1)+'" height="10" fill="'+s[1]+'"/>'; x+=w; return o; }).join('');
+      return '<svg viewBox="0 0 200 18" preserveAspectRatio="none" style="height:16px">'+r+'</svg>'
+        +'<div class="ls-zeilen" style="margin-top:8px">'
+        +'<div class="ls-zeile"><span>'+esc(T('Im Deck gesetzt'))+'</span><b>'+esc(zahl(z.datenbank,0))+'</b></div>'
+        +'<div class="ls-zeile"><span>'+esc(T('Aus der .env'))+'</span><b>'+esc(zahl(z.env,0))+'</b></div>'
+        +'<div class="ls-zeile"><span>'+esc(T('Vorgabe'))+'</span><b>'+esc(zahl(z.vorgabe,0))+'</b></div>'
+        +'<div class="ls-zeile" data-lage="'+(d.neustart?'warn':'ok')+'"><span>'+esc(T('Neustart nötig'))+'</span><b style="color:var(--ls-c)">'+esc(d.neustart||0)+'</b></div></div>';
+    },
+    mcp:function(d){
+      var n=Math.min(10,d.anzahl||0), cx=105, cy=50, g='';
+      for(var i=0;i<n;i++){ var w=(i/Math.max(1,n))*Math.PI*2, x=cx+Math.cos(w)*62, y=cy+Math.sin(w)*34;
+        g+='<line x1="'+cx+'" y1="'+cy+'" x2="'+x.toFixed(1)+'" y2="'+y.toFixed(1)+'" stroke="var(--border)"/>'
+          +'<rect data-lage="'+(i<(d.aktiv||0)?'ok':'aus')+'" x="'+(x-5).toFixed(1)+'" y="'+(y-5).toFixed(1)+'" width="10" height="10" fill="none" stroke="var(--ls-c)" stroke-width="1.5"/>'; }
+      return '<svg viewBox="0 0 210 104"><circle cx="'+cx+'" cy="'+cy+'" r="11" fill="none" stroke="var(--neon)" stroke-width="1.5"/>'
+        +'<text x="'+cx+'" y="'+(cy+3)+'" text-anchor="middle" class="ls-svg-text" style="fill:var(--neon)">MCP</text>'+g
+        +(n?'':'<text x="'+cx+'" y="94" text-anchor="middle" class="ls-svg-text">'+esc(T('keine Server'))+'</text>')
+        +'<text x="0" y="100" class="ls-svg-text">'+esc(T('Oberfläche: '))+esc(d.webui||'–')+(d.proxy?' · proxy':'')+'</text></svg>';
+    }
+  };
+
+  /* ── Zeichnen ──────────────────────────────────────────────────────── */
+  function tafel(t){
+    var el=$id('ls_t_'+t.tab); if(!el) return;
+    el.setAttribute('data-lage',t.lage||'unbekannt');
+    var nm=el.querySelector('.ls-name'); if(nm&&!nm.textContent) nm.textContent=tabName(t.tab);
+    /* Die Kennung benennt die Datenquelle und wird nie uebersetzt (data-i18n-skip). */
+    var kn=el.querySelector('.ls-kennung'); if(kn&&t.kennung&&kn.textContent!==t.kennung) kn.textContent=t.kennung;
+    var w=$id('ls_w_'+t.tab); if(w) w.textContent=(t.wert==null?'–':(t.tab==='insights'||t.tab==='system')?(Math.round(Number(t.wert)||0)+'%'):t.wert);
+    var s=$id('ls_s_'+t.tab), text=satz(t); if(s) s.textContent=text;
+    var v=$id('ls_v_'+t.tab);
+    if(v){ try{ v.innerHTML=(t.lage==='unbekannt'&&!Object.keys(t.daten||{}).length)
+                 ?'<div class="ls-leer">'+esc(T('nicht geladen'))+'</div>':VIS[t.tab](t.daten||{}); }
+           catch(e){ v.innerHTML='<div class="ls-leer">'+esc(T('Ansicht nicht darstellbar'))+'</div>'; } }
+    el.setAttribute('aria-label',(tabName(t.tab))+' — '+text+' — '+T('öffnen'));
+  }
+  function kette(k){
+    var ol=$id('ls_kette'); if(!ol) return;
+    ol.innerHTML=(k||[]).map(function(g,i){
+      return '<li data-lage="'+esc(g.lage)+'"><span class="n">'+String(i+1).padStart(2,'0')+'</span><span class="t">'
+        +esc(KETTE[g.name]||g.name)+'</span><span class="w">'+esc(zahl(g.wert))+'</span></li>'; }).join('');
+  }
+  function kopf(d){
+    var u=$id('ls_unter'), z=d.zahl||{}, teile=[];
+    if(z.fehler) teile.push(z.fehler+T(' Störung(en)'));
+    if(z.warn) teile.push(z.warn+T(' Warnung(en)'));
+    if(z.unbekannt) teile.push(z.unbekannt+T(' nicht geladen'));
+    if(u) u.textContent=teile.length?teile.join(' · '):T('Alle Tafeln in Ordnung');
+    var wall=(d.tafeln||[]).filter(function(t){return t.tab==='wall';})[0];
+    var live=$id('ls_live'); if(live) live.setAttribute('data-an',wall&&wall.daten&&wall.daten.live?'1':'0');
+    var tag=$id('up_tag'), st=$id('ls_stand'), ver=$id('up_ver');
+    if(st&&tag){ st.textContent=((ver&&ver.textContent&&ver.textContent!=='–')?ver.textContent+' · ':'')+tag.textContent;
+      var c=tag.style.color||''; st.className='ls-stand mono'+(c.indexOf('amber')>=0?' warn':c.indexOf('red')>=0?' bad':''); }
+  }
+  /* Sparklines der Kopfkacheln: aus den Werten, die loadOverview einträgt. */
+  function kennzahlen(){
+    ['live','track','rec','chk','usr','agents','health'].forEach(function(k){
+      var e=$id('ov_'+k), svg=document.querySelector('.ls-spark[data-spark="'+k+'"]'); if(!e||!svg) return;
+      var v=parseFloat(String(e.textContent||'').replace(/[^0-9.\-]/g,'')); if(isNaN(v)) return;
+      var a=verlauf[k]=(verlauf[k]||[]); a.push(v); if(a.length>MAX_VERLAUF) a.shift();
+      svg.style.color=e.style.color||'var(--neon)';
+      svg.innerHTML=a.length>1?('<path class="f" d="'+pfad(a,100,24,true)+'"/><path d="'+pfad(a,100,24)+'"/>'):'';
+    });
+  }
+  function zeichnen(d){
+    daten=d; texte();
+    (d.tafeln||[]).forEach(tafel);
+    kette(d.kette); kopf(d);
+    (d.ereignisse||[]).slice().reverse().forEach(function(e){ ereignis(e,true); });
+    drohnenSetzen(d.drohnen||[]);
+    ankerMessen();
+  }
+
+  /* ── Ereignisstrom und Schlüsselmomente ────────────────────────────── */
+  function zeitVon(e){
+    if(typeof e.ts==='number') return new Date(e.ts*1000);
+    var t=new Date(e.ts||Date.now()); return isNaN(t)?new Date():t;
+  }
+  function ereignis(e,ausProtokoll){
+    if(!e||!e.kind) return;
+    var text=e.summary||e.title||e.kind, schl=e.kind+'|'+text, jetzt=Date.now(), t=zeitVon(e);
+    if(evSchluessel[schl]&&jetzt-evSchluessel[schl]<120000) return;
+    evSchluessel[schl]=jetzt;
+    var ol=$id('ls_ev'); if(!ol) return;
+    var leer=ol.querySelector('li.faint'); if(leer) leer.remove();
+    var li=document.createElement('li'); li.setAttribute('data-ton',e.ton||'info'); if(!ausProtokoll) li.className='neu';
+    var z=document.createElement('span'); z.className='z'; z.textContent=t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    var k=document.createElement('span'); k.className='k'; k.textContent=e.kind;
+    var s=document.createElement('span'); s.className='s'; s.textContent=text;
+    var ic=document.createElement('span'); ic.setAttribute('aria-hidden','true');
+    ic.textContent={gut:'▲',warn:'◆',fehler:'✖'}[e.ton]||'·';
+    li.appendChild(z); li.appendChild(ic); li.appendChild(k); li.appendChild(s);
+    ol.insertBefore(li, ol.firstChild);
+    while(ol.children.length>40) ol.removeChild(ol.lastChild);
+    var tag=$id('ls_ev_tag'); if(tag) tag.textContent=(++evZahl)+T(' Ereignisse');
+    /* Ein Moment nur für Neues: beim Öffnen der Seite poppt nicht die
+       Vergangenheit auf. */
+    if(e.moment&&t.getTime()>=geladenAb-5000) momentMerken(e,text);
+  }
+  function momentMerken(e,text){
+    momente.push({ton:e.ton||'info',kind:e.kind,text:text,tafel:e.tafel||null});
+    if(momente.length>3) momente.shift();
+    if(!momentZeit) momentZeigen();
+  }
+  function momentZeigen(){
+    var m=momente.shift(), box=$id('ls_moment');
+    if(!m||!box){ momentZeit=null; if(box) box.hidden=true; return; }
+    box.setAttribute('data-ton',m.ton);
+    box.innerHTML='<div class="mk">◆ '+esc(T('Schlüsselmoment'))+' · '+esc(m.kind)+'</div><div class="mt">'+esc(m.text)+'</div>'
+      +'<div class="ms">'+esc(new Date().toLocaleTimeString())+(m.tafel?' · '+esc(tabName(m.tafel)):'')+'</div>';
+    box.style.top=Math.round(((anker._kette&&anker._kette.y)||110)+34)+'px';
+    box.hidden=false;
+    if(m.tafel){ var el=$id('ls_t_'+m.tafel); if(el){ el.classList.remove('blitz'); void el.offsetWidth; el.classList.add('blitz');
+      setTimeout(function(){ el.classList.remove('blitz'); },3400); impuls(m.tafel,m.ton); } }
+    momentZeit=setTimeout(momentZeigen,MOMENT_MS);
+  }
+
+  /* ── Bewegung: Lichtströme und Wächter-Drohnen ─────────────────────── */
+  var cv=null, ctx=null, W=0, H=0, raf=null, letztes=0, anker={}, fasern=[], teilchen=[], drohnen={}, impulse=[], farbe={};
+  function bewegt(){
+    if(ruhig||reduce) return false;
+    var th=document.documentElement.getAttribute('data-theme'); return th!=='kontrast';
+  }
+  function farben(){
+    ['--neon','--cyan','--magenta','--amber','--red','--text-faint','--text','--panel-solid'].forEach(function(n){ farbe[n]=ncCssVar(n)||'#8fd'; });
+    if(!/^#|rgb/.test(farbe['--panel-solid'])) farbe['--panel-solid']='#0b0f18';
+  }
+  function mitA(c,a){ var m=String(c||'').trim().match(/^#([0-9a-f]{6})$/i);
+    if(m){ var v=parseInt(m[1],16); return 'rgba('+(v>>16&255)+','+(v>>8&255)+','+(v&255)+','+a+')'; }
+    var r=String(c||'').match(/rgba?\(([^)]+)\)/); if(r){ var t=r[1].split(','); return 'rgba('+t[0]+','+t[1]+','+t[2]+','+a+')'; }
+    return 'rgba(140,220,255,'+a+')'; }
+  function lageFarbe(l){ return {fehler:farbe['--red'],warn:farbe['--amber'],aktiv:farbe['--cyan'],taetig:farbe['--cyan'],
+    ok:farbe['--neon'],ruht:farbe['--neon'],aus:farbe['--text-faint']}[l]||farbe['--text-faint']; }
+  function ankerMessen(){
+    var ls=$id('ls'); if(!ls||!cv) return;
+    var r0=ls.getBoundingClientRect();
+    W=Math.max(1,Math.round(r0.width)); H=Math.max(1,Math.round(r0.height));
+    if(cv.width!==W||cv.height!==H){ cv.width=W; cv.height=H; }
+    anker={};
+    document.querySelectorAll('#ls .ls-tafel').forEach(function(el){
+      var r=el.getBoundingClientRect(); anker[el.getAttribute('data-tab')]={x:r.left-r0.left,y:r.top-r0.top,w:r.width,h:r.height};
+    });
+    var k=$id('ls_kette'); if(k){ var rk=k.getBoundingClientRect(); anker._kette={y:rk.top-r0.top+rk.height/2}; }
+    /* Hangar: rechts in der Fuge zwischen Lieferkette und erster Tafelreihe. */
+    if(k){ var rk2=k.getBoundingClientRect(); anker._hangar={x:rk2.right-r0.left-260,y:rk2.bottom-r0.top+17,w:260}; }
+    /* Fasern: in den Fugen zwischen den Tafelreihen, plus eine an der Kette. */
+    var ys={}; Object.keys(anker).forEach(function(k2){ var a=anker[k2]; if(a&&a.h) ys[Math.round(a.y-17)]=1; });
+    var reihe=Object.keys(ys).map(Number).sort(function(a,b){return a-b;});
+    var lb=document.querySelector('#ls .ls-lagebild');
+    if(lb){ var rl=lb.getBoundingClientRect(); ys[Math.round(rl.top-r0.top-17)]=1; ys[Math.round(rl.bottom-r0.top+17)]=1;
+      reihe=Object.keys(ys).map(Number).sort(function(a,b){return a-b;}); }
+    var rr=$id('ls_raster'); if(rr){ var rb=rr.getBoundingClientRect(); anker._unten=rb.bottom-r0.top; }
+    fasern=reihe.slice(0,7).map(function(y,i){ return {y:y,amp:6+(i%3)*4,frq:0.004+(i%4)*0.0012,ph:i*1.7}; });
+  }
+  function faserY(f,x,t){ return f.y+Math.sin(x*f.frq+f.ph+t*0.0006)*f.amp; }
+  function aktivitaet(){
+    var k=(daten&&daten.kette)||[], s=0;
+    k.forEach(function(g){ if(['live','aufnahme','kodieren','versand','restream'].indexOf(g.name)>=0) s+=Number(g.wert)||0; });
+    return Math.min(1,s/20);
+  }
+  function teilchenFuellen(){
+    var soll=Math.round(24+aktivitaet()*90);
+    while(teilchen.length<soll&&fasern.length){ teilchen.push({f:Math.floor(Math.random()*fasern.length),x:Math.random()*W,
+      v:0.6+Math.random()*1.6,l:8+Math.random()*26,c:Math.random()<0.25?'--magenta':(Math.random()<0.5?'--cyan':'--neon')}); }
+    if(teilchen.length>soll) teilchen.length=soll;
+  }
+  function drohnenSetzen(liste){
+    var seen={}, je={};
+    liste.forEach(function(a){
+      seen[a.name]=1; var t=a.tafel||'_hangar'; je[t]=(je[t]||0)+1;
+      var h=anker._hangar||{x:W-160,y:120};
+      var d=drohnen[a.name]||(drohnen[a.name]={x:h.x+Math.random()*80,y:h.y,ph:Math.random()*6.28,name:a.name});
+      d.lage=a.ueberfaellig?'warn':a.lage; d.tafel=a.tafel; d.platz=je[t]-1;
+    });
+    Object.keys(drohnen).forEach(function(n){ var d=drohnen[n]; d.anzahl=je[d.tafel||'_hangar']||1; });
+    Object.keys(drohnen).forEach(function(n){ if(!seen[n]) delete drohnen[n]; });
+  }
+  function ziel(d){
+    /* Abgeschaltete Wächter parken im Hangar rechts unter dem Kopf. */
+    if(!d.tafel){ var h=anker._hangar||{x:W-160,y:120,w:150}; return {x:h.x+h.w-12-(d.platz%8)*18,y:h.y+4}; }
+    var a=anker[d.tafel]; if(!a) return {x:d.x,y:d.y};
+    /* Über der Tafel, in der Fuge — gleichmäßig über ihre Breite verteilt. */
+    return {x:a.x+(d.platz+0.5)*(a.w/Math.max(1,d.anzahl)),y:a.y-17};
+  }
+  var STATUS={taetig:T('im Einsatz'),ruht:T('bereit'),fehler:T('Fehler'),aus:T('abgeschaltet'),warn:T('überfällig')};
+  function drohneMalen(d,t){
+    var z=ziel(d); d.x+=(z.x-d.x)*0.035; d.y+=(z.y-d.y)*0.035;
+    var y=d.y+Math.sin(t*0.0016+d.ph)*3.5, c=lageFarbe(d.lage), aus=!d.tafel;
+    ctx.save(); ctx.globalAlpha=aus?0.45:1;
+    /* Schweif: drei Datenfäden, die hinter der Bewegung nachschwingen */
+    ctx.strokeStyle=mitA(c,0.45); ctx.lineWidth=1;
+    for(var i=-1;i<=1;i++){ ctx.beginPath(); ctx.moveTo(d.x+i*3,y+5);
+      for(var s=1;s<=3;s++){ ctx.lineTo(d.x+i*3+Math.sin(t*0.003+d.ph+s*0.9+i)*1.6*s,y+5+s*3.5); } ctx.stroke(); }
+    /* Kern: Sechseck mit Abtastbogen */
+    ctx.beginPath(); for(var k=0;k<6;k++){ var w=k*Math.PI/3; ctx[k?'lineTo':'moveTo'](d.x+Math.cos(w)*6,y+Math.sin(w)*6); } ctx.closePath();
+    ctx.fillStyle=mitA(c,0.18); ctx.fill(); ctx.strokeStyle=c; ctx.lineWidth=1.4; ctx.stroke();
+    ctx.beginPath(); ctx.arc(d.x,y,9,t*0.004+d.ph,t*0.004+d.ph+1.4); ctx.strokeStyle=mitA(c,0.8); ctx.stroke();
+    ctx.fillStyle=c; ctx.beginPath(); ctx.arc(d.x,y,1.8,0,6.283); ctx.fill();
+    /* Im Einsatz: ein Taststrahl auf die Tafel */
+    if(d.lage==='taetig'&&anker[d.tafel]){ var a=anker[d.tafel];
+      ctx.beginPath(); ctx.moveTo(d.x,y+6); ctx.lineTo(a.x+a.w*0.35,a.y+2); ctx.lineTo(a.x+a.w*0.75,a.y+2); ctx.closePath();
+      ctx.fillStyle=mitA(c,0.07); ctx.fill(); }
+    /* Etikett */
+    /* Etikett nur, wenn es in den eigenen Platz passt — überlappende Schilder
+       liest niemand. Im Einsatz und gestört mit Zustand, sonst nur der Name. */
+    var platzB=anker[d.tafel]?anker[d.tafel].w/Math.max(1,d.anzahl):0;
+    var txt=String(d.name||'').toUpperCase()+((d.lage==='taetig'||d.lage==='fehler'||d.lage==='warn')?' · '+(STATUS[d.lage]||''):'');
+    ctx.font='600 9px '+(ncCssVar('--mono')||'monospace'); var tw=ctx.measureText(txt).width;
+    if(!aus&&tw+24<platzB){
+      ctx.fillStyle=mitA(farbe['--panel-solid'],0.86); ctx.strokeStyle=mitA(c,0.6); ctx.lineWidth=1;
+      ctx.fillRect(d.x+11,y-16,tw+8,12); ctx.strokeRect(d.x+11,y-16,tw+8,12);
+      ctx.fillStyle=c; ctx.fillText(txt,d.x+15,y-7); }
+    ctx.restore();
+  }
+  function impuls(tab,ton){ var a=anker[tab]; if(a) impulse.push({x:a.x+a.w/2,y:a.y+a.h/2,r:10,c:lageFarbe(ton==='gut'?'ok':ton==='fehler'?'fehler':ton==='warn'?'warn':'aktiv')}); }
+  function bild(t){
+    raf=null;
+    if(!bewegt()||CURRENT_VIEW!=='overview'||document.hidden||!cv){ if(ctx) ctx.clearRect(0,0,W,H); return; }
+    if(t-letztes<BILD_MS){ raf=requestAnimationFrame(bild); return; }
+    letztes=t; ctx.clearRect(0,0,W,H);
+    /* Fasern */
+    fasern.forEach(function(f,i){ ctx.beginPath(); for(var x=0;x<=W;x+=24){ var y=faserY(f,x,t); x?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+      ctx.strokeStyle=mitA(i%2?farbe['--magenta']:farbe['--cyan'],0.10); ctx.lineWidth=1; ctx.stroke(); });
+    /* Lichtteilchen, schneller und dichter mit der Last */
+    var tempo=0.7+aktivitaet()*1.6; teilchenFuellen();
+    teilchen.forEach(function(p){ var f=fasern[p.f]; if(!f) return; p.x+=p.v*tempo; if(p.x>W+p.l) p.x=-p.l;
+      var y=faserY(f,p.x,t), y0=faserY(f,p.x-p.l,t), g=ctx.createLinearGradient(p.x-p.l,y0,p.x,y);
+      g.addColorStop(0,mitA(farbe[p.c],0)); g.addColorStop(1,mitA(farbe[p.c],0.85));
+      ctx.strokeStyle=g; ctx.lineWidth=1.6; ctx.beginPath(); ctx.moveTo(p.x-p.l,y0); ctx.lineTo(p.x,y); ctx.stroke(); });
+    /* Impulse der Schlüsselmomente */
+    impulse=impulse.filter(function(m){ m.r+=3; var a=Math.max(0,1-m.r/180); if(a<=0) return false;
+      ctx.beginPath(); ctx.arc(m.x,m.y,m.r,0,6.283); ctx.strokeStyle=mitA(m.c,a*0.6); ctx.lineWidth=2; ctx.stroke(); return true; });
+    Object.keys(drohnen).forEach(function(n){ drohneMalen(drohnen[n],t); });
+    raf=requestAnimationFrame(bild);
+  }
+  function anstossen(){ if(!raf&&bewegt()&&cv&&CURRENT_VIEW==='overview'&&!document.hidden) raf=requestAnimationFrame(bild); }
+
+  /* ── Ablauf ────────────────────────────────────────────────────────── */
+  async function laden(){
+    if(CURRENT_VIEW!=='overview'||document.hidden) return;
+    runde++;
+    try{
+      var d=await apiGet('/api/leitstand');
+      if(d&&d.ok){
+        var rs=(d.tafeln||[]).filter(function(t){return t.tab==='restream';})[0];
+        if(rs&&rs.daten) spurMerken(rs.daten.spuren);
+        var com=(d.tafeln||[]).filter(function(t){return t.tab==='discord';})[0];
+        if(com&&com.daten&&com.daten.chat_rate!=null){ chatVerlauf.push(Number(com.daten.chat_rate)||0); if(chatVerlauf.length>MAX_VERLAUF) chatVerlauf.shift(); }
+        zeichnen(d);
+      } else {
+        var u=$id('ls_unter'); if(u) u.textContent=T('Leitstand nicht erreichbar — ')+((d&&d.error)||T('keine Antwort'));
+      }
+    }catch(e){ var u2=$id('ls_unter'); if(u2) u2.textContent=T('Leitstand nicht erreichbar — Verbindung zum Bot prüfen'); }
+    /* Die Kopfkacheln jede dritte Runde (ihre Quellen sind teurer). */
+    if(runde%3===0&&typeof ovKennzahlen==='function'){ try{ await ovKennzahlen(); }catch(e){} }
+    anstossen();
+  }
+  function uhrTick(){ var u=$id('ls_uhr'); if(u) u.textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+  function ruhigZeigen(){
+    var ls=$id('ls'), b=$id('ls_ruhig'); if(ls) ls.classList.toggle('ruhig',ruhig);
+    if(b){ b.setAttribute('aria-pressed',ruhig?'true':'false'); b.textContent=ruhig?T('Bewegt'):T('Ruhig');
+      b.title=ruhig?T('Lichtströme und Drohnen wieder einschalten'):T('Bewegung anhalten — nur die Werte bleiben'); }
+  }
+  function ruhigUmschalten(){
+    ruhig=!ruhig; try{ localStorage.setItem('nc_ls_ruhig',ruhig?'1':'0'); }catch(e){}
+    ruhigZeigen(); anstossen();
+  }
+  function start(){
+    cv=$id('ls_strom'); ctx=cv?cv.getContext('2d'):null; texte(); farben(); ruhigZeigen();
+    document.querySelectorAll('#ls .ls-name[data-tabname]').forEach(function(n){ n.textContent=tabName(n.getAttribute('data-tabname')); });
+    if(!gestartet){
+      gestartet=true;
+      document.querySelectorAll('#ls .ls-tafel').forEach(function(el){
+        var geh=function(){ gotoView(el.getAttribute('data-tab')); };
+        el.addEventListener('click',geh);
+        el.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); geh(); } });
+      });
+      window.addEventListener('resize',function(){ ankerMessen(); });
+      if(window.ResizeObserver){ try{ new ResizeObserver(function(){ ankerMessen(); }).observe($id('ls')); }catch(e){} }
+      document.addEventListener('visibilitychange',function(){ if(!document.hidden){ laden(); anstossen(); } });
+      /* Themenwechsel: Farben neu lesen (die Tokens sind CSS, das Canvas nicht). */
+      try{ new MutationObserver(function(){ farben(); anstossen(); }).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']}); }catch(e){}
+    }
+    ankerMessen(); laden();
+    if(poll) clearInterval(poll); poll=setInterval(laden,TAKT_MS);
+    if(uhr) clearInterval(uhr); uhr=setInterval(uhrTick,1000); uhrTick();
+    anstossen();
+  }
+  return {start:start, ereignis:function(m){ try{ ereignis(m,false); }catch(e){} }, kennzahlen:kennzahlen,
+          ruhigUmschalten:ruhigUmschalten, _satz:satz};
+})();
+
 async function loadOverview(){
   try{ updCheck(false); }catch(e){}
   try{ ncLagebild.start('ov_cc','overview'); }catch(e){}
   try{ ncRecBars3D.start('rb_canvas','overview'); }catch(e){}
   try{ ncCatchGauge.start('cg_canvas','overview'); }catch(e){}
+  try{ ncLeitstand.start(); }catch(e){ console.error('Leitstand:', e); }
+  await ovKennzahlen();
+  try{ archStatus(); }catch(e){}
+}
+/* v5.10-W207: die Kopfkacheln als eigener Schritt — der Leitstand zieht sie
+   jede dritte Runde nach. Bis hierher standen sie nur beim Betreten der
+   Übersicht frisch und dann still, waehrend daneben alles lebte. */
+async function ovKennzahlen(){
   var set=function(id,v){var e=document.getElementById(id); if(e) e.textContent=(v==null?'—':v);};
   try{
     var s=await apiGet('/api/stats');
@@ -13841,7 +14646,7 @@ async function loadOverview(){
       setv('sd_db', hz.db?'ok':'FEHLER', (hz.db?'ok':'bad'));
     }
   }catch(e){}
-  try{ archStatus(); }catch(e){}
+  try{ ncLeitstand.kennzahlen(); }catch(e){}
 }
 VIEW_LOADERS['overview']=loadOverview;
 /* v4.0-W115: Anstoss beim Seitenaufruf — mit demselben Kunstgriff wie

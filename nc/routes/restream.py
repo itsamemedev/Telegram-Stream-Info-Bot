@@ -166,27 +166,34 @@ def api_restream_report():
 @bp.route("/api/restream/health")
 def api_restream_health():
     """B160: Live-Encode-Health je aktivem Restream (bitrate/fps/speed/drop aus ffmpeg-progress)."""
-    out = []
     try:
-        procs = getattr(_nc_rsstate.mgr(), "_procs", {}) or {}
-        active = _nc_rsstate.ACTIVE_ALL or {}
-        for rid, info in list(procs.items()):
-            h = (info or {}).get("health") or {}
-            meta = active.get(rid) or {}
-            started = (info or {}).get("started")
-            up = int(time.monotonic() - started) if started else None
-            tt = (info or {}).get("tee_targets")
-            out.append({
-                "rid": rid, "user": meta.get("user", ""), "label": meta.get("label", ""),
-                "bitrate": h.get("bitrate"), "fps": h.get("fps"), "speed": h.get("speed"),
-                "drop": h.get("drop", 0), "dup": h.get("dup", 0), "size_mb": h.get("size_mb"),
-                "out_time": h.get("out_time"),
-                "slow": bool(h.get("slow_ticks", 0) >= 5 or h.get("slow_warned")),
-                "uptime_s": up, "ntargets": (len(tt) if hasattr(tt, "__len__") else 0),
-            })
+        out = gesundheit()
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_restream_health"), streams=[])
     return jsonify(ok=True, streams=out, count=len(out))
+
+
+def gesundheit() -> list:
+    """Je laufendem Restream die ffmpeg-Werte. v5.10-W207: herausgeloest fuer
+    den Leitstand der Übersicht, der dieselben Spuren zeigt."""
+    out = []
+    procs = getattr(_nc_rsstate.mgr(), "_procs", {}) or {}
+    active = _nc_rsstate.ACTIVE_ALL or {}
+    for rid, info in list(procs.items()):
+        h = (info or {}).get("health") or {}
+        meta = active.get(rid) or {}
+        started = (info or {}).get("started")
+        up = int(time.monotonic() - started) if started else None
+        tt = (info or {}).get("tee_targets")
+        out.append({
+            "rid": rid, "user": meta.get("user", ""), "label": meta.get("label", ""),
+            "bitrate": h.get("bitrate"), "fps": h.get("fps"), "speed": h.get("speed"),
+            "drop": h.get("drop", 0), "dup": h.get("dup", 0), "size_mb": h.get("size_mb"),
+            "out_time": h.get("out_time"),
+            "slow": bool(h.get("slow_ticks", 0) >= 5 or h.get("slow_warned")),
+            "uptime_s": up, "ntargets": (len(tt) if hasattr(tt, "__len__") else 0),
+        })
+    return out
 
 
 @bp.route("/api/restream/testpush", methods=["GET"])

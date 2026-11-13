@@ -9,6 +9,7 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 from flask import Blueprint, jsonify
 
 from nc import fehlertext as _nc_fehlertext
+from nc import stats as _nc_stats   # v5.10-W207: Trefferquote, geteilt mit dem Leitstand
 from nc.textmore import _parse_iso
 from nc.dbwrap import db_conn
 
@@ -150,16 +151,8 @@ def api_insights_growth(username):
 def api_insights_catch_rate():
     """Anteil erkannter Lives die erfolgreich aufgenommen wurden (gesamt)."""
     try:
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS total, "
-                "SUM(CASE WHEN outcome='ok' THEN 1 ELSE 0 END) AS ok "
-                "FROM recording_attempts").fetchone()
-        total = int(row["total"] or 0)
-        ok = int(row["ok"] or 0)
-        rate = round(100.0 * ok / total, 1) if total else 0.0
-        return jsonify(ok=True, total_attempts=total, successful=ok,
-                       catch_rate=rate)
+        # v5.10-W207: die Abfrage steht in nc.stats (der Leitstand liest sie mit).
+        return jsonify(ok=True, **_nc_stats.trefferquote())
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_insights_catch_rate")), 500
 

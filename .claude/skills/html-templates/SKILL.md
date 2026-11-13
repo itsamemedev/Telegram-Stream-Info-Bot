@@ -1,6 +1,6 @@
 ---
 name: html-templates
-description: Eigenstaendige HTML-Oberflaechen fuer NIGHTCRAWLER und LAFAP bauen — Token-System, die vier Deck-Themen Messing (dunkel, Vorgabe), Blaupause (hell), Kontrast (WCAG AAA) und Phosphor (Nacht), Pruefkette vor jeder Auslieferung. Nutze dies bei jeder Aenderung an templates/*.html oder website/*.html.
+description: Eigenstaendige HTML-Oberflaechen fuer NIGHTCRAWLER und LAFAP bauen — Token-System, die fuenf Deck-Themen Messing (dunkel, Vorgabe), Blaupause (hell), Kontrast (WCAG AAA), Phosphor (Nacht) und Leitstand (Neonblau), die Übersicht als Leitstand, Pruefkette vor jeder Auslieferung. Nutze dies bei jeder Aenderung an templates/*.html oder website/*.html.
 ---
 
 # HTML-Oberflaechen fuer NIGHTCRAWLER
@@ -12,7 +12,7 @@ und meldet Zustand. Jede gestalterische Entscheidung leitet sich daraus ab:
 Ablesbarkeit vor Effekt, Ruhe vor Bewegung, ein einziges wiederkehrendes
 Detail statt vieler Verzierungen.
 
-## Die zwei Themen
+## Die Themen
 
 Umgeschaltet wird ueber `html[data-theme]`, nie ueber Klassen an einzelnen
 Elementen. Beide Themen definieren **dieselben** Token — wer eine neue Farbe
@@ -46,6 +46,11 @@ Nutzer.**
 Nacht: Werte und Kopfzeilen glimmen, Fliesstext nicht; jede Farbe >= 4,5:1
 (AA). Rot und Bernstein bleiben Warnfarben — ein Fehler darf in einem gruenen
 Thema nicht gruen aussehen; auch das prueft der Vertrag.
+
+**Leitstand** (v5.10-W207, nur Deck). Leuchtblau und Violett auf Nachtblau —
+die Anmutung, die der Betreiber per Video fuer die Übersicht gezeigt hat. Jede
+Farbe >= 4,5:1 (AA) auf dem Panel, Rot bleibt Rot; der W207-Vertrag rechnet
+nach wie bei Phosphor.
 
 **Ein neues Thema** braucht drei Dinge, sonst faellt `_test_v42_w140_phosphor_thema`:
 einen Token-Block `html[data-theme="name"]{…}`, einen Eintrag in `NC_THEMEN`,
@@ -99,6 +104,20 @@ eine Aufforderung, keine Entschuldigung. Fehlermeldungen sagen, was
 passiert ist und was zu tun ist — nie nur "Fehler".
 
 Alles auf Deutsch, Satzform, keine Fuellwoerter.
+
+## Die Übersicht ist ein Leitstand (v5.10-W207)
+
+`#view-overview` ist die eine Ansicht, in der Bewegung **gewollt** ist — der
+Betreiber hat sie ausdrücklich so verlangt. Die Regeln unten gelten dort
+deshalb nicht wörtlich, aber ihr Zweck gilt: jede Bewegung trägt Bedeutung.
+Die Lichtströme laufen an der Lieferkette entlang und werden mit der Last
+dichter, die Drohnen sind die Wächter und fliegen zu ihrer Tafel, ein
+Schlüsselmoment ist ein protokolliertes Ereignis. Was davon gezeigt wird,
+entscheidet `nc/leitstand.py` (`/api/leitstand`) — **kein Grenzwert im JS**,
+ein Vertrag prüft das. Bewegung steht still bei „Ruhig" (`nc_ls_ruhig`), bei
+`prefers-reduced-motion`, im Kontrast-Thema und wenn die Übersicht nicht
+sichtbar ist. Jeder Tab der Leiste braucht eine Tafel `ls_t_<tab>` — wer einen
+Tab hinzufügt, trägt ihn in `nc.leitstand.TAFELN` ein, sonst fällt der Vertrag.
 
 ## Was zu vermeiden ist
 
