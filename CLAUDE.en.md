@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **27,956 lines / 1.4 MB ≈ 290,000 tokens**. That file is **never**
+`bot.py` has **27,307 lines / 1.4 MB ≈ 290,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -217,6 +217,15 @@ Clear `__pycache__` and run with `PYTHONDONTWRITEBYTECODE=1`.
 **Module constants freeze the `.env`.** The `.env` is partly loaded only after
 the first imports. Read configuration through a function (`_backend_conf()`),
 never as a module constant.
+
+**Reading with a default and writing back is a delete on a locked
+database.** `nc.cfgstore.get()` returns the default on error — fine for a
+display, destructive for read-modify-write: a locked SQLite turned “add one
+schedule” into “every other schedule gone”. W198 fixed it for the MCP servers;
+W199 found seven more next to it. Since then there is **one** place,
+`nc/cfgstore.aendern()` — strict read, shape check, write under a lock.
+**When a class is fixed in one place, it usually sits right next door — look
+before the wave closes.**
 
 **A one-shot `await` without a supervisor.** Every long-running client needs
 reconnect with backoff **and** an abort criterion for deterministic errors.

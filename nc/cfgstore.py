@@ -124,11 +124,17 @@ def aendern(key, aenderung, fehlt=None, art=None):
 
     aenderung(alt) -> neu. `alt` kommt aus lesen(): ein Datenbankfehler oder
     ein unlesbarer Wert fliegt durch, `fehlt` gilt NUR, wenn der Schluessel
-    wirklich fehlt (als Kopie — eine Vorgabe-Liste wird nie geteilt). `art`
-    prueft die Form. Wirft die Aenderung, wird nichts geschrieben.
+    wirklich fehlt oder JSON null traegt (als Kopie — eine Vorgabe-Liste wird
+    nie geteilt). `art` prueft die Form. Wirft die Aenderung, wird nichts
+    geschrieben.
     """
     with _AENDERN:
-        alt = lesen(key, _copy.deepcopy(fehlt))
+        alt = lesen(key, None)
+        if alt is None:
+            # Fehlt der Schluessel oder steht dort JSON null (etwa aus einer
+            # wiederhergestellten Konfiguration): nichts gespeichert. Das ist
+            # kein Lesefehler — der fliegt oben in lesen() durch.
+            alt = _copy.deepcopy(fehlt)
         if art is not None and not isinstance(alt, art):
             raise FalscheForm("app_config[%s] ist %s, erwartet %s"
                               % (key, type(alt).__name__,

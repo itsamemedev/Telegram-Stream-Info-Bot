@@ -120,7 +120,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 27.956 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 27.307 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
     BOT -->|configure| NC["nc/ — 212 Fachmodule<br/>40 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
@@ -557,8 +557,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 27.956 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 386 Routen und 668 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 27.307 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 386 Routen und 630 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -574,6 +574,19 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 ```
 
 ---
+
+## 🆕 Neu in v5.8
+
+**„Nachlese“** — Bughunt mit Sicherheit, Aufräumen, Monolith-Abtrag:
+
+- **Kein Datenverlust bei gesperrter Datenbank:** „Zeitplan hinzufügen“ und die
+  Konfiguration von Marketing, News, Co-Host, Highlight-Radar und Signalton
+  lasen nachsichtig und schrieben zurück — eine gesperrte Datenbank löschte so
+  alle anderen Zeitpläne. Jetzt streng gelesen und unter Sperre geschrieben.
+- **`build/` begrenzt:** die Evolution legte bei jedem Lernzyklus eine volle
+  Kopie des Monolithen ab (rund 2 GB im Jahr, in jeder Sicherung) — jetzt höchstens 20.
+- **Aufgeräumt und abgetragen:** 27 tote Weiterleitungen und ein totes Modul
+  entfernt; Sperrliste/SSH-Angriffe nach `nc/abwehrlage.py`. `bot.py` 27.956 → 27.307 Zeilen.
 
 ## 🆕 Neu in v5.7
 
@@ -785,7 +798,7 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.7.0** — „Werkzeugkasten“ (2026.11) |
+| Aktuelle Version | **5.8.0** — „Nachlese“ (2026.11) |
 | Flask-Routen | 386 (34 in `bot.py` · 352 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
 | Fachmodule | 212 in `nc/` (+40 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |

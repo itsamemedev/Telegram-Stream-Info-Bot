@@ -66,7 +66,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 27.956 líneas"]:::core
+    BOT["bot.py<br/>monolito · 27.307 líneas"]:::core
     BOT -->|configure| NC["nc/ — 185 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
@@ -320,6 +320,19 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
+## 🆕 Novedades en v5.8
+
+**“Rebusca”** — caza de errores con seguridad, limpieza, reducción del monolito:
+
+- **Sin pérdida de datos con la base bloqueada:** “añadir horario” y la
+  configuración de marketing, noticias, co-host, radar de momentos y tono de
+  aviso leían con tolerancia y volvían a escribir — una base bloqueada borraba
+  todos los demás horarios. Ahora se lee de forma estricta y se escribe bajo bloqueo.
+- **`build/` acotado:** cada ciclo de evolución guardaba una copia completa del
+  monolito (unos 2 GB al año, en cada copia de seguridad) — ahora como mucho 20.
+- **Limpieza:** 27 reenvíos muertos y un módulo muerto eliminados;
+  lista de bloqueos y ataques SSH a `nc/abwehrlage.py`. `bot.py` 27.956 → 27.307 líneas.
+
 ## 🆕 Novedades en v5.7
 
 **“Caja de herramientas”** — gestionar servidores MCP en el panel:
@@ -415,7 +428,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.7.0** — “Caja de herramientas” (2026.11) |
+| Versión actual | **5.8.0** — “Rebusca” (2026.11) |
 | Rutas Flask | 386 (34 en `bot.py` · 352 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |

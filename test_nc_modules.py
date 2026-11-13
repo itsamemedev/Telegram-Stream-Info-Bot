@@ -25510,7 +25510,10 @@ def _test_v42_w133_drossel_und_loop():
         return next(n for n in baum.body if isinstance(n, (_ast.FunctionDef,
                     _ast.AsyncFunctionDef)) and n.name == name)
 
-    cs = _ast.unparse(_fn("_crowdsec_status"))
+    # ANKER GEWANDERT (v5.8-W199): die CrowdSec-Abfrage liegt in nc/abwehrlage.py.
+    _ab = _ast.parse(open("nc/abwehrlage.py", encoding="utf-8").read())
+    cs = _ast.unparse(next(n for n in _ab.body if isinstance(n, _ast.FunctionDef)
+                           and n.name == "crowdsec_status"))
     assert "_nc_meldetakt.melden('crowdsec'" in cs, "CrowdSec-Warnung ungedrosselt"
     assert cs.count("_nc_meldetakt.zuruecksetzen('crowdsec')") == 2, \
         "der Erfolgspfad (LAPI und cscli) setzt die Drossel nicht zurueck"
@@ -36812,6 +36815,10 @@ def _test_v58_w199_cfg_aendern():
         assert C.aendern("w199.a", lambda a: (a.append(1), a)[1], fehlt=vorgabe, art=list) == [1]
         assert vorgabe == [], "die Vorgabe des Aufrufers wurde veraendert"
         assert roh("w199.a") == [1]
+        # JSON null heisst „nichts gespeichert", wie ein fehlender Schluessel —
+        # der alte Code las es per `or []` genauso; 503 fuer immer waere falsch.
+        C.set_("w199.n", None)
+        assert C.aendern("w199.n", lambda a: a + [3], fehlt=[], art=list) == [3]
         C.set_("w199.d", {"x": 1})
         try:
             C.aendern("w199.d", lambda a: a + [2], fehlt=[], art=list)
@@ -37031,6 +37038,141 @@ def _test_v58_w199_linkvideo_nur_arbeitsordner():
         L._KONF.clear()
         L._KONF.update(alt[2])
     ok("v5.8-W199: Link-Video — nur eine Datei aus dem eigenen Arbeitsordner geht hinaus")
+
+
+def _test_v58_w199_abwehrlage():
+    """v5.8-W199: Sperrliste und SSH-Angriffe liegen in nc/abwehrlage.py.
+
+    Monolith-Abtrag: rund 350 Zeilen aus bot.py, woertlich uebernommen, die
+    vier CROWDSEC_*-Werte per configure(). Geprueft wird das VERHALTEN der
+    Wege, die das Deck zeigt — mit einer Attrappe fuer den privilegierten
+    Aufruf, nicht gegen den Quelltext: cscli fehlt (Programm, nicht Recht),
+    sudo fehlt (Hinweis mit dem ECHTEN Pfad), LAPI tot (konfigurierter Port im
+    Hinweis), kaputtes JSON, `null` als Erfolg, Zusammenfassen nach Herkunft,
+    und die Auswertung des Auth-Logs ohne private Adressen."""
+    import nc.abwehrlage as A
+    alt = (A._nc_sysrun.run_priv, A.cscli_bin, dict(A._KONF), list(A._CSCLI_CACHE))
+    antwort = {}
+
+    def _priv(args, timeout=6, sudo_first=False):
+        return antwort["r"]
+    A._nc_sysrun.run_priv = _priv
+    try:
+        A.configure(lapi_host="10.0.0.9", lapi_port=8099, bouncer_key="", lapi_url="")
+        A._CSCLI_CACHE[0] = None
+        A.cscli_bin = lambda: None
+        r = A.crowdsec_status()
+        assert r["status"] == "fehlt" and "nicht installiert" in r["hint"], r
+        A.cscli_bin = lambda: "/opt/cs/cscli"
+        assert A.crowdsec_via_lapi() is None, "ohne Schluessel kein LAPI-Weg"
+        antwort["r"] = (1, "", "sudo: a password is required", False)
+        r = A.crowdsec_status()
+        assert r["status"] == "kein_sudo" and "/opt/cs/cscli" in r["hint"], r
+        antwort["r"] = (1, "", "dial tcp 10.0.0.9:8099: connection refused", False)
+        r = A.crowdsec_status()
+        assert r["status"] == "lapi_tot" and "10.0.0.9:8099" in r["hint"], r
+        antwort["r"] = (124, "", "", False)
+        assert A.crowdsec_status()["status"] == "timeout"
+        antwort["r"] = (0, "WARN alt\n[", "", True)
+        assert A.crowdsec_status()["status"] == "json_kaputt"
+        # Ohne Entscheidungen sagt cscli `null` — oder gar nichts. Beides ist
+        # ein Erfolg (niemand gesperrt), kein kaputtes JSON.
+        for leer in ("null", ""):
+            antwort["r"] = (0, leer, "", True)
+            r = A.crowdsec_status()
+            assert r["ok"] and r["status"] == "leer" and r["total_banned"] == 0, (leer, r)
+        antwort["r"] = (0, '[{"decisions": [{"value": "1.2.3.4", "origin": "crowdsec", '
+                           '"scenario": "crowdsecurity/ssh-bf"}, {"value": "1.2.3.4", '
+                           '"origin": "crowdsec", "scenario": "crowdsecurity/ssh-bf"}]}, '
+                           '{"value": "5.6.7.8", "origin": "CAPI"}]', "", True)
+        r = A.crowdsec_status()
+        by = {j["jail"]: j for j in r["jails"]}
+        assert r["total_banned"] == 2 and r["via_sudo"] is True, r
+        assert by["crowdsec"]["ips"] == ["1.2.3.4"] and by["crowdsec"]["scenarios"] == {"ssh-bf": 2}
+        assert by["CAPI"]["ips"] == ["5.6.7.8"]
+        # Der cscli-Pfad wird gemerkt, ein Fehlschlag nicht (B138).
+        A._CSCLI_CACHE[0] = None
+        A.cscli_bin = lambda: None
+        assert A.cscli_path() is None and A._CSCLI_CACHE[0] is None
+        A.cscli_bin = lambda: "/usr/local/bin/cscli"
+        assert A.cscli_path() == "/usr/local/bin/cscli" == A._CSCLI_CACHE[0]
+    finally:
+        A._nc_sysrun.run_priv, A.cscli_bin = alt[0], alt[1]
+        A._KONF.clear()
+        A._KONF.update(alt[2])
+        A._CSCLI_CACHE[:] = alt[3]
+    log = ("Nov 13 01:00:01 h sshd[1]: Failed password for root from 45.33.32.156 port 1 ssh2\n"
+           "Nov 13 01:00:02 h sshd[1]: Failed password for invalid user bob from 45.33.32.156 port 2\n"
+           "Nov 13 01:00:03 h sshd[1]: Invalid user ftp from 91.198.174.192 port 3\n"
+           "Nov 13 01:00:04 h sshd[1]: Failed password for root from 192.168.1.5 port 4\n"
+           "Nov 13 01:00:05 h sshd[1]: Accepted publickey for ubuntu from 45.33.32.157\n")
+    r = A.auswerten(log, "attrappe")
+    assert r["total"] == 3 and r["unique_ips"] == 2, r
+    assert r["attacks"][0]["ip"] == "45.33.32.156" and r["attacks"][0]["users"] == ["bob", "root"]
+    assert all(a["ip"] != "192.168.1.5" for a in r["attacks"]), "privates Netz als Angriff"
+    assert A.auswerten("", "x")["status"] == "leer"
+    # Und der Bot haelt keine zweite Kopie.
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.py"),
+              encoding="utf-8") as f:
+        bot = f.read()
+    for alt_name in ("def _crowdsec_status(", "def _parse_ssh_attacks(", "def _crowdsec_via_lapi(",
+                     "def _cscli_path("):
+        assert alt_name not in bot, "%s steht wieder im Monolithen" % alt_name
+    assert "_nc_abwehrlage.configure(" in bot, "die CROWDSEC_*-Werte erreichen das Modul nicht"
+    ok("v5.8-W199: nc.abwehrlage — cscli fehlt/kein sudo/LAPI tot/Zeitlimit/kaputtes JSON/"
+       "null/Zusammenfassen, Auth-Log ohne private Adressen; keine Kopie im Bot")
+
+
+def _test_v58_w199_geocache_anreichern():
+    """v5.8-W199: die Proxy-Anreicherung liegt neben dem Cache (nc/geocache.py).
+
+    Treffer aus dem Cache sofort, Unbekannte in EINEM Stapel, gemerkt ueber
+    den einen Schreibweg put(). Dazu die Korrektur beim Umzug: die Ruhezeit
+    gegen ip-api.com wurde nur bei Erfolg gestempelt — ein gestoerter Dienst
+    kostete jede Pool-Auffrischung erneut den 10-s-Timeout (W102-Klasse)."""
+    import nc.geocache as G
+    alt = (G._abrufen, G._time, list(G._LETZTER_ABRUF))
+    uhr = {"t": 5000.0}
+
+    class _Uhr:
+        @staticmethod
+        def monotonic():
+            return uhr["t"]
+    abrufe = []
+
+    def _api(ips, timeout=10):
+        abrufe.append(list(ips))
+        if uhr.get("kaputt"):
+            raise OSError("ip-api gestoert")
+        return [{"status": "success", "query": ip, "lat": 1.0, "lon": 2.0, "country": "X",
+                 "city": "Y", "isp": "Z" * 80} for ip in ips if ip != "9.9.9.9"]
+    G._abrufen, G._time = _api, _Uhr
+    G._LETZTER_ABRUF[0] = 0.0
+    G.leeren()
+    try:
+        G.put("1.1.1.1", {"lat": 9.0, "lon": 9.0, "country": "C", "city": "c", "isp": "i"})
+        px = [{"url": "1.1.1.1:80"}, {"url": "2.2.2.2:8080"}, {"url": "9.9.9.9:3128"}, {"url": ""}]
+        G.anreichern(px)
+        assert px[0]["lat"] == 9.0, "Cache-Treffer nicht angewandt"
+        assert abrufe == [["2.2.2.2", "9.9.9.9"]], abrufe
+        assert px[1]["lat"] == 1.0 and len(px[1]["isp"]) == 50 and "lat" not in px[2]
+        assert G.get("2.2.2.2") and G.get("9.9.9.9") is None
+        # Innerhalb der Ruhezeit kein zweiter Abruf.
+        uhr["t"] += 1.0
+        G.anreichern([{"url": "3.3.3.3:1"}])
+        assert len(abrufe) == 1, "Ruhezeit nicht eingehalten"
+        # Ein FEHLSCHLAG haelt die Ruhe ebenfalls ein.
+        uhr["t"] += 10.0
+        uhr["kaputt"] = True
+        G.anreichern([{"url": "4.4.4.4:1"}])
+        uhr["t"] += 1.0
+        G.anreichern([{"url": "4.4.4.4:1"}])
+        assert len(abrufe) == 2, "nach einem Fehlschlag sofort wieder abgefragt (%d)" % len(abrufe)
+    finally:
+        G._abrufen, G._time = alt[0], alt[1]
+        G._LETZTER_ABRUF[:] = alt[2]
+        G.leeren()
+    ok("v5.8-W199: geocache.anreichern — Cache zuerst, ein Stapel, Ruhezeit auch nach Fehlschlag")
 
 
 def _test_v58_w199_evolution_schnappschuesse():
@@ -39953,6 +40095,8 @@ def main():
     _test_v58_w199_evolution_schnappschuesse()
     _test_v58_w199_uhr_beim_schreiben()
     _test_v58_w199_linkvideo_nur_arbeitsordner()
+    _test_v58_w199_abwehrlage()
+    _test_v58_w199_geocache_anreichern()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

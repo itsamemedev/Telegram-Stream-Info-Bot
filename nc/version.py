@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.7.0"
-CODENAME = "Werkzeugkasten"
+VERSION = "5.8.0"
+CODENAME = "Nachlese"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.8.0",
+        "date": "2026-11",
+        "title": "Nachlese",
+        # Nebenversion: Bughunt + Security, Aufraeumen, Monolith-Abtrag (W199).
+        "highlights": [
+            "Zeitplaene und Konfiguration im Deck gehen bei gesperrter Datenbank nicht mehr verloren: sieben Routen lasen nachsichtig und schrieben zurueck — jetzt streng gelesen, unter Sperre geschrieben, sonst 503",
+            "build/ waechst nicht mehr ohne Ende: jeder Lernzyklus legte eine volle Kopie des Monolithen ab (rund 2 GB im Jahr, in jeder Systemsicherung) — jetzt hoechstens 20",
+            "Caches nehmen die Uhr nach der Sonde; die GeoIP-Ruhezeit gilt auch nach einem Fehlschlag",
+            "Link-Video sendet nur Dateien aus seinem eigenen Arbeitsordner",
+            "Aufgeraeumt: 27 tote Weiterleitungen, ein totes Modul und leere Abschnitte im Monolithen; neun Dokumente im Doku-Index nachgetragen",
+            "Monolith: Sperrliste und SSH-Angriffe nach nc/abwehrlage.py, die Proxy-GeoIP nach nc/geocache.py — bot.py 27.956 → 27.307 Zeilen",
+        ],
+    },
     {
         "version": "5.7.0",
         "date": "2026-11",
