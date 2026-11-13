@@ -59,6 +59,24 @@ def get(key, default=None):
         return default
 
 
+def lesen(key, fehlt=None):
+    """Wie get(), aber STRENG: ein Datenbankfehler und ein unlesbarer Wert fliegen durch.
+
+    v5.6-W198. get() antwortet auf beides mit der Vorgabe — fuer eine Anzeige
+    richtig, fuer Lesen-Aendern-Schreiben gefaehrlich: wer eine Liste liest,
+    einen Eintrag anhaengt und zurueckschreibt, macht aus einer gesperrten
+    Datenbank (Alltag bei laufendem Recorder) ein Loeschen aller anderen
+    Eintraege. Dieselbe Klasse wie _find_orphans in W91: „ich weiss nicht, was
+    in der Datenbank steht" ist nicht „es steht nichts darin".
+
+    `fehlt` gilt NUR, wenn der Schluessel wirklich nicht da ist."""
+    with _db_conn() as conn:
+        row = conn.execute("SELECT v FROM app_config WHERE k=?", (key,)).fetchone()
+    if not row or row["v"] is None:
+        return fehlt
+    return _json.loads(row["v"])
+
+
 def set_(key, value):
     """Upsert eines JSON-Werts in app_config (backend-agnostisch ohne UPSERT-SQL).
 

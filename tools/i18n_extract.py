@@ -68,7 +68,10 @@ MARKIERT = ["nc/befehle.py",
             # v4.2-W172: die Antwort auf /spenden.
             "nc/spendeninfo.py",
             # v4.2-W178: die Abweisung fremder Schreibanfragen ans Deck.
-            "nc/herkunft.py"]
+            "nc/herkunft.py",
+            # v5.6-W198: Ablehnungen, Testgruende und Abhilfe der MCP-Verwaltung.
+            # Die Route uebersetzt die Vorlage und fuellt sie erst danach.
+            "nc/mcpdienste.py"]
 
 # Ein Text ist uebersetzbar, wenn er ueberhaupt Sprache enthaelt. Reine Zahlen,
 # Symbole, CSS-Werte und Platzhalter fliegen raus.

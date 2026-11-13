@@ -35594,6 +35594,871 @@ const confirm=t=>{fragen.push(t); return ja;};
        "Anmeldung nie weg, nur der gezeigte Plan, unter der Sperre")
 
 
+_MCP_TOKEN = "geheim-Token-77"
+
+
+def _mcp_speicher():
+    """nc.cfgstore fuer einen MCP-Vertrag auf ein Woerterbuch umlenken. -> (speicher, zurueck)
+
+    v5.6-W198. Der Gesamtlauf hat an dieser Stelle nicht immer eine
+    verlaessliche gemeinsame Datenbank — ein Vertrag davor darf sie umgebaut
+    haben. Ein eigener Speicher macht den Vertrag einzeln (pytest) und im
+    Gesamtlauf gleich. Der Wert geht wie in app_config durch JSON: was nicht
+    serialisierbar ist, faellt hier auf und nicht erst in der Produktion."""
+    import json as _js
+    import nc.cfgstore as _cs
+    speicher = {}
+    alt = (_cs.lesen, _cs.set_)
+
+    def _lesen(key, fehlt=None):
+        return _js.loads(speicher[key]) if key in speicher else fehlt
+
+    def _setzen(key, value):
+        speicher[key] = _js.dumps(value, ensure_ascii=False)
+        return value
+
+    _cs.lesen, _cs.set_ = _lesen, _setzen
+
+    def zurueck():
+        _cs.lesen, _cs.set_ = alt
+    return speicher, zurueck
+
+
+def _mcp_mit_frist(fn, sekunden):
+    """fn() in einem Faden; haengt er laenger als `sekunden`, faellt der Vertrag.
+
+    Ohne diese Klammer haengt eine Mutationsprobe auf Frist oder Deckel den
+    ganzen Lauf auf — und ein haengender Lauf liest sich wie ein langsamer."""
+    import threading as _th
+    aus = {}
+
+    def _lauf():
+        try:
+            aus["r"] = fn()
+        except BaseException as e:          # an den Vertrag weiterreichen
+            aus["e"] = e
+    t = _th.Thread(target=_lauf, daemon=True)
+    t.start()
+    t.join(sekunden)
+    assert not t.is_alive(), "haengt laenger als %s s" % sekunden
+    if "e" in aus:
+        raise aus["e"]
+    return aus["r"]
+
+
+def _mcp_attrappe():
+    """Ein MCP-Server zum Anfassen (v5.6-W198): http.server in einem Faden auf 127.0.0.1.
+
+    -> (basis, protokoll, halt). `protokoll` sammelt (Verb, Pfad, Koepfe klein, Rumpf).
+    Die Pfade sind die Fehlerbilder: /mcp (JSON, verlangt den Token), /sse und
+    /sse-offen (SSE, Antwort nach einer Benachrichtigung, JSON ueber zwei
+    data:-Zeilen), /endlos-seiten, /ohne-tools, /rpcfehler, /sitzung-kaputt,
+    /falsch (404), /umleitung (307), /spiegel (400, spiegelt den Token),
+    /html, /gross-json, /gross-sse, /gross-zeile (je 3 MB, dann Ende — ein
+    endloser Strom liesse eine Mutationsprobe auf den Deckel den Speicher
+    fuellen statt fallen), /tropf (alle 0,2 s ein SSE-Kommentar, nie eine
+    Antwort); fuer die Randfaelle /still-202, /ohne-result, /kaputt-json,
+    /fremde-id, /sse-kaputt, /sse-leer, /tools-kaputt, /viele (250 Werkzeuge),
+    /ohne-sitzung und /abbruch-delete (legt beim DELETE ohne Antwort auf)."""
+    import http.server as _hs
+    import json as _js
+    import threading as _th
+    protokoll = []
+    halt_ev = _th.Event()
+    drei_mb = 3 * 1024 * 1024
+
+    class H(_hs.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            return
+
+        def _senden(self, code, rumpf=b"", art="application/json", koepfe=()):
+            self.send_response(code)
+            if art:
+                self.send_header("Content-Type", art)
+            for k, v in koepfe:
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(rumpf)))
+            self.end_headers()
+            self.wfile.write(rumpf)
+
+        def _strom(self, art="text/event-stream", koepfe=()):
+            # Ohne Laenge: der Rumpf endet, wenn die Verbindung schliesst.
+            self.send_response(200)
+            self.send_header("Content-Type", art)
+            for k, v in koepfe:
+                self.send_header(k, v)
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
+        def _viel(self, stueck, gesamt):
+            geschrieben = 0
+            try:
+                while geschrieben < gesamt and not halt_ev.is_set():
+                    self.wfile.write(stueck)
+                    geschrieben += len(stueck)
+            except OSError:
+                return                     # der Pruefer hat abgebrochen — gewollt
+
+        def do_DELETE(self):
+            protokoll.append(("DELETE", self.path,
+                              {k.lower(): v for k, v in self.headers.items()}, None))
+            if self.path == "/abbruch-delete":
+                self.close_connection = True     # ohne Antwort auflegen
+                return
+            self._senden(204, art=None)
+
+        def _ausgeben(self, obj, koepfe=()):
+            if not self.path.startswith("/sse"):
+                return self._senden(200, _js.dumps(obj).encode(), koepfe=koepfe)
+            text = _js.dumps(obj)
+            teil = text.index(", ") + 1
+            ereignisse = (": ping\n\n"
+                          "event: message\ndata: " + _js.dumps(
+                              {"jsonrpc": "2.0", "method": "notifications/message",
+                               "params": {"level": "info", "data": "vorab"}}) + "\n\n"
+                          "event: message\ndata: " + text[:teil] + "\ndata:"
+                          + text[teil:] + "\n\n").encode()
+            if self.path != "/sse-offen":
+                return self._senden(200, ereignisse, art="text/event-stream", koepfe=koepfe)
+            # Die Antwort steht im Strom, die Verbindung bleibt aber offen —
+            # der Pruefer muss mit der Antwort aufhoeren, nicht mit dem Strom.
+            self._strom(koepfe=koepfe)
+            self.wfile.write(ereignisse)
+            self.wfile.flush()
+            halt_ev.wait(5)
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            msg = _js.loads(self.rfile.read(n) or b"null")
+            k = {a.lower(): b for a, b in self.headers.items()}
+            protokoll.append(("POST", self.path, k, msg))
+            pfad, meth, nr = self.path, msg.get("method"), msg.get("id")
+            if pfad == "/falsch":
+                return self._senden(404, b'{"error": "not found"}')
+            if pfad == "/umleitung":
+                return self._senden(307, koepfe=[("Location", "http://anderswo.example/mcp?schluessel=1")])
+            if pfad == "/spiegel":
+                return self._senden(400, ("abgelehnt, falscher Wert "
+                                          + k.get("authorization", "")[7:]).encode(), art="text/plain")
+            if pfad == "/html":
+                return self._senden(200, b"<html>hallo</html>", art="text/html")
+            if pfad == "/still-202":
+                return self._senden(202, art=None)
+            if pfad == "/ohne-result":
+                return self._ausgeben({"jsonrpc": "2.0", "id": nr, "result": "x"})
+            if pfad == "/kaputt-json":
+                return self._senden(200, b"{kaputt")
+            if pfad == "/fremde-id":
+                return self._ausgeben({"jsonrpc": "2.0", "id": 99, "result": {}})
+            if pfad == "/sse-kaputt":
+                return self._senden(200, b"data: {kaputt\n\n", art="text/event-stream")
+            if pfad == "/sse-leer":
+                return self._senden(200, b": nichts\n\n", art="text/event-stream")
+            if pfad == "/gross-json":
+                self._strom("application/json")
+                return self._viel(b" " * 65536, drei_mb)
+            if pfad == "/gross-sse":
+                self._strom()
+                return self._viel(b"data: {\"jsonrpc\": \"2.0\", \"method\": \"x\"}\n\n" * 1000, drei_mb)
+            if pfad == "/gross-zeile":
+                self._strom()
+                self.wfile.write(b"data: ")
+                return self._viel(b"a" * 65536, drei_mb)
+            if pfad == "/tropf":
+                self._strom()
+                try:
+                    while not halt_ev.wait(0.2):
+                        self.wfile.write(b": ping\n")
+                        self.wfile.flush()
+                except OSError:
+                    return
+                return
+            if pfad == "/mcp" and k.get("authorization") != "Bearer " + _MCP_TOKEN:
+                return self._senden(401, b'{"error": "unauthorized"}')
+            if meth == "initialize":
+                if pfad == "/rpcfehler":
+                    return self._ausgeben({"jsonrpc": "2.0", "id": nr, "error": {
+                        "code": -32602, "message": "Unsupported protocol version"}})
+                faehig = {} if pfad == "/ohne-tools" else {"tools": {"listChanged": False}}
+                sitzung = "a b" if pfad == "/sitzung-kaputt" else "sitz-123"
+                return self._ausgeben({"jsonrpc": "2.0", "id": nr, "result": {
+                    "protocolVersion": "2025-06-18", "capabilities": faehig,
+                    "serverInfo": {"name": "Attrappe", "version": "1.2"}}},
+                    [] if pfad == "/ohne-sitzung" else [("Mcp-Session-Id", sitzung)])
+            erwartet = None if pfad == "/ohne-sitzung" else "sitz-123"
+            if k.get("mcp-session-id") != erwartet \
+                    or k.get("mcp-protocol-version") != "2025-06-18":
+                return self._senden(400, b'{"error": "Sitzung oder Fassung fehlt"}')
+            if meth == "notifications/initialized":
+                return self._senden(202, art=None)
+            if meth == "tools/list":
+                cursor = (msg.get("params") or {}).get("cursor")
+                if pfad == "/tools-kaputt":
+                    return self._ausgeben({"jsonrpc": "2.0", "id": nr, "result": {"tools": "x"}})
+                if pfad == "/viele":
+                    return self._ausgeben({"jsonrpc": "2.0", "id": nr, "result": {
+                        "tools": [{"name": "t%d" % i} for i in range(250)], "nextCursor": "mehr"}})
+                if pfad == "/endlos-seiten":
+                    return self._ausgeben({"jsonrpc": "2.0", "id": nr, "result": {
+                        "tools": [{"name": "w%d" % len(protokoll)}],
+                        "nextCursor": "c%d" % len(protokoll)}})
+                if cursor is None:
+                    return self._ausgeben({"jsonrpc": "2.0", "id": nr, "result": {
+                        "tools": [{"name": "suche", "description": "Sucht\n im\tNetz"},
+                                  {"name": "rechne"}, "kaputt"],
+                        "nextCursor": "seite2"}})
+                if cursor == "seite2":
+                    return self._ausgeben({"jsonrpc": "2.0", "id": nr, "result": {
+                        "tools": [{"name": "echo",
+                                   "description": "gibt " + _MCP_TOKEN + " zurueck"}]}})
+            return self._senden(400, b'{"error": "?"}')
+
+    srv = _hs.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    srv.daemon_threads = True
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def halt():
+        halt_ev.set()
+        srv.shutdown()
+        srv.server_close()
+    return "http://127.0.0.1:%d" % srv.server_address[1], protokoll, halt
+
+
+def _mcp_neu(M, name, url, **mehr):
+    erfolg, s = M.speichern(dict(name=name, url=url, **mehr))
+    assert erfolg, (name, s)
+    return s["id"]
+
+
+def _test_v56_w198_mcp_protokoll():
+    """v5.6-W198: der Verbindungstest spricht MCP Streamable HTTP — gegen einen echten Server.
+
+    Der Betreiber: „Ich haette gern den Tab im Dashboard, um MCPs verwalten zu
+    koennen." Die Oberflaeche von llama-server speichert ihre MCP-Server im
+    Browser; das Deck fuehrt sie deshalb selbst und prueft jeden ECHT:
+    initialize (Fassung, Faehigkeiten, clientInfo), notifications/initialized,
+    tools/list ueber alle Seiten, Mcp-Session-Id und MCP-Protocol-Version in
+    jeder Folgeanfrage, am Ende DELETE der Sitzung. Beide Antwortformen —
+    JSON und SSE, dort mit Benachrichtigung vor der Antwort, Kommentar und
+    einer ueber zwei data:-Zeilen verteilten Nachricht. Jeder Fehlschlag mit
+    Grund UND Abhilfe, und der Token erscheint nirgends: nicht im Ergebnis,
+    nicht in der Liste, nicht im Log — auch nicht, wenn der Server ihn
+    zurueckspiegelt."""
+    import json as _js
+    import logging as _lg
+    import time as _ti
+    import nc.mcpdienste as M
+    from nc import version as _V
+
+    zeilen = []
+
+    class _Fang(_lg.Handler):
+        def emit(self, rec):
+            zeilen.append((rec.levelno, rec.getMessage()))
+    lg = _lg.getLogger("TikTokBot")
+    fang, stufe = _Fang(_lg.DEBUG), lg.level
+    lg.addHandler(fang)
+    lg.setLevel(_lg.DEBUG)
+    speicher, zurueck = _mcp_speicher()
+    basis, protokoll, halt = _mcp_attrappe()
+    try:
+        # (1) JSON, Token, Sitzung, zwei Seiten, Abmelden
+        sid = _mcp_neu(M, "json", basis + "/mcp", token=_MCP_TOKEN)
+        r = M.testen(sid, zeitlimit=5)
+        assert r["ok"], r
+        assert r["protokoll"] == "2025-06-18" and r["http"] == 200 and r["grund"] == "", r
+        assert r["server"] == {"name": "Attrappe", "version": "1.2"}, r["server"]
+        assert [w["name"] for w in r["werkzeuge"]] == ["suche", "rechne", "echo"], r["werkzeuge"]
+        assert r["werkzeuge"][0]["beschreibung"] == "Sucht im Netz", r["werkzeuge"][0]
+        assert r["vollstaendig"] is True and isinstance(r["dauer_ms"], int), r
+        assert r["zeit"].endswith("+00:00"), r["zeit"]
+        assert _MCP_TOKEN not in _js.dumps(r), "der gespiegelte Token steht im Ergebnis"
+        assert "<geschwärzt>" in r["werkzeuge"][2]["beschreibung"], r["werkzeuge"][2]
+        posts = [(k, m) for (v, p, k, m) in protokoll if v == "POST" and p == "/mcp"]
+        assert [m.get("method") for _k, m in posts] == [
+            "initialize", "notifications/initialized", "tools/list", "tools/list"], posts
+        k0, m0 = posts[0]
+        assert "application/json" in k0["accept"] and "text/event-stream" in k0["accept"], k0
+        assert k0["content-type"] == "application/json", k0
+        assert k0["authorization"] == "Bearer " + _MCP_TOKEN, k0
+        assert "mcp-session-id" not in k0 and "mcp-protocol-version" not in k0, k0
+        assert m0["params"] == {"protocolVersion": "2025-06-18", "capabilities": {},
+                                "clientInfo": {"name": "nightcrawler", "version": _V.VERSION}}, m0
+        for k, _m in posts[1:]:
+            assert k["mcp-session-id"] == "sitz-123", k
+            assert k["mcp-protocol-version"] == "2025-06-18", k
+        assert "id" not in posts[1][1], "eine Benachrichtigung traegt keine id"
+        assert posts[2][1]["params"] == {} and posts[3][1]["params"] == {"cursor": "seite2"}, posts
+        weg = [(p, k.get("mcp-session-id")) for (v, p, k, m) in protokoll if v == "DELETE"]
+        assert weg == [("/mcp", "sitz-123")], weg
+        ablage = [s for s in M.liste() if s["id"] == sid][0]["letzter_test"]
+        assert ablage["ok"] and ablage["werkzeuge"] == r["werkzeuge"], ablage
+        assert _MCP_TOKEN not in _js.dumps(M.liste()), "Token in liste()"
+
+        # (2) SSE: Benachrichtigung vor der Antwort, Kommentar, zwei data:-Zeilen
+        r = M.testen(_mcp_neu(M, "sse", basis + "/sse"), zeitlimit=5)
+        assert r["ok"] and [w["name"] for w in r["werkzeuge"]] == ["suche", "rechne", "echo"], r
+        # (3) Ein Strom, der nach der Antwort offen bleibt, haelt den Test nicht auf.
+        t0 = _ti.monotonic()
+        r = _mcp_mit_frist(lambda: M.testen(_mcp_neu(M, "offen", basis + "/sse-offen"),
+                                            zeitlimit=8), 12)
+        assert r["ok"] and _ti.monotonic() - t0 < 3, (r, _ti.monotonic() - t0)
+        # (4) Hoechstens fuenf Seiten — und die Liste sagt, dass sie nicht vollstaendig ist.
+        r = M.testen(_mcp_neu(M, "seiten", basis + "/endlos-seiten"), zeitlimit=5)
+        n = sum(1 for (v, p, k, m) in protokoll if p == "/endlos-seiten"
+                and (m or {}).get("method") == "tools/list")
+        assert r["ok"] and len(r["werkzeuge"]) == 5 and r["vollstaendig"] is False and n == 5, (r, n)
+        # (5) Ohne angekuendigte Werkzeuge kein tools/list, und das ist kein Fehler.
+        r = M.testen(_mcp_neu(M, "ohne", basis + "/ohne-tools"), zeitlimit=5)
+        n = sum(1 for (v, p, k, m) in protokoll if p == "/ohne-tools"
+                and (m or {}).get("method") == "tools/list")
+        assert r["ok"] and r["werkzeuge"] == [] and r["vollstaendig"] and n == 0, (r, n)
+
+        # (6) Fehlerbilder: jeder mit eigener Vorlage, HTTP-Status und Abhilfe.
+        def _fall(name, url, vorlage, http, *teile, **mehr):
+            r = M.testen(_mcp_neu(M, name, url, **mehr), zeitlimit=5)
+            assert r["ok"] is False and r["grund_vorlage"] == vorlage, (name, r)
+            assert r["http"] == http, (name, r["http"])
+            for t in teile:
+                assert t in r["grund"], (name, t, r["grund"])
+            assert _MCP_TOKEN not in _js.dumps(r), (name, "Token im Ergebnis")
+            assert r["werkzeuge"] == [] and r["server"] is None, (name, r)
+            return r
+        _fall("ohne token", basis + "/mcp", M.ANMELDUNG_OHNE, 401, "401", "kein Token")
+        _fall("falscher token", basis + "/mcp", M.ANMELDUNG, 401, "Token prüfen", token="falsch")
+        _fall("404", basis + "/falsch", M.KEIN_ENDPUNKT, 404, "/mcp", "SSE")
+        r = _fall("umleitung", basis + "/umleitung", M.UMLEITUNG, 307,
+                  "anderswo.example/mcp", "nicht gefolgt", token=_MCP_TOKEN)
+        assert "schluessel" not in r["grund"], r["grund"]
+        assert sum(1 for x in protokoll if x[1] == "/umleitung") == 1, "einer Umleitung gefolgt"
+        r = _fall("spiegel", basis + "/spiegel", M.ABGELEHNT, 400, "falscher Wert",
+                  "<geschwärzt>", token=_MCP_TOKEN)
+        _fall("html", basis + "/html", M.KEIN_MCP, 200, "text/html", "/mcp")
+        _fall("rpc", basis + "/rpcfehler", M.RPC_FEHLER, 200, "-32602",
+              "Unsupported protocol version", "initialize")
+        _fall("sitzung", basis + "/sitzung-kaputt", M.SITZUNG_UNGUELTIG, 200, "Mcp-Session-Id")
+        # (7) Unbekannte Kennung: eine Ausnahme, kein Ergebnis — die Route macht 404 daraus.
+        try:
+            M.testen("deadbeef")
+            raise AssertionError("unbekannte Kennung getestet")
+        except M.Unbekannt:
+            pass
+        # (8) Jeder Fehlschlag steht im Log (warning), der Token in keiner Zeile.
+        laut = [t for (lv, t) in zeilen if lv >= _lg.WARNING and t.startswith("MCP-Test")]
+        assert len(laut) == 8, laut
+        assert not [t for (_lv, t) in zeilen if _MCP_TOKEN in t], "Token im Log"
+    finally:
+        halt()
+        zurueck()
+        lg.removeHandler(fang)
+        lg.setLevel(stufe)
+    ok("v5.6-W198: MCP-Test gegen echte Attrappe — JSON und SSE, Sitzung, Fassung, "
+       "Seiten, Abmelden, acht Fehlerbilder mit Abhilfe, Token nie draussen")
+
+
+def _test_v56_w198_mcp_frist_und_deckel():
+    """v5.6-W198: der Test haelt eine Frist fuer das GANZE Gespraech und liest
+    einen fremden Rumpf nur bis 2 MB.
+
+    Ein Socket-Zeitlimit gilt je recv(): ein Server, der alle 0,2 s ein
+    SSE-Keepalive schickt, laesst es nie ablaufen (/tropf). Ein Server, der
+    gar nicht antwortet, muss nach der Frist mit „Zeitueberschreitung" enden,
+    nicht nach der Vorgabe des Betriebssystems. Und ein Rumpf von 3 MB — als
+    JSON, als Strom von Ereignissen ohne Antwort, als eine Zeile ohne Umbruch —
+    endet am Deckel, nicht im Speicher des Bots."""
+    import socket as _so
+    import time as _ti
+    import nc.mcpdienste as M
+    speicher, zurueck = _mcp_speicher()
+    basis, _protokoll, halt = _mcp_attrappe()
+    stumm = _so.socket()
+    try:
+        stumm.bind(("127.0.0.1", 0))
+        stumm.listen(8)                 # nimmt an (Warteschlange), antwortet nie
+        frei = _so.socket()
+        frei.bind(("127.0.0.1", 0))
+        zu = frei.getsockname()[1]
+        frei.close()                    # dort lauscht danach niemand
+        for name, url in (("stumm", "http://127.0.0.1:%d/mcp" % stumm.getsockname()[1]),
+                          ("tropf", basis + "/tropf")):
+            sid = _mcp_neu(M, name, url)
+            t0 = _ti.monotonic()
+            r = _mcp_mit_frist(lambda s=sid: M.testen(s, zeitlimit=1.0), 8)
+            dauer = _ti.monotonic() - t0
+            assert r["ok"] is False and r["grund_vorlage"] == M.ZEIT, (name, r)
+            assert "Zeitüberschreitung nach 1 s" in r["grund"] and dauer < 3.0, (name, dauer, r)
+        r = M.testen(_mcp_neu(M, "zu", "http://127.0.0.1:%d/mcp" % zu), zeitlimit=3)
+        assert r["grund_vorlage"] == M.VERWEIGERT and "127.0.0.1:%d" % zu in r["grund"], r
+        assert r["http"] is None, r
+        for pfad in ("/gross-json", "/gross-sse", "/gross-zeile"):
+            r = _mcp_mit_frist(lambda p=pfad: M.testen(_mcp_neu(M, p, basis + p), zeitlimit=8), 12)
+            assert r["ok"] is False and r["grund_vorlage"] == M.ZU_GROSS, (pfad, r)
+            assert "2 MB" in r["grund"], (pfad, r["grund"])
+        assert M.MAX_RUMPF == 2 * 1024 * 1024
+    finally:
+        stumm.close()
+        halt()
+        zurueck()
+    ok("v5.6-W198: MCP-Test — Frist fuer das ganze Gespraech (stumm, Tropf), "
+       "Verbindung verweigert, Rumpf bei 2 MB gedeckelt (JSON, SSE, Zeile)")
+
+
+def _mcp_klartext(antwort):
+    """Eine Gegenstelle, die auf jede Verbindung `antwort` schickt und auflegt —
+    weder HTTP noch TLS. -> (port, halt)
+
+    Erst lesen, dann schicken: wer mit ungelesenen Daten auflegt, schickt ein
+    RST statt eines FIN, und der Pruefer saehe „Verbindung zurueckgesetzt"
+    statt der Antwort, um die es geht."""
+    import socket as _so
+    import threading as _th
+    srv = _so.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    srv.settimeout(0.2)
+    halt_ev = _th.Event()
+
+    def _lauf():
+        while not halt_ev.is_set():
+            try:
+                c, _adr = srv.accept()
+            except OSError:
+                continue
+            with c:
+                try:
+                    c.settimeout(2)
+                    c.recv(65536)
+                    c.sendall(antwort)
+                    c.shutdown(_so.SHUT_WR)
+                    c.recv(65536)
+                except OSError:
+                    continue
+    t = _th.Thread(target=_lauf, daemon=True)
+    t.start()
+
+    def halt():
+        halt_ev.set()
+        t.join(2)
+        srv.close()
+    return srv.getsockname()[1], halt
+
+
+def _test_v56_w198_mcp_randfaelle():
+    """v5.6-W198: die seltenen Wege des Verbindungstests und der Eingabepruefung.
+
+    Antworten, die keine sind (202 auf eine Anfrage, result ohne Objekt,
+    kaputtes JSON, fremde id, SSE ohne Antwort), mehr Werkzeuge als die
+    Ablage nimmt (gekuerzt UND als unvollstaendig benannt), ein Server ohne
+    Sitzungskennung (keine erfinden, kein DELETE), ein DELETE, auf das der
+    Server auflegt (kein Befund), Gegenstellen ohne HTTP und ohne TLS, die
+    Zuordnung jeder Netz-Ausnahme zu ihrer Abhilfe, die abgelaufene Frist,
+    Eingaben am Rand, kollidierende Kennungen, unlesbare Eintraege und ein
+    Datenbankfehler beim Ablegen des Befunds."""
+    import http.client as _hc
+    import json as _js
+    import logging as _lg
+    import socket as _so
+    import sqlite3 as _sq
+    import ssl as _ssl
+    import time as _ti
+    import nc.cfgstore as _cs
+    import nc.mcpdienste as M
+
+    zeilen = []
+
+    class _Fang(_lg.Handler):
+        def emit(self, rec):
+            zeilen.append((rec.levelno, rec.getMessage()))
+    lg = _lg.getLogger("TikTokBot")
+    fang, stufe = _Fang(_lg.DEBUG), lg.level
+    lg.addHandler(fang)
+    lg.setLevel(_lg.DEBUG)
+    speicher, zurueck = _mcp_speicher()
+    basis, protokoll, halt = _mcp_attrappe()
+    port, klartext_halt = _mcp_klartext(b"kein http\r\n\r\n")
+    echt_secrets = M.secrets
+    try:
+        for pfad, vorlage, teil in (
+                ("/still-202", M.OHNE_ANTWORT, "initialize"),
+                ("/ohne-result", M.OHNE_ERGEBNIS, "initialize"),
+                ("/kaputt-json", M.KEIN_JSON, "initialize"),
+                ("/fremde-id", M.OHNE_ANTWORT, "initialize"),
+                ("/sse-kaputt", M.KEIN_JSON, "initialize"),
+                ("/sse-leer", M.OHNE_ANTWORT, "initialize"),
+                ("/tools-kaputt", M.WERKZEUGLISTE, "tools/list")):
+            r = M.testen(_mcp_neu(M, pfad, basis + pfad), zeitlimit=5)
+            assert r["ok"] is False and r["grund_vorlage"] == vorlage, (pfad, r)
+            assert teil in r["grund"], (pfad, r["grund"])
+        r = M.testen(_mcp_neu(M, "viele", basis + "/viele"), zeitlimit=5)
+        assert r["ok"] and len(r["werkzeuge"]) == M.MAX_WERKZEUGE, len(r["werkzeuge"])
+        assert r["vollstaendig"] is False, "gekuerzte Liste als vollstaendig ausgegeben"
+        n = sum(1 for x in protokoll if x[1] == "/viele" and (x[3] or {}).get("method") == "tools/list")
+        assert n == 1, "nach dem Abschneiden weiter geblaettert"
+        r = M.testen(_mcp_neu(M, "ohne sitzung", basis + "/ohne-sitzung"), zeitlimit=5)
+        assert r["ok"], r
+        assert not [x for x in protokoll if x[0] == "DELETE" and x[1] == "/ohne-sitzung"]
+        r = M.testen(_mcp_neu(M, "abbruch", basis + "/abbruch-delete"), zeitlimit=5)
+        assert r["ok"] and [x for x in protokoll if x[0] == "DELETE"], r
+        r = M.testen(_mcp_neu(M, "klartext", "http://127.0.0.1:%d/mcp" % port), zeitlimit=5)
+        assert r["grund_vorlage"] == M.KEIN_HTTP and "https://" in r["grund"], r
+        r = M.testen(_mcp_neu(M, "tls", "https://127.0.0.1:%d/mcp" % port), zeitlimit=5)
+        assert r["grund_vorlage"] == M.TLS and "http://" in r["grund"], r
+        # Die Zuordnung der Netzfehler — die Reihenfolge zaehlt: die SSL-Fehler
+        # sind OSError, RemoteDisconnected ist HTTPException UND OSError.
+        s = M._Sitzung("https://mcp.example:8443/mcp", "", 2.0)
+        for e, vorlage in ((TimeoutError(), M.ZEIT), (ConnectionRefusedError(), M.VERWEIGERT),
+                           (_so.gaierror(-2, "Name or service not known"), M.NAME_UNAUFLOESBAR),
+                           (_ssl.SSLCertVerificationError("x"), M.TLS_ZERTIFIKAT),
+                           (_ssl.SSLError("x"), M.TLS), (_hc.RemoteDisconnected("x"), M.KEIN_HTTP),
+                           (ConnectionResetError(), M.NETZ), (OSError(101, "unreachable"), M.NETZ)):
+            a = M._netzfehler(e, s)
+            assert a.vorlage == vorlage, (e, a.vorlage)
+            assert "{" not in a.vorlage.format(**a.werte), (e, a.werte)
+        assert M._netzfehler(_so.gaierror(-2, "x"), s).werte == {"ziel": "mcp.example"}
+        s.frist = _ti.monotonic() - 1
+        try:
+            s.rest()
+            raise AssertionError("abgelaufene Frist nicht gemeldet")
+        except M._Abbruch as e:
+            assert e.vorlage == M.ZEIT and e.werte == {"s": "2"}, e.werte
+        # Eingaben am Rand
+        sid = _mcp_neu(M, "rand", basis + "/mcp", token=_MCP_TOKEN, aktiv=1, notiz=None)
+        for daten, grund in (({"name": None}, M.NAME_FEHLT), ({"name": 5}, M.NAME_TEXT),
+                             ({"url": None}, M.URL_FEHLT), ({"token": 5}, M.TOKEN_TEXT),
+                             ({"token": "x" * 4097}, M.TOKEN_LANG), ({"notiz": 5}, M.NOTIZ_TEXT),
+                             ({"notiz": "a\x07b"}, M.NOTIZ_ZEICHEN), ({"aktiv": 2}, M.AKTIV_WERT)):
+            assert M.speichern(daten, sid) == (False, grund), daten
+        assert M.speichern({"url": basis + "/x"}) == (False, M.NAME_FEHLT)
+        erfolg, s2 = M.speichern({"aktiv": "nein", "notiz": "a\nb", "token": None}, sid)
+        assert erfolg and s2["aktiv"] is False and s2["notiz"] == "a\nb", s2
+        assert s2["token_gesetzt"] is False, s2
+
+        class _Wuerfel:
+            folge = iter(["aaaaaaaa", "bbbbbbbb"])
+
+            def token_hex(self, _n):
+                return next(self.folge)
+        M.secrets = _Wuerfel()
+        assert M._neue_id([{"id": "aaaaaaaa"}]) == "bbbbbbbb", "Kennung doppelt vergeben"
+        M.secrets = echt_secrets
+        # Ein Datenbankfehler beim Ablegen kostet den Befund, nicht die Antwort.
+        gut = _cs.lesen
+
+        def _gesperrt(*a, **k):
+            raise _sq.OperationalError("database is locked")
+        _cs.lesen = _gesperrt
+        try:
+            M._ablegen({"id": sid, "name": "rand", "url": basis + "/mcp"}, {"ok": True})
+        finally:
+            _cs.lesen = gut
+        assert [t for (lv, t) in zeilen if lv == _lg.WARNING and "nicht gespeichert" in t], zeilen[-3:]
+        # Unlesbare Eintraege fallen heraus — laut.
+        speicher[M.SCHLUESSEL] = _js.dumps([{"id": "x"}, 5, {"id": "a1b2c3d4", "name": "n",
+                                                             "url": "http://h/"}])
+        assert [x["id"] for x in M.liste()] == ["a1b2c3d4"]
+        assert [t for (lv, t) in zeilen if lv == _lg.WARNING and "unlesbare" in t], zeilen[-3:]
+        assert M.lage(unit_pfad=os.path.join(_ph.verzeichnis(), "fehlt"))["anzahl"] == 1
+    finally:
+        M.secrets = echt_secrets
+        klartext_halt()
+        halt()
+        zurueck()
+        lg.removeHandler(fang)
+        lg.setLevel(stufe)
+    ok("v5.6-W198: MCP-Randfaelle — Antworten ohne Antwort, gekuerzte Werkzeugliste, "
+       "ohne Sitzung, kein HTTP/TLS, Netzfehler-Zuordnung, Frist, Eingaben am Rand")
+
+
+def _test_v56_w198_mcp_verwaltung():
+    """v5.6-W198: die Verwaltung ueber die echte Flask-App mit dem Blueprint.
+
+    Anlegen, Aendern, Testen, Exportieren, Loeschen — und dabei die Riegel:
+    nur http/https, keine Zugangsdaten in der Adresse, eindeutige Namen ohne
+    Steuerzeichen, Token nie in einer Antwort (ausser im Export mit
+    mit_token=1), ein weggelassener Token bleibt, "" loescht ihn, ein neuer
+    Token oder eine neue Adresse verwirft den alten Testbefund. Und der Fall
+    aus W91: faellt die Datenbank beim LESEN aus, antwortet die Route 503 und
+    schreibt NICHTS — sonst loeschte das Anlegen eines Servers alle anderen."""
+    import contextvars as _cv
+    import json as _js
+    import sqlite3 as _sq
+    from flask import Flask
+    import nc.cfgstore as _cs
+    import nc.mcpdienste as M
+    import nc.routes.mcp as R
+    from nc import i18n as _i18n
+    speicher, zurueck = _mcp_speicher()
+    basis, _protokoll, halt = _mcp_attrappe()
+    d = _ph.verzeichnis()
+    alt_unit = M.UNIT_PFAD
+    M.UNIT_PFAD = os.path.join(d, "llama-server.service")
+    try:
+        app = Flask(__name__)
+        app.register_blueprint(R.bp)
+        cl = app.test_client()
+        r = cl.get("/api/mcp/server")
+        j = r.get_json()
+        assert r.status_code == 200 and j["ok"] and j["server"] == [], j
+        assert j["lage"]["anzahl"] == 0 and j["lage"]["webui"]["gefunden"] is False, j["lage"]
+        assert "ikllama.sh" in j["lage"]["webui"]["abhilfe"], j["lage"]
+        # Nur JSON — ein Formular einer fremden Seite kommt nicht durch.
+        r = cl.post("/api/mcp/server", data={"name": "x", "url": basis + "/mcp"})
+        assert r.status_code == 415, r.status_code
+        # Die Riegel der Adresse und des Namens
+        for daten, teil in (
+                ({"url": "file:///etc/passwd"}, "Nur http"),
+                ({"url": "javascript:alert(1)"}, "Nur http"),
+                ({"url": "ftp://127.0.0.1/mcp"}, "Nur http"),
+                ({"url": "http://nutzer:pass@127.0.0.1/mcp"}, "Zugangsdaten"),
+                ({"url": "http://:8080/mcp"}, "keinen Rechner"),
+                ({"url": "http://127.0.0.1:99999/mcp"}, "Port"),
+                ({"url": "http://127.0.0.1:0/mcp"}, "Port"),
+                ({"url": "http://127.0.0.1/m cp"}, "Leer"),
+                ({"url": "http://bücher.example/mcp"}, "Punycode"),
+                ({"url": ""}, "fehlt"),
+                ({"url": 5}, "Text"),
+                ({"url": "http://h/" + "x" * 500}, "zu lang"),
+                ({"name": "a‮b", "url": basis + "/mcp"}, "Steuerzeichen"),
+                ({"name": "x" * 61, "url": basis + "/mcp"}, "zu lang"),
+                ({"name": "  ", "url": basis + "/mcp"}, "fehlt"),
+                ({"url": basis + "/mcp", "token": "a\nb"}, "Leer- oder Steuer"),
+                ({"url": basis + "/mcp", "aktiv": "vielleicht"}, "aktiv"),
+                ({"url": basis + "/mcp", "notiz": "n" * 201}, "zu lang")):
+            daten = dict({"name": "riegel"}, **daten)
+            r = cl.post("/api/mcp/server", json=daten)
+            assert r.status_code == 400 and teil in r.get_json()["error"], (daten, r.get_json())
+        assert _js.loads(speicher.get(M.SCHLUESSEL, "[]")) == [], "trotz Ablehnung geschrieben"
+        # Anlegen mit Token — „Bearer " davor wird abgenommen.
+        r = cl.post("/api/mcp/server", json={"name": "Werkzeugkiste", "url": basis + "/mcp",
+                                              "token": "Bearer " + _MCP_TOKEN, "notiz": "erster"})
+        s = r.get_json()["server"]
+        sid = s["id"]
+        assert r.status_code == 200 and re.fullmatch(r"[0-9a-f]{8}", sid), s
+        assert s["token_gesetzt"] is True and "token" not in s and s["aktiv"] is True, s
+        assert s["notiz"] == "erster" and s["letzter_test"] is None and s["geaendert"], s
+        assert _MCP_TOKEN not in r.get_data(as_text=True), "Token in der Antwort"
+        assert [x["token"] for x in _js.loads(speicher[M.SCHLUESSEL])] == [_MCP_TOKEN]
+        r = cl.post("/api/mcp/server", json={"name": "WERKZEUGKISTE", "url": basis + "/sse"})
+        assert r.status_code == 400 and "schon" in r.get_json()["error"], r.get_json()
+        r = cl.post("/api/mcp/server", json={"name": "Aus", "url": basis + "/sse", "aktiv": False})
+        sid2 = r.get_json()["server"]["id"]
+        r = cl.get("/api/mcp/server")
+        j = r.get_json()
+        assert _MCP_TOKEN not in r.get_data(as_text=True), "Token in der Liste"
+        assert [x["name"] for x in j["server"]] == ["Werkzeugkiste", "Aus"], j
+        assert j["lage"]["anzahl"] == 2 and j["lage"]["aktiv"] == 1, j["lage"]
+        # Test ueber die Route: ok heisst „Route lief", test.ok „Server erreichbar".
+        r = cl.post("/api/mcp/server/%s/test" % sid)
+        j = r.get_json()
+        assert r.status_code == 200 and j["ok"] and j["test"]["ok"], j
+        assert len(j["test"]["werkzeuge"]) == 3 and _MCP_TOKEN not in r.get_data(as_text=True), j
+        # Aendern ohne token-Feld: Token und Befund bleiben.
+        r = cl.post("/api/mcp/server/%s" % sid, json={"notiz": "zweiter"})
+        s = r.get_json()["server"]
+        assert s["token_gesetzt"] and s["notiz"] == "zweiter" and s["letzter_test"]["ok"], s
+        # Export: nur aktive, Token nur auf Verlangen, als Datei, nicht zwischengespeichert.
+        r = cl.get("/api/mcp/export")
+        assert r.headers["Content-Disposition"] == 'attachment; filename="mcp_server.json"', r.headers
+        assert "no-store" in r.headers["Cache-Control"], r.headers
+        assert _js.loads(r.get_data(as_text=True)) == {
+            "mcpServers": {"Werkzeugkiste": {"url": basis + "/mcp"}}}, r.get_data(as_text=True)
+        r = cl.get("/api/mcp/export?mit_token=1")
+        assert _js.loads(r.get_data(as_text=True)) == {"mcpServers": {"Werkzeugkiste": {
+            "url": basis + "/mcp", "headers": {"Authorization": "Bearer " + _MCP_TOKEN}}}}
+        # "" loescht den Token, und der alte Befund gilt nicht mehr.
+        r = cl.post("/api/mcp/server/%s" % sid, json={"token": ""})
+        s = r.get_json()["server"]
+        assert s["token_gesetzt"] is False and s["letzter_test"] is None, s
+        r = cl.get("/api/mcp/export?mit_token=1")
+        assert "headers" not in _js.loads(r.get_data(as_text=True))["mcpServers"]["Werkzeugkiste"]
+        # Ein Befund, der waehrend einer Aenderung zurueckkommt, wird nicht abgelegt.
+        alt = dict(_js.loads(speicher[M.SCHLUESSEL])[0], token="vorher")
+        M._ablegen(alt, {"ok": True})
+        assert [x for x in M.liste() if x["id"] == sid][0]["letzter_test"] is None
+        # Gruende in der Sprache der Anfrage — Vorlage uebersetzt, DANN gefuellt.
+        def _en(fn):
+            def lauf():
+                _i18n.sprache_setzen("en")
+                return fn()
+            return _cv.copy_context().run(lauf)
+        r = _en(lambda: cl.post("/api/mcp/server/%s/test" % sid))
+        g = r.get_json()["test"]["grund"]
+        assert g == _i18n.t(M.ANMELDUNG_OHNE, sprache="en", code="401") and "401" in g, g
+        assert g != M.ANMELDUNG_OHNE.format(code="401"), "Grund nicht uebersetzt"
+        assert "grund_vorlage" not in r.get_json()["test"], r.get_json()
+        r = _en(lambda: cl.post("/api/mcp/server", json={"name": "x", "url": "http://a:b@h/"}))
+        assert r.get_json()["error"] == _i18n.t(M.URL_ZUGANG, sprache="en") != M.URL_ZUGANG
+        # Unbekannte Kennung: 404 auf allen drei Wegen.
+        assert cl.post("/api/mcp/server/deadbeef", json={"notiz": "x"}).status_code == 404
+        assert cl.post("/api/mcp/server/deadbeef/test").status_code == 404
+        assert cl.delete("/api/mcp/server/deadbeef").status_code == 404
+        # W91: Datenbank faellt beim Lesen — 503, und nichts wird ueberschrieben.
+        vorher = dict(speicher)
+        gut = _cs.lesen
+
+        def _gesperrt(*a, **k):
+            raise _sq.OperationalError("database is locked")
+        _cs.lesen = _gesperrt
+        try:
+            assert cl.post("/api/mcp/server", json={"name": "neu", "url": basis + "/x"}).status_code == 503
+            assert cl.post("/api/mcp/server/%s" % sid, json={"notiz": "x"}).status_code == 503
+            assert cl.delete("/api/mcp/server/%s" % sid).status_code == 503
+            assert cl.get("/api/mcp/server").status_code == 503
+            assert cl.get("/api/mcp/export").status_code == 503
+            assert cl.post("/api/mcp/server/%s/test" % sid).status_code == 503
+        finally:
+            _cs.lesen = gut
+        assert speicher == vorher, "bei unlesbarem Bestand geschrieben"
+        # Ein Bestand, der keine Liste ist, wird nicht ueberschrieben.
+        speicher[M.SCHLUESSEL] = '{"kaputt": true}'
+        assert cl.post("/api/mcp/server", json={"name": "neu", "url": basis + "/x"}).status_code == 503
+        assert speicher[M.SCHLUESSEL] == '{"kaputt": true}'
+        speicher.update(vorher)
+        # Loeschen
+        r = cl.delete("/api/mcp/server/%s" % sid2)
+        assert r.status_code == 200 and r.get_json() == {"ok": True}, r.get_json()
+        assert cl.delete("/api/mcp/server/%s" % sid2).status_code == 404
+        assert [x["id"] for x in M.liste()] == [sid]
+        # Hoechstens MAX_SERVER Eintraege.
+        for i in range(M.MAX_SERVER - 1):
+            assert M.speichern({"name": "s%d" % i, "url": basis + "/x"})[0]
+        erfolg, grund = M.speichern({"name": "zu viel", "url": basis + "/x"})
+        assert erfolg is False and grund == M.ZU_VIELE, grund
+        assert M.speichern("kein Objekt") == (False, M.KEIN_OBJEKT)
+    finally:
+        M.UNIT_PFAD = alt_unit
+        halt()
+        zurueck()
+    ok("v5.6-W198: MCP-Verwaltung ueber Flask — Riegel (Schema, Zugangsdaten, Name, Token), "
+       "Token nie in Antworten, Export, Uebersetzung, 404, 503 ohne Ueberschreiben")
+
+
+def _test_v56_w198_mcp_lage():
+    """v5.6-W198: laeuft llama-server mit der Oberflaeche, die einen MCP-Reiter hat?
+
+    Gelesen wird NUR die letzte ExecStart-Zeile der Unit. Die mitgelieferte
+    Vorlage (llama-server.service) nennt `--webui llamacpp` im Kommentar,
+    ohne es zu setzen — wer den Dateitext absucht, meldet eine Oberflaeche,
+    die nicht laeuft. Die Adresse kommt aus BRAIN_LLAMACPP_URL, gelesen beim
+    Aufruf (nicht beim Import, W67). Und jede Abhilfe und jede Vorlage hat in
+    en und es dieselben Platzhalter — ein falscher faellt in nc.i18n.t still
+    auf Deutsch zurueck."""
+    import ast as _ast
+    import json as _js
+    import string as _st
+    import nc.mcpdienste as M
+    d = _ph.verzeichnis()
+    kopf = "[Unit]\nDescription=x\n\n[Service]\n"
+
+    def _unit(name, text):
+        p = os.path.join(d, name)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        return p
+    w = M.webui("llama-server.service")
+    assert w["gefunden"] and w["webui"] == "auto" and w["mcp_proxy"] is False, w
+    assert w["abhilfe"] == M.WEBUI_FEHLT and "LLM_WEBUI=llamacpp" in w["abhilfe"], w
+    p = _unit("a.service", "# --webui-mcp-proxy erst mit LLM_WEBUI_MCP_PROXY=1\n" + kopf
+              + "ExecStart=/opt/ik/llama-server -m /m.gguf --port 8080 --webui llamacpp\n")
+    w = M.webui(p)
+    assert w["webui"] == "llamacpp" and w["mcp_proxy"] is False, w
+    assert w["abhilfe"] == M.WEBUI_PROXY_AUS and "LLM_WEBUI_MCP_PROXY=1" in w["abhilfe"], w
+    w = M.webui(_unit("b.service", kopf + "ExecStart=/x --webui llamacpp --webui-mcp-proxy\n"))
+    assert w["webui"] == "llamacpp" and w["mcp_proxy"] is True and w["abhilfe"] == "", w
+    w = M.webui(_unit("c.service", kopf + "ExecStart=/x --webui llamacpp\nExecStart=/x \\\n  --webui=none\n"))
+    assert w["webui"] == "none" and w["abhilfe"] == M.WEBUI_FEHLT, w
+    w = M.webui(_unit("d.service", kopf + "# ExecStart=/x --webui llamacpp\n"))
+    assert w["gefunden"] and w["webui"] is None and w["abhilfe"] == M.WEBUI_OHNE_START, w
+    w = M.webui(os.path.join(d, "fehlt.service"))
+    assert w["gefunden"] is False and w["webui"] is None and w["abhilfe"] == M.WEBUI_KEINE_UNIT, w
+
+    def _verweigert(*a, **k):
+        raise PermissionError(13, "Permission denied")
+    M.open = _verweigert                # verdeckt das eingebaute open nur in nc.mcpdienste
+    try:
+        w = M.webui(p)
+    finally:
+        del M.open
+    assert w["gefunden"] is False and w["abhilfe"] == M.WEBUI_UNLESBAR, w
+    alt = os.environ.get("BRAIN_LLAMACPP_URL")
+    try:
+        os.environ["BRAIN_LLAMACPP_URL"] = "http://127.0.0.1:9191/"
+        assert M.webui(p)["adresse"] == "http://127.0.0.1:9191"
+        os.environ.pop("BRAIN_LLAMACPP_URL")
+        assert M.webui(p)["adresse"] == "http://127.0.0.1:8080"
+    finally:
+        if alt is not None:
+            os.environ["BRAIN_LLAMACPP_URL"] = alt
+    la = M.lage(server=[{"aktiv": True}, {"aktiv": False}, {"aktiv": True}], unit_pfad=p)
+    assert (la["anzahl"], la["aktiv"], la["webui"]["webui"]) == (3, 2, "llamacpp"), la
+    # Katalog: jeder markierte Text in en und es, mit denselben Platzhaltern.
+    baum = _ast.parse(open("nc/mcpdienste.py", encoding="utf-8").read())
+    texte = {n.args[0].value for n in _ast.walk(baum)
+             if isinstance(n, _ast.Call) and getattr(n.func, "id", "") == "_t" and n.args
+             and isinstance(n.args[0], _ast.Constant) and isinstance(n.args[0].value, str)}
+    assert len(texte) >= 50, len(texte)
+
+    def _felder(t):
+        return {f for _a, f, _b, _c in _st.Formatter().parse(t) if f is not None}
+    for sprache in ("en", "es"):
+        kat = _js.load(open("locales/%s.json" % sprache, encoding="utf-8"))["strings"]
+        for t in texte:
+            assert t in kat, (sprache, t)
+            assert _felder(kat[t]) == _felder(t), (sprache, t, kat[t])
+    ok("v5.6-W198: llama-server-Lage aus ExecStart (nicht aus dem Kommentar), "
+       "Abhilfe je Lage, Adresse zur Laufzeit, Katalog mit gleichen Platzhaltern")
+
+
+def _test_v56_w198_cfgstore_lesen_streng():
+    """v5.6-W198: nc.cfgstore.lesen() wirft, wo get() die Vorgabe liefert.
+
+    get() ist fuer eine Anzeige richtig — und fuer Lesen-Aendern-Schreiben
+    gefaehrlich: eine gesperrte Datenbank liefert die Vorgabe [], und wer
+    daran einen Eintrag haengt und zurueckschreibt, loescht alle anderen
+    (die Klasse aus W91). lesen() unterscheidet „fehlt" (Vorgabe) von „weiss
+    ich nicht" (Ausnahme) und von „unlesbar" (Ausnahme)."""
+    import contextlib as _cl
+    import sqlite3 as _sq
+    import nc.cfgstore as C
+    conn = _sq.connect(":memory:")
+    conn.row_factory = _sq.Row
+    conn.execute("CREATE TABLE app_config (k TEXT PRIMARY KEY, v TEXT, updated_at TEXT)")
+
+    @_cl.contextmanager
+    def _db():
+        yield conn
+
+    def _gesperrt():
+        raise _sq.OperationalError("database is locked")
+    alt = C._db_conn
+    C._db_conn = _db
+    try:
+        assert C.lesen("mcp.server", []) == [] and C.lesen("mcp.server") is None
+        conn.execute("INSERT INTO app_config VALUES ('mcp.server', '[{\"id\": \"a\"}]', 'x')")
+        assert C.lesen("mcp.server", []) == [{"id": "a"}]
+        conn.execute("UPDATE app_config SET v='[kaputt' WHERE k='mcp.server'")
+        try:
+            C.lesen("mcp.server", [])
+            raise AssertionError("unlesbarer Wert als Vorgabe gelesen")
+        except ValueError:
+            pass
+        C._db_conn = _gesperrt
+        try:
+            C.lesen("mcp.server", [])
+            raise AssertionError("Datenbankfehler als Vorgabe gelesen")
+        except _sq.OperationalError:
+            pass
+        # Genau hier unterscheiden sich die beiden: get() sagt die Vorgabe.
+        assert C.get("mcp.server", []) == []
+    finally:
+        C._db_conn = alt
+        conn.close()
+    ok("v5.6-W198: cfgstore.lesen — fehlt = Vorgabe, Datenbankfehler und Unlesbares werfen")
+
+
 def _test_v52_w190_sicherheit():
     """v5.2-W190: sechs Riegel aus dem Sicherheits-Durchgang.
 
@@ -38359,6 +39224,12 @@ def main():
     _test_v51_w184_raumkennung()
     _test_v51_w185_sendebruecke_meldungen()
     _test_v51_w186_lagebild_dienste()
+    _test_v56_w198_mcp_protokoll()
+    _test_v56_w198_mcp_frist_und_deckel()
+    _test_v56_w198_mcp_randfaelle()
+    _test_v56_w198_mcp_verwaltung()
+    _test_v56_w198_mcp_lage()
+    _test_v56_w198_cfgstore_lesen_streng()
     _test_v56_w197_cookie_bereinigen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
