@@ -416,3 +416,27 @@ if importlib.util.find_spec("streamlink") is None:
 print("; ".join(g))
 PY
 }
+
+
+# nc_emoji_pakete [Paketmanager] -> Schriftpakete, die fuer Emoji fehlen (je Zeile)
+#
+# v5.9-W205. Zwei Wege zeichnen Emoji, und jeder braucht eine andere Schrift:
+#   * der Chat-Kasten im Sendebild (Chromium) eine FARB-Schrift
+#     -> fonts-noto-color-emoji;
+#   * der eingebrannte Chat in Aufnahmen (libass) eine UMRISS-Schrift — libass
+#     ueberspringt Bitmap-Schriften wie Noto Color Emoji -> fonts-symbola.
+# Ohne sie steht fuer jedes Emoji ein Kaestchen da. Geprueft wird an U+1F339
+# (Rose): DejaVu Sans fuehrt U+1F600 bis U+1F64F selbst und haette eine
+# Pruefung an 😀 bestanden, ohne dass eine Rose oder ein Krankenhaus ginge.
+# Nur apt: die Paketnamen der anderen Verwalter sind nicht nachgesehen.
+nc_emoji_pakete(){
+  _p="${1:-$NC_PKG}"
+  [ "$_p" = "apt" ] || return 0
+  if ! command -v fc-list >/dev/null 2>&1; then
+    printf '%s\n' fonts-noto-color-emoji fonts-symbola
+    return 0
+  fi
+  fc-list 2>/dev/null | grep -qi "Noto Color Emoji" || printf '%s\n' fonts-noto-color-emoji
+  fc-list ':charset=1f339:outline=true' 2>/dev/null | grep -q . || printf '%s\n' fonts-symbola
+  return 0
+}

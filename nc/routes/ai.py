@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+import logging as _logging
 from flask import Blueprint, Response, jsonify, request
 from nc.textmore import _parse_iso
 from nc.dbwrap import db_conn
@@ -859,7 +860,11 @@ def api_ki_wahl_setzen():
     try:
         _nc_kiwahl.deck_setzen(d.get("wahl"))
     except ValueError:
-        log.info("KI-Wahl: ungueltiger Wert %r abgewiesen.", str(d.get("wahl"))[:40])
+        # Den Wert selbst NICHT ins Log: er kommt aus der Anfrage, und ein
+        # Zeilenumbruch darin schriebe eine gefaelschte Logzeile (CodeQL
+        # py/log-injection). Dass abgewiesen wurde, genuegt.
+        _logging.getLogger(__name__).info(
+            "KI-Wahl: ungueltiger Wert abgewiesen (erlaubt: lokal, free, auto, leer).")
         return jsonify(ok=False, error=_t("KI-Wahl muss lokal, free, auto oder leer sein.")), 400
     except Exception as e:
         return jsonify(ok=False, error=_nc_fehlertext.nach_aussen(e, "api_ki_wahl_setzen")), 503

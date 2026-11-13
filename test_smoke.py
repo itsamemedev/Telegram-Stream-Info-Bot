@@ -727,6 +727,32 @@ def main():
        "Ansprache im Thema und als Antwort auf andere, Meldungen nur mit Grund, "
        "/brain-Antworten zurueck ans Brain, @-Name als Ansprache, Fuss mit Herkunft")
 
+    # v5.9-W204: der Abgleich Trackings -> Restream-Liste ueber den echten Bot.
+    # Ist die Ausschlussliste nicht lesbar, wird NICHTS eingetragen — sonst
+    # kaeme jeder im Deck geloeschte Nutzer bei gesperrter Datenbank zurueck.
+    from nc import restreamliste as _rl
+    _gerufen = []
+
+    def _abgl(conn, jetzt, aus=()):
+        _gerufen.append(list(aus))
+        return {"neu": [], "ruht": [], "wieder": []}
+    _echt4 = (m._nc_cfgstore.lesen, _rl.abgleichen)
+    try:
+        _rl.abgleichen = _abgl
+        m._nc_cfgstore.lesen = lambda k, fehlt=None: (_ for _ in ()).throw(RuntimeError("locked"))
+        try:
+            m._restream_liste_abgleichen()
+            raise AssertionError("Abgleich ohne lesbare Ausschlussliste gelaufen")
+        except RuntimeError:
+            pass
+        assert _gerufen == [], _gerufen
+        m._nc_cfgstore.lesen = lambda k, fehlt=None: ["anna"]
+        assert m._restream_liste_abgleichen() == {"neu": [], "ruht": [], "wieder": []}
+        assert _gerufen == [["anna"]], _gerufen
+    finally:
+        m._nc_cfgstore.lesen, _rl.abgleichen = _echt4
+    ok("W204: Restream-Liste \u2014 ohne lesbaren Ausschluss kein Abgleich, sonst mit")
+
     print("test_smoke OK \u2014 %d Vertraege gruen" % PASS)
 
 

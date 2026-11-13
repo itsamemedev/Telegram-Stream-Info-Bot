@@ -9,7 +9,7 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
-## [5.9.0] — 2026-11-13 · „Schaltpult" (W200–W203)
+## [5.9.0] — 2026-11-13 · „Schaltpult" (W200–W205)
 
 Der Betreiber, in vier Meldungen: „In Telegram antwortet das Brain nicht auf
 Antwort-Nachrichten." — „Dir ist klar, dass ich den /brain-Befehl meinte?
@@ -17,8 +17,11 @@ AZRAEL nutzt in Telegram eine free AI. Und im gesamten Dashboard sollte man
 zwischen lokaler und free AI unterscheiden können." — „/brain meint, der Slot
 wäre belegt. Wir brauchen mehrere Slots bei über 800 Mitgliedern." — „Das
 Budget für die LLM reicht bei weitem nicht mehr aus." Dazu ein Screenshot des
-Sendebilds mit Kästchen hinter fast jeder Chatzeile. 5.8.1 (nur W200) wurde
-nie veröffentlicht und geht hier auf.
+Sendebilds mit Kästchen hinter fast jeder Chatzeile. Danach: „Emojis sollten
+im Restream-Chat zu sehen sein sowie in den Aufnahmen" und „die User aus
+Discord und Telegram werden nicht mehr in die Liste eingetragen, welche im
+Kick-, YouTube- und Twitch-Stream landen". 5.8.1 (nur W200) wurde nie
+veröffentlicht und geht hier auf.
 
 ### Neu — eine KI-Wahl, und jede Antwort sagt, woher sie kommt (W201)
 
@@ -74,6 +77,40 @@ nie veröffentlicht und geht hier auf.
   vorsichtige Vermutung (Emoji-Ebene, Variantenwähler, Verbinder, private
   Zeichen, Steuerzeichen — nie ein Buchstabe).
 
+### Neu — Emoji im Restream-Chat farbig, in Aufnahmen lesbar (W205)
+
+- W203 hat die Kästchen beseitigt, indem es die Emoji herausnahm — der
+  Betreiber will sie **sehen**. drawtext kann das nicht (eine Schrift, kein
+  Rückfall). Den Chat-Kasten des Studio-Sendebilds zeichnet jetzt Chromium
+  (`templates/chatbild.html`, `/overlay/chat`, `nc/chatbild.py`): ein
+  dauerhafter Browser, ein Bild je Sekunde, ein Schreiber mit festem Takt in
+  die FIFO — derselbe Aufbau wie das HTML-Overlay, weil ein stockender
+  Bild-Eingang den ganzen ffmpeg anhält. ffmpeg legt das Bild genau an die
+  Stelle des Text-Chats (`ffmpeg_filters.chat_kasten`, eine Quelle für beide).
+  Startet Chromium nicht, bleibt der Text-Chat (Emoji gefiltert, ohne
+  Kästchen). Abschaltbar: `RESTREAM_CHAT_BILD=0`.
+- Aufnahmen brennen den Chat mit libass ein, und libass überspringt
+  Bitmap-Schriften wie Noto Color Emoji — dort sind Emoji einfarbig aus einer
+  Umriss-Schrift (Symbola). Installer und `update.sh` ziehen beide Pakete nach
+  (`nc_emoji_pakete`, geprüft an der Rose U+1F339, weil DejaVu 😀 selbst hat).
+  Die Update-Funktion installiert keine Pakete — fehlen sie, sagt der Bot es
+  einmal laut mit dem `apt`-Befehl.
+
+### Neu — Trackings in die Restream-Auto-Liste (W204)
+
+- Die Liste der Restream-Ziele füllte nur das Deck; wer per Telegram oder
+  Discord trackte, kam dort nie an. `nc/restreamliste.py` gleicht alle zwei
+  Minuten ab: ein getrackter Nutzer bekommt eine Zeile (`auto_restream=1`,
+  Keys aus der `.env`, Umkodieren wie die jüngste manuelle Zeile,
+  `herkunft='tracking'`), ein nicht mehr getrackter ruht, ein zurückkehrender
+  wird wieder scharf. Pausierte Trackings zählen nicht, manuelle Zeilen und der
+  Auto-Schalter des Betreibers bleiben unangetastet, Schreibweisen werden ohne
+  Groß-/Kleinschreibung verglichen (der Vertrag fand „Dora" und „dora" als zwei
+  Nutzer). Löschen im Deck schließt aus — **vor** dem Löschen, sonst käme die
+  Zeile in zwei Minuten zurück —, Anlegen von Hand nimmt den Ausschluss
+  zurück; der Bot liest die Ausschlussliste streng (W199). Abschaltbar:
+  `RESTREAM_TRACKINGS=0`.
+
 ### Offen
 
 - **Restream ohne Bild und Ton.** Der Screenshot zeigt das Pausenbild der
@@ -124,6 +161,13 @@ nie veröffentlicht und geht hier auf.
   JSON wurde mit falscher Kodierung geschickt, eine halbe Zeichentabelle fiel
   nur zufällig auf, und „free" war von „auto" nicht zu unterscheiden, solange
   das lokale Modell im Test nicht lief.
+- W204/W205: zwei Verträge (Abgleich samt Routen, Chat-Kasten von den Daten
+  bis zum ffmpeg-Eingang, Lebenszyklus mit Browser-Attrappe, Schriftprüfung in
+  Python und Shell) und einer im Rauchtest (ohne lesbaren Ausschluss kein
+  Abgleich). Echt geprüft: Chromium rendert den Kasten mit Farb-Emoji,
+  ffmpeg setzt ihn an die Stelle des Text-Chats, libass zeichnet mit Symbola
+  einfarbige Emoji. 21 Mutationsproben, alle gefangen — eine entwischte
+  zunächst: die Shell-Attrappe für `fc-list` unterschied 😀 und die Rose nicht.
 - Anker gewandert: der W177-Vertrag zählt fünf statt vier `llm.chat`-Stellen
   (dazu kam `_nur_lokal_sync`), W181/W110 erwarten `-np 4 -c 32768` und
   `MemoryMax=7G`, W196 liest `in_arbeit` in `lage()`.

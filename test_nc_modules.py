@@ -37677,6 +37677,339 @@ def _test_v59_w203_sendebild_zeichen():
        "Tabelle Emoji/Verbinder/Steuerzeichen raus, jede Overlay-Datei gefiltert")
 
 
+def _test_v59_w204_restream_liste():
+    """v5.9-W204: getrackte Nutzer landen in der Restream-Auto-Liste.
+
+    Der Betreiber: „Die User aus Discord und Telegram werden nicht mehr in die
+    Liste eingetragen, welche im Kick-, YouTube- und Twitch-Stream landen." Die
+    Liste (`restreams`) fuellte nur das Deck. Geprueft: der Abgleich traegt
+    ein, ruht und weckt, respektiert manuelle Zeilen, Pausen, den
+    Auto-Schalter des Betreibers und die Ausschlussliste; Loeschen im Deck
+    schliesst aus, Anlegen nimmt den Ausschluss zurueck; der Bot liest die
+    Ausschlussliste streng."""
+    import sqlite3 as _sq
+    import ast as _ast
+    import os as _os
+    from unittest import mock as _mock
+    from nc import restreamliste as L
+    k = _sq.connect(":memory:")
+    k.row_factory = _sq.Row
+    k.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, group_id INT, username TEXT, "
+              "paused INT DEFAULT 0)")
+    k.execute("CREATE TABLE restreams (id INTEGER PRIMARY KEY, created_at TEXT, label TEXT, "
+              "source_username TEXT, ingest_url TEXT, stream_key TEXT, transcode INT, "
+              "enabled INT, auto_restream INT, status TEXT, herkunft TEXT, last_error TEXT)")
+    for g, u, p in ((-100, "anna", 0), (987654321, "anna", 0),          # Telegram + Discord
+                    (-100, "https://www.tiktok.com/@Berta", 0), (-200, "cleo", 1),
+                    (-100, "dora", 0), (-100, "emil", 0)):
+        k.execute("INSERT INTO trackings (group_id, username, paused) VALUES (?,?,?)", (g, u, p))
+    k.execute("INSERT INTO restreams (label, source_username, transcode, enabled, auto_restream, "
+              "herkunft) VALUES ('alt', 'Dora', 0, 1, 0, NULL)")
+    k.execute("INSERT INTO restreams (label, source_username, transcode, enabled, auto_restream, "
+              "herkunft) VALUES ('neu', 'zora', 1, 1, 1, '')")
+    erg = L.abgleichen(k, "2026-11-13T00:00:00", ausgeschlossen=["@Emil"])
+    assert erg == {"neu": ["anna", "Berta"], "ruht": [], "wieder": []}, erg
+    zeilen = {r["source_username"].lower(): dict(r) for r in k.execute("SELECT * FROM restreams")}
+    a = zeilen["anna"]
+    assert a["auto_restream"] == 1 and a["enabled"] == 1 and a["herkunft"] == L.HERKUNFT
+    assert a["ingest_url"] == "" and a["stream_key"] == "", "eigene Keys statt der .env-Ziele"
+    assert a["transcode"] == 1, "Umkodieren nicht von der juengsten manuellen Zeile geerbt"
+    assert "cleo" not in zeilen, "pausiertes Tracking eingetragen"
+    assert "emil" not in zeilen, "Ausschluss (im Deck geloescht) missachtet"
+    assert zeilen["dora"]["auto_restream"] == 0, "manuelle Zeile vom Abgleich angefasst"
+    assert zeilen["berta"]["source_username"] == "Berta", "Schreibweise des Trackings verloren"
+    assert len(zeilen) == 4, "Doppel trotz zweier Gruppen/Schreibweisen: %s" % list(zeilen)
+    # Zweiter Lauf: nichts zu tun.
+    assert L.abgleichen(k, "x", ["emil"]) == {"neu": [], "ruht": [], "wieder": []}
+    # Der Betreiber stellt Auto aus: das bleibt so.
+    k.execute("UPDATE restreams SET auto_restream=0 WHERE source_username='Berta'")
+    assert L.abgleichen(k, "x", ["emil"])["wieder"] == []
+    assert k.execute("SELECT auto_restream FROM restreams WHERE source_username='Berta'"
+                     ).fetchone()[0] == 0, "Auto-Schalter des Betreibers ueberschrieben"
+    # Nicht mehr getrackt: ruht; wieder getrackt: scharf.
+    k.execute("DELETE FROM trackings WHERE username='anna'")
+    assert L.abgleichen(k, "x", ["emil"])["ruht"] == ["anna"]
+    r = k.execute("SELECT auto_restream, herkunft FROM restreams WHERE source_username='anna'"
+                  ).fetchone()
+    assert r[0] == 0 and r[1] == L.HERKUNFT_RUHT, tuple(r)
+    k.execute("INSERT INTO trackings (group_id, username) VALUES (-1, 'anna')")
+    assert L.abgleichen(k, "x", ["emil"])["wieder"] == ["anna"]
+    assert k.execute("SELECT auto_restream FROM restreams WHERE source_username='anna'"
+                     ).fetchone()[0] == 1
+    # Ohne manuelle Zeile: umkodieren (ohne gibt es kein Overlay).
+    assert L._transcode_vorgabe([]) == 1
+    assert L._transcode_vorgabe([{"id": 1, "transcode": 0, "herkunft": ""},
+                                 {"id": 2, "transcode": 1, "herkunft": "tracking"}]) == 0
+    # Schalter, Ausschluss-Helfer.
+    with _mock.patch.dict(_os.environ, {"RESTREAM_TRACKINGS": "0"}):
+        assert not L.an()
+    with _mock.patch.dict(_os.environ, {"RESTREAM_TRACKINGS": ""}):
+        assert L.an(), "leer gesetzt schaltet ab"
+    assert L.ausschliessen(["anna"], "@Berta") == ["anna", "berta"]
+    assert L.ausschliessen(["Anna"], "anna") == ["Anna"] and L.ausschliessen(None, "x") == ["x"]
+    assert L.zulassen(["anna", "Berta"], "https://www.tiktok.com/@berta") == ["anna"]
+
+    # Die Routen: Loeschen schliesst aus (vor dem Loeschen), Anlegen nimmt es zurueck.
+    # Eigene Restream-Tabelle (die Testdatenbank fuehrt keine) und die
+    # app_config aus W199, damit ein Schreibfehler gezielt einstellbar ist.
+    import contextlib as _cl
+    from flask import Flask
+    import nc.routes.restream as RR
+    lage, roh, zurueck = _w199_speicher()
+
+    @_cl.contextmanager
+    def _rs_db():
+        yield k
+    try:
+        app = Flask(__name__)
+        app.register_blueprint(RR.bp)
+        cl = app.test_client()
+        with _mock.patch.object(RR, "db_conn", _rs_db), \
+             _mock.patch.object(RR._nc_rsstate, "mgr", lambda: None):
+            assert cl.post("/api/restream/create", json={"source_username": "w204nutzer"}).get_json()["ok"]
+            rid = k.execute("SELECT id FROM restreams WHERE source_username='w204nutzer'").fetchone()[0]
+            assert cl.post("/api/restream/%d/delete" % rid).get_json()["ok"]
+            assert roh(L.AUSSCHLUSS_SCHLUESSEL) == ["w204nutzer"], "Loeschen schliesst nicht aus"
+            assert cl.post("/api/restream/create",
+                           json={"source_username": "@W204Nutzer"}).get_json()["ok"]
+            assert roh(L.AUSSCHLUSS_SCHLUESSEL) == [], "von Hand angelegt bleibt ausgeschlossen"
+            rid = k.execute("SELECT id FROM restreams WHERE source_username='W204Nutzer'").fetchone()[0]
+            # Ausschluss nicht lesbar: die Zeile bleibt (sonst kaeme sie still zurueck).
+            lage["lesen_gesperrt"] = True
+            assert cl.post("/api/restream/%d/delete" % rid).status_code == 500
+            lage["lesen_gesperrt"] = False
+            assert k.execute("SELECT id FROM restreams WHERE id=?", (rid,)).fetchone(), \
+                "geloescht, obwohl der Ausschluss nicht geschrieben wurde"
+        class _Mgr:
+            def status(self):
+                return {}
+        with _mock.patch.object(RR, "db_conn", _rs_db), \
+             _mock.patch.object(RR._nc_rsstate, "mgr", lambda: _Mgr()):
+            liste = cl.get("/api/restream/list").get_json()
+            herk = {t["source_username"]: t["herkunft"] for t in liste["targets"]}
+            assert herk["anna"] == L.HERKUNFT and herk["W204Nutzer"] == "", herk
+    finally:
+        zurueck()
+
+    # Der Bot: Abgleich im Takt der Auto-Restream-Schleife, Ausschluss STRENG gelesen.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    abgl = _ast.unparse(fn["_restream_liste_abgleichen"])
+    assert "_nc_cfgstore.lesen(_nc_rsliste.AUSSCHLUSS_SCHLUESSEL" in abgl and ".get(" not in abgl, \
+        "nachsichtig gelesen: eine gesperrte Datenbank truege jeden Geloeschten wieder ein"
+    assert "asyncio.to_thread(_restream_liste_abgleichen)" in _ast.unparse(fn["_auto_restream_loop"])
+    ok("v5.9-W204: Trackings (Telegram/Discord) in die Restream-Auto-Liste — eintragen, "
+       "ruhen, wecken, manuelle Zeilen/Pausen/Auto-Schalter/Ausschluss respektiert")
+
+
+def _test_v59_w205_chatbild():
+    """v5.9-W205: Emoji im Restream-Chat (Chromium) und in Aufnahmen (Schriften).
+
+    drawtext kennt eine Schrift, jedes Emoji wurde ein Kaestchen. Geprueft:
+    die Chat-Daten (Filter je Quelle, Emoji bleiben), die Routen, der
+    Filtergraph (Bild statt drawtext-Chat, an derselben Stelle), der
+    ffmpeg-Eingang, der Lebenszyklus mit einer Browser-Attrappe und die
+    Pruefung auf fehlende Emoji-Schriften (Python und Shell)."""
+    import os as _os
+    import subprocess as _sp
+    import threading as _th
+    from unittest import mock as _mock
+    from nc import channels as C
+    from nc import chatbild as CB
+    from nc import ffmpeg_filters as F
+    from nc import schriftzeichen as Z
+
+    # (1) Daten: eigener Kanal ueberall, TikTok nur aus der Quelle, Emoji bleiben.
+    alt = list(C.RESTREAM_CHAT)
+    C.RESTREAM_CHAT.clear()
+    try:
+        for src, who, text, origin in (("tiktok", "coco", "haha 😂", "anna"),
+                                       ("tiktok", "fremd", "nein", "berta"),
+                                       ("kick", "luna", "gut 🙏", None),
+                                       ("event", "jo", "GIFT 🌹", "anna")):
+            C.RESTREAM_CHAT.append({"ts": 1, "src": src, "who": who, "text": text, "origin": origin})
+        z = C.chat_eintraege(source_user="@Anna")
+        assert [e["who"] for e in z] == ["coco", "luna", "jo"], z
+        assert z[0]["text"] == "haha 😂", "Emoji im Chat-Kasten entfernt"
+        assert [e["who"] for e in C.chat_eintraege(anzahl=2, source_user="anna")] == ["luna", "jo"]
+        assert len(C.chat_eintraege()) == 4
+
+        # (2) Routen.
+        from flask import Flask
+        import nc.routes.overlay as RO
+        app = Flask(__name__)
+        app.register_blueprint(RO.bp)
+        cl = app.test_client()
+        r = cl.get("/overlay/chat")
+        assert r.status_code == 200 and b"/overlay/chat.json" in r.data and b"Noto Color Emoji" in r.data
+        j = cl.get("/overlay/chat.json?user=https://www.tiktok.com/@anna").get_json()
+        assert j["ok"] and [e["who"] for e in j["zeilen"]] == ["coco", "luna", "jo"], j
+        assert j["zeilen"][1]["text"] == "gut 🙏"
+    finally:
+        C.RESTREAM_CHAT.clear()
+        C.RESTREAM_CHAT.extend(alt)
+
+    # (3) Filtergraph: Bild statt drawtext-Chat, an der Stelle des Text-Chats.
+    files = {k: "/x/%s.txt" % k for k in ("title", "source", "caption", "chat", "goal",
+                                           "follow", "react", "brand", "alert")}
+    mit, lab = F.studio_chain(files, "/f.ttf", 1920, 1080, 30, chat_idx=3)
+    ohne, _l = F.studio_chain(files, "/f.ttf", 1920, 1080, 30)
+    x, y, b, h = F.chat_kasten(1920, 1080)
+    M = F.studio_masse(1920, 1080)
+    assert (x, y, b, h) == (M["px"], M["chat_y"], M["panel_b"], M["chat_h"])
+    assert "textfile='/x/chat.txt'" in ";".join(ohne) and "textfile='/x/chat.txt'" not in ";".join(mit)
+    assert any(p.startswith("[vdeco][3:v]overlay=x=%d:y=%d:eof_action=repeat:shortest=0" % (x, y))
+               for p in mit), mit
+    assert lab == "vstudio" and mit[-1].startswith("[vchat]")
+    assert "textfile='/x/title.txt'" in ";".join(mit), "die uebrigen Texte fehlen"
+
+    # (4) Der ffmpeg-Eingang: nur im Studio-Layout mit Overlay, vor der Stille.
+    import nc.restreamcmd as R
+    from nc import restreamstate as RS
+    from nc import tonspur as T
+    font = next((p for p in R.FONT_KANDIDATEN if _os.path.isfile(p)), None)
+    if font:
+        R.configure(
+            cookie_header=lambda: "", pick_pull_proxy=lambda: "",
+            restream_overlay_files=lambda rid=None: files, FFMPEG_THREADS_LIVE=3,
+            FFMPEG_THREADS_RELAY=2, RESTREAM_AVATAR="", RESTREAM_BITRATE_K=4500,
+            RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170, RESTREAM_AVATAR_LOOP="",
+            RESTREAM_CANVAS_H=1080, RESTREAM_CANVAS_W=1920, RESTREAM_FONT=font,
+            RESTREAM_FPS=30, RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=True,
+            RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+            RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+            RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+        alt_mode = RS.LAYOUT.get("mode")
+        try:
+            RS.LAYOUT["mode"] = "studio"
+            cmd = R.build("http://q/x.flv", "rtmp://k/app", "KEY", transcode=True, rid=7,
+                          chat_fifo="/tmp/cb.fifo", tonlos=True)
+            i = cmd.index("/tmp/cb.fifo")
+            assert cmd[i - 1] == "-i" and "image2pipe" in cmd[i - 12:i]
+            idx = cmd[:i - 1].count("-i")      # Eingangsnummer des Kastens
+            fc = cmd[cmd.index("-filter_complex") + 1]
+            assert "[%d:v]overlay=x=%d:y=%d" % (idx, x, y) in fc, fc
+            assert "textfile=" in fc and "chat.txt" not in fc, "Chat doppelt (Bild UND drawtext)"
+            assert T.hat_tonspur(cmd), "die Stille muss hinter dem Kasten bleiben"
+            ohne_cmd = R.build("http://q/x.flv", "rtmp://k/app", "KEY", transcode=True, rid=7)
+            assert "/tmp/cb.fifo" not in ohne_cmd and "chat.txt" in " ".join(ohne_cmd)
+            RS.LAYOUT["mode"] = "burnin"
+            bi = R.build("http://q/x.flv", "rtmp://k/app", "KEY", transcode=True, rid=7,
+                         chat_fifo="/tmp/cb.fifo")
+            assert "/tmp/cb.fifo" not in bi, "Kasten ausserhalb des Studio-Layouts"
+            RS.LAYOUT["mode"] = "studio"
+            kopie = R.build("http://q/x.flv", "rtmp://k/app", "KEY", transcode=False, rid=7,
+                            chat_fifo="/tmp/cb.fifo")
+            assert "/tmp/cb.fifo" not in kopie, "Kasten ohne Umkodieren"
+        finally:
+            RS.LAYOUT["mode"] = alt_mode
+    else:
+        print("    (keine Schrift — ffmpeg-Eingang nicht geprueft)")
+
+    # (5) Lebenszyklus mit einer Browser-Attrappe.
+    PNG = b"\x89PNG" + b"x" * 200
+
+    class _Browser:
+        faellt = False
+
+        def __init__(self, binpath, url, groesse, nice=None):
+            self.url, self.groesse, self.aus = url, groesse, False
+
+        def starten(self, timeout=20):
+            if _Browser.faellt:
+                raise RuntimeError("kein Chromium")
+
+        def schuss(self, timeout=15):
+            return PNG
+
+        def lebt(self):
+            return not self.aus
+
+        def beenden(self):
+            self.aus = True
+    d = _ph.verzeichnis()
+    fifo = CB.starten("w205", _Browser, "/bin/x", "http://127.0.0.1/overlay/chat?user=a",
+                      "978,688", d, fps=20, anlauf_s=0)
+    assert fifo and _os.path.exists(fifo) and open(_os.path.join(d, "chatbild_w205.png"), "rb").read() == PNG
+    gelesen = []
+
+    def _lesen():
+        with open(fifo, "rb") as f:
+            gelesen.append(f.read(len(PNG) * 2))
+    t = _th.Thread(target=_lesen)
+    t.start()
+    t.join(5)
+    assert gelesen and gelesen[0].startswith(PNG), "der Schreiber schiebt nichts in die FIFO"
+    assert CB.lage() == {"w205": {"browser_lebt": True}}
+    br = CB._LAUF["w205"]["browser"]
+    CB.beenden("w205")
+    assert br.aus and not _os.path.exists(fifo) and CB.lage() == {}
+    _Browser.faellt = True
+    assert CB.starten("w205b", _Browser, "/bin/x", "u", "1,1", d, anlauf_s=0) is None
+    assert CB.lage() == {}, "gescheiterter Start als laufend gefuehrt"
+    # Ein Schreiber, der in open() haengt (ffmpeg startet nie), endet mit beenden().
+    _Browser.faellt = False
+    CB.starten("w205c", _Browser, "/bin/x", "u", "1,1", d, fps=20, anlauf_s=0)
+    schreiber = CB._LAUF["w205c"]["faeden"][1]
+    CB.beenden("w205c")
+    schreiber.join(3)
+    assert not schreiber.is_alive(), "Schreiber-Faden bleibt in open() haengen"
+
+    # (6) Fehlende Emoji-Schriften: Python (Bot) und Shell (Installer/update.sh).
+    class _Erg:
+        def __init__(self, out):
+            self.stdout = out
+    with _mock.patch.object(Z.shutil, "which", return_value="/usr/bin/fc-list"), \
+         _mock.patch.object(Z.subprocess, "run",
+                            side_effect=[_Erg("DejaVu Sans\n"), _Erg("")]) as lauf:
+        assert Z.emoji_pakete_fehlen() == ["fonts-noto-color-emoji", "fonts-symbola"]
+    assert lauf.call_args_list[1][0][0] == ["/usr/bin/fc-list", ":charset=1f339:outline=true"], \
+        "geprueft an einem Zeichen, das DejaVu selbst hat"
+    with _mock.patch.object(Z.shutil, "which", return_value="/usr/bin/fc-list"), \
+         _mock.patch.object(Z.subprocess, "run",
+                            side_effect=[_Erg("x: Noto Color Emoji:style=Regular\n"),
+                                         _Erg("Symbola\n")]):
+        assert Z.emoji_pakete_fehlen() == []
+    with _mock.patch.object(Z.shutil, "which", return_value=None):
+        assert Z.emoji_pakete_fehlen() == ["fonts-noto-color-emoji", "fonts-symbola"]
+    Z._EMOJI["gemeldet"] = False
+    with _mock.patch.object(Z, "emoji_pakete_fehlen", return_value=["fonts-symbola"]), \
+         _mock.patch.object(Z.log, "warning") as w:
+        Z.emoji_hinweis("Test")
+        Z.emoji_hinweis("Test")
+    assert w.call_count == 1 and "sudo apt install" in w.call_args[0][0] \
+        and "fonts-symbola" in w.call_args[0][-1], w.call_args
+    Z._EMOJI["gemeldet"] = False
+    bin_d = _ph.verzeichnis()
+    fc = _os.path.join(bin_d, "fc-list")
+    with open(fc, "w") as f:
+        # DejaVu fuehrt 😀 (U+1F600) selbst, die Rose nicht — eine Pruefung an
+        # 😀 meldete die fehlende Umriss-Schrift nie.
+        f.write('#!/bin/sh\ncase "$1" in *1f339*) exit 0;; *1f600*) echo "DejaVu Sans"; '
+                'exit 0;; esac\necho "DejaVu Sans"\n')
+    _os.chmod(fc, 0o755)
+    r = _sp.run(["bash", "-c", ". tools/lib/system.sh; nc_emoji_pakete apt; nc_emoji_pakete dnf"],
+                capture_output=True, text=True,
+                env=dict(_os.environ, PATH=bin_d + ":" + _os.environ.get("PATH", "")))
+    assert r.stdout.split() == ["fonts-noto-color-emoji", "fonts-symbola"], (r.stdout, r.stderr)
+    for skript in ("tools/installer.sh", "tools/update.sh"):
+        zeilen = [zl.strip() for zl in open(skript, encoding="utf-8").read().splitlines()]
+        assert any(zl.startswith("for _k in $(nc_emoji_pakete") for zl in zeilen), skript
+    # Der Bot sagt es einmal laut — die Update-Funktion installiert keine Pakete.
+    bot = open("bot.py", encoding="utf-8").read()
+    assert bot.count("_nc_schriftzeichen.emoji_hinweis(") == 2
+    # Schalter RESTREAM_CHAT_BILD, an der Startbedingung des Restreams.
+    with _mock.patch.dict(_os.environ, {"RESTREAM_CHAT_BILD": "0"}):
+        assert not CB.an()
+    for wert in ("", "1", "ja"):
+        with _mock.patch.dict(_os.environ, {"RESTREAM_CHAT_BILD": wert}):
+            assert CB.an(), wert
+    assert '_restream_layout_mode() == "studio" and _nc_chatbild.an()):' in bot
+    ok("v5.9-W205: Chat-Kasten aus Chromium (Emoji farbig) — Daten je Quelle, Routen, "
+       "Filtergraph an der Stelle des Text-Chats, ffmpeg-Eingang nur im Studio, "
+       "Lebenszyklus, fehlende Emoji-Schriften laut")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -40605,6 +40938,8 @@ def main():
     _test_v59_w201_ki_wahl()
     _test_v59_w202_plaetze_und_budget()
     _test_v59_w203_sendebild_zeichen()
+    _test_v59_w204_restream_liste()
+    _test_v59_w205_chatbild()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

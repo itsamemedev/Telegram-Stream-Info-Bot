@@ -36,6 +36,7 @@ from nc import einstellungen as _nc_einst
 from nc import fehlertext as _nc_fehlertext
 from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Ziel fuer alle Anzeigen
 from nc.dbwrap import db_conn
+from nc.textutil import clean_username
 from nc import donations as _nc_donations
 
 _log = logging.getLogger("TikTokBot")
@@ -115,6 +116,35 @@ def _bilanz(zeilen, by_platform):
             by_platform[p]["amount"] = round(by_platform[p]["amount"] + a, 2)
         else:
             by_platform[p]["follows"] += 1
+
+
+_CHATBILD_SEITE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               os.pardir, os.pardir, "templates", "chatbild.html")
+
+
+@bp.route("/overlay/chat")
+def overlay_chatbild():
+    """v5.9-W205: der Chat-Kasten des Studio-Sendebilds, gezeichnet von Chromium.
+
+    Roh ausgeliefert (kein Jinja: CSS und JS tragen geschweifte Klammern).
+    Der Bot ruft sie ueber 127.0.0.1 — Loopback braucht keinen Token. Fuer
+    OBS ist sie nicht gedacht und steht deshalb NICHT bei den Ausnahmen."""
+    try:
+        with open(_CHATBILD_SEITE, "r", encoding="utf-8") as f:
+            return f.read(), 200, {"Content-Type": "text/html; charset=utf-8",
+                                   "Cache-Control": "no-store"}
+    except OSError as e:
+        return _t("Chat-Kasten fehlt: ") + _nc_fehlertext.nach_aussen(e, "overlay_chatbild"), 404
+
+
+@bp.route("/overlay/chat.json")
+def overlay_chatbild_daten():
+    """Die juengsten Chat-Eintraege fuer EIN Sendebild (?user=<TikTok-Quelle>).
+
+    Ungefiltert, also MIT Emoji — der Text-Chat fuer drawtext nimmt sie heraus
+    (nc/schriftzeichen.py), hier zeichnet Chromium sie farbig."""
+    nutzer = clean_username(request.args.get("user") or "")
+    return jsonify(ok=True, zeilen=_nc_channels.chat_eintraege(source_user=nutzer or None))
 
 
 @bp.route("/api/overlay/state")

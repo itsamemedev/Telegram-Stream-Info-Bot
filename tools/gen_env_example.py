@@ -479,6 +479,14 @@ def _umbruch(text, breite):
 # Quelltext nicht mehr liest, bricht den Generator ab (siehe main): sonst
 # erklaert die Vorlage still einen Schalter, den es nicht gibt.
 ERKLAERUNG = {
+    "RESTREAM_TRACKINGS":
+        "v5.9-W204: getrackte Nutzer (Telegram, Discord, Deck) automatisch in die "
+        "Restream-Auto-Liste — Keys aus der .env, im Deck geloeschte bleiben draussen. "
+        "0 = nur von Hand angelegte Ziele.",
+    "RESTREAM_CHAT_BILD":
+        "v5.9-W205: den Chat im Studio-Sendebild zeichnet Chromium (Emoji farbig, "
+        "braucht fonts-noto-color-emoji) statt ffmpeg-drawtext. Rund 0,08 CPU-s je "
+        "Bild, ein Bild je Sekunde. 0 = Text-Chat (Emoji dort herausgefiltert).",
     "BRAIN_LLM_MAX_CALLS_H":
         "v5.9-W202: Stundendeckel fuer lokale Antworten. 0 (Vorgabe) = keiner — "
         "die Inferenz-Plaetze und die Unit (Nice/CPUWeight) schuetzen die "

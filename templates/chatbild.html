@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Chat-Kasten</title>
+<!-- v5.9-W205: der Live-Chat im Studio-Sendebild, gezeichnet von Chromium.
+     Bis dahin schrieb ffmpeg (drawtext) den Chat in EINER Schrift, und jedes
+     Emoji der Zuschauer wurde ein Kaestchen. Chromium faellt je Zeichen auf
+     eine andere Schrift zurueck — mit fonts-noto-color-emoji sind die Emoji
+     farbig. Der Bot fotografiert diese Seite einmal je Sekunde (dauerhafter
+     Browser, nc/overlaybrowser.py) und legt das Bild genau dorthin, wo der
+     Text-Chat stand. Durchsichtiger Grund: der Panel-Hintergrund kommt aus
+     dem Filtergraph. -->
+<link rel="stylesheet" href="/fonts/schriften.css">
+<style>
+  :root{--text:#d9f6ea;--tiktok:#00e5ff;--kick:#00ff9c;--event:#ffb000;--fs:20px;--abstand:9px}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+  body{font-family:'JetBrains Mono','DejaVu Sans Mono','Noto Color Emoji','Apple Color Emoji',monospace;
+       font-weight:700;font-size:var(--fs);line-height:calc(var(--fs) + var(--abstand));color:var(--text);
+       display:flex;flex-direction:column;justify-content:flex-end}
+  /* Dieselbe Kontur wie drawtext (borderw=3): heller Text bleibt ueber jeder
+     Textur lesbar, auch ueber dem Avatar. */
+  .z{padding-left:2.2em;text-indent:-2.2em;word-break:break-word;
+     text-shadow:-2px -2px 0 #03060a,2px -2px 0 #03060a,-2px 2px 0 #03060a,2px 2px 0 #03060a,
+                 0 0 3px #03060a}
+  .i{display:inline-block;width:1.2em;text-indent:0}
+  .tiktok .i{color:var(--tiktok)} .kick .i,.twitch .i,.youtube .i{color:var(--kick)}
+  .event{color:var(--event)}
+  .w{color:#fff}
+</style>
+</head>
+<body>
+<div id="chat"></div>
+<script>
+"use strict";
+(function(){
+  var q = new URLSearchParams(location.search);
+  var nutzer = q.get("user") || "";
+  var fs = parseInt(q.get("fs") || "20", 10);
+  var ab = parseInt(q.get("abstand") || "9", 10);
+  if (fs > 8 && fs < 80) document.documentElement.style.setProperty("--fs", fs + "px");
+  if (ab >= 0 && ab < 60) document.documentElement.style.setProperty("--abstand", ab + "px");
+  var ICON = {tiktok: "▸", kick: "●", twitch: "●", youtube: "●", event: "◆"};
+  var box = document.getElementById("chat");
+  var zuletzt = "";
+  function zeile(m){
+    var d = document.createElement("div");
+    d.className = "z " + (m.src || "");
+    var i = document.createElement("span"); i.className = "i"; i.textContent = ICON[m.src] || "·";
+    d.appendChild(i);
+    if (m.who){
+      var w = document.createElement("span"); w.className = "w"; w.textContent = m.who + "  ";
+      d.appendChild(w);
+    }
+    d.appendChild(document.createTextNode(m.text || ""));
+    return d;
+  }
+  function laden(){
+    fetch("/overlay/chat.json?user=" + encodeURIComponent(nutzer), {cache: "no-store"})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var z = (d && d.zeilen) || [];
+        var neu = JSON.stringify(z);
+        if (neu === zuletzt) return;
+        zuletzt = neu;
+        box.replaceChildren.apply(box, z.map(zeile));
+      })
+      .catch(function(){ /* naechster Takt versucht es wieder; das letzte Bild bleibt */ });
+  }
+  laden();
+  setInterval(laden, 1000);
+})();
+</script>
+</body>
+</html>

@@ -59,14 +59,14 @@
 | | | |
 |---|---|---|
 | **🔍 Detectar** — sondeo adaptativo con histéresis anti-parpadeo; cada fila del panel dice cuándo se comprobó por última vez | **⏺️ Grabar** — grabador en tres etapas (ffmpeg → streamlink → yt-dlp) con comprobación previa, control de la pista de audio y detección de bloqueos | **📡 Retransmitir** — Kick, Twitch y YouTube a la vez, verificación de destinos contra las API de las plataformas |
-| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 388 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
+| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 390 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
 
 ```mermaid
 flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 27.498 líneas"]:::core
+    BOT["bot.py<br/>monolito · 27.563 líneas"]:::core
     BOT -->|configure| NC["nc/ — 185 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
@@ -335,8 +335,11 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
   de la plaza local.
 - **Telegram:** AZRAEL responde a las respuestas (también sin Redis y en
   grupos con temas); una respuesta a `/brain` vuelve al brain.
-- **Imagen de emisión sin cuadros:** los emoji que la fuente no tiene se
-  quitan antes de drawtext.
+- **Emoji en color en el chat del restream:** Chromium dibuja el cuadro de chat
+  en lugar de ffmpeg; en las grabaciones los emoji se leen en un color (`update.sh`
+  instala las fuentes).
+- **Los usuarios seguidos desde Telegram y Discord** entran solos en la lista
+  automática del restream (Kick, YouTube, Twitch); los borrados en el panel no vuelven.
 
 ## 🆕 Novedades en v5.8
 
@@ -449,7 +452,7 @@ Todas las oleadas en
 | | |
 |---|---|
 | Versión actual | **5.9.0** — “Pupitre” (2026.11) |
-| Rutas Flask | 388 (34 en `bot.py` · 354 en `nc/routes/`) |
+| Rutas Flask | 390 (34 en `bot.py` · 356 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |
 | Variables de configuración | ~577 |

@@ -157,3 +157,46 @@ def schrift_von(finder):
                     "geschaetzt gefiltert.", type(e).__name__, e)
         return None
     return s if s and os.path.isfile(s) else None
+
+
+# ── v5.9-W205: fehlen die Emoji-Schriften? ───────────────────────────────────
+# Der Chat-Kasten (Chromium) braucht eine Farb-Schrift, der eingebrannte Chat
+# in Aufnahmen (libass) eine Umriss-Schrift. tools/lib/system.sh installiert
+# beide (nc_emoji_pakete) — aber nur ueber Installer und update.sh. Wer per
+# Update-Funktion aktualisiert, bekommt sie nicht, und dann steht je Emoji
+# ein Kaestchen da, ohne dass irgendwer sagt, warum. Einmal je Prozess laut.
+_EMOJI = {"gemeldet": False}
+
+
+def emoji_pakete_fehlen():
+    """-> Liste der fehlenden Pakete (Debian/Ubuntu-Namen), [] wenn alles da ist.
+    Ohne fc-list: beide (dann ist auch keine Pruefung moeglich)."""
+    prog = shutil.which("fc-list")
+    if not prog:
+        return ["fonts-noto-color-emoji", "fonts-symbola"]
+    fehlt = []
+    try:
+        alle = subprocess.run([prog], capture_output=True, text=True, timeout=15).stdout
+        umriss = subprocess.run([prog, ":charset=1f339:outline=true"], capture_output=True,
+                                text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        log.info("Emoji-Schriften: fc-list scheitert (%s) — nicht geprueft.", e)
+        return fehlt
+    if "noto color emoji" not in alle.lower():
+        fehlt.append("fonts-noto-color-emoji")
+    if not umriss.strip():
+        fehlt.append("fonts-symbola")
+    return fehlt
+
+
+def emoji_hinweis(wo):
+    """Einmal je Prozess: fehlen Emoji-Schriften, laut mit dem apt-Befehl."""
+    if _EMOJI["gemeldet"]:
+        return
+    _EMOJI["gemeldet"] = True
+    fehlt = emoji_pakete_fehlen()
+    if fehlt:
+        log.warning("%s: Emoji-Schriften fehlen (%s) — im Sendebild und in Aufnahmen "
+                    "steht je Emoji ein Kaestchen. Abhilfe: sudo apt install %s "
+                    "(oder tools/update.sh), danach den Restream neu starten.",
+                    wo, ", ".join(fehlt), " ".join(fehlt))

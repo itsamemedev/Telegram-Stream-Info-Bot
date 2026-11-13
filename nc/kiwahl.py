@@ -329,6 +329,7 @@ def llm_zeiten() -> dict:
 DECK_SCHLUESSEL = "ki.wahl"
 FREE = "free"
 DECK_WERTE = (LOKAL, FREE, AUTO)
+_ANZEIGE = {LOKAL: "lokal", FREE: "free", AUTO: "auto", "": "aufgehoben (es gilt die .env)"}
 # Die Wahl wird bei jeder KI-Anfrage gelesen; die Reaktions-Engine fragt im
 # Sekundenbereich. Fuenf Sekunden Puffer sind fuer einen Klick im Deck
 # unmerklich und sparen die Datenbank.
@@ -360,7 +361,9 @@ def deck_setzen(wert) -> str:
     from nc import cfgstore
     cfgstore.set_(DECK_SCHLUESSEL, w)
     _DECK.update(t=time.monotonic(), wert=w)
-    log.info("KI-Wahl im Deck: %s.", w or "aufgehoben (es gilt die .env)")
+    # Ins Log nur ein fester Text je Wahl, nie der Wert aus der Anfrage —
+    # auch geprueft bleibt er fuer die Datenflussanalyse Fremdeingabe.
+    log.info("KI-Wahl im Deck: %s.", _ANZEIGE[w])
     return w
 
 

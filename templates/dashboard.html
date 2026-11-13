@@ -8864,7 +8864,10 @@ async function rsLoad(){
                 :`<button class="btn sm" onclick="rsStart(${t.id})">▶ Start</button>`);
       return `<tr>
         <td><span class="dot" style="background:${c}"></span> <span style="color:${c}">${t.status}</span></td>
-        <td class="mono">@${esc(t.source_username||'')}</td>
+        <td class="mono">@${esc(t.source_username||'')}${t.herkunft==='tracking'
+          ? ` <span class="tag" title="${esc(T('Automatisch aus den Trackings (Telegram, Discord) eingetragen'))}">${esc(T('Tracking'))}</span>`
+          : (t.herkunft==='tracking-ruht'
+             ? ` <span class="tag faint" title="${esc(T('Wird nicht mehr getrackt — Auto-Start ruht'))}">${esc(T('ruht'))}</span>` : '')}</td>
         <td>${esc(t.label||'')}</td>
         <td class="faint">${t.transcode?'transcode':'copy'}${t.has_key?'':' · <span style="color:var(--red)">kein Key</span>'}</td>
         <td>${health}</td>
@@ -8892,7 +8895,7 @@ async function rsStartAll(){ toast('starte alle live Quellen…'); const d=await
 async function rsStopAll(){ if(!confirm(T('Alle Restreams stoppen?')))return; const d=await apiPost('/api/restream/stop_all',{}); if(d&&d.ok)toast('Alle gestoppt'); rsLoad(); }
 async function rsStart(id){ toast('starte…'); const d=await apiPost('/api/restream/'+id+'/start',{}); if(d&&d.ok)toast('Restream läuft'); else toast((d&&d.error)||'Start fehlgeschlagen','err'); rsLoad(); }
 async function rsStop(id){ const d=await apiPost('/api/restream/'+id+'/stop',{}); if(d&&d.ok)toast('Gestoppt'); rsLoad(); }
-async function rsDelete(id){ if(!confirm(T('Ziel löschen?')))return; const d=await apiPost('/api/restream/'+id+'/delete',{}); if(d&&d.ok){toast('Gelöscht');rsLoad();} else { /* v4.2-W178: Stop gescheitert → Eintrag bleibt, das sagen */ toast((d&&d.error)||T('Fehler'),'err'); rsLoad(); } }
+async function rsDelete(id){ if(!confirm(T('Ziel löschen? Ein getrackter Nutzer wird danach nicht mehr automatisch eingetragen — von Hand anlegen nimmt das zurück.')))return; const d=await apiPost('/api/restream/'+id+'/delete',{}); if(d&&d.ok){toast('Gelöscht');rsLoad();} else { /* v4.2-W178: Stop gescheitert → Eintrag bleibt, das sagen */ toast((d&&d.error)||T('Fehler'),'err'); rsLoad(); } }
 
 let _kmRunning=false;
 async function kmLoad(){

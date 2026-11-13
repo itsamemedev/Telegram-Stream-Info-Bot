@@ -170,14 +170,28 @@ def chat_zeilen(chat_h, fontsize, zeilenabstand):
     return max(3, int(chat_h / schritt) - 1)
 
 
+def chat_kasten(canvas_w, canvas_h):
+    """v5.9-W205: wo der Chat im Studio-Sendebild steht -> (x, y, breite, hoehe).
+
+    EINE Quelle fuer den Text-Chat (drawtext) und den Chat-Kasten aus Chromium
+    (nc/chatbild.py): stuende die Lage zweimal, laege das Bild nach der
+    naechsten Layout-Aenderung neben dem Panel."""
+    M = studio_masse(canvas_w, canvas_h)
+    return M["px"], M["chat_y"], M["panel_b"], M["chat_h"]
+
+
 def studio_chain(files, font, canvas_w, canvas_h, fps, avatar_idx=None,
-                 avatar_alpha_idx=None, avatar_h=170):
+                 avatar_alpha_idx=None, avatar_h=170, chat_idx=None):
     """F92: STUDIO-LAYOUT als filter_complex-Kette. Komponiert eine 16:9-Leinwand:
        Quell-Video links (aspect-fit, funktioniert für Hochkant-TikTok UND 16:9),
        rechts ein Info-Panel mit LIVE-CHAT (TikTok+Kick), Titel, Quelle, Ziel,
        Follower, AZRAEL-Reaktion; unten ein Branding-Footer. Alle Texte kommen aus
        reload-baren Dateien (expansion=none → kein %-Unfall durch Chat-Inhalte).
-       Rückgabe: (liste von filtergraph-Teilen, finales Video-Label)."""
+       Rückgabe: (liste von filtergraph-Teilen, finales Video-Label).
+
+       v5.9-W205 `chat_idx`: der Eingang mit dem Chat-Kasten aus Chromium
+       (Emoji farbig). Dann entfaellt der drawtext-Chat, und das Bild liegt an
+       derselben Stelle (chat_kasten) — nach dem Avatar, also vorn wie er."""
     f = files
     M = studio_masse(canvas_w, canvas_h)               # v4.2-W54: eine Quelle
     W, H, VREG, PX = M["W"], M["H"], M["vreg"], M["px"]
@@ -270,6 +284,15 @@ def studio_chain(files, font, canvas_w, canvas_h, fps, avatar_idx=None,
                      f"y=H-72-h+6*sin(2*PI*t/6):"
                      f"eof_action=repeat:shortest=0[vav]")
         vlabel = "vav"
+    if chat_idx is not None:
+        # Der Chat als Bild statt als drawtext — sonst stuende er doppelt.
+        texts = [t for t in texts if f"textfile='{esc(f['chat'])}'" not in t]
+        x, y, _b, _h = chat_kasten(W, H)
+        # eof_action=repeat + shortest=0: ein Bild-Eingang, der stockt oder
+        # endet, darf das Sendebild nicht beenden (wie beim HTML-Overlay).
+        parts.append(f"[{vlabel}][{chat_idx}:v]overlay=x={x}:y={y}:"
+                     f"eof_action=repeat:shortest=0[vchat]")
+        vlabel = "vchat"
     # ... und JETZT die Texte, ueber den Avatar.
     parts.append(f"[{vlabel}]" + ",".join(texts) + "[vstudio]")
     return parts, "vstudio"

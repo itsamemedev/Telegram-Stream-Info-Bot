@@ -78,6 +78,7 @@ RESTREAM_FPS = None
 RESTREAM_LOW_LATENCY = None
 RESTREAM_OVERLAY = None
 RESTREAM_OVERLAY_HTML_FPS = None
+RESTREAM_CHAT_BILD_FPS = 1.0        # v5.9-W205: Takt des Chat-Kastens (nc/chatbild.py)
 RESTREAM_RELAY_BITRATE_K = None
 RESTREAM_RELAY_PRESET = None
 RESTREAM_X264_PRESET = None
@@ -162,7 +163,7 @@ def _drawtext_chain(rid=None):
                                  schriftart(RESTREAM_FONT))
 
 
-def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None, drossel=0):
+def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None, drossel=0, chat_idx=None):
     # v4.0-W27: verbatim nach nc/ffmpeg_filters.py extrahiert (bitgenau geprüft).
     # v4.2-W60: die Leinwand kommt gedrosselt herein. Sie muss dieselbe sein,
     # die der Encoder bekommt — sonst skaliert ffmpeg das fertige Sendebild
@@ -173,7 +174,14 @@ def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None, drossel=0):
                                _cw, _ch, drossel_fps(RESTREAM_FPS, drossel),
                                avatar_idx=avatar_idx,
                                avatar_alpha_idx=avatar_alpha_idx,
-                               avatar_h=RESTREAM_AVATAR_H)
+                               avatar_h=RESTREAM_AVATAR_H, chat_idx=chat_idx)
+
+
+def chat_kasten(drossel=0):
+    """v5.9-W205: Lage und Groesse des Chat-Kastens auf der Leinwand, die
+    der Encoder bekommt (gedrosselt wie _studio_chain) -> (x, y, b, h)."""
+    _cw, _ch = drossel_canvas(RESTREAM_CANVAS_W, RESTREAM_CANVAS_H, drossel)
+    return _nc_ff.chat_kasten(_cw, _ch)
 
 
 # v4.2-W43: Drossel-Stufen gegen den Encode-Rueckstand.
@@ -526,7 +534,7 @@ def quell_eingang(source_url):
     return cmd
 
 
-def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None, drossel=0, tonlos=False, bruecke=False):
+def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None, drossel=0, tonlos=False, bruecke=False, chat_fifo=None):
     """ffmpeg-Relay: zieht die TikTok-Quelle und pusht per RTMP(S)/FLV an Kick/AWS-IVS.
        Input-Flags spiegeln den BEWÄHRTEN Aufnahme-Pfad (_build_native_cmd): FLV =
        eine saubere Dauerverbindung (bevorzugt); HLS braucht +genpts+igndts, weil
@@ -693,6 +701,15 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
                 "-probesize", "32", "-analyzeduration", "0",
                 "-framerate", str(RESTREAM_OVERLAY_HTML_FPS), "-i", html_ov_fifo]
         htmlov_idx = _idx; _idx += 1
+    # v5.9-W205: der Chat-Kasten aus Chromium (nc/chatbild.py) — nur im
+    # Studio-Layout, und nur ohne HTML-Overlay (das ersetzt die Studio-Kette).
+    chat_idx = None
+    if (chat_fifo and transcode and htmlov_idx is None and overlay_on
+            and _restream_layout_mode() == "studio"):
+        cmd += ["-thread_queue_size", "64", "-f", "image2pipe", "-c:v", "png",
+                "-probesize", "32", "-analyzeduration", "0",
+                "-framerate", str(RESTREAM_CHAT_BILD_FPS), "-i", chat_fifo]
+        chat_idx = _idx; _idx += 1
     # v4.2-W106: Stille als LETZTER Eingang, damit sie keinen der Indizes
     # oben verschiebt. Gesetzt nur, wenn der Manager die Quelle als tonlos
     # erkannt hat (nc/tonspur.ist_tonlos_fehler) — sonst bliebe ffmpeg an
@@ -759,7 +776,8 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             if studio_on:
                 sparts, vlabel = _studio_chain(avatar_idx if avatar_on else None, rid=rid,
                                                drossel=drossel,
-                                               avatar_alpha_idx=avatar_alpha_idx)
+                                               avatar_alpha_idx=avatar_alpha_idx,
+                                               chat_idx=chat_idx)
                 fc.extend(sparts)
             else:
                 # v4.2-W114: quadratische Pixel vor Text und Avatar.

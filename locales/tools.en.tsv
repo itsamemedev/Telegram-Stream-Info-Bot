@@ -1057,3 +1057,4 @@ MariaDB ist die Vorgabe fuer neue Installationen: ein eigener Server, der mit de
 MariaDB liess sich nicht einrichten — DB_BACKEND steht schon vorher auf mariadb; vor dem Start pruefen.	MariaDB could not be set up — DB_BACKEND was already set to mariadb before; check before starting.
 MariaDB liess sich nicht einrichten — die Installation bleibt bei SQLite. Spaeter: bash tools/update.sh --mariadb	MariaDB could not be set up — the installation stays on SQLite. Later: bash tools/update.sh --mariadb
 LLM_PLAETZE muss zwischen 1 und 16 liegen: %s	LLM_PLAETZE must be between 1 and 16: %s
+Emoji-Schrift fehlt — Paket: %s	Emoji font missing — package: %s

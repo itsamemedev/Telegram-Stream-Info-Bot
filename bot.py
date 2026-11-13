@@ -606,6 +606,9 @@ from nc import audiocue as _nc_audiocue  # v4.1-W20: Signalton/Ducking
 from nc import brainstate as _nc_brainstate  # v4.1-W21: Brain-Panel-Zustand
 from nc import tiktokheaders as _nc_tthdr  # v4.1-W23: Kopfzeilen fuer TikTok-Abrufe
 from nc import restreamcfg as _nc_rscfg  # v4.1-W22: Sendeziele + Pruef-Parameter
+from nc import restreamliste as _nc_rsliste  # v5.9-W204: Trackings -> Restream-Auto-Liste
+from nc import chatbild as _nc_chatbild  # v5.9-W205: Chat-Kasten aus Chromium (Emoji)
+from nc import schriftzeichen as _nc_schriftzeichen  # v5.9-W205: fehlen Emoji-Schriften?
 from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustand
 from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import sendebruecke as _nc_bruecke  # v4.2-W130: Verbindung ueberlebt den Quellwechsel
@@ -14013,6 +14016,26 @@ def _fifo_schreiber_wecken(fifo):
         pass   # Aufraeumen: FIFO schon weg, dann wartet auch niemand darauf
 
 
+def _restream_chatbild_start(rid, nutzer, drossel=0):
+    """v5.9-W205: der Chat-Kasten aus Chromium (Emoji farbig, nc/chatbild.py).
+    -> FIFO oder None (dann bleibt der Text-Chat). Der Schalter
+    RESTREAM_CHAT_BILD steht beim Aufrufer (nc.chatbild.an)."""
+    binpath = _find_chromium()
+    if not binpath:
+        log.info("Chat-Kasten: kein Chromium — der Chat bleibt Text (Emoji ohne Bild).")
+        return None
+    _nc_schriftzeichen.emoji_hinweis("Chat-Kasten")
+    _x, _y, breite, hoehe = _nc_rscmd.chat_kasten(drossel)
+    url = (f"http://127.0.0.1:{DASHBOARD_PORT}/overlay/chat?user="
+           + quote(clean_username(nutzer or "")) + "&fs=%d&abstand=%d"
+           % (_nc_ff.CHAT_FS, _nc_ff.CHAT_ABSTAND))
+    return _nc_chatbild.starten(rid, _nc_ovbrowser.Dauerbrowser, binpath, url,
+                                "%d,%d" % (breite, hoehe),
+                                os.path.join(RECORDINGS_DIR, "overlay_live"),
+                                fps=_nc_rscmd.RESTREAM_CHAT_BILD_FPS, nice=FFMPEG_NICE_BG,
+                                melden=_loop_fehler)
+
+
 def _restream_html_overlay_stop(rid):
     """v4.2-W179: laeuft auch in einem Worker-Thread (Browser-Ende bis 5 s) —
     deshalb wird der Schuss-Task per call_soon_threadsafe beendet."""
@@ -15325,6 +15348,14 @@ class RestreamManager:
             # Eine Durchreicher-Adresse ist fuer ffprobe keine Adresse (W148).
             _html_ov = await asyncio.to_thread(_restream_html_overlay_start,
                                                rid, source_url=None if _nc_durch.ist(src) else src)
+        # v5.9-W205: Chat-Kasten aus Chromium, damit Emoji im Sendebild farbig
+        # stehen — nur im Studio-Layout und ohne HTML-Overlay (das ersetzt die
+        # Studio-Kette). Scheitert er, bleibt der Text-Chat.
+        _chat_fifo = None
+        if (RESTREAM_OVERLAY and transcode and _html_ov is None
+                and _restream_layout_mode() == "studio" and _nc_chatbild.an()):
+            _chat_fifo = await asyncio.to_thread(_restream_chatbild_start, rid,
+                                                 row["source_username"], _drossel_stufe(rid))
         # v4.2-W34: AZRAELs Frames-Feeder. Scheitert er, bleibt _av_feed None
         # und der Bauer nimmt die feste Schleife aus W32 — der Restream
         # startet in jedem Fall.
@@ -15359,14 +15390,15 @@ class RestreamManager:
                                           html_ov_fifo=_html_ov,
                                           avatar_feed=_av_feed,
                                           drossel=_drossel_stufe(rid),
-                                          tonlos=rid in self._tonlos)
+                                          tonlos=rid in self._tonlos,
+                                          chat_fifo=_chat_fifo)
             else:
                 cmd = _build_restream_cmd(src, ingest, key, transcode, tts_fifo=tts_fifo, rid=rid,
                                           html_ov_fifo=_html_ov, targets=_targets,
                                           avatar_feed=_av_feed,
                                           drossel=_drossel_stufe(rid),
                                           tonlos=rid in self._tonlos,
-                                          bruecke=_bruecke_an)
+                                          bruecke=_bruecke_an, chat_fifo=_chat_fifo)
             if RESTREAM_OVERLAY:
                 # Textdateien anlegen, BEVOR drawtext sie öffnet — abgewartet,
                 # aber im Thread (W179): os.replace stand unter Plattenlast bis
@@ -16207,6 +16239,7 @@ class RestreamManager:
         Teil ab."""
         _restream_tts_stop(rid)
         await asyncio.to_thread(_restream_html_overlay_stop, rid)
+        await asyncio.to_thread(_nc_chatbild.beenden, rid)       # v5.9-W205
         _restream_avatar_feeder_stop(rid)
         if info is not None:
             await self._relays_abraeumen(info)
@@ -19354,6 +19387,8 @@ def _aufnahme_chat_einarbeiten(video, chat, modus, username):
             f.write(_nc_aufnahmechat.ass(chat, breite or 720, hoehe or 1280))
         for versuch in ((modus, "untertitel") if modus == "einbrennen" else (modus,)):
             if versuch == "einbrennen":
+                # v5.9-W205: libass braucht eine Umriss-Schrift mit Emoji.
+                _nc_schriftzeichen.emoji_hinweis("Aufnahme-Chat")
                 cmd = _nc_aufnahmechat.einbrennen_cmd(
                     video, ass_pfad, tmp, preset=os.getenv("AUFNAHME_CHAT_PRESET", "veryfast"),
                     threads=_env_int("AUFNAHME_CHAT_THREADS", 2))
@@ -20256,12 +20291,39 @@ async def _restream_resume_after_restart():
         await _RESTREAM_MGR.start(r["id"], _src_watch=True)
 
 
+_RESTREAM_LISTE_TAKT_S = 120.0
+
+
+def _restream_liste_abgleichen():
+    """v5.9-W204: getrackte Nutzer (Telegram, Discord, Deck) in die Restream-
+    Auto-Liste — nc/restreamliste.py. Die Ausschlussliste wird STRENG gelesen:
+    ohne sie truege der Abgleich jeden geloeschten Nutzer wieder ein (W199)."""
+    aus = _nc_cfgstore.lesen(_nc_rsliste.AUSSCHLUSS_SCHLUESSEL, []) or []
+    with db_conn() as conn:
+        erg = _nc_rsliste.abgleichen(conn, datetime.now(timezone.utc).isoformat(), aus)
+        conn.commit()
+    if erg["neu"] or erg["ruht"] or erg["wieder"]:
+        log.info("Restream-Liste: %d aus den Trackings dazu (%s), %d ruhen (nicht mehr "
+                 "getrackt), %d wieder dabei.", len(erg["neu"]),
+                 ", ".join("@" + u for u in erg["neu"][:10]) or "—",
+                 len(erg["ruht"]), len(erg["wieder"]))
+    return erg
+
+
 async def _auto_restream_loop():
     """Prüft periodisch, ob ein Auto-Restream-Ziel gestartet/umgeschaltet werden muss.
        30s-Takt: im Single-Modus ist das die Failover-Latenz zum nächsten Live-User
-       (kostet nichts, solange ein Slot belegt ist — dann kehrt auto_start_due sofort um)."""
+       (kostet nichts, solange ein Slot belegt ist — dann kehrt auto_start_due sofort um).
+       v5.9-W204: alle zwei Minuten vorher der Abgleich mit den Trackings."""
     await asyncio.sleep(45)
+    _abgleich_t = -1e9
     while True:
+        if _nc_rsliste.an() and _time_mod.monotonic() - _abgleich_t >= _RESTREAM_LISTE_TAKT_S:
+            _abgleich_t = _time_mod.monotonic()
+            try:
+                await asyncio.to_thread(_restream_liste_abgleichen)
+            except Exception as e:
+                _loop_fehler("restream-liste", e)
         try:
             if _auto_on("auto_restream", True):
                 await _RESTREAM_MGR.auto_start_due()
