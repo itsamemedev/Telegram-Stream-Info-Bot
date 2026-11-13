@@ -121,7 +121,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolith · 27,563 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT["bot.py<br/>monolith · 27,560 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
     BOT -->|configure| NC["nc/ — 185 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>16 watchdog agents"]:::brain
@@ -554,7 +554,7 @@ python3 -m pytest -k w145          # one wave on its own
 python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
 ```
 
-`bot.py` has 27,563 lines and is never read in full — the navigation map
+`bot.py` has 27,560 lines and is never read in full — the navigation map
 `.claude/INDEX.md` knows 390 routes and 639 functions with line numbers. Before
 every pull request the full verification chain from
 **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
