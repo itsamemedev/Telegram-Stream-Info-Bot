@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.6.0"
-CODENAME = "Kehraus"
+VERSION = "5.7.0"
+CODENAME = "Werkzeugkasten"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.7.0",
+        "date": "2026-11",
+        "title": "Werkzeugkasten",
+        # Nebenversion: MCP-Server im Deck verwalten (W198).
+        "highlights": [
+            "Neuer Reiter „09 MCP“: MCP-Server anlegen, bearbeiten, aktiv schalten und loeschen — der Token verlaesst den Server nie, nicht in Antworten, nicht im Log",
+            "Verbindungstest mit echtem MCP-Handshake (Streamable HTTP, JSON und SSE): Protokoll, Servername und Werkzeugliste — oder der Grund mit Abhilfe (401, falsche Adresse, Umleitung, Zeitueberschreitung)",
+            "Export als mcp_server.json, mit Token nur nach Rueckfrage; die llama-Oberflaeche fuehrt ihre eigene Liste im Browser",
+            "Lage der llama-Oberflaeche im Reiter: ob --webui llamacpp und der MCP-Proxy laufen, mit Abhilfe und Tunnel-Hinweis",
+            "Einstellungen bleiben nach dem Neuladen nicht mehr leer, wenn sie der zuletzt offene Reiter waren",
+        ],
+    },
     {
         "version": "5.6.0",
         "date": "2026-11",

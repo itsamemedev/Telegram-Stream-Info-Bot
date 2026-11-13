@@ -7043,6 +7043,11 @@ async function einstUebernehmen(){
   einstLoad();
 }
 VIEW_LOADERS['einstellungen']=einstLoad;
+/* v5.7-W198: die Reiter-Wiederherstellung beim Start klickt in einem frueheren
+   Script-Block, in dem dieser Lader noch nicht eingetragen ist — war
+   „Einstellungen“ der letzte Reiter, blieb die Ansicht nach dem Neuladen leer
+   (im Browser gemessen: 0 statt 6420 Zeichen). Derselbe Anstoss wie beim MCP-Reiter. */
+try{ if(CURRENT_VIEW==='einstellungen') einstLoad(); }catch(e){}
 T('Einstellungen');   /* der Reiter steht als HTML da — so kommt das Wort in den Katalog */
 
 /* v5.6-W198: MCP-Server verwalten. Der Betreiber: „Ich hätte gern den Tab im

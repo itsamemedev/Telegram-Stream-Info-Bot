@@ -607,6 +607,14 @@ class _Sitzung:
 
 def _lesen(s, resp, sock, gelesen, zeile):
     """Ein Stück des Rumpfs, unter Frist und Deckel. -> bytes (leer = Ende)."""
+    if resp.isclosed():
+        # v5.7-W198: der Rumpf ist ganz gelesen. Bei „Connection: close"
+        # (HTTP/1.0, viele einfache MCP-Server) hat http.client den Socket
+        # dabei geschlossen — ein settimeout darauf warf OSError (EBADF), und
+        # jeder solche Server erschien als „Netzwerkfehler", obwohl er korrekt
+        # geantwortet hatte. Gefunden im Ende-zu-Ende-Lauf, nicht im Vertrag:
+        # dessen Attrappe hielt die Verbindung offen.
+        return resp.read(0)
     sock.settimeout(s.rest())
     stueck = resp.readline(MAX_RUMPF + 1 - gelesen) if zeile else resp.read1(65536)
     if gelesen + len(stueck) > MAX_RUMPF:

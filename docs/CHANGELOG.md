@@ -9,6 +9,62 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.7.0] — 2026-11-13 · „Werkzeugkasten" (W198)
+
+Der Betreiber: „Ich hätte gern den Tab im Dashboard, um MCPs verwalten zu
+können." Die llama-Oberfläche (Reiter „MCP", seit v5.6.0 mit
+`--webui llamacpp` wieder da) speichert ihre MCP-Server im Browser — das Deck
+kann sie dort nicht setzen. Gebaut ist deshalb eine eigene Verwaltung mit
+Verbindungstest und Export. AZRAEL ruft keine MCP-Werkzeuge auf: das wäre aus
+dem Live-Chat heraus auslösbar und bleibt eine eigene Entscheidung.
+
+### Neu
+
+- **`nc/mcpdienste.py`** (bot-frei) und **`/api/mcp/*`** (`nc/routes/mcp.py`):
+  Server anlegen, ändern, löschen, testen, exportieren. Gespeichert in
+  `app_config` (`mcp.server`), kein Schemawechsel. Der Token verlässt den
+  Server nie; im Export nur mit `?mit_token=1`, und das steht als Warnung im Log.
+- **Verbindungstest:** echter MCP-Handshake über Streamable HTTP —
+  `initialize`, `notifications/initialized`, `tools/list` (höchstens 5 Seiten,
+  200 Werkzeuge), Antworten als JSON oder SSE, `Mcp-Session-Id`, am Ende
+  `DELETE` der Sitzung. Gesamtfrist 10 s, Rumpf gedeckelt auf 2 MB. Jeder
+  Fehlergrund mit Abhilfe (401/403, 404/405, Umleitung, TLS, Verbindung
+  verweigert, Zeitüberschreitung, ungültiges JSON-RPC).
+- **`http.client` statt `urllib`:** `urllib` folgt einer Umleitung und
+  schickt den `Authorization`-Kopf an das neue Ziel mit. Eine Umleitung ist
+  jetzt ein Befund mit der Zieladresse.
+- **`nc.cfgstore.lesen()`** — streng: ein Datenbankfehler wirft, statt die
+  Vorgabe zu liefern. Mit `get(…, [])` hätte das Anlegen eines Servers bei
+  gesperrter Datenbank alle anderen gelöscht (die Klasse aus W91). Alle
+  MCP-Routen antworten dann 503.
+- **Deck, Reiter „09 MCP":** Lage der llama-Oberfläche (`--webui`, MCP-Proxy,
+  Abhilfe, Tunnel-Hinweis), Serverliste mit Test, aufklappbarer
+  Werkzeugliste, Formular und Export. Fremde Werkzeugnamen und Beschreibungen
+  laufen durch `esc()`; Löschen und Export mit Token nur nach Rückfrage.
+
+### Befunde
+
+- **Ein MCP-Server, der nach der Antwort die Verbindung schließt,** erschien
+  als „Netzwerkfehler": bei `Connection: close` schließt `http.client` den
+  Socket, sobald der Rumpf gelesen ist, und das nächste `settimeout` warf
+  EBADF. Gefunden im Ende-zu-Ende-Lauf (Deck + Backend + Testserver im
+  Browser), nicht in den Verträgen — deren Attrappe hielt die Verbindung offen.
+- **„Einstellungen" blieb nach dem Neuladen leer,** wenn es der zuletzt offene
+  Reiter war: die Wiederherstellung klickt in einem früheren Script-Block, in
+  dem der Lader noch nicht eingetragen ist. Im Browser gemessen: 0 statt 6420
+  Zeichen. Derselbe Startanstoß wie beim MCP-Reiter.
+
+### Gegenprobe
+
+- 50 (Backend) + 26 (Deck) + 2 Mutationsproben, alle gefangen.
+- Ende-zu-Ende in Chromium: Server anlegen, Test ohne Token → „HTTP 401 …
+  Token eintragen", mit Token → Protokoll, Servername, zwei Werkzeuge; ein
+  feindlicher Werkzeugname (`<img onerror>`) erscheint als Text und läuft
+  nicht; der Token steht weder im DOM noch in der API noch im Export ohne Token.
+- **Offen:** die Namensauflösung (DNS) unterliegt nicht der 10-s-Frist; ein
+  hängender Resolver kann einen Test verlängern. Ob die llama-Oberfläche die
+  exportierte Datei importieren kann, ist nicht geprüft.
+
 ## [5.6.0] — 2026-11-12 · „Kehraus" (W197)
 
 Der Betreiber: Bughunt einschließlich Sicherheit, Repo aufräumen und nicht

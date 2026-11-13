@@ -62,7 +62,7 @@
 | | | |
 |---|---|---|
 | **🔍 Erkennen** — adaptives Polling mit Anti-Flap-Hysterese; jede Zeile im Deck sagt, wann sie zuletzt geprüft wurde | **⏺️ Aufnehmen** — dreistufiger Recorder (ffmpeg → streamlink → yt-dlp) mit Preflight, Tonspur-Prüfung und Hänger-Erkennung | **📡 Weitersenden** — Kick, Twitch und YouTube gleichzeitig, Ziel-Verifikation gegen die Plattform-APIs |
-| **🛡️ Moderieren** — SENTINEL-SHIELD gegen Doxxing und Hass, deterministisch und **vor** jeder KI | **🤖 Mitreden** — AZRAEL antwortet in drei Chats, reagiert aufs Sendebild und steht als Figur im Bild | **📊 Auswerten** — Deck mit 380 API-Routen, Wissensgraph, Einnahmen-Journal mit Hash-Kette, PWA |
+| **🛡️ Moderieren** — SENTINEL-SHIELD gegen Doxxing und Hass, deterministisch und **vor** jeder KI | **🤖 Mitreden** — AZRAEL antwortet in drei Chats, reagiert aufs Sendebild und steht als Figur im Bild | **📊 Auswerten** — Deck mit 386 API-Routen, Wissensgraph, Einnahmen-Journal mit Hash-Kette, PWA |
 
 <details>
 <summary><b>🔎 Vollständige Funktionsliste</b></summary>
@@ -80,7 +80,7 @@
 | **Sentinel-Flotte** | 16 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank, prometheus, grafana) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
 | **Geld** | Spenden-Telemetrie (Schätzwerte) · getrenntes Einnahmen-Journal (`nc/ledger.py`) mit Hash-Kette und CSV-Export fürs Finanzamt |
-| **Dashboard** | 380 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
+| **Dashboard** | 386 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · Umzug per `update.sh --mariadb` mit Nachzählen · zentrales Schema-Modul · Export-Werkzeug · Datenbank-Wächter |
 | **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~620 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
@@ -120,8 +120,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 27.954 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
-    BOT -->|configure| NC["nc/ — 211 Fachmodule<br/>39 Blueprints"]:::lib
+    BOT["bot.py<br/>Monolith · 27.956 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT -->|configure| NC["nc/ — 212 Fachmodule<br/>40 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
     BOT --> DB[("SQLite oder MariaDB<br/>+ Einstellungen")]:::db
@@ -557,8 +557,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 27.954 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 380 Routen und 668 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 27.956 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 386 Routen und 668 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -575,6 +575,18 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 
 ---
 
+## 🆕 Neu in v5.7
+
+**„Werkzeugkasten“** — MCP-Server im Deck verwalten:
+
+- **Reiter „09 MCP“:** Server anlegen, bearbeiten, aktiv schalten, löschen.
+  Der Token bleibt auf dem Server — er steht in keiner Antwort und in keinem Log.
+- **Verbindungstest** mit echtem MCP-Handshake (Streamable HTTP, JSON und
+  SSE): Protokoll, Servername, Werkzeugliste — oder der Grund mit Abhilfe.
+- **Export** als `mcp_server.json`, mit Token nur nach Rückfrage. Die
+  llama-Oberfläche (Reiter „MCP“, seit v5.6 wieder da) führt ihre eigene Liste
+  im Browser; der Reiter zeigt, ob `--webui llamacpp` und der MCP-Proxy laufen.
+
 ## 🆕 Neu in v5.6
 
 **„Kehraus“** — Bughunt, Aufräumen, Monolith-Abtrag:
@@ -589,7 +601,7 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
   zehn Minuten nicht neu, statt es bei jedem Aufruf zu versuchen.
 - **`--selfcheck` zeigt die Diagnose** einer unlesbaren Datenbank, statt am
   Bericht zu sterben.
-- **Monolith:** `bot.py` 28.831 → 27.954 Zeilen; Website-Statistik und
+- **Monolith:** `bot.py` rund drei Prozent kürzer; Website-Statistik und
   Tagesbericht leben in `nc/`, tote Hüllen und alte Patches sind weg.
 
 ## 🆕 Neu in v5.5
@@ -773,10 +785,10 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.6.0** — „Kehraus“ (2026.11) |
-| Flask-Routen | 380 (34 in `bot.py` · 346 in `nc/routes/`) |
+| Aktuelle Version | **5.7.0** — „Werkzeugkasten“ (2026.11) |
+| Flask-Routen | 386 (34 in `bot.py` · 352 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
-| Fachmodule | 211 in `nc/` (+39 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 212 in `nc/` (+40 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 16 |
 | Konfigurationsvariablen | ~620 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |

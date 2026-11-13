@@ -36733,6 +36733,82 @@ def _test_v56_w198_cfgstore_lesen_streng():
     ok("v5.6-W198: cfgstore.lesen — fehlt = Vorgabe, Datenbankfehler und Unlesbares werfen")
 
 
+def _test_v57_w198_mcp_verbindung_zu():
+    """v5.7-W198: ein MCP-Server, der nach jeder Antwort die Verbindung schliesst.
+
+    Gefunden im Ende-zu-Ende-Lauf (Deck + Backend + Testserver), nicht im
+    Vertrag: dessen Attrappe hielt die Verbindung offen (HTTP/1.1). Bei
+    HTTP/1.0 bzw. „Connection: close" schliesst http.client den Socket, sobald
+    der Rumpf gelesen ist, und das naechste settimeout warf EBADF — jeder
+    solche Server erschien als „Netzwerkfehler", obwohl er richtig antwortete.
+    Geprueft mit JSON- und mit SSE-Antworten."""
+    import json as _json
+    import threading as _th
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from nc import mcpdienste as M
+
+    class _H(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"          # schliesst nach jeder Antwort
+        sse = False
+
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            req = _json.loads(self.rfile.read(n) or b"{}")
+            if "id" not in req:
+                self.send_response(202)
+                self.end_headers()
+                return
+            res = ({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "zu", "version": "1"}}
+                   if req["method"] == "initialize"
+                   else {"tools": [{"name": "eins", "description": "x"}]})
+            roh = _json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": res})
+            if _H.sse:
+                body = ("event: message\ndata: " + roh + "\n\n").encode()
+                art = "text/event-stream"
+            else:
+                body = roh.encode()
+                art = "application/json"
+            self.send_response(200)
+            self.send_header("Content-Type", art)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        url = "http://127.0.0.1:%d/mcp" % srv.server_address[1]
+        for sse in (False, True):
+            _H.sse = sse
+            e = M._pruefen(M._Sitzung(url, "", 10.0))
+            assert e.get("ok") and [w["name"] for w in e["werkzeuge"]] == ["eins"], \
+                ("Server mit Connection: close als Fehler gemeldet", sse, e.get("grund"))
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    ok("v5.7-w198: MCP-Test besteht gegen Server, die nach jeder Antwort schliessen (JSON und SSE)")
+
+
+def _test_v57_w198_reiter_anstoss():
+    """v5.7-W198: Reiter, deren Lader erst in einem spaeteren Script-Block
+    eingetragen wird, brauchen einen Anstoss — sonst bleibt die Ansicht leer,
+    wenn sie beim Start wiederhergestellt wird. Fuer „Einstellungen" im Browser
+    gemessen: 0 statt 6420 Zeichen nach dem Neuladen. Geprueft an Zeilen, die
+    mit dem Code BEGINNEN (kein Treffer in Kommentaren)."""
+    z = open("templates/dashboard.html", encoding="utf-8").read().splitlines()
+    for view, lader in (("einstellungen", "einstLoad"), ("mcp", "mcpLaden")):
+        reg = [i for i, l in enumerate(z) if l.startswith("VIEW_LOADERS['%s']=%s;" % (view, lader))]
+        an = [i for i, l in enumerate(z)
+              if l.startswith("try{ if(CURRENT_VIEW==='%s') %s(); }" % (view, lader))]
+        assert len(reg) == 1 and len(an) == 1, (view, reg, an)
+        assert an[0] > reg[0], "%s: Anstoss vor der Lader-Zeile" % view
+    ok("v5.7-w198: Einstellungen und MCP laden nach dem Neuladen (Startanstoss hinter dem Lader)")
+
+
 def _test_v52_w190_sicherheit():
     """v5.2-W190: sechs Riegel aus dem Sicherheits-Durchgang.
 
@@ -39499,6 +39575,8 @@ def main():
     _test_v51_w185_sendebruecke_meldungen()
     _test_v56_w198_mcp_deck()
     _test_v51_w186_lagebild_dienste()
+    _test_v57_w198_mcp_verbindung_zu()
+    _test_v57_w198_reiter_anstoss()
     _test_v56_w198_mcp_protokoll()
     _test_v56_w198_mcp_frist_und_deckel()
     _test_v56_w198_mcp_randfaelle()
