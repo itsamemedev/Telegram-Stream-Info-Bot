@@ -62,7 +62,7 @@
 | | | |
 |---|---|---|
 | **🔍 Detect** — adaptive polling with anti-flap hysteresis; every row in the deck says when it was last checked | **⏺️ Record** — three-stage recorder (ffmpeg → streamlink → yt-dlp) with preflight, audio-track check and stall detection | **📡 Restream** — Kick, Twitch and YouTube at once, target verification against the platform APIs |
-| **🛡️ Moderate** — SENTINEL-SHIELD against doxxing and hate, deterministic and **before** any AI | **🤖 Talk along** — AZRAEL answers in three chats, reacts to the broadcast and appears in the picture | **📊 Evaluate** — deck with 380 API routes, knowledge graph, revenue journal with a hash chain, PWA |
+| **🛡️ Moderate** — SENTINEL-SHIELD against doxxing and hate, deterministic and **before** any AI | **🤖 Talk along** — AZRAEL answers in three chats, reacts to the broadcast and appears in the picture | **📊 Evaluate** — deck with 386 API routes, knowledge graph, revenue journal with a hash chain, PWA |
 
 <details>
 <summary><b>🔎 Full feature list</b></summary>
@@ -80,7 +80,7 @@
 | **Sentinel fleet** | 16 watchdog agents (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank, prometheus, grafana) with Telegram alarms, individually switchable |
 | **Community** | Recognition of regular viewers · loyalty points & ranks · Discord XP, levels, daily streak · live ping · highlight share · community events |
 | **Money** | Donation telemetry (estimates) · separate revenue journal (`nc/ledger.py`) with a hash chain and CSV export for the tax office |
-| **Dashboard** | 380 Flask routes · live panels · brain visualisation with a learning curve · overlay for OBS · installable PWA (Android) · QR login |
+| **Dashboard** | 386 Flask routes · live panels · brain visualisation with a learning curve · overlay for OBS · installable PWA (Android) · QR login |
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
 | **Multilingual** | German, English and Spanish, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
 | **Database** | SQLite **or** MariaDB · move with `update.sh --mariadb`, counted again · central schema module · export tool · database watchdog |
@@ -121,7 +121,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolith · 27,954 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT["bot.py<br/>monolith · 27,956 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
     BOT -->|configure| NC["nc/ — 185 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>16 watchdog agents"]:::brain
@@ -554,8 +554,8 @@ python3 -m pytest -k w145          # one wave on its own
 python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
 ```
 
-`bot.py` has 27,954 lines and is never read in full — the navigation map
-`.claude/INDEX.md` knows 380 routes and 668 functions with line numbers. Before
+`bot.py` has 27,956 lines and is never read in full — the navigation map
+`.claude/INDEX.md` knows 386 routes and 668 functions with line numbers. Before
 every pull request the full verification chain from
 **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
 documentation figures, locks against silent failure paths and giant functions,
@@ -572,6 +572,18 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 ```
 
 ---
+
+## 🆕 New in v5.7
+
+**“Toolbox”** — manage MCP servers in the deck:
+
+- **Tab “09 MCP”:** add, edit, enable and delete servers. The token stays on
+  the server — it appears in no response and in no log.
+- **Connection test** with a real MCP handshake (Streamable HTTP, JSON and
+  SSE): protocol, server name, tool list — or the reason with a remedy.
+- **Export** as `mcp_server.json`, with the token only after confirmation. The
+  llama web UI (its “MCP” tab is back since v5.6) keeps its own list in the
+  browser; the tab shows whether `--webui llamacpp` and the MCP proxy are on.
 
 ## 🆕 New in v5.6
 
@@ -734,8 +746,8 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **5.6.0** — “Sweep” (2026.11) |
-| Flask routes | 380 (34 in `bot.py` · 346 in `nc/routes/`) |
+| Current version | **5.7.0** — “Toolbox” (2026.11) |
+| Flask routes | 386 (34 in `bot.py` · 352 in `nc/routes/`) |
 | Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 14 |

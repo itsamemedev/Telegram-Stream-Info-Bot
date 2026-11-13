@@ -692,6 +692,7 @@ from nc.routes import einstellungen as _nc_routes_einstellungen    # v4.2-W145: 
 from nc.routes import wartung as _nc_routes_wartung            # v4.1-W24: Wartung
 from nc.routes import abwehr as _nc_routes_abwehr              # v4.1-W25: Abwehr
 from nc.routes import auskunft as _nc_routes_auskunft          # v4.1-W26: Auskunft
+from nc.routes import mcp as _nc_routes_mcp                    # v5.6-W198: MCP-Server im Deck
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
 # Aggregat-Route /api/dashboard-bundle) — sie sind dort gewoehnliche
@@ -27945,6 +27946,7 @@ dashboard_app.register_blueprint(_nc_routes_einstellungen.bp)     # v4.2-W145
 dashboard_app.register_blueprint(_nc_routes_wartung.bp)           # v4.1-W24
 dashboard_app.register_blueprint(_nc_routes_abwehr.bp)            # v4.1-W25
 dashboard_app.register_blueprint(_nc_routes_auskunft.bp)          # v4.1-W26
+dashboard_app.register_blueprint(_nc_routes_mcp.bp)               # v5.6-W198
 
 
 if __name__ == "__main__":
