@@ -19089,7 +19089,8 @@ async def _meme_zusammenschnitt(username, output_file):
     Gemeldet: „der Hype-Director schneidet gar keine Memes zusammen". Jeder
     Clip trägt seit dieser Welle den Chat seines Fensters; hier werden sie
     hintereinandergesetzt und an dieselben Ziele geschickt wie die Clips
-    (Discord-Clip-Kanal, W168) und an die Telegram-Gruppen des Trackings."""
+    (Discord-Clip-Kanal, W168). An die Telegram-Gruppen des Trackings nur mit
+    MEME_REEL_TELEGRAM=1 (seit v5.8-W199; vorher ungefragt an)."""
     # Review #204: erst warten, bis kein Clip dieser Aufnahme mehr geschnitten
     # wird — sonst fehlt der letzte Hype-Moment, oder die Mindestzahl faellt.
     await _clips_abwarten(output_file)
@@ -19128,7 +19129,11 @@ async def _meme_zusammenschnitt(username, output_file):
     titel = f"🎬 Highlights & Memes @{username} — {len(pfade)} Momente" + \
         (f" ({gruende})" if gruende else "")
     await _clip_to_discord(username, ziel, titel)
-    if os.getenv("MEME_REEL_TELEGRAM", "1") != "0":
+    # v5.8-W199: Telegram nur auf ausdruecklichen Wunsch. W159 hat den
+    # Zusammenschnitt gebaut, weil „der Hype-Director keine Memes
+    # zusammenschneidet" — dass er auch in jede Telegram-Gruppe des Trackings
+    # geht, hat niemand verlangt, und der Betreiber wollte es nicht.
+    if (os.getenv("MEME_REEL_TELEGRAM", "0") or "0").strip().lower() in ("1", "true", "yes", "on"):
         app = globals().get("bot_app")
         rows = await db_async(lambda c: c.execute(
             "SELECT DISTINCT group_id FROM trackings WHERE username=?", (username,)).fetchall())

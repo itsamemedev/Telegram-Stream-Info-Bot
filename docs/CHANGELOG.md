@@ -47,6 +47,18 @@ sonst noch steht.
   ip-api.com wurde nur bei **Erfolg** gestempelt, ein gestörter Dienst kostete
   jede Pool-Auffrischung den 10-s-Timeout.
 
+### Geändert
+
+- **Der Highlights-&-Memes-Zusammenschnitt geht nicht mehr nach Telegram.**
+  Der Betreiber: „Wieso landen Hype-Moment-Videos und Meme-Videos in
+  Telegram? Davon war nie die Rede." Gebaut hat ihn W159 auf die Meldung „der
+  Hype-Director schneidet gar keine Memes zusammen" — und ihn dabei
+  ungefragt auch an jede Telegram-Gruppe des Trackings geschickt, als Vorgabe
+  an. Er geht jetzt nur noch an den Discord-Clip-Kanal;
+  `MEME_REEL_TELEGRAM=1` schaltet Telegram wieder zu. Einzelne Clips kommen
+  nach Telegram weiterhin nur über ⭐ in Discord (`CLIP_HIGHLIGHT_TO_TG`,
+  im Deck „Highlights → Telegram").
+
 ### Sicherheit
 
 - **Link-Video sendet nur eine Datei aus seinem eigenen Arbeitsordner.** Der
@@ -82,7 +94,7 @@ sonst noch steht.
   `CROWDSEC_*`-Werte per `configure()`. Die Auswertung des Auth-Logs ist als
   reine Funktion `auswerten()` herausgelöst und damit ohne `/var/log` prüfbar.
 - `nc/geocache.anreichern()`: die Proxy-GeoIP neben dem Cache, dem sie gehört.
-- `bot.py` 27.956 → 27.307 Zeilen.
+- `bot.py` 27.956 → 27.312 Zeilen.
 
 ### Gegenprobe
 

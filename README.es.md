@@ -66,7 +66,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 27.307 líneas"]:::core
+    BOT["bot.py<br/>monolito · 27.312 líneas"]:::core
     BOT -->|configure| NC["nc/ — 185 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
@@ -330,8 +330,10 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
   todos los demás horarios. Ahora se lee de forma estricta y se escribe bajo bloqueo.
 - **`build/` acotado:** cada ciclo de evolución guardaba una copia completa del
   monolito (unos 2 GB al año, en cada copia de seguridad) — ahora como mucho 20.
+- **El resumen ya no va a Telegram:** el vídeo “Highlights & Memes” tras cada
+  grabación va solo a Discord — a Telegram solo con `MEME_REEL_TELEGRAM=1`.
 - **Limpieza:** 27 reenvíos muertos y un módulo muerto eliminados;
-  lista de bloqueos y ataques SSH a `nc/abwehrlage.py`. `bot.py` 27.956 → 27.307 líneas.
+  lista de bloqueos y ataques SSH a `nc/abwehrlage.py`. `bot.py` 27.956 → 27.312 líneas.
 
 ## 🆕 Novedades en v5.7
 

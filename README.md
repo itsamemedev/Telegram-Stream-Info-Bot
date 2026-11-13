@@ -120,7 +120,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 27.307 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 27.312 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
     BOT -->|configure| NC["nc/ — 212 Fachmodule<br/>40 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
@@ -557,7 +557,7 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 27.307 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`bot.py` hat 27.312 Zeilen und wird nie ganz gelesen — die Navigationskarte
 `.claude/INDEX.md` kennt 386 Routen und 630 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
@@ -585,8 +585,11 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
   alle anderen Zeitpläne. Jetzt streng gelesen und unter Sperre geschrieben.
 - **`build/` begrenzt:** die Evolution legte bei jedem Lernzyklus eine volle
   Kopie des Monolithen ab (rund 2 GB im Jahr, in jeder Sicherung) — jetzt höchstens 20.
+- **Zusammenschnitt nicht mehr in Telegram:** das „Highlights & Memes“-Video
+  nach jeder Aufnahme geht nur noch nach Discord — Telegram nur mit
+  `MEME_REEL_TELEGRAM=1`.
 - **Aufgeräumt und abgetragen:** 27 tote Weiterleitungen und ein totes Modul
-  entfernt; Sperrliste/SSH-Angriffe nach `nc/abwehrlage.py`. `bot.py` 27.956 → 27.307 Zeilen.
+  entfernt; Sperrliste/SSH-Angriffe nach `nc/abwehrlage.py`. `bot.py` 27.956 → 27.312 Zeilen.
 
 ## 🆕 Neu in v5.7
 

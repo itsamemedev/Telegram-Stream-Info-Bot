@@ -37175,6 +37175,40 @@ def _test_v58_w199_geocache_anreichern():
     ok("v5.8-W199: geocache.anreichern — Cache zuerst, ein Stapel, Ruhezeit auch nach Fehlschlag")
 
 
+def _test_v58_w199_zusammenschnitt_nicht_nach_telegram():
+    """v5.8-W199: der Highlights-&-Memes-Zusammenschnitt geht nur noch nach
+    Discord — Telegram nur mit MEME_REEL_TELEGRAM=1.
+
+    W159 hatte ihn ungefragt auch in jede Telegram-Gruppe des Trackings
+    geschickt (Vorgabe an); der Betreiber: „Davon war nie die Rede." Geprueft
+    wird die Bedingung selbst, ausgewertet mit und ohne Variable — nicht ihr
+    Wortlaut."""
+    import ast as _ast
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.py"),
+              encoding="utf-8") as f:
+        baum = _ast.parse(f.read())
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_meme_zusammenschnitt")
+    tg = next(n for n in _ast.walk(fn) if isinstance(n, _ast.If)
+              and "MEME_REEL_TELEGRAM" in _ast.unparse(n.test))
+    bedingung = compile(_ast.Expression(tg.test), "<MEME_REEL_TELEGRAM>", "eval")
+    alt = os.environ.pop("MEME_REEL_TELEGRAM", None)
+    try:
+        assert not eval(bedingung, {"os": os}), "ohne Variable geht der Zusammenschnitt nach Telegram"
+        for wert, soll in (("", False), ("0", False), ("nein", False), ("1", True),
+                           ("on", True), (" TRUE ", True)):
+            os.environ["MEME_REEL_TELEGRAM"] = wert
+            assert bool(eval(bedingung, {"os": os})) is soll, (wert, soll)
+    finally:
+        os.environ.pop("MEME_REEL_TELEGRAM", None)
+        if alt is not None:
+            os.environ["MEME_REEL_TELEGRAM"] = alt
+    # Discord bleibt das Ziel, unabhaengig vom Schalter.
+    vor_if = [n for n in fn.body if n.lineno < tg.lineno]
+    assert any("_clip_to_discord(" in _ast.unparse(n) for n in vor_if), \
+        "der Zusammenschnitt geht nicht mehr nach Discord"
+    ok("v5.8-W199: Zusammenschnitt nur nach Discord, Telegram nur mit MEME_REEL_TELEGRAM=1")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -40097,6 +40131,7 @@ def main():
     _test_v58_w199_linkvideo_nur_arbeitsordner()
     _test_v58_w199_abwehrlage()
     _test_v58_w199_geocache_anreichern()
+    _test_v58_w199_zusammenschnitt_nicht_nach_telegram()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

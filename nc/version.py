@@ -33,8 +33,9 @@ CHANGELOG = [
             "build/ waechst nicht mehr ohne Ende: jeder Lernzyklus legte eine volle Kopie des Monolithen ab (rund 2 GB im Jahr, in jeder Systemsicherung) — jetzt hoechstens 20",
             "Caches nehmen die Uhr nach der Sonde; die GeoIP-Ruhezeit gilt auch nach einem Fehlschlag",
             "Link-Video sendet nur Dateien aus seinem eigenen Arbeitsordner",
+            "Der Highlights-&-Memes-Zusammenschnitt geht nur noch nach Discord — in die Telegram-Gruppen nur mit MEME_REEL_TELEGRAM=1 (war ungefragt an)",
             "Aufgeraeumt: 27 tote Weiterleitungen, ein totes Modul und leere Abschnitte im Monolithen; neun Dokumente im Doku-Index nachgetragen",
-            "Monolith: Sperrliste und SSH-Angriffe nach nc/abwehrlage.py, die Proxy-GeoIP nach nc/geocache.py — bot.py 27.956 → 27.307 Zeilen",
+            "Monolith: Sperrliste und SSH-Angriffe nach nc/abwehrlage.py, die Proxy-GeoIP nach nc/geocache.py — bot.py 27.956 → 27.312 Zeilen",
         ],
     },
     {
