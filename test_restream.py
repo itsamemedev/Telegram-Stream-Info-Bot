@@ -3171,7 +3171,6 @@ def test_v40_youtube_api():
     bp=y.ban_payload("LC","C",300)
     assert bp["snippet"]["type"]=="temporary" and bp["snippet"]["banDurationSeconds"]==300
     assert y.ban_payload("LC","C",0)["snippet"]["type"]=="permanent"
-    assert y.is_self({"channel_id":"C"},"C")
     src=open("bot.py").read()
     assert "async def _youtube_api_chat_loop(" in src and "async def _yt_timeout(" in src
     assert "await _youtube_api_chat_loop()" in src, "YT-Loop delegiert nicht an API"
@@ -3471,8 +3470,11 @@ def test_v40_w9_kick_and_listener():
     # Resolver existiert + liest user_id/user.id + cacht.
     # ANKER GEWANDERT (v4.1-W9, nicht der Vertrag): Resolver und Cache liegen
     # in nc/kickapi.py, damit nc/routes/kick.py sie direkt importieren kann.
-    # Der Bot haelt eine Weiterleitung, weil KickModerator sie dreimal aufruft.
-    assert "async def _kick_broadcaster_id(" in src, "kein Broadcaster-ID-Resolver im Bot"
+    # v5.8-W199: die Weiterleitung im Bot ist entfallen — KickModerator ruft
+    # sie laengst nicht mehr, die Route importiert direkt aus nc/kickapi.
+    assert "async def _kick_broadcaster_id(" not in src, "tote Weiterleitung wieder im Bot"
+    assert "from nc.kickapi import broadcaster_id as _kick_broadcaster_id" in \
+        open("nc/routes/kick.py", encoding="utf-8").read(), "Route loest die ID nicht mehr auf"
     _ka = open("nc/kickapi.py", encoding="utf-8").read()
     assert "async def broadcaster_id(" in _ka, "kein Broadcaster-ID-Resolver"
     assert 'j.get("user_id")' in _ka and '(j.get("user") or {}).get("id")' in _ka, "user_id nicht aufgeloest"
@@ -3631,7 +3633,8 @@ def test_v40_w12_audio_panel():
     arts = open("nc/routes/audio.py", encoding="utf-8").read()
     assert "def config(" in acfg, "keine Laufzeit-Audio-Konfig"
     assert '_cfgstore.get("audio.cue"' in acfg, "liest den gespeicherten Wert nicht"
-    assert '_nc_cfgstore.set_("audio.cue"' in arts, "nicht persistent"
+    # v5.8-W199: streng gelesen und geschrieben ueber nc/cfgstore.aendern.
+    assert '_nc_cfgstore.aendern("audio.cue"' in arts, "nicht persistent"
     # Die .env-Vorgaben werden hereingereicht, nicht im Modul eingefroren.
     assert "_nc_audiocue.configure(" in src, "die .env-Vorgaben erreichen das Modul nicht"
     assert "os.getenv" not in acfg, "nc/audiocue.py friert .env selbst ein"
@@ -5838,43 +5841,6 @@ def test_v40_w44_ffbuild():
     ok("v4.0-w44: Bot delegiert den ffmpeg-Bau, keine Doppel-Logik")
 
 
-def test_v40_w45_chatstats():
-    """v4.0-W45: Monolith-Abtrag — die Chat-Health-Aggregation (_chat_stats_snapshot)
-       ist nach nc.chatstats gewandert. Bitgenau: Uptime-Quote (gedeckelt 100%),
-       Median/kürzeste/längste Session, laufende Session, letzte Gründe."""
-    from nc import chatstats as CS
-    stats = {"streamerX": {
-        "sessions": [10.0, 30.0, 20.0], "connected_since": 100.0, "first_seen": 0.0,
-        "connects": 5, "failed": 1, "disconnects": 4, "flaps": 2,
-        "total_uptime": 900.0, "backoff_s": 8.0,
-        "reasons": [(50.0, "net"), (80.0, "timeout")]}}
-    r = CS.summarize(stats, now_mono=150.0, now_wall=1000.0)["streamerX"]
-    assert r["connected"] is True and r["current_session_s"] == 50, "laufende Session falsch"
-    assert r["median_session_s"] == 20 and r["shortest_s"] == 10 and r["longest_s"] == 30
-    # uptime = (900 + 50) / (1000 - 0) = 95%
-    assert r["uptime_pct"] == 95.0, f"uptime falsch: {r['uptime_pct']}"
-    # jüngster Grund zuerst (reversed).
-    assert r["last_reasons"][0]["why"] == "timeout" and r["last_reasons"][0]["ago_s"] == 920
-    # nicht verbunden → current_session 0, uptime aus total_uptime.
-    stats2 = {"y": {**stats["streamerX"], "connected_since": 0.0}}
-    r2 = CS.summarize(stats2, 150.0, 1000.0)["y"]
-    assert r2["connected"] is False and r2["current_session_s"] == 0
-    # leere sessions → 0-Werte, kein Crash.
-    stats3 = {"z": {**stats["streamerX"], "sessions": [], "connected_since": 0.0}}
-    r3 = CS.summarize(stats3, 150.0, 1000.0)["z"]
-    assert r3["median_session_s"] == 0 and r3["shortest_s"] == 0 and r3["longest_s"] == 0
-    # uptime auf 100% gedeckelt (total_uptime > span).
-    stats4 = {"w": {**stats["streamerX"], "total_uptime": 99999.0, "connected_since": 0.0}}
-    assert CS.summarize(stats4, 150.0, 1000.0)["w"]["uptime_pct"] == 100.0, "uptime nicht gedeckelt"
-    ok("v4.0-w45: nc.chatstats — Uptime/Median/Sessions/Gründe bitgenau")
-
-    src = open("bot.py").read()
-    assert "from nc import chatstats as _nc_chatstats" in src
-    assert "_nc_chatstats.summarize(_CHAT_STATS, _time_mod.monotonic(), _time_mod.time())" in src, "delegiert nicht"
-    assert "Uptime-Quote: der ehrlichste" not in src, "alte Aggregation noch im Monolithen"
-    ok("v4.0-w45: Bot delegiert die Aggregation, keine Doppel-Logik")
-
-
 def test_v40_w46_json_and_telegram_launch():
     """v4.0-W46: zwei Betriebsfehler behoben. (1) Der orjson-JSON-Provider lehnte
        Nicht-String-Keys hart ab → HTTP 500 'Dict key must be str' auf jedem
@@ -6211,7 +6177,10 @@ def test_v40_w54_inspectcache():
     assert "from nc import inspectcache as _nc_inspectcache" in _rt, \
         "Blueprint importiert den Inspect-Cache nicht"
     assert "_nc_inspectcache.serialize(data)" in _rt, "Serialisierung nicht delegiert"
-    assert "return _nc_recdb.get_or_compute_inspect_sync(" in src, "Bot delegiert nicht an recdb"
+    # v5.8-W199: die Weiterleitung im Bot ist entfallen — das Blueprint ruft
+    # nc.recdb direkt. Geprueft wird der heutige Weg.
+    assert "recdb.get_or_compute_inspect_sync(" in _rt, "Blueprint fragt nc.recdb nicht"
+    assert "def get_or_compute_inspect_sync(" not in src, "tote Weiterleitung wieder im Bot"
     assert "json.dumps(data, ensure_ascii=False)[:200000]" not in src, "alte Serialisierung noch im Monolithen"
     assert "_nc_inspectcache.parse_row(row)" not in src, "Doppel-Logik: Parse noch im Monolithen"
     ok("v4.0-w54: (De-)Serialisierung delegiert — Parse in nc.recdb, serialize im Blueprint")
@@ -6305,11 +6274,12 @@ def test_v40_w55b_convmap():
     _aidb = open("nc/aidb.py", encoding="utf-8").read()
     assert "from nc import convmap as _nc_convmap" in _aidb
     assert "return _nc_convmap.messages(rows)" in _aidb, "delegiert nicht"
-    assert "return _nc_aidb.conv_messages(conv_id)" in src, "Bot delegiert nicht an nc.aidb"
-    # Die alte Inline-Map in _conv_messages ist weg (die in api_ai_log bleibt separat).
-    cm = src[src.find("def _conv_messages("):src.find("def _conv_messages(") + 500]
-    assert '"duration_ms": r["duration_ms"]' not in cm, "alte Map noch in _conv_messages"
-    ok("v4.0-w55b: Bot delegiert das Mapping, hält nur das SELECT")
+    # v5.8-W199: die Weiterleitung _conv_messages im Bot ist entfallen — die
+    # KI-Route importiert nc.aidb.conv_messages direkt. Keine Kopie im Bot.
+    assert "from nc.aidb import conv_messages as _conv_messages" in \
+        open("nc/routes/ai.py", encoding="utf-8").read(), "KI-Route fragt nc.aidb nicht"
+    assert "def _conv_messages(" not in src, "tote Weiterleitung wieder im Bot"
+    ok("v4.0-w55b: das Mapping liegt in nc.convmap, die Route fragt nc.aidb direkt")
 
 
 def test_v40_w56_admod():
@@ -10062,7 +10032,6 @@ def main():
     test_v40_w42_chat_listener_decoupled()
     test_v40_w43_send_status_panel()
     test_v40_w44_ffbuild()
-    test_v40_w45_chatstats()
     test_v40_w46_json_and_telegram_launch()
     test_v40_w47_executor_isolation()
     test_v40_w48_loop_lag_monitor()

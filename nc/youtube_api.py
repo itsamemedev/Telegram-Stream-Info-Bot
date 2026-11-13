@@ -119,9 +119,3 @@ def parse_error(data):
         return f"Kontingent erschöpft ({reason}) — kein Rechteproblem, frei nach Mitternacht US-Pazifik"
     msg = (err.get("message") or "")[:120]
     return f"{reason or 'fehler'}: {msg}" if msg else (reason or "fehler")
-
-
-def is_self(msg, own_channel_id):
-    """True, wenn die Nachricht vom eigenen Kanal stammt (nicht moderieren/
-       nicht beantworten — sonst Selbst-Loop)."""
-    return bool(own_channel_id) and msg.get("channel_id") == own_channel_id

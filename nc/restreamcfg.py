@@ -118,11 +118,6 @@ def key_gesetzt(name) -> bool:
     return bool(ziel(name)["key"])
 
 
-def bereite_ziele():
-    """Die Ziele, die eingeschaltet sind UND einen Key haben — ohne Keys."""
-    return [z for z in ZIELE if aktiv(z) and key_gesetzt(z)]
-
-
 # ---- Sendeprüfung und Zeitgeber ---------------------------------------------
 
 def verify() -> bool:

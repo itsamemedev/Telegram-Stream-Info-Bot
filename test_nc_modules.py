@@ -342,18 +342,22 @@ def _test_recdb():
     src = open("bot.py", encoding="utf-8").read()
     assert "from nc import recdb as _nc_recdb" in src, "recdb nicht importiert"
     assert "_nc_recdb.configure(log_event=log_event)" in src, "log_event nicht injiziert"
-    for fn in ("get_all_recordings", "get_recording_by_id", "soft_delete_recording",
-               "restore_recording", "get_trash_recordings", "get_manual_recordings",
-               "get_recording_note", "get_annotations_for_recording",
-               "get_bookmarked_recordings", "get_recent_recording_attempts",
+    for fn in ("get_all_recordings", "get_recording_by_id", "get_recent_recording_attempts"):
+        assert ("return _nc_recdb.%s(" % fn) in src, "%s delegiert nicht" % fn
+    # v5.8-W199: die uebrigen zehn Weiterleitungen hatten keinen Aufrufer mehr
+    # — die Routen importieren seit den Blueprint-Wellen direkt aus nc.recdb.
+    # Die Aussage „keine zweite Kopie im Bot" gilt damit strenger: gar keine.
+    for fn in ("soft_delete_recording", "restore_recording", "get_trash_recordings",
+               "get_manual_recordings", "get_recording_note",
+               "get_annotations_for_recording", "get_bookmarked_recordings",
                "update_recording_fingerprint", "find_recordings_by_fingerprint",
                "get_or_compute_inspect_sync"):
-        assert ("return _nc_recdb.%s(" % fn) in src, "%s delegiert nicht" % fn
+        assert ("def %s(" % fn) not in src, "%s: tote Weiterleitung wieder im Bot" % fn
     # Kein Rumpf-Rest: die SQL darf nur noch im Modul stehen, sonst laufen die
     # beiden Kopien mit der Zeit auseinander.
     assert "SELECT * FROM recordings WHERE deleted_at IS NULL" not in src, \
         "alte SQL noch im Monolithen — Doppel-Logik"
-    ok("bot.py delegiert an nc.recdb (13 Funktionen, keine Doppel-Logik)")
+    ok("bot.py delegiert an nc.recdb (3 Funktionen, 10 tote Weiterleitungen weg, keine Doppel-Logik)")
 
 
 def _test_routes_recordings():
@@ -1695,11 +1699,11 @@ def _test_w22_restream_blueprint():
         _os.environ.pop("KICK_STREAM_KEY", None)
         _os.environ["TWITCH_ENABLED"] = "0"
         assert C.aktiv("kick") is True and C.aktiv("twitch") is False
-        assert C.bereite_ziele() == [], C.bereite_ziele()
+        assert not [z for z in C.ZIELE if C.aktiv(z) and C.key_gesetzt(z)]
         _os.environ["TWITCH_ENABLED"] = "1"
         _os.environ["TWITCH_STREAM_KEY"] = "geheim123"
         assert C.aktiv("twitch") is True and C.key_gesetzt("twitch") is True
-        assert C.bereite_ziele() == ["twitch"], C.bereite_ziele()
+        assert [z for z in C.ZIELE if C.aktiv(z) and C.key_gesetzt(z)] == ["twitch"]
         # LIVE gelesen, nicht eingefroren: der Betreiber aendert Keys und
         # erwartet, dass der naechste Restream sie benutzt.
         _os.environ["RESTREAM_VERIFY_S"] = "17"
@@ -2005,9 +2009,13 @@ def _test_w24_wartung_blueprint():
     # (7) Der Monolith ruft die geloesten Funktionen auf, statt sie ein
     # zweites Mal zu halten. Eine Kopie einer loeschenden Funktion laeuft
     # irgendwann auseinander — genau deshalb sind sie gewandert.
-    for ruf in ("_nc_retention.scan(", "_nc_storage.cleanup(",
-                "_nc_storage.stats(", "_nc_arules.run_archive_rules("):
+    for ruf in ("_nc_retention.scan(", "_nc_storage.cleanup(", "_nc_storage.stats("):
         assert ruf in b, "Monolith ruft %s nicht auf" % ruf
+    # v5.8-W199: die Archiv-Regeln ruft nur noch der Blueprint — die Huelle im
+    # Bot hatte keinen Aufrufer. Eine Wahrheit, und die steht hier:
+    _w = open("nc/routes/wartung.py", encoding="utf-8").read()
+    assert "_nc_arules.run_archive_rules(" in _w, "Blueprint fuehrt die Archiv-Regeln nicht aus"
+    assert "def run_archive_rules(" not in b, "tote Weiterleitung wieder im Bot"
 
     # (8) Ein fehlender Haken sagt es, statt Erfolg zu melden. Ohne diese
     # Pruefung startet threading.Thread(target=None) klaglos und die Route
@@ -2330,9 +2338,16 @@ def _test_w26_auskunft_blueprint():
     # dieselben Funktionen auf wie der Blueprint — sonst gaebe es zwei
     # Wahrheiten ueber denselben Wert.
     b = open("bot.py", encoding="utf-8").read()
+    # v5.8-W199: die vier Huellen im Monolithen hatten keinen Aufrufer mehr —
+    # der Blueprint ruft die Fachmodule direkt. Strenger als vorher: der Bot
+    # haelt gar keine Fassung dieser Werte, also keine zweite Wahrheit.
+    _ak = open("nc/routes/auskunft.py", encoding="utf-8").read()
     for ruf in ("_nc_suche.universal_search(", "_nc_outcomes.get_outcome_breakdown(",
-                "_nc_storage.forecast(", "_nc_recdb.get_all_checks("):
-        assert ruf in b, "Monolith ruft %s nicht auf" % ruf
+                "_nc_storage.forecast(", "get_all_checks(limit="):
+        assert ruf in _ak, "Blueprint ruft %s nicht auf" % ruf
+    for fn in ("universal_search", "get_outcome_breakdown", "compute_storage_forecast",
+               "get_all_checks"):
+        assert ("def %s(" % fn) not in b, "%s: tote Weiterleitung wieder im Bot" % fn
     # v5.6-W197: "_nc_band.messen()" stand hier mit — erfuellt nur von
     # sample_bandwidth_for_active(), einer Huelle, die nichts aufrief. Die
     # Aussage dahinter (EINE Wahrheit) gilt strenger: nur der Blueprint misst,
@@ -10627,7 +10642,9 @@ def _test_v42_w71_discord_run_once_geschrumpft():
             if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
     for name in ("_disc_sprache_setzen", "_is_admin", "_ensure_rank_roles",
                  "_provision_base_channels",   # _provision_user_channels: entfallen in W168
-                 "_tracked_usernames", "_par_chat_id", "_handle_voice_ai",
+                 # _tracked_usernames: entfallen in W199 (einziger Aufrufer war
+                 # _provision_user_channels, W168)
+                 "_par_chat_id", "_handle_voice_ai",
                  "_discord_automod"):
         assert name in oben, \
             "%s ist wieder in die Closure gewandert — dort ist es weder " \

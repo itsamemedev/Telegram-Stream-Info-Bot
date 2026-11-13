@@ -591,7 +591,6 @@ from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisie
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
 from nc import ffbuild as _nc_ffbuild        # v4.0-W44: ffmpeg-Kommandobauer (extrahiert)
 from nc import ffmpeg_filters as _nc_ff    # v4.2-W54: Panel-Masse (Chat-Umbruch)
-from nc import chatstats as _nc_chatstats    # v4.0-W45: Chat-Health-Aggregation (extrahiert)
 # v4.1-W9: nc.oauthpage ist raus — beide Rueckmeldeseiten (Kick, Twitch)
 # werden nur noch von den OAuth-Blueprints gebaut, nicht mehr vom Monolithen.
 from nc import trackingdb as _nc_trackingdb  # v4.0-W50: Tracking-Status-Helfer (conn-injiziert)
@@ -992,9 +991,6 @@ from nc import webserver as _nc_webserver  # v4.2-W84: Server + Bindung
 from nc import schemastand as _nc_schemastand  # v4.2-W85: Schema-Zaehler
 from nc import auslieferung as _nc_auslieferung  # v4.2-W85: welcher Stand laeuft?
 from nc import fehlertext as _nc_fehlertext  # v4.1-W30: Fehlertext nach aussen
-from nc import outcomes as _nc_outcomes   # v4.1-W26: Ausgaenge der Aufnahmen
-from nc import suche as _nc_suche         # v4.1-W26: bestandsweite Suche
-from nc import archiverules as _nc_arules  # v4.1-W24: Auto-Archiv-Regeln
 from nc import retention as _nc_retention  # v4.1-W24: Aufbewahrungs-Scan
 from nc import storage as _nc_storage      # v4.1-W24: Platz und Aufraeumen
 from nc.notes import delete_annotation  # noqa: F401
@@ -4448,15 +4444,6 @@ def init_db():
 # F21: Archive-Helpers
 
 
-# F38: Kind-Klassifikation für Type-Filter (video/audio/image).
-# Wird vom Dashboard-Filter und vom Bulk-Listing benutzt. Single source of truth,
-# damit Frontend und Backend nicht auseinanderlaufen wenn neue Extensions
-# zu ARCHIVE_ALLOWED_EXTS dazukommen.
-def _kind_from_filename(filename: str) -> str:
-    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
-    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
-    return _nc_archive._kind_from_filename(filename)
-
 # F38: Paginierte + gefilterte Archive-Liste.
 # 600+ Files in einem Rutsch zum Browser zu schicken ist a) langsam,
 # b) für Mobile-Use unbrauchbar, c) renderts dort 600 DOM-Nodes auf einmal.
@@ -4479,23 +4466,12 @@ def _kind_from_filename(filename: str) -> str:
 #   - DB-Zeile wird IMMER aktualisiert wenn der Rename auf Disk geklappt hat,
 #     auch wenn die Datei vorher fehlte (dann ist's nur DB-Rename).
 
-# Backwards-compat: einige interne Aufrufer (z.B. /diag, Tests) erwarten weiterhin
-# eine einfache Liste. Wir lassen die alte Signatur am Leben aber die neue paged-
-# Variante ist das was /api/archive jetzt benutzt.
-def add_archive_entry(filename, filepath, title, notes, size, mime, source_url):
-    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
-    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
-    return _nc_archive.add_archive_entry(filename, filepath, title, notes, size, mime, source_url)
 
 def get_archive_entry(eid):
     # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
     # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
     return _nc_archive.get_archive_entry(eid)
 
-def delete_archive_entry(eid):
-    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
-    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
-    return _nc_archive.delete_archive_entry(eid)
 
 def start_recording_attempt(tracking_id, username, recorder):
     """F19: legt einen neuen Attempt-Eintrag an. Returns die ID für späteres Update."""
@@ -4580,9 +4556,6 @@ def save_tiktok_check(user_id: int, username: str, data: dict):
              datetime.now(timezone.utc).isoformat()))
         conn.commit()
 
-def get_all_checks(limit=100, offset=0):
-    # v4.1-W26: nach nc/recdb.py geloest.
-    return _nc_recdb.get_all_checks(limit=limit, offset=offset)
 
 # B122-PERF: Ergebnis-Cache fuer die teuren Gesamt-Aggregate.
 #
@@ -4608,11 +4581,6 @@ def get_all_checks(limit=100, offset=0):
 # lean-Modus, der die Aggregate fuer den Puls komplett auslaesst.
 STATS_CACHE_TTL = _env_int("STATS_CACHE_TTL", 120)   # Sekunden, 0 = aus
 
-
-def get_stats(force: bool = False):
-    # v4.0-W117: Koerper und Cache nach nc/stats.py — der /api/stats-Blueprint
-    # braucht sie ebenso wie der Bot, und ueber nc.ctx waere das ein Slot mehr.
-    return _nc_stats.get_stats(force)
 
 # F64: Per-Chat Tracking-Quota
 # Verhindert dass ein einzelner Chat hunderte Trackings anlegt → DB-Bloat,
@@ -5097,13 +5065,6 @@ def get_event_log(limit: int = 100, kind: Optional[str] = None,
     with db_conn() as conn:
         return conn.execute(sql, params).fetchall()
 
-# ---------- X2: Tracking-Tags ----------
-
-
-def get_all_tags_with_counts() -> List[dict]:
-    """Alle Tags + Anzahl Trackings die diesen Tag haben."""
-    return _nc_trackingdb.get_all_tags_with_counts()
-
 # ---------- X3: Tracking-Priority (VIP) ----------
 
 
@@ -5111,56 +5072,6 @@ def get_priority_poll_interval(tracking_id: int, default_interval: int) -> int:
     """Polling-Intervall basierend auf Priority. Wird von _schedule_next_check
        benutzt. Hoehere Priority = kuerzeres Intervall."""
     return _nc_trackingdb.get_priority_poll_interval(tracking_id, default_interval)
-
-# ---------- X4: Recording-Notes ----------
-
-def get_recording_note(recording_id: int) -> Optional[str]:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_recording_note(recording_id=recording_id)
-
-# ---------- X5: Bookmarks ----------
-
-def get_bookmarked_recordings(limit: int = 50) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_bookmarked_recordings(limit=limit)
-
-# ---------- X6: Recording Annotations ----------
-
-def get_annotations_for_recording(recording_id: int) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_annotations_for_recording(recording_id=recording_id)
-
-
-# ---------- X7: ffprobe-Inspect mit Cache ----------
-
-def get_or_compute_inspect_sync(recording_id: int) -> Optional[dict]:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_or_compute_inspect_sync(recording_id=recording_id)
-
-
-# ---------- X8: Quality-Score ----------
-
-# ---------- X9: Hash-Fingerprint ----------
-
-def update_recording_fingerprint(recording_id: int) -> Optional[str]:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.update_recording_fingerprint(recording_id=recording_id)
-
-def find_recordings_by_fingerprint(h: str) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.find_recordings_by_fingerprint(h=h)
-
-# ---------- X10: Storage-Forecast ----------
-def compute_storage_forecast() -> dict:
-    # v4.1-W26: nach nc/storage.py geloest — "wann ist die Platte voll" steht
-    # dort neben "wie viel Platz ist da".
-    return _nc_storage.forecast(RECORDINGS_DIR)
 
 # ---------- X11: Live-Bandwidth-Monitor ----------
 _NET_SAMPLE = {"ts": 0.0, "bytes": 0}
@@ -5188,33 +5099,6 @@ def _sample_net_throughput():
 _nc_routes_auskunft.HAKEN["netzdurchsatz"]["fn"] = _sample_net_throughput
 
 
-# ---------- X12: Heatmaps ----------
-
-
-# ---------- X13: Profile-Snapshots ----------
-
-
-# ---------- X14: Auto-Archive-Rules ----------
-def list_archive_rules() -> list:
-    # v4.1-W24: nach nc/archiverules.py geloest.
-    return _nc_arules.list_archive_rules()
-
-def add_archive_rule(name: str, condition: dict, action: dict) -> Optional[int]:
-    # v4.1-W24: nach nc/archiverules.py geloest.
-    return _nc_arules.add_archive_rule(name, condition, action)
-
-def delete_archive_rule(rule_id: int) -> bool:
-    # v4.1-W24: nach nc/archiverules.py geloest.
-    return _nc_arules.delete_archive_rule(rule_id)
-
-
-def run_archive_rules(rule_id: Optional[int] = None) -> dict:
-    # v4.1-W24: nach nc/archiverules.py geloest. Archivverzeichnis und
-    # Ereignisprotokoll gehen als Argument hinueber — beides kennt nur der
-    # laufende Monolith.
-    return _nc_arules.run_archive_rules(rule_id, archive_dir=ARCHIVE_DIR,
-                                        log_event=log_event)
-
 # ---------- X15: TikTok-Status-Code-Tracker ----------
 _TIKTOK_STATUS_COUNTER = _collections.Counter()    # in-memory counter
 _TIKTOK_STATUS_FIRST_SEEN = _time_mod.monotonic()
@@ -5226,11 +5110,6 @@ def record_tiktok_status(status_code: int):
 def get_tiktok_status_distribution() -> dict:
     """Returns: {since_seconds, total, by_code: [{code, count, pct}]}"""
     return _nc_stats.get_tiktok_status_distribution()
-
-# ---------- X16: Failure-Pattern-Clusterer ----------
-
-
-# ---------- X17: Activity-Pulse (1min-Resolution) ----------
 
 # ---------- X18: Manual Recording ----------
 _MANUAL_RECORDINGS = {}    # manual_id -> asyncio.subprocess.Process
@@ -5428,41 +5307,7 @@ def stop_manual_recording(manual_id: int) -> dict:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-def get_manual_recordings(limit: int = 50, only_active: bool = False) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_manual_recordings(limit=limit, only_active=only_active)
 
-# ---------- X19: Soft-Delete (Trash/Restore) ----------
-def soft_delete_recording(recording_id: int) -> bool:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.soft_delete_recording(recording_id=recording_id)
-
-def restore_recording(recording_id: int) -> bool:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.restore_recording(recording_id=recording_id)
-
-def get_trash_recordings(limit: int = 50) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_trash_recordings(limit=limit)
-
-# ---------- X20: Universal Search ----------
-def universal_search(q, limit=20):
-    # v4.1-W26: nach nc/suche.py geloest.
-    return _nc_suche.universal_search(q, limit=limit)
-
-# ---------- X21: Recording-Manifest-Export ----------
-
-# ---------- X22: Cookie-Refresh-Days ----------
-
-# ---------- X23: Tracking Quick-Restart ----------
-
-# ---------- X24: Stream-URL-Inspector (live test) ----------
-
-# ---------- X25: Audio-Waveform-Peaks ----------
 # ============================================================================
 # End X-Series Helpers
 # ============================================================================
@@ -5529,10 +5374,6 @@ _OUTCOME_META = {
     "running":               ("Running",            "muted"),
 }
 
-def get_outcome_breakdown(days: int = 7) -> dict:
-    # v4.1-W26: nach nc/outcomes.py geloest — mitsamt _OUTCOME_META, damit
-    # Ausgang und Klartext nicht an zwei Stellen gepflegt werden muessen.
-    return _nc_outcomes.get_outcome_breakdown(days)
 
 # -----------------------------
 # TikTok Profil-Scraper
@@ -7004,10 +6845,6 @@ async def _viewer_sample_loop():
 # zweite Kopie und die Diagnose meldete ewig "noch kein Sendeversuch".
 _KICK_BID_CACHE = _nc_kickapi.BID_CACHE
 _KICK_SEND_LAST = _nc_kickapi.SEND_LAST
-
-
-async def _kick_broadcaster_id():
-    return await _nc_kickapi.broadcaster_id()
 
 
 async def _db_vacuum_loop():
@@ -11266,11 +11103,6 @@ AI_CHAT_CONTEXT_CHARS    = _env_int("AI_CHAT_CONTEXT_CHARS", 16000)
 AI_CHAT_TITLE_MAX        = 60
 
 
-def _conv_messages(conv_id):
-    # v4.0-W112: nach nc/aidb.py geloest (KI-Datenzugriff).
-    return _nc_aidb.conv_messages(conv_id)
-
-
 # F78: LLM-Modellliste mit Cache.
 # V37: Modell-Cache lebt in _llm_list_models (60s, Brain→freeai).
 
@@ -11904,12 +11736,6 @@ def api_automation_toggle():
 
 
 # ═══ v37: POLEN-VPS-TUNNEL — Aufnahme-Proxy zur Laufzeit steuern ═══
-
-def _tunnel_effective():
-    # v4.0-W116: Koerper nach nc/proxyutil.py — dort liegt _TUNNEL ohnehin schon
-    # (per configure_proxy_select derselbe Dict), und die Tunnel-Routen im
-    # Blueprint kommen so ohne einen weiteren nc.ctx-Eintrag aus.
-    return _nc_proxyutil_sel.tunnel_effective()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -12722,26 +12548,11 @@ def _scraper_session():
         return None
 
 
-# ---------- X20: Universal Search ----------
-
-# ---------- X7+X8: Recording-Inspect (ffprobe) ----------
-
-
-# ---------- X4: Recording-Notes ----------
-
-# ---------- X5: Bookmarks ----------
-
-
 # ---------- X6: Annotations ----------
 
 @dashboard_app.route("/api/annotations/<int:aid>", methods=["DELETE"])
 def api_annotation_delete(aid):
     return jsonify(ok=delete_annotation(aid))
-
-# ---------- X2: Tags ----------
-
-
-# ---------- X3: Priority ----------
 
 # ---------- X1: Event-Log ----------
 @dashboard_app.route("/api/events")
@@ -12755,26 +12566,6 @@ def api_events():
         "severity": r["severity"], "summary": r["summary"],
         "payload": (json.loads(r["payload"]) if r["payload"] else None),
     } for r in rows])
-
-# ---------- X10: Storage-Forecast ----------
-
-# ---------- X11: Bandwidth-Live ----------
-
-# ---------- X12: Heatmaps ----------
-
-
-# ---------- X13: Profile-Snapshots ----------
-
-# ---------- X14: Auto-Archive-Rules ----------
-
-
-# ---------- X21: Recording-Manifest ----------
-
-# ---------- X25: Waveform ----------
-
-# ---------- X24: Stream-Inspect ----------
-
-# ---------- X9: Fingerprint + Dedup ----------
 
 # ---------- X15: TikTok-Status-Distribution ----------
 
@@ -12845,28 +12636,6 @@ def api_proxy_heatmap():
     except Exception:
         pass
     return jsonify(ok=True, cells=cells)
-
-# ---------- X16: Failure-Patterns ----------
-
-# ---------- X17: Activity-Pulse ----------
-
-# ---------- X18: Manual Recording ----------
-
-
-# ---------- X19: Trash/Restore ----------
-
-
-# ---------- X23: Quick-Restart ----------
-
-# ---------- X22: Cookie-Age + X26: Multi-status overview ----------
-
-# ---------- X27: Bulk Profile-Lookup ----------
-
-# ---------- X28: Watchlist-Export ----------
-
-# ---------- X29: Recording-Stats-Summary (dashboard overview) ----------
-
-# ---------- X30: Dedup-Scan (fingerprint-based) ----------
 
 # =============================================================================
 # End X-Series Routes
@@ -13351,12 +13120,6 @@ def _chat_disconnected(username, reason=""):
         s["reasons"].append((_time_mod.time(), str(reason)[:160]))
         del s["reasons"][:-_CHAT_STATS_MAX_REASONS]
     return dur
-
-
-def _chat_stats_snapshot():
-    """Fuers Dashboard: die Zahlen, an denen man Disconnect-Muster erkennt.
-       v4.0-W45: Aggregation nach nc/chatstats.py extrahiert (bitgenau geprüft)."""
-    return _nc_chatstats.summarize(_CHAT_STATS, _time_mod.monotonic(), _time_mod.time())
 
 
 # F92e: TikTokLive nutzt den EulerStream-Sign-Server — der Gratis-Tier hat ein
