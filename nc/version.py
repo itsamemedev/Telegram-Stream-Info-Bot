@@ -41,6 +41,7 @@ CHANGELOG = [
             "Emoji im Restream-Chat farbig: den Chat-Kasten des Studio-Sendebilds zeichnet jetzt Chromium (ffmpeg kannte nur eine Schrift, jedes Emoji war ein Kaestchen); ohne Chromium faellt er auf Text zurueck, ohne Kaestchen",
             "Emoji in Aufnahmen lesbar: Installer und update.sh ziehen die Emoji-Schriften nach (fonts-noto-color-emoji, fonts-symbola), der Bot sagt laut, wenn sie fehlen",
             "Getrackte Nutzer aus Telegram und Discord landen automatisch in der Restream-Auto-Liste (Kick, YouTube, Twitch) — im Deck geloeschte bleiben draussen, nicht mehr getrackte ruhen",
+            "Restream bricht nicht mehr alle sechs Minuten ab: ging YouTube nicht live, baute der Waechter den ganzen Multistream neu auf und riss Kick und Twitch mit; jetzt hoechstens einmal, danach bleibt YouTube aufgegeben (mit Abhilfe im Log)",
             "AZRAEL antwortet in Telegram wieder auf Antworten: eine Antwort auf seine Nachricht brauchte bisher einen Verlauf in Redis — ohne Redis, nach einer Stunde oder bei einem anderen Nutzer blieb es still",
             "In Themen-Gruppen galt jede Nachricht als Antwort auf den Bot (Bezug auf den Themen-Kopf) — dort antwortete AZRAEL weder auf Antworten noch auf „@Azrael …“",
             "Eine Antwort auf einen anderen Nutzer mit „@Azrael …“ wird jetzt beantwortet",

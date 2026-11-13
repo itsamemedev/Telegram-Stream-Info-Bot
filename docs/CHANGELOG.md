@@ -9,7 +9,7 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
-## [5.9.0] — 2026-11-13 · „Schaltpult" (W200–W205)
+## [5.9.0] — 2026-11-13 · „Schaltpult" (W200–W206)
 
 Der Betreiber, in vier Meldungen: „In Telegram antwortet das Brain nicht auf
 Antwort-Nachrichten." — „Dir ist klar, dass ich den /brain-Befehl meinte?
@@ -111,13 +111,28 @@ veröffentlicht und geht hier auf.
   zurück; der Bot liest die Ausschlussliste streng (W199). Abschaltbar:
   `RESTREAM_TRACKINGS=0`.
 
+### Behoben — ein totes Ziel riss den ganzen Restream mit (W206)
+
+- **Restream ohne Bild und Ton.** Das Log des Betreibers zeigte die Ursache:
+  „youtube meldet offline trotz laufendem Prozess — Neuaufbau (2. … 7.
+  Versuch)" im Sechs-Minuten-Takt, jedes Mal gefolgt von „Sendebruecke
+  beendet — Broken pipe". Bei tee lässt sich kein einzelnes Ziel neu
+  verbinden; der Wächter baute deshalb den ganzen Multistream neu auf, und
+  Kick und Twitch brachen jedes Mal mit ab — dazu ein Neustart unter
+  Volllast mit Drosselstufe 5. Sein Backoff (60 → 120 → 240 s) lag unter dem
+  eigenen Prüfzyklus (90 s Anlauf + 3 × 120 s) und griff nie. Jetzt
+  (`nc/restream_guard.py`): sendet ein anderes Ziel nachweislich, bekommt das
+  tote **einen** Neuaufbau; danach ist es aufgegeben, einmal laut gemeldet mit
+  Abhilfe (YouTube: Stream-Schlüssel, „Automatisch starten"), und die
+  laufenden Ziele bleiben in Ruhe. Sendet es wieder, bekommt es seine
+  Versuche zurück; sendet kein Ziel mehr, wird wie bisher neu aufgebaut.
+
 ### Offen
 
-- **Restream ohne Bild und Ton.** Der Screenshot zeigt das Pausenbild der
-  Sendebrücke: der Raum ist live (der Chat läuft), aber die Quelle liefert
-  kein Bild. Der Code dieser Wege ist seit 5.7 unverändert; die Ursache steht
-  im Log (`Restream #… liefert seit … kein Bild`, `Zubringer`, `yt-dlp`,
-  `geschuetzt`). Ohne diese Zeilen wäre jede Änderung geraten.
+- **CPU am Anschlag.** Vor jedem Restream-Start „frei 0,6 von 8 Kernen
+  (Load 6,2)", ffmpeg 0,46x Echtzeit, selbst Drosselstufe 5 passt nicht.
+  Whisper tritt beim Restream schon zurück (3 → 1), das lokale Sprachmodell
+  (`-t 4`) nicht — und seit dem Wegfall des Stundendeckels rechnet es mehr.
 
 ### Behoben — Telegram-Antworten (W200)
 

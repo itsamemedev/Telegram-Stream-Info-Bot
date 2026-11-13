@@ -38037,6 +38037,71 @@ def _test_v59_w205_chatbild():
        "Lebenszyklus, fehlende Emoji-Schriften laut")
 
 
+def _test_v59_w206_ein_totes_ziel_reisst_nicht_mit():
+    """v5.9-W206: ein totes Ziel baut den Multistream nicht endlos neu auf.
+
+    Log des Betreibers vom 13.11.: „youtube meldet offline trotz laufendem
+    Prozess — Neuaufbau (2. … 7. Versuch)" im Sechs-Minuten-Takt, und jedes
+    Mal „Sendebruecke beendet — Broken pipe": der tee-Neuaufbau riss Kick und
+    Twitch mit ab. Nachgestellt mit dem echten Waechter."""
+    from nc import restream_guard as G
+    g = G.RestreamGuard(G.GuardConfig(startup_grace_s=0, misses_before_action=3))
+    t = [1000.0]
+
+    def runde(ergebnis):
+        t[0] += 120
+        return g.evaluate(7, running=True, desired=True, source_live=True,
+                          platform_results=dict(ergebnis), now=t[0])
+    g.note_started(7, t[0])
+    lage = {"kick": G.LIVE, "twitch": G.LIVE, "youtube": G.OFFLINE}
+    # (1) Erstes Mal: YouTube tot, die anderen senden -> EIN Neuaufbau.
+    runde(lage), runde(lage)
+    d = runde(lage)
+    assert d["action"] == G.ACT_RESTART and d["dead"] == ["youtube"], d
+    g.note_restart(7, t[0], dead=d["dead"])
+    # (2) Wieder tot: kein zweiter Neuaufbau, sondern aufgegeben — einmal gemeldet.
+    for _ in range(2):
+        assert runde(lage)["action"] == G.ACT_NONE
+    d = runde(lage)
+    assert d["action"] == G.ACT_NONE and d["neu_aufgegeben"] == ["youtube"], d
+    assert "youtube aufgegeben" in d["reason"] and "kick, twitch senden weiter" in d["reason"], d
+    for _ in range(10):        # eine Stunde spaeter: still, kein Neuaufbau
+        d = runde(lage)
+        assert d["action"] == G.ACT_NONE and d["neu_aufgegeben"] == [], d
+    assert g.snapshot()[7]["targets"]["youtube"]["aufgegeben"] is True
+    # (3) YouTube sendet wieder (Schluessel getauscht): Versuche zurueck.
+    runde({"kick": G.LIVE, "twitch": G.LIVE, "youtube": G.LIVE})
+    assert g.snapshot()[7]["targets"]["youtube"]["aufgegeben"] is False
+    for _ in range(2):
+        runde(lage)
+    assert runde(lage)["action"] == G.ACT_RESTART, "nach Erholung keine neue Chance"
+    # (4) Sendet KEIN Ziel mehr: Neuaufbau wie bisher, aufgegeben oder nicht.
+    g2 = G.RestreamGuard(G.GuardConfig(startup_grace_s=0, misses_before_action=1))
+    g2.note_started(8, 0)
+    tot = {"kick": G.OFFLINE, "youtube": G.OFFLINE}
+    d = g2.evaluate(8, running=True, desired=True, source_live=True,
+                    platform_results=tot, now=500)
+    assert d["action"] == G.ACT_RESTART and sorted(d["dead"]) == ["kick", "youtube"], d
+    g2.note_restart(8, 500, dead=d["dead"])
+    d = g2.evaluate(8, running=True, desired=True, source_live=True,
+                    platform_results=tot, now=5000)
+    assert d["action"] == G.ACT_RESTART, "ohne lebendes Ziel muss neu aufgebaut werden"
+    # (5) Ein einzelnes Ziel (nur Kick): wie bisher.
+    g3 = G.RestreamGuard(G.GuardConfig(startup_grace_s=0, misses_before_action=1))
+    g3.note_started(9, 0)
+    d = g3.evaluate(9, running=True, desired=True, source_live=True,
+                    platform_results={"kick": G.OFFLINE}, now=500)
+    assert d["action"] == G.ACT_RESTART
+    # (6) Abhilfe je Plattform; der Bot meldet sie und zaehlt die Versuche je Ziel.
+    assert "Automatisch starten" in G.abhilfe("youtube") and "Twitch" in G.abhilfe("twitch")
+    assert G.abhilfe("x")
+    bot = open("bot.py", encoding="utf-8").read()
+    assert "_RESTREAM_GUARD.note_restart(rid, now, dead=d[\"dead\"])" in bot
+    assert "_nc_guard.abhilfe(_p)" in bot and 'd.get("neu_aufgegeben")' in bot
+    ok("v5.9-W206: ein totes Ziel (YouTube) baut den Multistream hoechstens einmal neu "
+       "auf, danach aufgegeben mit Abhilfe; ohne lebendes Ziel wie bisher")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -40967,6 +41032,7 @@ def main():
     _test_v59_w203_sendebild_zeichen()
     _test_v59_w204_restream_liste()
     _test_v59_w205_chatbild()
+    _test_v59_w206_ein_totes_ziel_reisst_nicht_mit()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

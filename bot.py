@@ -20233,7 +20233,7 @@ async def _restream_verify_loop():
                     if plat.get("youtube") == _nc_guard.OFFLINE:
                         await _youtube_restream_autoconfig(force=True)
                     await _RESTREAM_MGR.stop(rid, _keep_desired=True)
-                    _RESTREAM_GUARD.note_restart(rid, now)
+                    _RESTREAM_GUARD.note_restart(rid, now, dead=d["dead"])
                     await asyncio.sleep(3)
                     await _RESTREAM_MGR.start(rid, _src_watch=True)
                 elif act == _nc_guard.ACT_STOP:
@@ -20241,6 +20241,14 @@ async def _restream_verify_loop():
                     await _RESTREAM_MGR.stop(rid, _keep_desired=True)
                 elif is_running and d["reason"] == "alle Ziele bestaetigt":
                     _RESTREAM_GUARD.note_healthy(rid)
+                for _p in d.get("neu_aufgegeben") or ():
+                    # v5.9-W206: einmal laut, mit Abhilfe — danach bleibt das
+                    # Ziel still aus der Pruefung, bis es wieder sendet oder
+                    # der Restream von aussen gestoppt wird.
+                    log.error("Restream #%d: %s geht trotz Neuaufbau nicht live — "
+                              "kein weiterer Neuaufbau seinetwegen (er riss jedes Mal "
+                              "die laufenden Ziele mit ab). %s", rid, _p,
+                              _nc_guard.abhilfe(_p))
         except asyncio.CancelledError:
             raise
         except Exception as e:
