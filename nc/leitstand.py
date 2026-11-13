@@ -53,6 +53,11 @@ TAFELN = (
 # Übersicht laufen an ihr entlang, ihre Stärke folgt dem Wert.
 KETTE = ("erfassen", "live", "aufnahme", "kodieren", "versand", "restream", "archiv")
 
+# v5.10-W208: welcher Bereich der Seite ein Glied fuehrt — ein Klick auf das
+# Glied springt dorthin.
+KETTE_TAB = {"erfassen": "wall", "live": "wall", "aufnahme": "wall", "kodieren": "betrieb",
+             "versand": "betrieb", "restream": "restream", "archiv": "insights"}
+
 # Wie viele Namen die Live-Wand und wie viele Spuren der Restream zeigt.
 MAX_NAMEN = 12
 MAX_SPUREN = 4
@@ -374,7 +379,7 @@ def tafeln(roh, gelesen=None) -> list:
 # ─── Lieferkette, Drohnen, Ereignisse ────────────────────────────────────
 
 def _glied(name, wert, lage):
-    return {"name": name, "wert": wert, "lage": lage}
+    return {"name": name, "wert": wert, "lage": lage, "tab": KETTE_TAB.get(name)}
 
 
 def kette(roh, gelesen, fertig) -> list:
@@ -391,6 +396,7 @@ def kette(roh, gelesen, fertig) -> list:
 
     enc, upl = dienst("encode", "laeuft", "wartet"), dienst("upload", "wartend")
     enc["name"], upl["name"] = "kodieren", "versand"
+    enc["tab"], upl["tab"] = KETTE_TAB["kodieren"], KETTE_TAB["versand"]
     erfasst = (roh.get("zaehler") or {}).get("trackings")
     return [
         _glied("erfassen", erfasst, "unbekannt" if erfasst is None else "ok"),

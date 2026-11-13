@@ -2544,8 +2544,8 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
    bei reduzierter Bewegung und im Kontrast-Thema von selbst. */
 .ls{position:relative;isolation:isolate}
 .ls>*:not(.ls-strom){position:relative;z-index:1}
-.ls-strom{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;display:block}
-.ls.ruhig .ls-strom{display:none}
+.ls-strom{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;display:block}
+#hauptinhalt.ruhig>.ls-strom{display:none}
 .ls-kopf{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:stretch;margin-bottom:10px}
 .ls-marke{display:flex;flex-direction:column;justify-content:center;gap:4px;padding:8px 12px;
   border:1px solid var(--border);background:var(--panel);min-width:190px}
@@ -2595,12 +2595,11 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
    halten sich die Drohnen auf — ueber den Tafeln verdeckten sie Werte. */
 .ls-raster{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:34px 12px;grid-auto-flow:row dense}
 .ls-raster>.ls-feld{margin:0;min-width:0}
-/* Lagebild links ueber drei Reihen, daneben sechs Tafeln; darunter die
-   restlichen drei und der Ereignisstrom in einer Reihe. */
-.ls-lagebild{grid-column:span 6;grid-row:span 3}
-.ls-tafel{grid-column:span 3}
-.ls-strom-liste{grid-column:span 3}
-.ls-w6{grid-column:span 6}
+/* Lagebild links ueber drei Reihen, rechts daneben Ereignisstrom, Statistik
+   und Software-Stand; das Archiv darunter ueber die volle Breite. Die Tafeln
+   der Tabs stehen seit W208 in ihren Bereichen. */
+.ls-lagebild{grid-column:span 7;grid-row:span 3}
+.ls-rechts5{grid-column:span 5}
 .ls-w12{grid-column:1/-1}
 .ls-paar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .ls-paar>.panel{margin:0}
@@ -2653,7 +2652,7 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
 .ls-svg-wert{font-family:var(--mono);font-weight:700;font-size:13px;fill:var(--text)}
 
 /* Ereignisstrom */
-.ls-ev{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;max-height:200px;overflow-y:auto;
+.ls-ev{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;max-height:300px;overflow-y:auto;
   font:11px/1.35 var(--mono)}
 .ls-ev li{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:7px;padding:4px 2px;
   border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent);color:var(--text-dim)}
@@ -2667,7 +2666,7 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
 .ls-ev li.neu{animation:ls-rein .6s ease-out}
 
 /* Schlüsselmoment */
-.ls>.ls-moment{--ls-c:var(--cyan);position:absolute;left:50%;top:150px;z-index:6;transform:translateX(-50%);
+.ls>.ls-moment{--ls-c:var(--cyan);position:fixed;left:50%;top:64px;z-index:60;transform:translateX(-50%);
   min-width:min(420px,92vw);max-width:min(620px,94vw);padding:10px 16px 12px;
   background:var(--panel-solid,var(--panel));border:1px solid var(--ls-c);
   box-shadow:0 0 0 1px color-mix(in srgb,var(--ls-c) 25%,transparent),0 18px 40px -18px rgba(0,0,0,.9);
@@ -2704,9 +2703,9 @@ html[data-theme="kontrast"] .ls-tafel{border-width:2px}
 
 @media (max-width:1500px){
   .ls-raster{grid-template-columns:repeat(8,minmax(0,1fr))}
-  .ls-lagebild,.ls-w6,.ls-w12{grid-column:span 8}
+  .ls-lagebild,.ls-w12,#pnl_ov_update{grid-column:span 8}
   .ls-lagebild{grid-row:auto}
-  .ls-tafel,.ls-strom-liste{grid-column:span 4}
+  .ls-strom-liste,#pnl_ov_stats{grid-column:span 4}
   .ls-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
 }
 @media (max-width:1100px){
@@ -2722,6 +2721,48 @@ html[data-theme="kontrast"] .ls-tafel{border-width:2px}
   .ls-paar{grid-template-columns:minmax(0,1fr)}
 }
 @media (pointer:coarse){.ls-tafel{min-height:220px} #ls_ruhig{min-height:44px;min-width:44px}}
+
+/* ═══ v5.10-W208: ALLE ANSICHTEN AUF EINER SEITE ═══
+   Jede Ansicht ist ein Bereich: Kopf, Tafel, dann ihre Panels. Die Panels
+   fliessen im Mauerwerk-Raster: Spalten fester Mindestbreite, Zeilen von
+   6 px, und jedes Panel belegt so viele Zeilen, wie es hoch ist (ncSeite
+   misst per ResizeObserver). So stehen Panels unterschiedlicher Hoehe dicht
+   an dicht, ohne die Luecken eines gewoehnlichen Rasters — und behalten ihren
+   Platz, wenn sich ein Wert aendert (Spalten-Layouts wuerden sie dabei von
+   Spalte zu Spalte schieben). */
+#hauptinhalt{position:relative}
+#hauptinhalt>.view,#hauptinhalt>.ls-bereich{position:relative;z-index:1}
+#hauptinhalt>#view-overview{display:block;animation:none}
+.ls-bereich{margin-top:30px;scroll-margin-top:96px;display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr));column-gap:12px;
+  grid-auto-flow:row dense;align-items:start}
+.ls-bereich.ls-mauer{grid-auto-rows:6px}
+.ls-bereich>.view{display:contents!important}
+.ls-bereich>:not(.view),.ls-bereich>.view>*{align-self:start;min-width:0;margin:0 0 12px!important}
+.ls-bereich>.view>:not(.panel),.ls-bereich>.ls-bereich-kopf{grid-column:1/-1}
+@media (min-width:1300px){
+  .ls-bereich>.view>.panel:has(table),.ls-bereich>.view>.panel:has(.tbl-wrap){grid-column:span 2}
+}
+#view-overview{scroll-margin-top:96px}
+.ls-bereich-kopf{--ls-c:var(--text-faint);display:flex;align-items:center;gap:10px;min-width:0;padding:4px 0 2px}
+.ls-bereich-kopf h2{margin:0;font:700 14px/1.2 var(--display);letter-spacing:.18em;text-transform:uppercase;
+  color:var(--text);white-space:nowrap}
+.ls-bk-linie{flex:1;min-width:24px;height:1px;background:linear-gradient(90deg,var(--ls-c),transparent)}
+.ls-bk-satz{font:11px/1.3 var(--mono);color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%}
+.ls-bereich>.ls-tafel{cursor:default}
+.ls-bereich>.ls-tafel:hover{transform:none}
+/* HUD-Ecken an jedem Panel der Seite — dieselbe Signatur wie die Tafeln. */
+html:not([data-theme="kontrast"]) #hauptinhalt .panel{
+  --ls-k:color-mix(in srgb,var(--neon) 55%,transparent);
+  background-image:
+    linear-gradient(var(--ls-k),var(--ls-k)),linear-gradient(var(--ls-k),var(--ls-k)),
+    linear-gradient(var(--ls-k),var(--ls-k)),linear-gradient(var(--ls-k),var(--ls-k));
+  background-size:10px 1px,1px 10px,10px 1px,1px 10px;
+  background-position:100% 0,100% 0,0 100%,0 100%;
+  background-repeat:no-repeat}
+.ls-kette li[data-tab]{cursor:pointer}
+.ls-kette li[data-tab]:hover,.ls-kette li[data-tab]:focus-visible{outline:1px solid var(--ls-c);outline-offset:-1px}
+@media (max-width:700px){.ls-bk-satz{display:none}}
 
 /* v5.10-W207: LEITSTAND als Thema — Neonblau und Violett auf Nachtblau, wie
    der Betreiber es im Video gezeigt hat. Jede Text- und Signalfarbe >= AA
@@ -2970,7 +3011,10 @@ document.addEventListener("DOMContentLoaded",function(){
        arbeiten, bevor der Inhalt kommt. tabindex="-1" macht das Ziel
        fokussierbar, ohne es in die Tab-Reihenfolge aufzunehmen. -->
   <main id="hauptinhalt" tabindex="-1">
-  <div class="view active" id="view-overview">
+  <!-- v5.10-W208: die Leinwand liegt fest im Fenster hinter ALLEN Bereichen —
+       eine seitenhohe Leinwand waere bei zehn Bereichen ueber 16 Mio. Pixel. -->
+  <canvas class="ls-strom" id="ls_strom" aria-hidden="true"></canvas>
+  <div class="view active" id="view-overview" data-bereich="overview">
     <!-- v5.10-W207: der LEITSTAND. Der Betreiber zeigte ein Video eines dichten
          Leitstands und schrieb: „So habe ich mir die Übersicht vorgestellt …
          Bedenke, dass alle anderen Tabs integriert werden müssen." Jeder der
@@ -2983,7 +3027,6 @@ document.addEventListener("DOMContentLoaded",function(){
          zu der Tafel, an der sie arbeiten. „Ruhig" schaltet die Bewegung ab;
          bei reduzierter Bewegung und im Kontrast-Thema steht sie von selbst. -->
     <div class="ls" id="ls">
-      <canvas class="ls-strom" id="ls_strom" aria-hidden="true"></canvas>
       <div class="ls-kopf">
         <div class="ls-marke">
           <span class="ls-titel">NIGHTCRAWLER · LEITSTAND</span>
@@ -3043,56 +3086,11 @@ document.addEventListener("DOMContentLoaded",function(){
         </div>
       </div>
 
-      <div class="ls-tafel ls-feld" id="ls_t_restream" data-tab="restream" data-lage="unbekannt" role="button" tabindex="0">
-        <div class="ls-t-kopf"><span class="ls-nr">01</span><span class="ls-name" data-tabname="restream"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_restream">–</span></div>
-        <div class="ls-t-vis" id="ls_v_restream" aria-hidden="true"></div>
-        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_restream">wird geladen …</span></div>
-      </div>
-      <div class="ls-tafel ls-feld" id="ls_t_wall" data-tab="wall" data-lage="unbekannt" role="button" tabindex="0">
-        <div class="ls-t-kopf"><span class="ls-nr">02</span><span class="ls-name" data-tabname="wall"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_wall">–</span></div>
-        <div class="ls-t-vis" id="ls_v_wall" aria-hidden="true"></div>
-        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_wall">wird geladen …</span></div>
-      </div>
-      <div class="ls-tafel ls-feld" id="ls_t_discord" data-tab="discord" data-lage="unbekannt" role="button" tabindex="0">
-        <div class="ls-t-kopf"><span class="ls-nr">03</span><span class="ls-name" data-tabname="discord"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_discord">–</span></div>
-        <div class="ls-t-vis" id="ls_v_discord" aria-hidden="true"></div>
-        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_discord">wird geladen …</span></div>
-      </div>
-      <div class="ls-tafel ls-feld" id="ls_t_system" data-tab="system" data-lage="unbekannt" role="button" tabindex="0">
-        <div class="ls-t-kopf"><span class="ls-nr">04</span><span class="ls-name" data-tabname="system"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_system">–</span></div>
-        <div class="ls-t-vis" id="ls_v_system" aria-hidden="true"></div>
-        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_system">wird geladen …</span></div>
-      </div>
-      <div class="ls-tafel ls-feld" id="ls_t_brain" data-tab="brain" data-lage="unbekannt" role="button" tabindex="0">
-        <div class="ls-t-kopf"><span class="ls-nr">05</span><span class="ls-name" data-tabname="brain"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_brain">–</span></div>
-        <div class="ls-t-vis" id="ls_v_brain" aria-hidden="true"></div>
-        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_brain">wird geladen …</span></div>
-      </div>
-      <div class="ls-tafel ls-feld" id="ls_t_betrieb" data-tab="betrieb" data-lage="unbekannt" role="button" tabindex="0">
-        <div class="ls-t-kopf"><span class="ls-nr">06</span><span class="ls-name" data-tabname="betrieb"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_betrieb">–</span></div>
-        <div class="ls-t-vis" id="ls_v_betrieb" aria-hidden="true"></div>
-        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_betrieb">wird geladen …</span></div>
-      </div>
-      <div class="ls-tafel ls-feld" id="ls_t_insights" data-tab="insights" data-lage="unbekannt" role="button" tabindex="0">
-        <div class="ls-t-kopf"><span class="ls-nr">07</span><span class="ls-name" data-tabname="insights"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_insights">–</span></div>
-        <div class="ls-t-vis" id="ls_v_insights" aria-hidden="true"></div>
-        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_insights">wird geladen …</span></div>
-      </div>
-      <div class="ls-tafel ls-feld" id="ls_t_einstellungen" data-tab="einstellungen" data-lage="unbekannt" role="button" tabindex="0">
-        <div class="ls-t-kopf"><span class="ls-nr">08</span><span class="ls-name" data-tabname="einstellungen"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_einstellungen">–</span></div>
-        <div class="ls-t-vis" id="ls_v_einstellungen" aria-hidden="true"></div>
-        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_einstellungen">wird geladen …</span></div>
-      </div>
-      <div class="ls-tafel ls-feld" id="ls_t_mcp" data-tab="mcp" data-lage="unbekannt" role="button" tabindex="0">
-        <div class="ls-t-kopf"><span class="ls-nr">09</span><span class="ls-name" data-tabname="mcp"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_mcp">–</span></div>
-        <div class="ls-t-vis" id="ls_v_mcp" aria-hidden="true"></div>
-        <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_mcp">wird geladen …</span></div>
-      </div>
-      <div class="panel ls-feld ls-strom-liste" id="pnl_ls_ereignisse">
+      <div class="panel ls-feld ls-strom-liste ls-rechts5" id="pnl_ls_ereignisse">
         <div class="head"><h3>◆ EREIGNISSTROM</h3><span class="tag" id="ls_ev_tag">live</span></div>
         <div class="body"><ol class="ls-ev" id="ls_ev" aria-live="polite"><li class="faint">Noch keine Ereignisse.</li></ol></div>
       </div>
-      <div class="ls-feld ls-w6 ls-paar" id="pnl_ov_stats">
+      <div class="ls-feld ls-rechts5 ls-paar" id="pnl_ov_stats">
         <div class="panel">
           <div class="head"><h3>AUFNAHMEN · 14 TAGE</h3><span class="tag" id="rb_tag">…</span></div>
           <div class="body" style="padding:0">
@@ -3116,7 +3114,7 @@ document.addEventListener("DOMContentLoaded",function(){
            gemeldeter Fehler ueberhaupt noch existiert. Der Ablauf hier ist
            vierstufig und jederzeit abbrechbar — pruefen, trocken rechnen,
            einspielen, neu starten. Geschrieben wird erst nach Rueckfrage. -->
-      <div class="panel ls-feld ls-w6" id="pnl_ov_update">
+      <div class="panel ls-feld ls-rechts5" id="pnl_ov_update">
         <div class="head"><h3>◆ SOFTWARE-STAND</h3>
           <span class="tag" id="up_tag">wird geprüft …</span>
           <div class="spacer"></div>
@@ -3177,578 +3175,54 @@ document.addEventListener("DOMContentLoaded",function(){
     </div>
   </div>
 
-  <div class="view" id="view-system"></div>
+  <!-- v5.10-W208: ALLES AUF EINER SEITE. Der Betreiber: „Wieso denn noch mehr
+       Panels, wenn man doch mehrere in die Übersicht einbauen kann? Wie in dem
+       Video." Jede Ansicht ist ein Bereich dieser Seite, in der Reihenfolge der
+       Tab-Leiste: Kopf, Tafel (Lage aus nc/leitstand.py), dann ihre echten Panels
+       im Mauerwerk-Raster. Die Tab-Leiste springt nur noch. -->
+  <section class="ls-bereich" id="ls_b_restream" data-bereich="restream" aria-labelledby="ls_bk_restream">
+    <div class="ls-bereich-kopf" id="ls_bkopf_restream" data-lage="unbekannt"><span class="ls-nr">01</span><h2 id="ls_bk_restream" data-tabname="restream"></h2><span class="ls-bk-linie" aria-hidden="true"></span><span class="ls-bk-satz" id="ls_bs_restream"></span></div>
+    <div class="ls-tafel ls-feld" id="ls_t_restream" data-tab="restream" data-lage="unbekannt" role="group">
+      <div class="ls-t-kopf"><span class="ls-nr">01</span><span class="ls-name" data-tabname="restream"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_restream">–</span></div>
+      <div class="ls-t-vis" id="ls_v_restream" aria-hidden="true"></div>
+      <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_restream">wird geladen …</span></div>
+    </div>
   <div class="view" id="view-restream"></div>
-  <div class="view" id="view-discord"></div>
+  </section>
+  <section class="ls-bereich" id="ls_b_wall" data-bereich="wall" aria-labelledby="ls_bk_wall">
+    <div class="ls-bereich-kopf" id="ls_bkopf_wall" data-lage="unbekannt"><span class="ls-nr">02</span><h2 id="ls_bk_wall" data-tabname="wall"></h2><span class="ls-bk-linie" aria-hidden="true"></span><span class="ls-bk-satz" id="ls_bs_wall"></span></div>
+    <div class="ls-tafel ls-feld" id="ls_t_wall" data-tab="wall" data-lage="unbekannt" role="group">
+      <div class="ls-t-kopf"><span class="ls-nr">02</span><span class="ls-name" data-tabname="wall"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_wall">–</span></div>
+      <div class="ls-t-vis" id="ls_v_wall" aria-hidden="true"></div>
+      <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_wall">wird geladen …</span></div>
+    </div>
   <div class="view" id="view-wall"></div>
-  <div class="view" id="view-insights">
-
-    <div class="g2 mb" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
-      <div class="panel">
-        <div class="head"><h3>Trefferquote</h3><div class="spacer"></div>
-          <button class="btn sm" onclick="insightsLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-        <div class="body"><div id="in_catch" class="skel" aria-busy="true"><i></i><i></i></div></div>
-      </div>
-      <div class="panel">
-        <div class="head"><h3>Aktivität über den Tag</h3></div>
-        <div class="body"><div id="in_clock" class="skel" aria-busy="true"><i></i><i></i></div></div>
-      </div>
+  </section>
+  <section class="ls-bereich" id="ls_b_discord" data-bereich="discord" aria-labelledby="ls_bk_discord">
+    <div class="ls-bereich-kopf" id="ls_bkopf_discord" data-lage="unbekannt"><span class="ls-nr">03</span><h2 id="ls_bk_discord" data-tabname="discord"></h2><span class="ls-bk-linie" aria-hidden="true"></span><span class="ls-bk-satz" id="ls_bs_discord"></span></div>
+    <div class="ls-tafel ls-feld" id="ls_t_discord" data-tab="discord" data-lage="unbekannt" role="group">
+      <div class="ls-t-kopf"><span class="ls-nr">03</span><span class="ls-name" data-tabname="discord"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_discord">–</span></div>
+      <div class="ls-t-vis" id="ls_v_discord" aria-hidden="true"></div>
+      <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_discord">wird geladen …</span></div>
     </div>
-
-    <div class="panel mb">
-      <div class="head"><h3>Beste Sendezeiten</h3><div class="spacer"></div></div>
-      <div class="body">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-          <input type="text" id="in_bt_user" placeholder="Kanalname, z. B. helge_72"
-                 aria-label="Kanalname" style="flex:1;min-width:180px">
-          <button class="btn" onclick="insightsBestTimes()">Zeiten anzeigen</button>
-        </div>
-        <div id="in_bt"><div class="empty">Kanalnamen eingeben, dann erscheinen hier die besten Sendezeiten.</div></div>
-      </div>
+  <div class="view" id="view-discord"></div>
+  </section>
+  <section class="ls-bereich" id="ls_b_system" data-bereich="system" aria-labelledby="ls_bk_system">
+    <div class="ls-bereich-kopf" id="ls_bkopf_system" data-lage="unbekannt"><span class="ls-nr">04</span><h2 id="ls_bk_system" data-tabname="system"></h2><span class="ls-bk-linie" aria-hidden="true"></span><span class="ls-bk-satz" id="ls_bs_system"></span></div>
+    <div class="ls-tafel ls-feld" id="ls_t_system" data-tab="system" data-lage="unbekannt" role="group">
+      <div class="ls-t-kopf"><span class="ls-nr">04</span><span class="ls-name" data-tabname="system"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_system">–</span></div>
+      <div class="ls-t-vis" id="ls_v_system" aria-hidden="true"></div>
+      <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_system">wird geladen …</span></div>
     </div>
-
-    <div class="panel mb">
-      <div class="head"><h3>Rangliste</h3><span class="tag">nach Punkten</span></div>
-      <div class="body"><div id="in_lb" class="skel" aria-busy="true"><i></i><i></i></div></div>
+  <div class="view" id="view-system"></div>
+  </section>
+  <section class="ls-bereich" id="ls_b_brain" data-bereich="brain" aria-labelledby="ls_bk_brain">
+    <div class="ls-bereich-kopf" id="ls_bkopf_brain" data-lage="unbekannt"><span class="ls-nr">05</span><h2 id="ls_bk_brain" data-tabname="brain"></h2><span class="ls-bk-linie" aria-hidden="true"></span><span class="ls-bk-satz" id="ls_bs_brain"></span></div>
+    <div class="ls-tafel ls-feld" id="ls_t_brain" data-tab="brain" data-lage="unbekannt" role="group">
+      <div class="ls-t-kopf"><span class="ls-nr">05</span><span class="ls-name" data-tabname="brain"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_brain">–</span></div>
+      <div class="ls-t-vis" id="ls_v_brain" aria-hidden="true"></div>
+      <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_brain">wird geladen …</span></div>
     </div>
-
-    <div class="panel mb">
-      <div class="head"><h3>Zuverlässigkeit je Kanal</h3></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;margin-bottom:12px">
-          Anteil der Versuche, die tatsächlich Material ergeben haben. Niedrige
-          Quoten heißen meist: der Kanal geht oft kurz live und sofort wieder offline.
-        </div>
-        <div id="in_rel" class="skel" aria-busy="true"><i></i><i></i></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="head"><h3>Abwehr · CrowdSec</h3><div class="spacer"></div>
-        <button class="btn sm" onclick="crowdsecConn()" title="Prüft genau den Weg, den der Bot geht (LAPI-Bouncer bzw. cscli)">Verbindung testen</button>
-        <button class="btn sm" onclick="insightsDefense()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;margin-bottom:12px">
-          Gesperrte Adressen aus CrowdSec. Bis B132 fragte der Bot hier fail2ban ab —
-          das läuft auf diesem Server nicht mehr, die Liste blieb deshalb dauerhaft leer.
-        </div>
-        <div id="def_conn" style="margin-bottom:12px"></div>
-        <div id="in_def" class="skel" aria-busy="true"><i></i><i></i></div>
-      </div>
-    </div>
-
-    <div class="panel mb" id="pnl_defatk">
-      <div class="head"><h3>Abwehr · Angriffe</h3>
-        <span class="tag" id="defatk_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadDefenseAttacks()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
-          Fehlgeschlagene SSH-Logins aus dem Auth-Log, geo-lokalisiert — plus die
-          CrowdSec-Bans von oben. Braucht Leserechte auf die auth.log.
-        </div>
-        <div class="grid g4" id="defatk_stats" style="margin-bottom:12px"></div>
-        <div id="defatk_hint" class="faint" style="font-size:10.5px;margin-bottom:12px"></div>
-        <div class="kc-sub">LIVE-ANGRIFFE <span class="faint" style="font-size:10px;letter-spacing:0">geo-lokalisiert · Ziel OVH Gravelines</span></div>
-        <div class="viz-zoomable"><button class="viz-expand" onclick="ncZoom.open('map')" aria-label="Vergrößern" title="Vergrößern">⤢</button><div id="defatk_map" class="worldmap-wrap"></div></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
-          <div><div class="kc-sub">TOP-LÄNDER</div><div id="defatk_countries"></div></div>
-          <div><div class="kc-sub">JÜNGSTE ANGREIFER</div><div id="defatk_list" class="skel" aria-busy="true"><i></i></div></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel mb" id="pnl_rectimeline">
-      <div class="head"><h3>Aufnahme-Timeline</h3>
-        <span class="tag" id="rtl_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadRecTimeline()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;margin-bottom:10px">Letzte Aufnahme-Sessions je Creator — Position = Startzeit, Breite = Dauer.</div>
-        <div id="rtl_body"></div>
-      </div>
-    </div>
-    <div class="panel mb" id="pnl_abo">
-      <div class="head"><h3>Abo-Lives</h3>
-        <span class="tag" id="abo_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadAboStatus()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
-          Getrackte User, die gerade als TikTok-Abo-Live (Subscriber-only) erkannt sind. Abo-Lives
-          werden nur aufgenommen bzw. über VLC angeschaut, nie restreamt. „Nur erkannt“ heißt: der
-          Bot-Account ist beim Creator nicht abonniert — dort lohnt ein Abo.
-        </div>
-        <div class="grid g3" id="abo_stats" style="margin-bottom:12px"></div>
-        <div id="abo_list" class="skel" aria-busy="true"><i></i></div>
-      </div>
-    </div>
-
-    <!-- ═══════════ WAVE 5: STREAMER-INSIGHTS ═══════════ -->
-    <div class="panel mb" id="pnl_in_watch">
-      <div class="head"><h3>Watchlist &amp; Ruhende</h3>
-        <span class="tag" id="in5_watch_n">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadInsightsPlus()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
-          <div>
-            <div class="kc-sub">GETRACKTE STREAMER · Priorität &amp; Health</div>
-            <div id="in5_watch" class="skel" aria-busy="true"><i></i></div>
-          </div>
-          <div>
-            <div class="kc-sub">RUHEND
-              <select id="in5_dormant_days" onchange="loadIn5Dormant()" style="max-width:110px">
-                <option value="7">7 Tage</option><option value="14" selected>14 Tage</option><option value="30">30 Tage</option></select></div>
-            <div id="in5_dormant" class="skel" aria-busy="true"><i></i></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel mb" id="pnl_in_vol">
-      <div class="head"><h3>Volumen &amp; Trend</h3><div class="spacer"></div>
-        <button class="btn sm" onclick="loadIn5Volume()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
-          <div><div class="kc-sub">7-TAGE-TREND</div><div id="in5_trend"></div></div>
-          <div><div class="kc-sub">AKTIVITÄTS-PULS <span class="faint" style="font-size:10px;letter-spacing:0">60 min</span></div><div id="in5_pulse"></div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
-          <div><div class="kc-sub">SESSION-DAUER <span class="faint" style="font-size:10px;letter-spacing:0">Top nach Stunden</span></div>
-            <div id="in5_sessions" class="skel" aria-busy="true"><i></i></div></div>
-          <div><div class="kc-sub">SPEICHER / STREAMER <span class="tag" id="in5_storage_total">…</span></div>
-            <div id="in5_storage" class="skel" aria-busy="true"><i></i></div></div>
-        </div>
-        <div class="head" style="border:0;padding:0;margin-bottom:8px"><h3 style="font-size:12px">User-Stats</h3>
-          <div class="spacer"></div>
-          <select id="in5_us_sort" onchange="loadIn5UserStats()" style="max-width:170px">
-            <option value="rec_count">nach Aufnahmen</option>
-            <option value="total_bytes">nach Volumen</option>
-            <option value="success_rate">nach Erfolgsquote</option>
-            <option value="last_recording">nach letzter Aufnahme</option></select></div>
-        <div id="in5_userstats" class="skel" aria-busy="true"><i></i></div>
-      </div>
-    </div>
-
-    <div class="panel" id="pnl_in_lupe">
-      <div class="head"><h3>Streamer-Lupe &amp; Vergleich</h3></div>
-      <div class="body">
-        <div class="kc-sub">STREAMER-LUPE <span class="faint" style="font-size:10px;letter-spacing:0">Digest · Journal · Wachstum · Priorität</span></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-          <input id="in5_lupe_user" type="text" placeholder="streamer" style="flex:1;min-width:180px">
-          <button class="btn cyan" onclick="in5Lupe()">Analysieren</button>
-        </div>
-        <div id="in5_lupe_out" style="margin-bottom:20px"></div>
-
-        <div class="kc-sub">VERGLEICH <span class="faint" style="font-size:10px;letter-spacing:0">zwei Streamer nebeneinander</span></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-          <input id="in5_cmp_a" type="text" placeholder="streamer A" style="flex:1;min-width:130px">
-          <input id="in5_cmp_b" type="text" placeholder="streamer B" style="flex:1;min-width:130px">
-          <button class="btn" onclick="in5Compare()">Vergleichen</button>
-        </div>
-        <div id="in5_cmp_out" style="margin-bottom:20px"></div>
-
-        <div class="kc-sub">LIVE-BULK-CHECK <span class="faint" style="font-size:10px;letter-spacing:0">max. 20 auf einmal</span></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px">
-          <textarea id="in5_bulk_text" placeholder="@user1 @user2 user3 …" rows="2" style="flex:1;min-width:220px"></textarea>
-          <button class="btn" onclick="in5BulkLookup()">Prüfen</button>
-        </div>
-        <div id="in5_bulk_out"></div>
-      </div>
-    </div>
-
-  </div>
-
-  <div class="view" id="view-betrieb">
-
-    <div class="panel mb" id="pnl_verify">
-      <div class="head"><h3>Restream · Zielprüfung</h3>
-        <span class="tag" id="vf_tag">—</span><div class="spacer"></div>
-        <button class="btn sm" onclick="betriebLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
-          Fragt die Plattformen selbst, ob sie senden — nicht den ffmpeg-Prozess.
-          Twitch und YouTube laufen im tee-Muxer mit <code>onfail=ignore</code>:
-          brechen sie weg, sendet ffmpeg unbeirrt an Kick weiter. „Läuft“ und
-          „kommt an“ sind deshalb zwei verschiedene Fragen.
-        </div>
-        <div id="vf_body" class="skel" aria-busy="true"><i></i><i></i></div>
-      </div>
-    </div>
-
-    <div class="panel mb" id="pnl_timing">
-      <div class="head"><h3>Messwerte</h3>
-        <div class="spacer"></div>
-        <button class="btn sm" onclick="betriebLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
-          Grundlage für Justierungen an Polling, Whisper und Transcode.
-          Erst wenn hier über Tage etwas anderes als „unauffällig“ steht,
-          lohnt es, an den Werten zu drehen.
-        </div>
-        <div id="tm_body" class="skel" aria-busy="true"><i></i><i></i></div>
-      </div>
-    </div>
-
-    <div class="panel mb" id="pnl_sitzungen">
-      <div class="head"><h3>Aufnahme-Sitzungen</h3>
-        <span class="tag" id="sz_tag">—</span><div class="spacer"></div>
-        <button class="btn sm" onclick="sitzungenLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
-          Ein dreistündiger Live-Auftritt liegt als sechs bis zehn Dateien auf der
-          Platte: die signierte TikTok-URL läuft alle rund 30 Minuten ab, dazu je
-          eine Datei nach einem 403 oder einem Abriss. Die Sitzungs-Kennung hält
-          sie zusammen. <b>Abdeckung</b> ist der Anteil der Sendezeit, der
-          wirklich auf der Platte liegt — der Rest sind die Nahtlücken.
-          Zusammenfügen kopiert nur, es kodiert nicht neu.
-        </div>
-        <div id="sz_body" class="skel" aria-busy="true"><i></i><i></i></div>
-      </div>
-    </div>
-
-    <div class="panel" id="pnl_fa">
-      <div class="head"><h3>Einnahmen · Finanzamt</h3>
-        <span class="tag" id="fa_tag">—</span><div class="spacer"></div>
-        <select id="fa_year" onchange="faLoad()" aria-label="Jahr wählen"
-                style="max-width:110px"></select>
-        <button class="btn sm" onclick="faLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:14px">
-          Gebucht wird der <b>Zufluss</b> — der Tag der Gutschrift auf dem Konto,
-          nicht der Stream-Tag. Buchungen lassen sich nicht ändern; eine Korrektur
-          ist eine Gegenbuchung. TikTok erscheint hier nie: diese Gifts gehen an
-          den getrackten Streamer, nicht an dich.
-        </div>
-
-        <div class="g2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:16px">
-          <div class="field"><label for="fa_date">Datum der Gutschrift</label>
-            <input type="date" id="fa_date"></div>
-          <div class="field"><label for="fa_plat">Plattform</label>
-            <select id="fa_plat"></select></div>
-          <div class="field"><label for="fa_gross">Brutto (EUR)</label>
-            <input type="number" id="fa_gross" step="0.01" placeholder="412.50"></div>
-          <div class="field"><label for="fa_fee">Gebühr (EUR)</label>
-            <input type="number" id="fa_fee" step="0.01" placeholder="0.00"></div>
-          <div class="field"><label for="fa_ref">Belegreferenz</label>
-            <input type="text" id="fa_ref" placeholder="TW-2026-01"></div>
-          <div class="field"><label for="fa_note">Notiz</label>
-            <input type="text" id="fa_note" placeholder="Auszahlung Januar"></div>
-        </div>
-        <div class="btnrow" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
-          <button class="btn" onclick="faAdd()">Auszahlung buchen</button>
-          <button class="btn sm" onclick="faCsv()">CSV für das Steuerbüro</button>
-        </div>
-
-        <div id="fa_sum"></div>
-        <div id="fa_list" class="skel" aria-busy="true"><i></i><i></i></div>
-        <div class="faint" id="fa_disc" style="font-size:10.5px;margin-top:14px;line-height:1.5"></div>
-      </div>
-    </div>
-
-    <!-- ═══════════ WAVE 6: BETRIEB & WARTUNG ═══════════ -->
-    <div class="panel mb" id="pnl_rhealth">
-      <div class="head"><h3>Restream-Encode-Health</h3>
-        <span class="tag" id="rh_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadRestreamHealth()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="rh_body"></div></div>
-    </div>
-    <div class="panel mb" id="pnl_restrend">
-      <div class="head"><h3>Ressourcen-Verlauf (24h)</h3>
-        <span class="tag" id="rtr_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadResourceHistory()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="rtr_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_sendstatus">
-      <div class="head"><h3>Chat-Sende-Bereitschaft</h3>
-        <span class="tag" id="ss_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadSendStatus()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="ss_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_testpush">
-      <div class="head"><h3>Test-Push (Key-Prüfung)</h3>
-        <span class="tag" id="tp_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadTestPush()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="tp_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_marketing">
-      <div class="head"><h3>Marketing-Agent</h3>
-        <span class="tag" id="mk_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadMarketing()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="mk_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_news">
-      <div class="head"><h3>News-Agent (Website)</h3>
-        <span class="tag" id="nw_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadNews()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="nw_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_kickoauth">
-      <div class="head"><h3>Kick-Verbindung (OAuth)</h3>
-        <span class="tag" id="ko_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadKickOAuth()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="ko_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_hl">
-      <div class="head"><h3>Highlight-Radar</h3>
-        <span class="tag" id="hl_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadHighlights()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="hl_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_cohost">
-      <div class="head"><h3>AZRAEL Co-Host (proaktiv)</h3>
-        <span class="tag" id="co_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadCohost()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="co_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_audio">
-      <div class="head"><h3>AZRAEL-Audio</h3>
-        <span class="tag" id="au_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadAudioCfg()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="au_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_modfeed">
-      <div class="head"><h3>Moderation · alle Plattformen</h3>
-        <span class="tag" id="mf_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadModFeed()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body"><div id="mf_body"><div class="empty">…</div></div></div>
-    </div>
-    <div class="panel mb" id="pnl_ops6">
-      <div class="head"><h3>System-Diagnose</h3>
-        <span class="tag" id="ops6_health_tag">…</span><div class="spacer"></div>
-        <button class="btn sm" onclick="loadOps6()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <!-- v4.2-W111: hier stand eine ✓/✗-Reihe aus /api/ops/healthcheck
-             (database, disk, cookies, ffmpeg, event_loop) — eine Teilmenge des
-             Preflights im System-Tab, mit Rohschluesseln statt Klartext. Der
-             Gesamtstatus bleibt oben im Kopf; die Einzelpruefungen stehen an
-             EINER Stelle. -->
-        <div class="faint" id="ops6_health" style="font-size:11px;margin-bottom:16px">
-          <span id="ops6_health_rot"></span>
-          <a href="#" onclick="gotoView('system');return false">Einzelprüfungen im System-Tab (Preflight)</a></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
-          <div><div class="kc-sub">BACKOFF-WATCH <span class="faint" style="font-size:10px;letter-spacing:0">Trackings in Wartezeit</span></div>
-            <div id="ops6_backoff" class="skel" aria-busy="true"><i></i></div></div>
-          <div><div class="kc-sub">TIKTOK-STATUS <span class="faint" style="font-size:10px;letter-spacing:0">HTTP-Codes</span></div>
-            <div id="ops6_tiktok" class="skel" aria-busy="true"><i></i></div></div>
-        </div>
-        <div class="head" style="border:0;padding:0;margin-bottom:8px"><h3 style="font-size:12px">Log-Viewer</h3><div class="spacer"></div>
-          <select id="ops6_log_which" onchange="loadOps6Log()" style="max-width:120px">
-            <option value="debug">debug.log</option><option value="error">error.log</option></select>
-          <select id="ops6_log_lines" onchange="loadOps6Log()" style="max-width:100px">
-            <option value="50">50</option><option value="100" selected>100</option><option value="300">300</option></select>
-          <button class="btn sm" onclick="loadOps6Log()">laden</button></div>
-        <div id="ops6_log" class="kc-code" style="max-height:280px;overflow:auto">—</div>
-      </div>
-    </div>
-
-    <div class="panel mb" id="pnl_stats6">
-      <div class="head"><h3>Statistik &amp; Prognose</h3><div class="spacer"></div>
-        <button class="btn sm" onclick="loadStats6()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="kc-sub">AKTIVITÄTS-TIMELINE <span class="faint" style="font-size:10px;letter-spacing:0">14 Tage · Versuche</span></div>
-        <div id="ops6_timeline" style="margin-bottom:16px"></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
-          <div><div class="kc-sub">OUTCOMES <span class="faint" style="font-size:10px;letter-spacing:0">24 h</span></div>
-            <div id="ops6_outcomes" class="skel" aria-busy="true"><i></i></div></div>
-          <div><div class="kc-sub">FEHLER-MUSTER <span class="faint" style="font-size:10px;letter-spacing:0">24 h</span></div>
-            <div id="ops6_failures" class="skel" aria-busy="true"><i></i></div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
-          <div><div class="kc-sub">SPEICHER-PROGNOSE</div><div id="ops6_forecast" class="skel" aria-busy="true"><i></i></div></div>
-          <div><div class="kc-sub">UPLOAD-FENSTER</div><div id="ops6_upwin" class="skel" aria-busy="true"><i></i></div></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel" id="pnl_maint6">
-      <div class="head"><h3>Wartung &amp; Backup</h3><div class="spacer"></div>
-        <button class="btn sm" onclick="loadMaint6()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:14px">
-          Löschende/ändernde Aktionen fragen nach. Exporte sind reine Downloads.
-        </div>
-        <div class="kc-sub">BACKUP &amp; EXPORT</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-          <button class="btn sm" onclick="window.open('/api/config/snapshot','_blank')">⬇ Config-Snapshot (JSON)</button>
-          <span class="faint" style="font-size:10px">Daten-Export:</span>
-          <select id="ops6_exp_kind" style="max-width:140px"><option value="recordings">Aufnahmen</option><option value="streamers">Streamer</option><option value="attempts">Versuche</option></select>
-          <select id="ops6_exp_fmt" style="max-width:90px"><option value="json">JSON</option><option value="csv">CSV</option></select>
-          <button class="btn sm" onclick="ops6Export()">⬇ Export</button>
-        </div>
-        <details style="margin-bottom:16px"><summary class="faint" style="font-size:11px;cursor:pointer">Config wiederherstellen (fortgeschritten)</summary>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin-top:8px">
-            <textarea id="ops6_restore_json" placeholder="Snapshot-JSON hier einfügen …" rows="3" style="flex:1;min-width:220px"></textarea>
-            <button class="btn sm" onclick="ops6Restore()">Wiederherstellen</button>
-          </div>
-          <div id="ops6_restore_out" style="margin-top:6px"></div>
-        </details>
-
-        <div class="kc-sub">SPEICHER-BEREINIGUNG</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-          <label class="faint" style="font-size:11px">älter als</label>
-          <input id="ops6_cleanup_days" type="number" value="30" style="max-width:80px"><span class="faint" style="font-size:11px">Tage</span>
-          <button class="btn sm" onclick="ops6Cleanup(true)">Vorschau (dry-run)</button>
-          <button class="btn sm" id="ops6_cleanup_apply" onclick="ops6Cleanup(false)" style="display:none">Wirklich löschen</button>
-          <button class="btn sm" onclick="ops6ClipsClear()">Highlight-Clips leeren</button>
-        </div>
-        <div id="ops6_cleanup_out" style="margin-bottom:16px"></div>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
-          <div><div class="kc-sub">TAGS</div><div id="ops6_tags"></div></div>
-          <div><div class="kc-sub">LESEZEICHEN <span class="faint" style="font-size:10px;letter-spacing:0">markierte Aufnahmen</span></div>
-            <div id="ops6_bookmarks" class="skel" aria-busy="true"><i></i></div></div>
-        </div>
-
-        <div class="kc-sub">AUFNAHMEFENSTER PLANEN</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-          <input id="ops6_sch_user" type="text" placeholder="streamer" style="max-width:140px">
-          <select id="ops6_sch_day" style="max-width:120px">
-            <option value="0">Mo</option><option value="1">Di</option><option value="2">Mi</option><option value="3">Do</option><option value="4">Fr</option><option value="5">Sa</option><option value="6">So</option></select>
-          <input id="ops6_sch_hour" type="number" placeholder="Std 0-23" min="0" max="23" style="max-width:100px">
-          <input id="ops6_sch_dur" type="number" placeholder="Min" value="60" style="max-width:90px">
-          <button class="btn sm cyan" onclick="ops6Schedule()">Fenster hinzufügen</button>
-        </div>
-        <div id="ops6_sch_out"></div>
-        <!-- v4.0-W126: Anlegen ging seit je (ops6Schedule -> /api/schedule/add),
-             die geplanten Fenster ANZUSEHEN oder zu entfernen nicht — die
-             Liste stand in der aufgeloesten Brain+-Ansicht. -->
-        <div id="bp_sc_list" class="skel" aria-busy="true" style="margin-top:8px"><i></i></div>
-
-        <div class="kc-sub" style="margin-top:16px">TAGES-ZUSAMMENFASSUNG <span class="faint" style="font-size:10px;letter-spacing:0">Vorschau ohne Senden</span></div>
-        <button class="btn sm" onclick="ops6Summary()">Vorschau laden</button>
-        <div id="ops6_summary" style="margin-top:8px"></div>
-      </div>
-    </div>
-
-    <!-- v4.0-W126: AUTOMATISIERUNG. Vier Endpunkte, die seit dem Reorg keine
-         Oberflaeche mehr hatten und trotzdem die ganze Zeit antworteten:
-         /api/auto-archive-rules, /api/webhooks, /api/collections und
-         /api/notifications/quiet-hours. Sie gehoeren zusammen — alles vier
-         beantwortet "was soll der Bot von selbst tun". -->
-    <div class="panel mt">
-      <div class="head"><h3>▚ Automatisierung</h3>
-        <span class="tag">Regeln · Webhooks · Sammlungen · Ruhezeiten</span>
-        <div class="spacer"></div>
-        <button class="btn sm" onclick="loadAutomatisierung()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:14px">
-          Was ohne dich passiert: Regeln räumen das Archiv auf, Webhooks melden
-          Ereignisse nach draußen, Sammlungen bündeln Streamer, Ruhezeiten
-          halten den Bot nachts still. Löschende Aktionen fragen nach.
-        </div>
-
-        <div class="kc-sub">AUTO-ARCHIV-REGELN</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-          <input id="ar_name" type="text" placeholder="Name der Regel" style="max-width:190px">
-          <select id="ar_feld" style="max-width:190px">
-            <option value="min_size_mb">mindestens (MB)</option>
-            <option value="max_size_mb">höchstens (MB)</option>
-            <option value="min_duration_secs">länger als (Sekunden)</option>
-            <option value="username_contains">Streamer enthält</option>
-          </select>
-          <input id="ar_wert" type="text" placeholder="Wert" style="max-width:120px">
-          <button class="btn sm cyan" onclick="arAdd()">Regel anlegen</button>
-          <span class="faint" style="font-size:10.5px">Aktion: ins Archiv kopieren — die
-            Regel-Maschine kennt bisher nur diese eine.</span>
-        </div>
-        <div id="op_rules" class="skel" aria-busy="true" style="margin-bottom:18px"><i></i></div>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
-          <div>
-            <div class="kc-sub">SAMMLUNGEN <span class="faint" style="font-size:10px;letter-spacing:0">Streamer bündeln</span></div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-              <input id="coll_name" type="text" placeholder="Name" style="max-width:150px">
-              <input id="coll_farbe" type="color" value="#e8c86a" style="width:48px;padding:2px" aria-label="Farbe" title="Farbe">
-              <button class="btn sm cyan" onclick="collAdd()">Anlegen</button>
-            </div>
-            <div id="lab_colls" class="skel" aria-busy="true"><i></i></div>
-          </div>
-          <div>
-            <div class="kc-sub">RUHEZEITEN <span class="faint" style="font-size:10px;letter-spacing:0">keine Meldungen im Fenster</span></div>
-            <div id="lab_quiet" class="skel" aria-busy="true"><i></i></div>
-          </div>
-        </div>
-
-        <div class="kc-sub" style="margin-top:18px">WEBHOOKS <span class="faint" style="font-size:10px;letter-spacing:0">Ereignisse nach draußen melden</span></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-          <input id="wh_url" type="url" placeholder="https://…" style="flex:1;min-width:220px">
-          <input id="wh_events" type="text" placeholder="Ereignisse (leer = alle)" style="max-width:200px">
-          <button class="btn sm cyan" onclick="whAdd()">Webhook anlegen</button>
-        </div>
-        <div id="lab_webhooks" class="skel" aria-busy="true"><i></i></div>
-      </div>
-    </div>
-
-  </div>
-  <!-- v4.2-W145: Einstellungen aus der Datenbank, im Deck setzbar (nc/einstellungen.py). -->
-  <div class="view" id="view-einstellungen">
-    <div class="panel mb">
-      <div class="head"><h3 id="es_titel">▚ Einstellungen</h3><span class="tag" id="es_tag">Deck › .env › Vorgabe</span>
-        <div class="spacer"></div>
-        <button class="btn sm" onclick="einstLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div class="faint" id="es_erkl" style="font-size:12px;line-height:1.6;margin-bottom:10px"></div>
-        <div id="es_lage" class="faint" style="font-size:12px;margin-bottom:10px">…</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-          <input class="field" id="es_suche" type="search" oninput="einstZeigen()" style="flex:1;min-width:200px" aria-label="Suche">
-          <select class="field" id="es_gruppe" onchange="einstZeigen()" aria-label="Gruppe"></select>
-          <select class="field" id="es_quelle" onchange="einstZeigen()" aria-label="Quelle"></select>
-          <button class="btn" type="button" id="es_uebernehmen" onclick="einstUebernehmen()"></button>
-          <button class="btn" type="button" id="es_neustart" hidden onclick="updRestart()"></button>
-        </div>
-        <div id="es_liste"></div>
-      </div>
-    </div>
-  </div>
-  <!-- v5.6-W198: MCP-Server verwalten. Die Liste haelt der Bot (/api/mcp/server);
-       die Chat-Oberflaeche von llama-server (--webui llamacpp) fuehrt ihre
-       eigene im Browser. Der Inhalt entsteht in mcpLaden(), hier stehen nur
-       die Rahmen. Das Formular schickt ein Token nur, wenn eines eingetippt
-       ist — leer heisst beim Bearbeiten „unveraendert", nicht „loeschen". -->
-  <div class="view" id="view-mcp">
-    <div class="panel mb" id="pnl_mcp_webui">
-      <div class="head"><h3>▚ llama-Oberfläche</h3><span class="tag" id="mcp_webui_tag">…</span>
-        <div class="spacer"></div>
-        <button class="btn sm" type="button" onclick="mcpLaden()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
-      <div class="body">
-        <div id="mcp_webui" class="skel" aria-busy="true"><i></i><i></i><i></i></div>
-      </div>
-    </div>
-    <div class="panel mb" id="pnl_mcp_server">
-      <div class="head"><h3>▚ MCP-Server</h3><span class="tag" id="mcp_tag">…</span>
-        <div class="spacer"></div>
-        <button class="btn sm" type="button" onclick="mcpNeu(true)">＋ Server anlegen</button></div>
-      <div class="body">
-        <div class="faint" style="font-size:12px;line-height:1.6;margin-bottom:10px">Server, die der Bot kennt und prüfen kann. Ein Test fragt den Server nach Protokoll, Namen und Werkzeugen. Die llama-Oberfläche führt eine eigene Liste im Browser — diese hier lässt sich als Datei sichern.</div>
-        <div id="mcp_liste" class="skel" aria-busy="true"><i></i><i></i><i></i></div>
-        <div class="btnrow mt">
-          <button class="btn sm" type="button" onclick="mcpExport(false)">⬇ Export (ohne Token)</button>
-          <button class="btn sm danger" type="button" onclick="mcpExport(true)">⬇ Export mit Token</button>
-        </div>
-      </div>
-    </div>
-    <div class="panel mb" id="pnl_mcp_form">
-      <div class="head"><h3 id="mcp_f_titel">▚ Server anlegen</h3></div>
-      <div class="body">
-        <form id="mcp_form" onsubmit="mcpSpeichern(event)" autocomplete="off" novalidate>
-          <input type="hidden" id="mcp_f_id" value="">
-          <div class="mcp-raster">
-            <label class="mcp-feld"><span>Name</span><input class="field" id="mcp_f_name" type="text" maxlength="120" spellcheck="false"></label>
-            <label class="mcp-feld"><span>Adresse</span><input class="field" id="mcp_f_url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:3000/mcp"></label>
-            <label class="mcp-feld"><span>Token</span><input class="field" id="mcp_f_token" type="password" autocomplete="new-password" spellcheck="false"></label>
-            <label class="mcp-feld"><span>Notiz</span><input class="field" id="mcp_f_notiz" type="text" maxlength="300"></label>
-          </div>
-          <div class="btnrow mt">
-            <label class="chk"><input type="checkbox" id="mcp_f_aktiv" checked> aktiv</label>
-            <label class="chk"><input type="checkbox" id="mcp_f_token_weg" onchange="mcpTokenWeg()" disabled> Token entfernen</label>
-          </div>
-          <div class="btnrow mt">
-            <button class="btn" type="submit" id="mcp_f_speichern">Speichern</button>
-            <button class="btn" type="button" onclick="mcpNeu(false)">Abbrechen</button>
-          </div>
-          <div id="mcp_f_msg" role="status" style="margin-top:8px;font-size:12px"></div>
-        </form>
-      </div>
-    </div>
-  </div>
   <div class="view" id="view-brain">
     <div class="panel mb">
       <div class="head"><h3>▚ Brain-Zustand</h3>
@@ -4117,6 +3591,606 @@ document.addEventListener("DOMContentLoaded",function(){
       </div>
     </div>
   </div>
+  </section>
+  <section class="ls-bereich" id="ls_b_betrieb" data-bereich="betrieb" aria-labelledby="ls_bk_betrieb">
+    <div class="ls-bereich-kopf" id="ls_bkopf_betrieb" data-lage="unbekannt"><span class="ls-nr">06</span><h2 id="ls_bk_betrieb" data-tabname="betrieb"></h2><span class="ls-bk-linie" aria-hidden="true"></span><span class="ls-bk-satz" id="ls_bs_betrieb"></span></div>
+    <div class="ls-tafel ls-feld" id="ls_t_betrieb" data-tab="betrieb" data-lage="unbekannt" role="group">
+      <div class="ls-t-kopf"><span class="ls-nr">06</span><span class="ls-name" data-tabname="betrieb"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_betrieb">–</span></div>
+      <div class="ls-t-vis" id="ls_v_betrieb" aria-hidden="true"></div>
+      <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_betrieb">wird geladen …</span></div>
+    </div>
+  <div class="view" id="view-betrieb">
+
+    <div class="panel mb" id="pnl_verify">
+      <div class="head"><h3>Restream · Zielprüfung</h3>
+        <span class="tag" id="vf_tag">—</span><div class="spacer"></div>
+        <button class="btn sm" onclick="betriebLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
+          Fragt die Plattformen selbst, ob sie senden — nicht den ffmpeg-Prozess.
+          Twitch und YouTube laufen im tee-Muxer mit <code>onfail=ignore</code>:
+          brechen sie weg, sendet ffmpeg unbeirrt an Kick weiter. „Läuft“ und
+          „kommt an“ sind deshalb zwei verschiedene Fragen.
+        </div>
+        <div id="vf_body" class="skel" aria-busy="true"><i></i><i></i></div>
+      </div>
+    </div>
+
+    <div class="panel mb" id="pnl_timing">
+      <div class="head"><h3>Messwerte</h3>
+        <div class="spacer"></div>
+        <button class="btn sm" onclick="betriebLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
+          Grundlage für Justierungen an Polling, Whisper und Transcode.
+          Erst wenn hier über Tage etwas anderes als „unauffällig“ steht,
+          lohnt es, an den Werten zu drehen.
+        </div>
+        <div id="tm_body" class="skel" aria-busy="true"><i></i><i></i></div>
+      </div>
+    </div>
+
+    <div class="panel mb" id="pnl_sitzungen">
+      <div class="head"><h3>Aufnahme-Sitzungen</h3>
+        <span class="tag" id="sz_tag">—</span><div class="spacer"></div>
+        <button class="btn sm" onclick="sitzungenLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
+          Ein dreistündiger Live-Auftritt liegt als sechs bis zehn Dateien auf der
+          Platte: die signierte TikTok-URL läuft alle rund 30 Minuten ab, dazu je
+          eine Datei nach einem 403 oder einem Abriss. Die Sitzungs-Kennung hält
+          sie zusammen. <b>Abdeckung</b> ist der Anteil der Sendezeit, der
+          wirklich auf der Platte liegt — der Rest sind die Nahtlücken.
+          Zusammenfügen kopiert nur, es kodiert nicht neu.
+        </div>
+        <div id="sz_body" class="skel" aria-busy="true"><i></i><i></i></div>
+      </div>
+    </div>
+
+    <div class="panel" id="pnl_fa">
+      <div class="head"><h3>Einnahmen · Finanzamt</h3>
+        <span class="tag" id="fa_tag">—</span><div class="spacer"></div>
+        <select id="fa_year" onchange="faLoad()" aria-label="Jahr wählen"
+                style="max-width:110px"></select>
+        <button class="btn sm" onclick="faLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:14px">
+          Gebucht wird der <b>Zufluss</b> — der Tag der Gutschrift auf dem Konto,
+          nicht der Stream-Tag. Buchungen lassen sich nicht ändern; eine Korrektur
+          ist eine Gegenbuchung. TikTok erscheint hier nie: diese Gifts gehen an
+          den getrackten Streamer, nicht an dich.
+        </div>
+
+        <div class="g2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:16px">
+          <div class="field"><label for="fa_date">Datum der Gutschrift</label>
+            <input type="date" id="fa_date"></div>
+          <div class="field"><label for="fa_plat">Plattform</label>
+            <select id="fa_plat"></select></div>
+          <div class="field"><label for="fa_gross">Brutto (EUR)</label>
+            <input type="number" id="fa_gross" step="0.01" placeholder="412.50"></div>
+          <div class="field"><label for="fa_fee">Gebühr (EUR)</label>
+            <input type="number" id="fa_fee" step="0.01" placeholder="0.00"></div>
+          <div class="field"><label for="fa_ref">Belegreferenz</label>
+            <input type="text" id="fa_ref" placeholder="TW-2026-01"></div>
+          <div class="field"><label for="fa_note">Notiz</label>
+            <input type="text" id="fa_note" placeholder="Auszahlung Januar"></div>
+        </div>
+        <div class="btnrow" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
+          <button class="btn" onclick="faAdd()">Auszahlung buchen</button>
+          <button class="btn sm" onclick="faCsv()">CSV für das Steuerbüro</button>
+        </div>
+
+        <div id="fa_sum"></div>
+        <div id="fa_list" class="skel" aria-busy="true"><i></i><i></i></div>
+        <div class="faint" id="fa_disc" style="font-size:10.5px;margin-top:14px;line-height:1.5"></div>
+      </div>
+    </div>
+
+    <!-- ═══════════ WAVE 6: BETRIEB & WARTUNG ═══════════ -->
+    <div class="panel mb" id="pnl_rhealth">
+      <div class="head"><h3>Restream-Encode-Health</h3>
+        <span class="tag" id="rh_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadRestreamHealth()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="rh_body"></div></div>
+    </div>
+    <div class="panel mb" id="pnl_restrend">
+      <div class="head"><h3>Ressourcen-Verlauf (24h)</h3>
+        <span class="tag" id="rtr_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadResourceHistory()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="rtr_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_sendstatus">
+      <div class="head"><h3>Chat-Sende-Bereitschaft</h3>
+        <span class="tag" id="ss_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadSendStatus()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="ss_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_testpush">
+      <div class="head"><h3>Test-Push (Key-Prüfung)</h3>
+        <span class="tag" id="tp_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadTestPush()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="tp_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_marketing">
+      <div class="head"><h3>Marketing-Agent</h3>
+        <span class="tag" id="mk_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadMarketing()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="mk_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_news">
+      <div class="head"><h3>News-Agent (Website)</h3>
+        <span class="tag" id="nw_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadNews()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="nw_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_kickoauth">
+      <div class="head"><h3>Kick-Verbindung (OAuth)</h3>
+        <span class="tag" id="ko_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadKickOAuth()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="ko_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_hl">
+      <div class="head"><h3>Highlight-Radar</h3>
+        <span class="tag" id="hl_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadHighlights()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="hl_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_cohost">
+      <div class="head"><h3>AZRAEL Co-Host (proaktiv)</h3>
+        <span class="tag" id="co_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadCohost()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="co_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_audio">
+      <div class="head"><h3>AZRAEL-Audio</h3>
+        <span class="tag" id="au_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadAudioCfg()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="au_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_modfeed">
+      <div class="head"><h3>Moderation · alle Plattformen</h3>
+        <span class="tag" id="mf_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadModFeed()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body"><div id="mf_body"><div class="empty">…</div></div></div>
+    </div>
+    <div class="panel mb" id="pnl_ops6">
+      <div class="head"><h3>System-Diagnose</h3>
+        <span class="tag" id="ops6_health_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadOps6()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <!-- v4.2-W111: hier stand eine ✓/✗-Reihe aus /api/ops/healthcheck
+             (database, disk, cookies, ffmpeg, event_loop) — eine Teilmenge des
+             Preflights im System-Tab, mit Rohschluesseln statt Klartext. Der
+             Gesamtstatus bleibt oben im Kopf; die Einzelpruefungen stehen an
+             EINER Stelle. -->
+        <div class="faint" id="ops6_health" style="font-size:11px;margin-bottom:16px">
+          <span id="ops6_health_rot"></span>
+          <a href="#" onclick="gotoView('system');return false">Einzelprüfungen im System-Tab (Preflight)</a></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
+          <div><div class="kc-sub">BACKOFF-WATCH <span class="faint" style="font-size:10px;letter-spacing:0">Trackings in Wartezeit</span></div>
+            <div id="ops6_backoff" class="skel" aria-busy="true"><i></i></div></div>
+          <div><div class="kc-sub">TIKTOK-STATUS <span class="faint" style="font-size:10px;letter-spacing:0">HTTP-Codes</span></div>
+            <div id="ops6_tiktok" class="skel" aria-busy="true"><i></i></div></div>
+        </div>
+        <div class="head" style="border:0;padding:0;margin-bottom:8px"><h3 style="font-size:12px">Log-Viewer</h3><div class="spacer"></div>
+          <select id="ops6_log_which" onchange="loadOps6Log()" style="max-width:120px">
+            <option value="debug">debug.log</option><option value="error">error.log</option></select>
+          <select id="ops6_log_lines" onchange="loadOps6Log()" style="max-width:100px">
+            <option value="50">50</option><option value="100" selected>100</option><option value="300">300</option></select>
+          <button class="btn sm" onclick="loadOps6Log()">laden</button></div>
+        <div id="ops6_log" class="kc-code" style="max-height:280px;overflow:auto">—</div>
+      </div>
+    </div>
+
+    <div class="panel mb" id="pnl_stats6">
+      <div class="head"><h3>Statistik &amp; Prognose</h3><div class="spacer"></div>
+        <button class="btn sm" onclick="loadStats6()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="kc-sub">AKTIVITÄTS-TIMELINE <span class="faint" style="font-size:10px;letter-spacing:0">14 Tage · Versuche</span></div>
+        <div id="ops6_timeline" style="margin-bottom:16px"></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
+          <div><div class="kc-sub">OUTCOMES <span class="faint" style="font-size:10px;letter-spacing:0">24 h</span></div>
+            <div id="ops6_outcomes" class="skel" aria-busy="true"><i></i></div></div>
+          <div><div class="kc-sub">FEHLER-MUSTER <span class="faint" style="font-size:10px;letter-spacing:0">24 h</span></div>
+            <div id="ops6_failures" class="skel" aria-busy="true"><i></i></div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
+          <div><div class="kc-sub">SPEICHER-PROGNOSE</div><div id="ops6_forecast" class="skel" aria-busy="true"><i></i></div></div>
+          <div><div class="kc-sub">UPLOAD-FENSTER</div><div id="ops6_upwin" class="skel" aria-busy="true"><i></i></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="pnl_maint6">
+      <div class="head"><h3>Wartung &amp; Backup</h3><div class="spacer"></div>
+        <button class="btn sm" onclick="loadMaint6()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:14px">
+          Löschende/ändernde Aktionen fragen nach. Exporte sind reine Downloads.
+        </div>
+        <div class="kc-sub">BACKUP &amp; EXPORT</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <button class="btn sm" onclick="window.open('/api/config/snapshot','_blank')">⬇ Config-Snapshot (JSON)</button>
+          <span class="faint" style="font-size:10px">Daten-Export:</span>
+          <select id="ops6_exp_kind" style="max-width:140px"><option value="recordings">Aufnahmen</option><option value="streamers">Streamer</option><option value="attempts">Versuche</option></select>
+          <select id="ops6_exp_fmt" style="max-width:90px"><option value="json">JSON</option><option value="csv">CSV</option></select>
+          <button class="btn sm" onclick="ops6Export()">⬇ Export</button>
+        </div>
+        <details style="margin-bottom:16px"><summary class="faint" style="font-size:11px;cursor:pointer">Config wiederherstellen (fortgeschritten)</summary>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin-top:8px">
+            <textarea id="ops6_restore_json" placeholder="Snapshot-JSON hier einfügen …" rows="3" style="flex:1;min-width:220px"></textarea>
+            <button class="btn sm" onclick="ops6Restore()">Wiederherstellen</button>
+          </div>
+          <div id="ops6_restore_out" style="margin-top:6px"></div>
+        </details>
+
+        <div class="kc-sub">SPEICHER-BEREINIGUNG</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <label class="faint" style="font-size:11px">älter als</label>
+          <input id="ops6_cleanup_days" type="number" value="30" style="max-width:80px"><span class="faint" style="font-size:11px">Tage</span>
+          <button class="btn sm" onclick="ops6Cleanup(true)">Vorschau (dry-run)</button>
+          <button class="btn sm" id="ops6_cleanup_apply" onclick="ops6Cleanup(false)" style="display:none">Wirklich löschen</button>
+          <button class="btn sm" onclick="ops6ClipsClear()">Highlight-Clips leeren</button>
+        </div>
+        <div id="ops6_cleanup_out" style="margin-bottom:16px"></div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
+          <div><div class="kc-sub">TAGS</div><div id="ops6_tags"></div></div>
+          <div><div class="kc-sub">LESEZEICHEN <span class="faint" style="font-size:10px;letter-spacing:0">markierte Aufnahmen</span></div>
+            <div id="ops6_bookmarks" class="skel" aria-busy="true"><i></i></div></div>
+        </div>
+
+        <div class="kc-sub">AUFNAHMEFENSTER PLANEN</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <input id="ops6_sch_user" type="text" placeholder="streamer" style="max-width:140px">
+          <select id="ops6_sch_day" style="max-width:120px">
+            <option value="0">Mo</option><option value="1">Di</option><option value="2">Mi</option><option value="3">Do</option><option value="4">Fr</option><option value="5">Sa</option><option value="6">So</option></select>
+          <input id="ops6_sch_hour" type="number" placeholder="Std 0-23" min="0" max="23" style="max-width:100px">
+          <input id="ops6_sch_dur" type="number" placeholder="Min" value="60" style="max-width:90px">
+          <button class="btn sm cyan" onclick="ops6Schedule()">Fenster hinzufügen</button>
+        </div>
+        <div id="ops6_sch_out"></div>
+        <!-- v4.0-W126: Anlegen ging seit je (ops6Schedule -> /api/schedule/add),
+             die geplanten Fenster ANZUSEHEN oder zu entfernen nicht — die
+             Liste stand in der aufgeloesten Brain+-Ansicht. -->
+        <div id="bp_sc_list" class="skel" aria-busy="true" style="margin-top:8px"><i></i></div>
+
+        <div class="kc-sub" style="margin-top:16px">TAGES-ZUSAMMENFASSUNG <span class="faint" style="font-size:10px;letter-spacing:0">Vorschau ohne Senden</span></div>
+        <button class="btn sm" onclick="ops6Summary()">Vorschau laden</button>
+        <div id="ops6_summary" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- v4.0-W126: AUTOMATISIERUNG. Vier Endpunkte, die seit dem Reorg keine
+         Oberflaeche mehr hatten und trotzdem die ganze Zeit antworteten:
+         /api/auto-archive-rules, /api/webhooks, /api/collections und
+         /api/notifications/quiet-hours. Sie gehoeren zusammen — alles vier
+         beantwortet "was soll der Bot von selbst tun". -->
+    <div class="panel mt">
+      <div class="head"><h3>▚ Automatisierung</h3>
+        <span class="tag">Regeln · Webhooks · Sammlungen · Ruhezeiten</span>
+        <div class="spacer"></div>
+        <button class="btn sm" onclick="loadAutomatisierung()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:14px">
+          Was ohne dich passiert: Regeln räumen das Archiv auf, Webhooks melden
+          Ereignisse nach draußen, Sammlungen bündeln Streamer, Ruhezeiten
+          halten den Bot nachts still. Löschende Aktionen fragen nach.
+        </div>
+
+        <div class="kc-sub">AUTO-ARCHIV-REGELN</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <input id="ar_name" type="text" placeholder="Name der Regel" style="max-width:190px">
+          <select id="ar_feld" style="max-width:190px">
+            <option value="min_size_mb">mindestens (MB)</option>
+            <option value="max_size_mb">höchstens (MB)</option>
+            <option value="min_duration_secs">länger als (Sekunden)</option>
+            <option value="username_contains">Streamer enthält</option>
+          </select>
+          <input id="ar_wert" type="text" placeholder="Wert" style="max-width:120px">
+          <button class="btn sm cyan" onclick="arAdd()">Regel anlegen</button>
+          <span class="faint" style="font-size:10.5px">Aktion: ins Archiv kopieren — die
+            Regel-Maschine kennt bisher nur diese eine.</span>
+        </div>
+        <div id="op_rules" class="skel" aria-busy="true" style="margin-bottom:18px"><i></i></div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
+          <div>
+            <div class="kc-sub">SAMMLUNGEN <span class="faint" style="font-size:10px;letter-spacing:0">Streamer bündeln</span></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+              <input id="coll_name" type="text" placeholder="Name" style="max-width:150px">
+              <input id="coll_farbe" type="color" value="#e8c86a" style="width:48px;padding:2px" aria-label="Farbe" title="Farbe">
+              <button class="btn sm cyan" onclick="collAdd()">Anlegen</button>
+            </div>
+            <div id="lab_colls" class="skel" aria-busy="true"><i></i></div>
+          </div>
+          <div>
+            <div class="kc-sub">RUHEZEITEN <span class="faint" style="font-size:10px;letter-spacing:0">keine Meldungen im Fenster</span></div>
+            <div id="lab_quiet" class="skel" aria-busy="true"><i></i></div>
+          </div>
+        </div>
+
+        <div class="kc-sub" style="margin-top:18px">WEBHOOKS <span class="faint" style="font-size:10px;letter-spacing:0">Ereignisse nach draußen melden</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <input id="wh_url" type="url" placeholder="https://…" style="flex:1;min-width:220px">
+          <input id="wh_events" type="text" placeholder="Ereignisse (leer = alle)" style="max-width:200px">
+          <button class="btn sm cyan" onclick="whAdd()">Webhook anlegen</button>
+        </div>
+        <div id="lab_webhooks" class="skel" aria-busy="true"><i></i></div>
+      </div>
+    </div>
+
+  </div>
+  </section>
+  <section class="ls-bereich" id="ls_b_insights" data-bereich="insights" aria-labelledby="ls_bk_insights">
+    <div class="ls-bereich-kopf" id="ls_bkopf_insights" data-lage="unbekannt"><span class="ls-nr">07</span><h2 id="ls_bk_insights" data-tabname="insights"></h2><span class="ls-bk-linie" aria-hidden="true"></span><span class="ls-bk-satz" id="ls_bs_insights"></span></div>
+    <div class="ls-tafel ls-feld" id="ls_t_insights" data-tab="insights" data-lage="unbekannt" role="group">
+      <div class="ls-t-kopf"><span class="ls-nr">07</span><span class="ls-name" data-tabname="insights"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_insights">–</span></div>
+      <div class="ls-t-vis" id="ls_v_insights" aria-hidden="true"></div>
+      <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_insights">wird geladen …</span></div>
+    </div>
+  <div class="view" id="view-insights">
+
+    <div class="g2 mb" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
+      <div class="panel">
+        <div class="head"><h3>Trefferquote</h3><div class="spacer"></div>
+          <button class="btn sm" onclick="insightsLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+        <div class="body"><div id="in_catch" class="skel" aria-busy="true"><i></i><i></i></div></div>
+      </div>
+      <div class="panel">
+        <div class="head"><h3>Aktivität über den Tag</h3></div>
+        <div class="body"><div id="in_clock" class="skel" aria-busy="true"><i></i><i></i></div></div>
+      </div>
+    </div>
+
+    <div class="panel mb">
+      <div class="head"><h3>Beste Sendezeiten</h3><div class="spacer"></div></div>
+      <div class="body">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <input type="text" id="in_bt_user" placeholder="Kanalname, z. B. helge_72"
+                 aria-label="Kanalname" style="flex:1;min-width:180px">
+          <button class="btn" onclick="insightsBestTimes()">Zeiten anzeigen</button>
+        </div>
+        <div id="in_bt"><div class="empty">Kanalnamen eingeben, dann erscheinen hier die besten Sendezeiten.</div></div>
+      </div>
+    </div>
+
+    <div class="panel mb">
+      <div class="head"><h3>Rangliste</h3><span class="tag">nach Punkten</span></div>
+      <div class="body"><div id="in_lb" class="skel" aria-busy="true"><i></i><i></i></div></div>
+    </div>
+
+    <div class="panel mb">
+      <div class="head"><h3>Zuverlässigkeit je Kanal</h3></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;margin-bottom:12px">
+          Anteil der Versuche, die tatsächlich Material ergeben haben. Niedrige
+          Quoten heißen meist: der Kanal geht oft kurz live und sofort wieder offline.
+        </div>
+        <div id="in_rel" class="skel" aria-busy="true"><i></i><i></i></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="head"><h3>Abwehr · CrowdSec</h3><div class="spacer"></div>
+        <button class="btn sm" onclick="crowdsecConn()" title="Prüft genau den Weg, den der Bot geht (LAPI-Bouncer bzw. cscli)">Verbindung testen</button>
+        <button class="btn sm" onclick="insightsDefense()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;margin-bottom:12px">
+          Gesperrte Adressen aus CrowdSec. Bis B132 fragte der Bot hier fail2ban ab —
+          das läuft auf diesem Server nicht mehr, die Liste blieb deshalb dauerhaft leer.
+        </div>
+        <div id="def_conn" style="margin-bottom:12px"></div>
+        <div id="in_def" class="skel" aria-busy="true"><i></i><i></i></div>
+      </div>
+    </div>
+
+    <div class="panel mb" id="pnl_defatk">
+      <div class="head"><h3>Abwehr · Angriffe</h3>
+        <span class="tag" id="defatk_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadDefenseAttacks()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
+          Fehlgeschlagene SSH-Logins aus dem Auth-Log, geo-lokalisiert — plus die
+          CrowdSec-Bans von oben. Braucht Leserechte auf die auth.log.
+        </div>
+        <div class="grid g4" id="defatk_stats" style="margin-bottom:12px"></div>
+        <div id="defatk_hint" class="faint" style="font-size:10.5px;margin-bottom:12px"></div>
+        <div class="kc-sub">LIVE-ANGRIFFE <span class="faint" style="font-size:10px;letter-spacing:0">geo-lokalisiert · Ziel OVH Gravelines</span></div>
+        <div class="viz-zoomable"><button class="viz-expand" onclick="ncZoom.open('map')" aria-label="Vergrößern" title="Vergrößern">⤢</button><div id="defatk_map" class="worldmap-wrap"></div></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
+          <div><div class="kc-sub">TOP-LÄNDER</div><div id="defatk_countries"></div></div>
+          <div><div class="kc-sub">JÜNGSTE ANGREIFER</div><div id="defatk_list" class="skel" aria-busy="true"><i></i></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel mb" id="pnl_rectimeline">
+      <div class="head"><h3>Aufnahme-Timeline</h3>
+        <span class="tag" id="rtl_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadRecTimeline()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;margin-bottom:10px">Letzte Aufnahme-Sessions je Creator — Position = Startzeit, Breite = Dauer.</div>
+        <div id="rtl_body"></div>
+      </div>
+    </div>
+    <div class="panel mb" id="pnl_abo">
+      <div class="head"><h3>Abo-Lives</h3>
+        <span class="tag" id="abo_tag">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadAboStatus()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
+          Getrackte User, die gerade als TikTok-Abo-Live (Subscriber-only) erkannt sind. Abo-Lives
+          werden nur aufgenommen bzw. über VLC angeschaut, nie restreamt. „Nur erkannt“ heißt: der
+          Bot-Account ist beim Creator nicht abonniert — dort lohnt ein Abo.
+        </div>
+        <div class="grid g3" id="abo_stats" style="margin-bottom:12px"></div>
+        <div id="abo_list" class="skel" aria-busy="true"><i></i></div>
+      </div>
+    </div>
+
+    <!-- ═══════════ WAVE 5: STREAMER-INSIGHTS ═══════════ -->
+    <div class="panel mb" id="pnl_in_watch">
+      <div class="head"><h3>Watchlist &amp; Ruhende</h3>
+        <span class="tag" id="in5_watch_n">…</span><div class="spacer"></div>
+        <button class="btn sm" onclick="loadInsightsPlus()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+          <div>
+            <div class="kc-sub">GETRACKTE STREAMER · Priorität &amp; Health</div>
+            <div id="in5_watch" class="skel" aria-busy="true"><i></i></div>
+          </div>
+          <div>
+            <div class="kc-sub">RUHEND
+              <select id="in5_dormant_days" onchange="loadIn5Dormant()" style="max-width:110px">
+                <option value="7">7 Tage</option><option value="14" selected>14 Tage</option><option value="30">30 Tage</option></select></div>
+            <div id="in5_dormant" class="skel" aria-busy="true"><i></i></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel mb" id="pnl_in_vol">
+      <div class="head"><h3>Volumen &amp; Trend</h3><div class="spacer"></div>
+        <button class="btn sm" onclick="loadIn5Volume()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
+          <div><div class="kc-sub">7-TAGE-TREND</div><div id="in5_trend"></div></div>
+          <div><div class="kc-sub">AKTIVITÄTS-PULS <span class="faint" style="font-size:10px;letter-spacing:0">60 min</span></div><div id="in5_pulse"></div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
+          <div><div class="kc-sub">SESSION-DAUER <span class="faint" style="font-size:10px;letter-spacing:0">Top nach Stunden</span></div>
+            <div id="in5_sessions" class="skel" aria-busy="true"><i></i></div></div>
+          <div><div class="kc-sub">SPEICHER / STREAMER <span class="tag" id="in5_storage_total">…</span></div>
+            <div id="in5_storage" class="skel" aria-busy="true"><i></i></div></div>
+        </div>
+        <div class="head" style="border:0;padding:0;margin-bottom:8px"><h3 style="font-size:12px">User-Stats</h3>
+          <div class="spacer"></div>
+          <select id="in5_us_sort" onchange="loadIn5UserStats()" style="max-width:170px">
+            <option value="rec_count">nach Aufnahmen</option>
+            <option value="total_bytes">nach Volumen</option>
+            <option value="success_rate">nach Erfolgsquote</option>
+            <option value="last_recording">nach letzter Aufnahme</option></select></div>
+        <div id="in5_userstats" class="skel" aria-busy="true"><i></i></div>
+      </div>
+    </div>
+
+    <div class="panel" id="pnl_in_lupe">
+      <div class="head"><h3>Streamer-Lupe &amp; Vergleich</h3></div>
+      <div class="body">
+        <div class="kc-sub">STREAMER-LUPE <span class="faint" style="font-size:10px;letter-spacing:0">Digest · Journal · Wachstum · Priorität</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <input id="in5_lupe_user" type="text" placeholder="streamer" style="flex:1;min-width:180px">
+          <button class="btn cyan" onclick="in5Lupe()">Analysieren</button>
+        </div>
+        <div id="in5_lupe_out" style="margin-bottom:20px"></div>
+
+        <div class="kc-sub">VERGLEICH <span class="faint" style="font-size:10px;letter-spacing:0">zwei Streamer nebeneinander</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <input id="in5_cmp_a" type="text" placeholder="streamer A" style="flex:1;min-width:130px">
+          <input id="in5_cmp_b" type="text" placeholder="streamer B" style="flex:1;min-width:130px">
+          <button class="btn" onclick="in5Compare()">Vergleichen</button>
+        </div>
+        <div id="in5_cmp_out" style="margin-bottom:20px"></div>
+
+        <div class="kc-sub">LIVE-BULK-CHECK <span class="faint" style="font-size:10px;letter-spacing:0">max. 20 auf einmal</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px">
+          <textarea id="in5_bulk_text" placeholder="@user1 @user2 user3 …" rows="2" style="flex:1;min-width:220px"></textarea>
+          <button class="btn" onclick="in5BulkLookup()">Prüfen</button>
+        </div>
+        <div id="in5_bulk_out"></div>
+      </div>
+    </div>
+
+  </div>
+  </section>
+  <section class="ls-bereich" id="ls_b_einstellungen" data-bereich="einstellungen" aria-labelledby="ls_bk_einstellungen">
+    <div class="ls-bereich-kopf" id="ls_bkopf_einstellungen" data-lage="unbekannt"><span class="ls-nr">08</span><h2 id="ls_bk_einstellungen" data-tabname="einstellungen"></h2><span class="ls-bk-linie" aria-hidden="true"></span><span class="ls-bk-satz" id="ls_bs_einstellungen"></span></div>
+    <div class="ls-tafel ls-feld" id="ls_t_einstellungen" data-tab="einstellungen" data-lage="unbekannt" role="group">
+      <div class="ls-t-kopf"><span class="ls-nr">08</span><span class="ls-name" data-tabname="einstellungen"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_einstellungen">–</span></div>
+      <div class="ls-t-vis" id="ls_v_einstellungen" aria-hidden="true"></div>
+      <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_einstellungen">wird geladen …</span></div>
+    </div>
+  <!-- v4.2-W145: Einstellungen aus der Datenbank, im Deck setzbar (nc/einstellungen.py). -->
+  <div class="view" id="view-einstellungen">
+    <div class="panel mb">
+      <div class="head"><h3 id="es_titel">▚ Einstellungen</h3><span class="tag" id="es_tag">Deck › .env › Vorgabe</span>
+        <div class="spacer"></div>
+        <button class="btn sm" onclick="einstLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" id="es_erkl" style="font-size:12px;line-height:1.6;margin-bottom:10px"></div>
+        <div id="es_lage" class="faint" style="font-size:12px;margin-bottom:10px">…</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+          <input class="field" id="es_suche" type="search" oninput="einstZeigen()" style="flex:1;min-width:200px" aria-label="Suche">
+          <select class="field" id="es_gruppe" onchange="einstZeigen()" aria-label="Gruppe"></select>
+          <select class="field" id="es_quelle" onchange="einstZeigen()" aria-label="Quelle"></select>
+          <button class="btn" type="button" id="es_uebernehmen" onclick="einstUebernehmen()"></button>
+          <button class="btn" type="button" id="es_neustart" hidden onclick="updRestart()"></button>
+        </div>
+        <div id="es_liste"></div>
+      </div>
+    </div>
+  </div>
+  </section>
+  <section class="ls-bereich" id="ls_b_mcp" data-bereich="mcp" aria-labelledby="ls_bk_mcp">
+    <div class="ls-bereich-kopf" id="ls_bkopf_mcp" data-lage="unbekannt"><span class="ls-nr">09</span><h2 id="ls_bk_mcp" data-tabname="mcp"></h2><span class="ls-bk-linie" aria-hidden="true"></span><span class="ls-bk-satz" id="ls_bs_mcp"></span></div>
+    <div class="ls-tafel ls-feld" id="ls_t_mcp" data-tab="mcp" data-lage="unbekannt" role="group">
+      <div class="ls-t-kopf"><span class="ls-nr">09</span><span class="ls-name" data-tabname="mcp"></span><span class="ls-kennung" data-i18n-skip></span><span class="ls-wert" id="ls_w_mcp">–</span></div>
+      <div class="ls-t-vis" id="ls_v_mcp" aria-hidden="true"></div>
+      <div class="ls-t-fuss"><i class="ls-pkt"></i><span class="ls-satz" id="ls_s_mcp">wird geladen …</span></div>
+    </div>
+  <!-- v5.6-W198: MCP-Server verwalten. Die Liste haelt der Bot (/api/mcp/server);
+       die Chat-Oberflaeche von llama-server (--webui llamacpp) fuehrt ihre
+       eigene im Browser. Der Inhalt entsteht in mcpLaden(), hier stehen nur
+       die Rahmen. Das Formular schickt ein Token nur, wenn eines eingetippt
+       ist — leer heisst beim Bearbeiten „unveraendert", nicht „loeschen". -->
+  <div class="view" id="view-mcp">
+    <div class="panel mb" id="pnl_mcp_webui">
+      <div class="head"><h3>▚ llama-Oberfläche</h3><span class="tag" id="mcp_webui_tag">…</span>
+        <div class="spacer"></div>
+        <button class="btn sm" type="button" onclick="mcpLaden()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div id="mcp_webui" class="skel" aria-busy="true"><i></i><i></i><i></i></div>
+      </div>
+    </div>
+    <div class="panel mb" id="pnl_mcp_server">
+      <div class="head"><h3>▚ MCP-Server</h3><span class="tag" id="mcp_tag">…</span>
+        <div class="spacer"></div>
+        <button class="btn sm" type="button" onclick="mcpNeu(true)">＋ Server anlegen</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:12px;line-height:1.6;margin-bottom:10px">Server, die der Bot kennt und prüfen kann. Ein Test fragt den Server nach Protokoll, Namen und Werkzeugen. Die llama-Oberfläche führt eine eigene Liste im Browser — diese hier lässt sich als Datei sichern.</div>
+        <div id="mcp_liste" class="skel" aria-busy="true"><i></i><i></i><i></i></div>
+        <div class="btnrow mt">
+          <button class="btn sm" type="button" onclick="mcpExport(false)">⬇ Export (ohne Token)</button>
+          <button class="btn sm danger" type="button" onclick="mcpExport(true)">⬇ Export mit Token</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel mb" id="pnl_mcp_form">
+      <div class="head"><h3 id="mcp_f_titel">▚ Server anlegen</h3></div>
+      <div class="body">
+        <form id="mcp_form" onsubmit="mcpSpeichern(event)" autocomplete="off" novalidate>
+          <input type="hidden" id="mcp_f_id" value="">
+          <div class="mcp-raster">
+            <label class="mcp-feld"><span>Name</span><input class="field" id="mcp_f_name" type="text" maxlength="120" spellcheck="false"></label>
+            <label class="mcp-feld"><span>Adresse</span><input class="field" id="mcp_f_url" type="text" inputmode="url" spellcheck="false" placeholder="http://127.0.0.1:3000/mcp"></label>
+            <label class="mcp-feld"><span>Token</span><input class="field" id="mcp_f_token" type="password" autocomplete="new-password" spellcheck="false"></label>
+            <label class="mcp-feld"><span>Notiz</span><input class="field" id="mcp_f_notiz" type="text" maxlength="300"></label>
+          </div>
+          <div class="btnrow mt">
+            <label class="chk"><input type="checkbox" id="mcp_f_aktiv" checked> aktiv</label>
+            <label class="chk"><input type="checkbox" id="mcp_f_token_weg" onchange="mcpTokenWeg()" disabled> Token entfernen</label>
+          </div>
+          <div class="btnrow mt">
+            <button class="btn" type="submit" id="mcp_f_speichern">Speichern</button>
+            <button class="btn" type="button" onclick="mcpNeu(false)">Abbrechen</button>
+          </div>
+          <div id="mcp_f_msg" role="status" style="margin-top:8px;font-size:12px"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  </section>
 
   <div class="footer">
     <!-- v4.2: Version und Build kommen aus /api/version, nicht aus dieser
@@ -4454,7 +4528,7 @@ function sseStart(){
     const sev=m.severity||'info';
     // F99: Chat-Nachrichten aktualisieren das Studio-Panel SOFORT (kein 8s-Warten)
     if((m.kind||'')==='chat.msg'){
-      if(CURRENT_VIEW==='restream' && typeof slLoad==='function' && !document.hidden) slLoad();
+      if(ncSicht('restream') && typeof slLoad==='function') slLoad();
       return;   // kein Toast/Notification pro Chat-Zeile
     }
     // F99: jedes Event landet im Benachrichtigungs-Center (Historie)
@@ -4583,53 +4657,84 @@ async function loadFooterVersion(){
 }
 loadFooterVersion();
 
-/* ============ TABS ============ */
-let CURRENT_VIEW='restream';
+/* ============ TABS → SPRUNGMARKEN (v5.10-W208) ============
+   Alle Ansichten stehen auf EINER Seite (Bereiche ls_b_<tab>). Ein Tab
+   springt zu seinem Bereich; welcher Tab leuchtet, folgt dem Scrollen.
+   CURRENT_VIEW ist der Bereich, der gerade oben im Blick ist — ob ein
+   Bereich sichtbar ist (und seine Poller laufen duerfen), sagt ncSicht(v):
+   mehrere Bereiche koennen zugleich sichtbar sein. */
+let CURRENT_VIEW='overview';
 const VIEW_LOADERS={};   // view -> async fn
+var _LS_SICHT={};        // Bereich -> im Sichtfeld (mit Vorlauf)
+var _LS_GELADEN={};      // Bereich -> Lader schon gelaufen
+function ncSicht(v){ return !!_LS_SICHT[v] && !document.hidden; }
+function ncBereichEl(v){ return document.getElementById(v==='overview'?'view-overview':'ls_b_'+v); }
+/* Ein Bereich laedt beim ersten Naehern — nicht alle zehn beim Seitenaufruf.
+   Laeuft erst nach DOMContentLoaded: einige Lader werden in spaeteren
+   Script-Bloecken eingetragen (W115/W198 brauchten dafuer je einen Anstoss). */
+function ncBereichLaden(v){
+  if(_LS_GELADEN[v]||!VIEW_LOADERS[v]) return;
+  _LS_GELADEN[v]=true;
+  try{ VIEW_LOADERS[v](); }catch(e){ console.error('Bereich '+v+':', e); }
+}
+function ncTabMarkieren(v){
+  $$('.tab').forEach(t=>t.classList.toggle('active', t.dataset.view===v));
+  // .view.active bleibt die „aktuelle Ansicht" fuer den Sammel-Klappschalter.
+  $$('.view').forEach(view=>view.classList.toggle('active', view.id==='view-'+v));
+  CURRENT_VIEW=v;
+}
+/* Springen ohne weiches Scrollen: unterwegs naeherten sich Bereiche, luden
+   und wuchsen — der Sprung zu „System" landete gemessen bei „Streams". Das
+   Ziel wird deshalb kurz nachgefuehrt, solange der Nutzer nicht selbst
+   scrollt (dann hat er das Ruder). */
+function ncSpringen(el){
+  var n=0, manuell=false, halt=function(){ manuell=true; };
+  ['wheel','touchstart','keydown'].forEach(function(t){ window.addEventListener(t, halt, {once:true, passive:true}); });
+  (function nachfuehren(){
+    if(manuell) return;
+    var abw=el.getBoundingClientRect().top-parseFloat(getComputedStyle(el).scrollMarginTop||'0');
+    if(Math.abs(abw)>8) el.scrollIntoView({behavior:'auto', block:'start'});
+    if(++n<7) setTimeout(nachfuehren, n<3?250:600);
+  })();
+}
 $$('.tab').forEach(tab=>{
   tab.addEventListener('click', ()=>{
-    const v=tab.dataset.view;
-    $$('.tab').forEach(t=>t.classList.toggle('active', t===tab));
-    $$('.view').forEach(view=>view.classList.toggle('active', view.id==='view-'+v));
-    CURRENT_VIEW=v;
-    if(VIEW_LOADERS[v]) VIEW_LOADERS[v]();
+    const v=tab.dataset.view, el=ncBereichEl(v);
+    ncTabMarkieren(v); ncBereichLaden(v);
+    if(el) ncSpringen(el);
     // v4.0-W53: URL-Hash spiegeln → Deep-Links (/#brain) + PWA-Shortcuts steuerbar,
     // ohne History-Spam (replaceState) und ohne hashchange-Schleife.
     try{ if(location.hash.slice(1)!==v) history.replaceState(null,'','#'+v); }catch(e){}
-    // VERBESSERUNG: letzten Tab in localStorage speichern → nach Reload wiederherstellen
-    try{ localStorage.setItem('nc_last_tab', v); }catch(e){}
-    // VERBESSERUNG: aktiven Tab auf Mobile ins Sichtfeld scrollen
     tab.scrollIntoView({behavior:'smooth', block:'nearest', inline:'center'});
   });
 });
 // v4.0-W53: Deep-Link/Shortcut-Routing. Ein Hash in der URL (z.B. /#brain aus
-// dem PWA-Shortcut) hat Vorrang vor dem gespeicherten Tab. hashchange schaltet
-// live um (Zurück-Button/erneuter Shortcut-Tap).
+// dem PWA-Shortcut) springt zum Bereich; hashchange ebenso.
 function _viewFromHash(){
   var v=(location.hash||'').slice(1);
   var t=$$('.tab').find(function(x){return x.dataset.view===v;});
   return t||null;
 }
 window.addEventListener('hashchange', function(){ var t=_viewFromHash(); if(t) t.click(); });
-// VERBESSERUNG: gespeicherten Tab beim Start wiederherstellen
-(()=>{
-  try{
-    const byHash=_viewFromHash();
-    if(byHash){ byHash.click(); return; }         // Deep-Link/Shortcut hat Vorrang
-    const saved = localStorage.getItem('nc_last_tab');
-    if(saved){
-      const t = $$('.tab').find(t=>t.dataset.view===saved);
-      if(t){ t.click(); return; }
-    }
-  }catch(e){}
-  /* BUGFIX B131: hier stand data-view==='surveil'. Diese Ansicht wurde
-     entfernt, der Selektor traf ins Leere — war localStorage leer (erster
-     Besuch, privates Fenster, geleerter Speicher), wurde KEIN Tab aktiviert
-     und kein VIEW_LOADER lief. Das Dashboard startete leer. Jetzt der erste
-     tatsaechlich vorhandene Tab. */
-  const def = $$('.tab').find(t=>t.dataset.view==='overview') || $$('.tab').find(t=>t.dataset.view==='restream') || $$('.tab')[0];
-  if(def) def.click();
-})();
+document.addEventListener('DOMContentLoaded', function(){
+  const start=_viewFromHash() || $$('.tab').find(t=>t.dataset.view==='overview');
+  ncTabMarkieren(start?start.dataset.view:'overview');
+  if(!window.IntersectionObserver){
+    // Ohne Beobachter: alles gilt als sichtbar, alles laedt (alte Browser).
+    $$('[data-bereich]').forEach(function(el){ var v=el.getAttribute('data-bereich'); _LS_SICHT[v]=true; ncBereichLaden(v); });
+    return;
+  }
+  var nah=new IntersectionObserver(function(es){
+    es.forEach(function(e){ var v=e.target.getAttribute('data-bereich');
+      _LS_SICHT[v]=e.isIntersecting; if(e.isIntersecting) ncBereichLaden(v); });
+  }, {rootMargin:'400px 0px 400px 0px'});
+  var oben=new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting) ncTabMarkieren(e.target.getAttribute('data-bereich')); });
+  }, {rootMargin:'-25% 0px -70% 0px'});
+  $$('[data-bereich]').forEach(function(el){ nah.observe(el); oben.observe(el); });
+  // Deep-Link: erst springen, wenn das Raster steht.
+  if(start&&start.dataset.view!=='overview') setTimeout(function(){ start.click(); }, 400);
+});
 
 /* v37: AI-BRAIN-Tab — Iframe erst beim ersten Öffnen laden (spart die
    ~10 /api/brain-Polls, solange der Tab nie besucht wird). */
@@ -5126,14 +5231,14 @@ var ncBrainNet=(function(){
     x.fillText(ncre+' Creator · '+tri+' Fakten · '+keys.length+' Organe',core.x,H-8);
   }
   function draw(){
-    if(CURRENT_VIEW!=='brain'||document.hidden){raf=null;return;}
+    if(!ncSicht('brain')){raf=null;return;}
     if(cv&&ctx){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);scene(ctx);}
     if(!reduce&&(alpha>0.02||flashOn())){if(alpha>0.02){sim();alpha*=0.9;}raf=requestAnimationFrame(draw);}else{raf=null;}
   }
   function paintStatic(){if(cv&&ctx){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);scene(ctx);}}
   function reheat(){
     if(reduce){alpha=1;for(var i=0;i<180;i++){sim();alpha*=0.96;}paintStatic();return;}
-    alpha=1;if(!raf&&cv&&CURRENT_VIEW==='brain')raf=requestAnimationFrame(draw);
+    alpha=1;if(!raf&&cv&&ncSicht('brain'))raf=requestAnimationFrame(draw);
   }
   function snapshotInto(t){
     if(!t||!W) return;
@@ -5164,10 +5269,10 @@ var ncBrainNet=(function(){
     ctx=cv.getContext('2d');fit();cv.style.cursor='pointer';cv.addEventListener('click',tap);
     loadAll().then(function(){reheat();});
     if(!poll) poll=setInterval(function(){
-      if(CURRENT_VIEW==='brain'&&!document.hidden) loadAll().then(function(changed){if(changed)reheat();else paintStatic();});
+      if(ncSicht('brain')) loadAll().then(function(changed){if(changed)reheat();else paintStatic();});
     },7000);
   }
-  window.addEventListener('resize',function(){if(cv&&CURRENT_VIEW==='brain'){fit();reheat();}});
+  window.addEventListener('resize',function(){if(cv&&ncSicht('brain')){fit();reheat();}});
   return {start:start,snapshotInto:snapshotInto};
 })();
 
@@ -5215,7 +5320,7 @@ var ncBrainNet3D=(function(){
     return {x:W/2+panx+x*R*persp, y:H/2+pany+y2*R*persp, z:z2, s:persp};
   }
   function draw(){
-    if(CURRENT_VIEW!=='brain'||document.hidden){raf=null;return;}
+    if(!ncSicht('brain')){raf=null;return;}
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
     if(!drag && Object.keys(ptrs).length===0){ idle++; if(spin&&idle>40) yaw+=spin; }
     var pts=nodes.map(function(n){var q=proj(n);q.n=n;return q;});
@@ -5255,7 +5360,7 @@ var ncBrainNet3D=(function(){
     ctx.fillText(creators+' Creator · '+tri+' Fakten · '+nodes.length+' Knoten · ziehen/drehen · Rad = Zoom',W/2,H-8);
     raf=requestAnimationFrame(draw);
   }
-  function kick(){if(!raf&&cv&&CURRENT_VIEW==='brain')raf=requestAnimationFrame(draw);}
+  function kick(){if(!raf&&cv&&ncSicht('brain'))raf=requestAnimationFrame(draw);}
   // ---- Interaktion (Maus + Touch, ein Pfad über Pointer-Events) ----
   function pv(){var a=[];for(var k in ptrs)a.push(ptrs[k]);return a;}
   function down(e){idle=0;cv.setPointerCapture&&cv.setPointerCapture(e.pointerId);
@@ -5294,7 +5399,7 @@ var ncBrainNet3D=(function(){
     ctx=cv.getContext('2d');fit();bind();
     loadAll().then(function(){kick();});
     if(!poll)poll=setInterval(function(){
-      if(CURRENT_VIEW==='brain'&&!document.hidden)loadAll().then(function(){kick();});
+      if(ncSicht('brain'))loadAll().then(function(){kick();});
     },7000);
   }
   function snapshotInto(t){
@@ -5314,7 +5419,7 @@ var ncBrainNet3D=(function(){
       ctx.beginPath();ctx.arc(q.x,q.y,r,0,6.2832);ctx.fillStyle='rgba(4,6,10,0.85)';ctx.fill();
       ctx.strokeStyle=subj?C('--neon'):C('--cyan');ctx.lineWidth=1.4;ctx.stroke();});
   }
-  window.addEventListener('resize',function(){if(cv&&CURRENT_VIEW==='brain'){fit();kick();}});
+  window.addEventListener('resize',function(){if(cv&&ncSicht('brain')){fit();kick();}});
   return {start:start,snapshotInto:snapshotInto};
 })();
 /* v4.0-W71: ncDefenseMap (2D-SVG-Karte) entfernt — seit W58 ersetzt durch
@@ -5375,7 +5480,7 @@ var ncDefenseGlobe=(function(){
     x.stroke();
   }
   function draw(){
-    if(CURRENT_VIEW!=='betrieb'&&CURRENT_VIEW!=='defense'&&!host.offsetParent){ /* Tab-agnostisch, aber pausiert wenn unsichtbar */ }
+    if(!ncSicht('betrieb')&&!host.offsetParent){ /* Tab-agnostisch, aber pausiert wenn unsichtbar */ }
     if(document.hidden||!host.offsetParent){raf=null;return;}
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
     if(!drag&&Object.keys(ptrs).length===0){idle++;if(spin&&idle>40)yaw+=spin;}
@@ -7059,7 +7164,7 @@ VIEW_LOADERS.system = async function(){
   loadResources(); loadAudit(); loadPfHistory(); loadNotify(); loadScheduler(); loadBackup();
   loadListeners(); loadLlmLatency(); loadPreflightStats();
   labLoadVersion(); labLoadDbStats(); labLoadDisk(); dbxLoad(); discLoad(); driftLoad(); twoauthLoad(); ytoauthLoad(); donLoad(); commLoad();
-  if(!window._pfTimer) window._pfTimer=setInterval(()=>{ if(CURRENT_VIEW==='system' && !document.hidden){ loadPreflight(); loadResources(); loadListeners(); loadLlmLatency(); loadPreflightStats(); } }, 60000);
+  if(!window._pfTimer) window._pfTimer=setInterval(()=>{ if(ncSicht('system')){ loadPreflight(); loadResources(); loadListeners(); loadLlmLatency(); loadPreflightStats(); } }, 60000);
 };
 /* v37 Welle 1: Ressourcen-Monitor (CPU-Last / RAM / Disk) */
 async function loadResources(){
@@ -7420,7 +7525,6 @@ VIEW_LOADERS['einstellungen']=einstLoad;
    Script-Block, in dem dieser Lader noch nicht eingetragen ist — war
    „Einstellungen“ der letzte Reiter, blieb die Ansicht nach dem Neuladen leer
    (im Browser gemessen: 0 statt 6420 Zeichen). Derselbe Anstoss wie beim MCP-Reiter. */
-try{ if(CURRENT_VIEW==='einstellungen') einstLoad(); }catch(e){}
 T('Einstellungen');   /* der Reiter steht als HTML da — so kommt das Wort in den Katalog */
 
 /* v5.6-W198: MCP-Server verwalten. Der Betreiber: „Ich hätte gern den Tab im
@@ -7698,7 +7802,6 @@ VIEW_LOADERS['mcp']=mcpLaden;
 /* Die Tab-Wiederherstellung beim Start klickt in einem FRUEHEREN Script-Block
    — dort ist dieser Loader noch nicht eingetragen (wie W115 fuer die
    Uebersicht). Ohne den Anstoss bliebe die Ansicht nach dem Neuladen leer. */
-try{ if(CURRENT_VIEW==='mcp') mcpLaden(); }catch(e){}
 
 /* v4.2-W144: liest Prometheus den Bot wirklich, und ist Grafana da? Die
    Gruende kommen uebersetzt vom Server (nc/beobachtungslage.py). */
@@ -8944,7 +9047,7 @@ VIEW_LOADERS.restream = async function(){
     if(!window._rsAutoRefresh){
       // F99: SSE treibt Chat + Events live → Polling nur noch als Fallback für
       // Werte ohne Push (Systemlast, Timeline). 8s → 20s spart ~60% Requests.
-      window._rsAutoRefresh=setInterval(()=>{ if(CURRENT_VIEW==='restream' && !document.hidden){ rsLoad(); kmLoad(); slLoad(); loadResilience(); rsDeck(); loadTunnel(); loadLiveNow(); loadTimeline(); loadTranscript(); chLoad(); } }, 20000);   /* V37-MP: Kanal-Status mit auffrischen (Server cached 20s) */
+      window._rsAutoRefresh=setInterval(()=>{ if(ncSicht('restream')){ rsLoad(); kmLoad(); slLoad(); loadResilience(); rsDeck(); loadTunnel(); loadLiveNow(); loadTimeline(); loadTranscript(); chLoad(); } }, 20000);   /* V37-MP: Kanal-Status mit auffrischen (Server cached 20s) */
     }
   }
   rsLoad(); kmLoad(); slLoad(); loadResilience(); kcLoad(); kcCatsLoad(); voiceLoad(); ctxLoad(); rsDeck(); loadTunnel(); loadLiveNow(); loadTimeline(); loadTranscript();
@@ -10301,7 +10404,7 @@ pulsIntervall(pollHeader, 5000);
 // refresh active view every 8s for live-ish data
 setInterval(()=>{
   if(document.hidden) return;
-  if(CURRENT_VIEW==='system'){ loadSystem(); loadEgress(); loadLogtail(); loadErrors(); }
+  if(ncSicht('system')){ loadSystem(); loadEgress(); loadLogtail(); loadErrors(); }
 }, 8000);
 
 console.log('%cNIGHTCRAWLER v3.7 ▚ modules online','color:#00ff9c;font-weight:bold;font-size:14px');
@@ -10457,7 +10560,7 @@ async function avatarPoll(){
     }
   }catch(e){}
 }
-setInterval(()=>{ if(!document.hidden && CURRENT_VIEW==='restream') avatarPoll(); },700);
+setInterval(()=>{ if(ncSicht('restream')) avatarPoll(); },700);
 requestAnimationFrame(avatarFrame);
 </script>
 <script>
@@ -10532,7 +10635,7 @@ VIEW_LOADERS.discord = async function(){
       </div>`;
     root.dataset.built='1';
     /* F82: Auto-Refresh im Muster der anderen Tabs (nur wenn Tab aktiv + sichtbar) */
-    if(!window._dcAutoRefresh) window._dcAutoRefresh=setInterval(()=>{ if(CURRENT_VIEW==='discord' && !document.hidden){ loadDiscord(); loadCommunity(); } }, 15000);
+    if(!window._dcAutoRefresh) window._dcAutoRefresh=setInterval(()=>{ if(ncSicht('discord')){ loadDiscord(); loadCommunity(); } }, 15000);
   }
   loadDiscord(); loadCommunity(); loadClipWeek();
 };
@@ -10713,7 +10816,7 @@ async function buildAzraelInto(root){
           <div class="body"><div id="azr_recent" class="skel" aria-busy="true"><i></i><i></i><i></i></div></div></div>
       </div>`;
     root.dataset.built='1';
-    if(!window._azrTimer) window._azrTimer=setInterval(()=>{ if(CURRENT_VIEW==='brain' && !document.hidden) loadAzrael(); }, 10000);
+    if(!window._azrTimer) window._azrTimer=setInterval(()=>{ if(ncSicht('brain')) loadAzrael(); }, 10000);
   }
   loadAzrael(); loadAiConfig(); loadAutomation(); loadMemories(); loadAgents();
 };
@@ -11025,7 +11128,7 @@ VIEW_LOADERS.wall = async function(){
         <div class="body"><div class="faint" id="arc_disk" style="font-size:10.5px;margin-bottom:8px">—</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><label class="btn sm" style="cursor:pointer;margin:0">⬆ Upload<input type="file" id="arc_up_file" style="display:none" onchange="arcUpload()"></label><input class="field" id="arc_up_title" placeholder="Titel (optional)" style="width:150px"><button class="btn sm" onclick="arcCheck()">Integritäts-Check</button><button class="btn sm" onclick="arcScan()">🔍 Ordner prüfen</button><button class="btn sm" onclick="arcDedup()">⊟ Dubletten</button><button class="btn sm" onclick="arcBulkDelete()">🗑 Auswahl löschen</button><span class="faint" id="arc_mgmt_out" style="font-size:10.5px"></span></div><div id="arc_list" class="skel" aria-busy="true"><i></i><i></i><i></i></div><div id="arc_more" style="text-align:center;margin-top:10px"></div></div>
       </div>`;
     root.dataset.built='1';
-    if(!window._wallTimer) window._wallTimer=setInterval(()=>{ if(CURRENT_VIEW==='wall' && !document.hidden){ loadWall(); loadSurveil(); } }, 8000);
+    if(!window._wallTimer) window._wallTimer=setInterval(()=>{ if(ncSicht('wall')){ loadWall(); loadSurveil(); } }, 8000);
   }
   loadWall(); loadSurveil(); loadArchive(); loadRecTools(); loadCaptures();
   try{ trkGroupsFill(); }catch(e){}
@@ -13649,12 +13752,12 @@ var ncLagebild=(function(){
     strahl(t);koerper(t);ziele(t);waechter(now);
   }
   function takt(now){
-    if(CURRENT_VIEW!==OWNVIEW||document.hidden||!cv||reduce){raf=null;return;}
+    if(!ncSicht(OWNVIEW)||!cv||reduce){raf=null;return;}
     var dt=last?Math.min(0.05,(now-last)/1000):0.016;last=now;
     schritt(dt,now/1000);bild(now);raf=requestAnimationFrame(takt);
   }
   function kick(){if(reduce){if(cv)bild(performance.now());return;}
-    if(!raf&&cv&&CURRENT_VIEW===OWNVIEW&&!document.hidden){last=0;raf=requestAnimationFrame(takt);}}
+    if(!raf&&cv&&ncSicht(OWNVIEW)){last=0;raf=requestAnimationFrame(takt);}}
   /* ── DOM: Statusleiste und Wächter-Tafel (textContent, nie innerHTML) ── */
   function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
   /* v5.1-W186: Betriebsteile. Lage und Grund entscheidet nc/lagebild.py
@@ -13745,7 +13848,7 @@ var ncLagebild=(function(){
     if(gebunden)return;gebunden=true;
     cv.addEventListener('pointermove',function(e){var r=cv.getBoundingClientRect();maus={x:e.clientX-r.left,y:e.clientY-r.top};if(reduce)bild(performance.now());});
     cv.addEventListener('pointerleave',function(){maus=null;if(reduce)bild(performance.now());});
-    window.addEventListener('resize',function(){if(cv&&CURRENT_VIEW===OWNVIEW){fit();setze(daten);}});
+    window.addEventListener('resize',function(){if(cv&&ncSicht(OWNVIEW)){fit();setze(daten);}});
     document.addEventListener('visibilitychange',function(){if(!document.hidden){laden();kick();}});
     if(mq&&mq.addEventListener)mq.addEventListener('change',function(e){reduce=e.matches;setze(daten);});
   }
@@ -13756,8 +13859,8 @@ var ncLagebild=(function(){
     if(poll){clearInterval(poll);poll=null;}
     if(uhr){clearInterval(uhr);uhr=null;}
     /* Echtzeit: alle 2 s neue Lage, jede Sekunde Countdown und Ringe. */
-    laden();poll=setInterval(function(){if(CURRENT_VIEW===OWNVIEW&&!document.hidden)laden();},2000);
-    uhr=setInterval(function(){if(CURRENT_VIEW===OWNVIEW&&!document.hidden){tafel(false);if(reduce)bild(performance.now());}},1000);
+    laden();poll=setInterval(function(){if(ncSicht(OWNVIEW))laden();},2000);
+    uhr=setInterval(function(){if(ncSicht(OWNVIEW)){tafel(false);if(reduce)bild(performance.now());}},1000);
     kick();
   }
   return {start:start,reload:laden,_setze:setze,_AG:AG};
@@ -13978,7 +14081,7 @@ var ncRecBars3D=(function(){
     if(tag)tag.textContent=((d&&d.total)||0)+T(' Aufnahmen · ')+arr.length+T(' Tage');
   }
   function draw(){
-    if(CURRENT_VIEW!==OWNVIEW||document.hidden||!cv){raf=null;return;}
+    if(!ncSicht(OWNVIEW)||!cv){raf=null;return;}
     if(appear<1)appear=Math.min(1,appear+0.05);
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
     if(!drag&&Object.keys(ptrs).length===0){idle++;if(spin&&idle>40)yaw+=spin;}
@@ -14009,7 +14112,7 @@ var ncRecBars3D=(function(){
     ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.fillText('Aufnahmen/Tag · ziehen = drehen',10,H-8);
     raf=requestAnimationFrame(draw);
   }
-  function kick(){if(!raf&&cv&&CURRENT_VIEW===OWNVIEW)raf=requestAnimationFrame(draw);}
+  function kick(){if(!raf&&cv&&ncSicht(OWNVIEW))raf=requestAnimationFrame(draw);}
   function pv(){var a=[];for(var k in ptrs)a.push(ptrs[k]);return a;}
   function down(e){idle=0;cv.setPointerCapture&&cv.setPointerCapture(e.pointerId);ptrs[e.pointerId]={x:e.clientX,y:e.clientY};var v=pv();
     if(v.length===1)drag={x:e.clientX,y:e.clientY,pan:(e.button===2||e.shiftKey)};
@@ -14024,10 +14127,10 @@ var ncRecBars3D=(function(){
     cv.addEventListener('pointerdown',down);cv.addEventListener('pointermove',move);cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
     cv.addEventListener('wheel',wheel,{passive:false});cv.addEventListener('contextmenu',function(e){e.preventDefault();});
     cv.addEventListener('dblclick',function(){yaw=0.62;pitch=-0.5;zoom=1;panx=0;pany=0;appear=0;kick();});
-    window.addEventListener('resize',function(){if(cv&&CURRENT_VIEW===OWNVIEW){fit();kick();}});}
+    window.addEventListener('resize',function(){if(cv&&ncSicht(OWNVIEW)){fit();kick();}});}
   function start(canvasId,viewName){OWNVIEW=viewName||'overview';cv=document.getElementById(canvasId||'rb_canvas');if(!cv)return;
     ctx=cv.getContext('2d');fit();bind();appear=0;load();
-    if(poll){clearInterval(poll);poll=null;}poll=setInterval(function(){if(CURRENT_VIEW===OWNVIEW&&!document.hidden)load();},15000);kick();}
+    if(poll){clearInterval(poll);poll=null;}poll=setInterval(function(){if(ncSicht(OWNVIEW))load();},15000);kick();}
   function load(){return apiGet('/api/recordings/daily?days=14').then(function(d){setData(d);kick();}).catch(function(){});}
   return {start:start};
 })();
@@ -14043,7 +14146,7 @@ var ncCatchGauge=(function(){
     cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';}
   function colFor(v){return v>=80?C('--neon','#00ff9c'):v>=50?C('--amber','#ffb000'):C('--red','#ff3a47');}
   function draw(){
-    if(CURRENT_VIEW!==OWNVIEW||document.hidden||!cv){raf=null;return;}
+    if(!ncSicht(OWNVIEW)||!cv){raf=null;return;}
     cur+=(target-cur)*0.08; if(Math.abs(target-cur)<0.1)cur=target;
     ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
     var cx=W/2,cy=H*0.56,R=Math.min(W,H)*0.36,tilt=0.52,i;
@@ -14069,11 +14172,11 @@ var ncCatchGauge=(function(){
     ctx.fillText(tot+' Versuche · 14 Tage',cx,cy+R*0.55);
     if(Math.abs(target-cur)>=0.1)raf=requestAnimationFrame(draw); else raf=null;
   }
-  function kick(){if(!raf&&cv&&CURRENT_VIEW===OWNVIEW)raf=requestAnimationFrame(draw);}
+  function kick(){if(!raf&&cv&&ncSicht(OWNVIEW))raf=requestAnimationFrame(draw);}
   function start(canvasId,viewName){OWNVIEW=viewName||'overview';cv=document.getElementById(canvasId||'cg_canvas');if(!cv)return;
     ctx=cv.getContext('2d');fit();cur=0;load();
-    if(poll){clearInterval(poll);poll=null;}poll=setInterval(function(){if(CURRENT_VIEW===OWNVIEW&&!document.hidden)load();},15000);
-    window.addEventListener('resize',function(){if(cv&&CURRENT_VIEW===OWNVIEW){fit();kick();}});kick();}
+    if(poll){clearInterval(poll);poll=null;}poll=setInterval(function(){if(ncSicht(OWNVIEW))load();},15000);
+    window.addEventListener('resize',function(){if(cv&&ncSicht(OWNVIEW)){fit();kick();}});kick();}
   function load(){return apiGet('/api/insights/catch-rate').then(function(d){
     if(d){target=Number(d.catch_rate||0);tot=d.total_attempts||0;
       var tag=document.getElementById('cg_tag');if(tag)tag.textContent=(d.successful||0)+'/'+(d.total_attempts||0);}
@@ -14317,12 +14420,15 @@ var ncLeitstand=(function(){
     if(v){ try{ v.innerHTML=(t.lage==='unbekannt'&&!Object.keys(t.daten||{}).length)
                  ?'<div class="ls-leer">'+esc(T('nicht geladen'))+'</div>':VIS[t.tab](t.daten||{}); }
            catch(e){ v.innerHTML='<div class="ls-leer">'+esc(T('Ansicht nicht darstellbar'))+'</div>'; } }
-    el.setAttribute('aria-label',(tabName(t.tab))+' — '+text+' — '+T('öffnen'));
+    el.setAttribute('aria-label',(tabName(t.tab))+' — '+text);
+    /* Der Kopf des Bereichs traegt dieselbe Lage und denselben Satz. */
+    var bk=$id('ls_bkopf_'+t.tab); if(bk) bk.setAttribute('data-lage',t.lage||'unbekannt');
+    var bs=$id('ls_bs_'+t.tab); if(bs) bs.textContent=text;
   }
   function kette(k){
     var ol=$id('ls_kette'); if(!ol) return;
     ol.innerHTML=(k||[]).map(function(g,i){
-      return '<li data-lage="'+esc(g.lage)+'"><span class="n">'+String(i+1).padStart(2,'0')+'</span><span class="t">'
+      return '<li data-lage="'+esc(g.lage)+'"'+(g.tab?' data-tab="'+esc(g.tab)+'" tabindex="0" role="link"':'')+'><span class="n">'+String(i+1).padStart(2,'0')+'</span><span class="t">'
         +esc(KETTE[g.name]||g.name)+'</span><span class="w">'+esc(zahl(g.wert))+'</span></li>'; }).join('');
   }
   function kopf(d){
@@ -14393,7 +14499,6 @@ var ncLeitstand=(function(){
     box.setAttribute('data-ton',m.ton);
     box.innerHTML='<div class="mk">◆ '+esc(T('Schlüsselmoment'))+' · '+esc(m.kind)+'</div><div class="mt">'+esc(m.text)+'</div>'
       +'<div class="ms">'+esc(new Date().toLocaleTimeString())+(m.tafel?' · '+esc(tabName(m.tafel)):'')+'</div>';
-    box.style.top=Math.round(((anker._kette&&anker._kette.y)||110)+34)+'px';
     box.hidden=false;
     if(m.tafel){ var el=$id('ls_t_'+m.tafel); if(el){ el.classList.remove('blitz'); void el.offsetWidth; el.classList.add('blitz');
       setTimeout(function(){ el.classList.remove('blitz'); },3400); impuls(m.tafel,m.ton); } }
@@ -14416,26 +14521,28 @@ var ncLeitstand=(function(){
     return 'rgba(140,220,255,'+a+')'; }
   function lageFarbe(l){ return {fehler:farbe['--red'],warn:farbe['--amber'],aktiv:farbe['--cyan'],taetig:farbe['--cyan'],
     ok:farbe['--neon'],ruht:farbe['--neon'],aus:farbe['--text-faint']}[l]||farbe['--text-faint']; }
+  /* Ankerpunkte in SEITEN-Koordinaten (Fenster + Scroll). Die Leinwand liegt
+     fest im Fenster; gezeichnet wird mit dem Versatz OFF = scrollY. */
+  var OFF=0;
+  function seiteY(r){ return r.top+(window.scrollY||0); }
   function ankerMessen(){
-    var ls=$id('ls'); if(!ls||!cv) return;
-    var r0=ls.getBoundingClientRect();
-    W=Math.max(1,Math.round(r0.width)); H=Math.max(1,Math.round(r0.height));
+    if(!cv) return;
+    W=Math.max(1,window.innerWidth||1); H=Math.max(1,window.innerHeight||1);
     if(cv.width!==W||cv.height!==H){ cv.width=W; cv.height=H; }
     anker={};
-    document.querySelectorAll('#ls .ls-tafel').forEach(function(el){
-      var r=el.getBoundingClientRect(); anker[el.getAttribute('data-tab')]={x:r.left-r0.left,y:r.top-r0.top,w:r.width,h:r.height};
+    document.querySelectorAll('#hauptinhalt .ls-tafel').forEach(function(el){
+      var r=el.getBoundingClientRect(); if(!r.width) return;
+      anker[el.getAttribute('data-tab')]={x:r.left,y:seiteY(r),w:r.width,h:r.height};
     });
-    var k=$id('ls_kette'); if(k){ var rk=k.getBoundingClientRect(); anker._kette={y:rk.top-r0.top+rk.height/2}; }
-    /* Hangar: rechts in der Fuge zwischen Lieferkette und erster Tafelreihe. */
-    if(k){ var rk2=k.getBoundingClientRect(); anker._hangar={x:rk2.right-r0.left-260,y:rk2.bottom-r0.top+17,w:260}; }
-    /* Fasern: in den Fugen zwischen den Tafelreihen, plus eine an der Kette. */
-    var ys={}; Object.keys(anker).forEach(function(k2){ var a=anker[k2]; if(a&&a.h) ys[Math.round(a.y-17)]=1; });
+    var k=$id('ls_kette'); if(k){ var rk=k.getBoundingClientRect(); anker._kette={y:seiteY(rk)+rk.height/2};
+      /* Hangar: rechts in der Fuge zwischen Lieferkette und Raster. */
+      anker._hangar={x:rk.right-260,y:seiteY(rk)+rk.height+17,w:260}; }
+    /* Fasern: in der Fuge ueber jedem Bereich und ueber dem Lagebild. */
+    var ys={};
+    document.querySelectorAll('#hauptinhalt .ls-bereich, #hauptinhalt .ls-lagebild').forEach(function(el){
+      var r=el.getBoundingClientRect(); if(r.height) ys[Math.round(seiteY(r)-15)]=1; });
     var reihe=Object.keys(ys).map(Number).sort(function(a,b){return a-b;});
-    var lb=document.querySelector('#ls .ls-lagebild');
-    if(lb){ var rl=lb.getBoundingClientRect(); ys[Math.round(rl.top-r0.top-17)]=1; ys[Math.round(rl.bottom-r0.top+17)]=1;
-      reihe=Object.keys(ys).map(Number).sort(function(a,b){return a-b;}); }
-    var rr=$id('ls_raster'); if(rr){ var rb=rr.getBoundingClientRect(); anker._unten=rb.bottom-r0.top; }
-    fasern=reihe.slice(0,7).map(function(y,i){ return {y:y,amp:6+(i%3)*4,frq:0.004+(i%4)*0.0012,ph:i*1.7}; });
+    fasern=reihe.map(function(y,i){ return {y:y,amp:6+(i%3)*4,frq:0.004+(i%4)*0.0012,ph:i*1.7}; });
   }
   function faserY(f,x,t){ return f.y+Math.sin(x*f.frq+f.ph+t*0.0006)*f.amp; }
   function aktivitaet(){
@@ -14455,6 +14562,7 @@ var ncLeitstand=(function(){
       seen[a.name]=1; var t=a.tafel||'_hangar'; je[t]=(je[t]||0)+1;
       var h=anker._hangar||{x:W-160,y:120};
       var d=drohnen[a.name]||(drohnen[a.name]={x:h.x+Math.random()*80,y:h.y,ph:Math.random()*6.28,name:a.name});
+      /* Seiten-Koordinaten: die Drohne bleibt an ihrer Tafel, auch beim Scrollen. */
       d.lage=a.ueberfaellig?'warn':a.lage; d.tafel=a.tafel; d.platz=je[t]-1;
     });
     Object.keys(drohnen).forEach(function(n){ var d=drohnen[n]; d.anzahl=je[d.tafel||'_hangar']||1; });
@@ -14470,7 +14578,8 @@ var ncLeitstand=(function(){
   var STATUS={taetig:T('im Einsatz'),ruht:T('bereit'),fehler:T('Fehler'),aus:T('abgeschaltet'),warn:T('überfällig')};
   function drohneMalen(d,t){
     var z=ziel(d); d.x+=(z.x-d.x)*0.035; d.y+=(z.y-d.y)*0.035;
-    var y=d.y+Math.sin(t*0.0016+d.ph)*3.5, c=lageFarbe(d.lage), aus=!d.tafel;
+    var y=d.y-OFF+Math.sin(t*0.0016+d.ph)*3.5, c=lageFarbe(d.lage), aus=!d.tafel;
+    if(y<-60||y>H+60) return;     /* ausserhalb des Fensters: nur weiterbewegen */
     ctx.save(); ctx.globalAlpha=aus?0.45:1;
     /* Schweif: drei Datenfäden, die hinter der Bewegung nachschwingen */
     ctx.strokeStyle=mitA(c,0.45); ctx.lineWidth=1;
@@ -14482,8 +14591,8 @@ var ncLeitstand=(function(){
     ctx.beginPath(); ctx.arc(d.x,y,9,t*0.004+d.ph,t*0.004+d.ph+1.4); ctx.strokeStyle=mitA(c,0.8); ctx.stroke();
     ctx.fillStyle=c; ctx.beginPath(); ctx.arc(d.x,y,1.8,0,6.283); ctx.fill();
     /* Im Einsatz: ein Taststrahl auf die Tafel */
-    if(d.lage==='taetig'&&anker[d.tafel]){ var a=anker[d.tafel];
-      ctx.beginPath(); ctx.moveTo(d.x,y+6); ctx.lineTo(a.x+a.w*0.35,a.y+2); ctx.lineTo(a.x+a.w*0.75,a.y+2); ctx.closePath();
+    if(d.lage==='taetig'&&anker[d.tafel]){ var a=anker[d.tafel], ay=a.y-OFF;
+      ctx.beginPath(); ctx.moveTo(d.x,y+6); ctx.lineTo(a.x+a.w*0.35,ay+2); ctx.lineTo(a.x+a.w*0.75,ay+2); ctx.closePath();
       ctx.fillStyle=mitA(c,0.07); ctx.fill(); }
     /* Etikett */
     /* Etikett nur, wenn es in den eigenen Platz passt — überlappende Schilder
@@ -14500,29 +14609,33 @@ var ncLeitstand=(function(){
   function impuls(tab,ton){ var a=anker[tab]; if(a) impulse.push({x:a.x+a.w/2,y:a.y+a.h/2,r:10,c:lageFarbe(ton==='gut'?'ok':ton==='fehler'?'fehler':ton==='warn'?'warn':'aktiv')}); }
   function bild(t){
     raf=null;
-    if(!bewegt()||CURRENT_VIEW!=='overview'||document.hidden||!cv){ if(ctx) ctx.clearRect(0,0,W,H); return; }
+    if(!bewegt()||document.hidden||!cv){ if(ctx) ctx.clearRect(0,0,W,H); return; }
     if(t-letztes<BILD_MS){ raf=requestAnimationFrame(bild); return; }
-    letztes=t; ctx.clearRect(0,0,W,H);
+    letztes=t; ctx.clearRect(0,0,W,H); OFF=window.scrollY||0;
     /* Fasern */
-    fasern.forEach(function(f,i){ ctx.beginPath(); for(var x=0;x<=W;x+=24){ var y=faserY(f,x,t); x?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+    fasern.forEach(function(f,i){ if(f.y-OFF<-40||f.y-OFF>H+40) return;
+      ctx.beginPath(); for(var x=0;x<=W;x+=24){ var y=faserY(f,x,t)-OFF; x?ctx.lineTo(x,y):ctx.moveTo(x,y); }
       ctx.strokeStyle=mitA(i%2?farbe['--magenta']:farbe['--cyan'],0.10); ctx.lineWidth=1; ctx.stroke(); });
     /* Lichtteilchen, schneller und dichter mit der Last */
     var tempo=0.7+aktivitaet()*1.6; teilchenFuellen();
     teilchen.forEach(function(p){ var f=fasern[p.f]; if(!f) return; p.x+=p.v*tempo; if(p.x>W+p.l) p.x=-p.l;
-      var y=faserY(f,p.x,t), y0=faserY(f,p.x-p.l,t), g=ctx.createLinearGradient(p.x-p.l,y0,p.x,y);
+      if(f.y-OFF<-40||f.y-OFF>H+40) return;
+      var y=faserY(f,p.x,t)-OFF, y0=faserY(f,p.x-p.l,t)-OFF, g=ctx.createLinearGradient(p.x-p.l,y0,p.x,y);
       g.addColorStop(0,mitA(farbe[p.c],0)); g.addColorStop(1,mitA(farbe[p.c],0.85));
       ctx.strokeStyle=g; ctx.lineWidth=1.6; ctx.beginPath(); ctx.moveTo(p.x-p.l,y0); ctx.lineTo(p.x,y); ctx.stroke(); });
     /* Impulse der Schlüsselmomente */
     impulse=impulse.filter(function(m){ m.r+=3; var a=Math.max(0,1-m.r/180); if(a<=0) return false;
-      ctx.beginPath(); ctx.arc(m.x,m.y,m.r,0,6.283); ctx.strokeStyle=mitA(m.c,a*0.6); ctx.lineWidth=2; ctx.stroke(); return true; });
+      ctx.beginPath(); ctx.arc(m.x,m.y-OFF,m.r,0,6.283); ctx.strokeStyle=mitA(m.c,a*0.6); ctx.lineWidth=2; ctx.stroke(); return true; });
     Object.keys(drohnen).forEach(function(n){ drohneMalen(drohnen[n],t); });
     raf=requestAnimationFrame(bild);
   }
-  function anstossen(){ if(!raf&&bewegt()&&cv&&CURRENT_VIEW==='overview'&&!document.hidden) raf=requestAnimationFrame(bild); }
+  function anstossen(){ if(!raf&&bewegt()&&cv&&!document.hidden) raf=requestAnimationFrame(bild); }
 
   /* ── Ablauf ────────────────────────────────────────────────────────── */
   async function laden(){
-    if(CURRENT_VIEW!=='overview'||document.hidden) return;
+    /* Die Tafeln stehen in allen Bereichen — der Abruf laeuft, solange die
+       Seite sichtbar ist, nicht nur, wenn die Übersicht oben ist. */
+    if(document.hidden) return;
     runde++;
     try{
       var d=await apiGet('/api/leitstand');
@@ -14537,12 +14650,13 @@ var ncLeitstand=(function(){
       }
     }catch(e){ var u2=$id('ls_unter'); if(u2) u2.textContent=T('Leitstand nicht erreichbar — Verbindung zum Bot prüfen'); }
     /* Die Kopfkacheln jede dritte Runde (ihre Quellen sind teurer). */
-    if(runde%3===0&&typeof ovKennzahlen==='function'){ try{ await ovKennzahlen(); }catch(e){} }
+    if(runde%3===0&&ncSicht('overview')&&typeof ovKennzahlen==='function'){ try{ await ovKennzahlen(); }catch(e){} }
     anstossen();
   }
   function uhrTick(){ var u=$id('ls_uhr'); if(u) u.textContent=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
   function ruhigZeigen(){
-    var ls=$id('ls'), b=$id('ls_ruhig'); if(ls) ls.classList.toggle('ruhig',ruhig);
+    var ls=$id('ls'), b=$id('ls_ruhig'), hm=$id('hauptinhalt'); if(ls) ls.classList.toggle('ruhig',ruhig);
+    if(hm) hm.classList.toggle('ruhig',ruhig);
     if(b){ b.setAttribute('aria-pressed',ruhig?'true':'false'); b.textContent=ruhig?T('Bewegt'):T('Ruhig');
       b.title=ruhig?T('Lichtströme und Drohnen wieder einschalten'):T('Bewegung anhalten — nur die Werte bleiben'); }
   }
@@ -14552,16 +14666,15 @@ var ncLeitstand=(function(){
   }
   function start(){
     cv=$id('ls_strom'); ctx=cv?cv.getContext('2d'):null; texte(); farben(); ruhigZeigen();
-    document.querySelectorAll('#ls .ls-name[data-tabname]').forEach(function(n){ n.textContent=tabName(n.getAttribute('data-tabname')); });
+    document.querySelectorAll('#hauptinhalt [data-tabname]').forEach(function(n){ n.textContent=tabName(n.getAttribute('data-tabname')); });
     if(!gestartet){
       gestartet=true;
-      document.querySelectorAll('#ls .ls-tafel').forEach(function(el){
-        var geh=function(){ gotoView(el.getAttribute('data-tab')); };
-        el.addEventListener('click',geh);
-        el.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); geh(); } });
-      });
+      /* Ein Glied der Lieferkette springt zu dem Bereich, der es fuehrt. */
+      var kt=$id('ls_kette'), geh=function(e){ var li=e.target.closest&&e.target.closest('li[data-tab]');
+        if(li&&(e.type==='click'||e.key==='Enter'||e.key===' ')){ e.preventDefault(); gotoView(li.getAttribute('data-tab')); } };
+      if(kt){ kt.addEventListener('click',geh); kt.addEventListener('keydown',geh); }
       window.addEventListener('resize',function(){ ankerMessen(); });
-      if(window.ResizeObserver){ try{ new ResizeObserver(function(){ ankerMessen(); }).observe($id('ls')); }catch(e){} }
+      if(window.ResizeObserver){ try{ new ResizeObserver(function(){ ankerMessen(); }).observe($id('hauptinhalt')); }catch(e){} }
       document.addEventListener('visibilitychange',function(){ if(!document.hidden){ laden(); anstossen(); } });
       /* Themenwechsel: Farben neu lesen (die Tokens sind CSS, das Canvas nicht). */
       try{ new MutationObserver(function(){ farben(); anstossen(); }).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']}); }catch(e){}
@@ -14573,6 +14686,39 @@ var ncLeitstand=(function(){
   }
   return {start:start, ereignis:function(m){ try{ ereignis(m,false); }catch(e){} }, kennzahlen:kennzahlen,
           ruhigUmschalten:ruhigUmschalten, _satz:satz};
+})();
+
+/* v5.10-W208: ncSeite — das Mauerwerk der Bereiche. Jedes Feld (Kopf, Tafel,
+   jedes Panel einer Ansicht) belegt so viele 6-px-Zeilen, wie es hoch ist;
+   ein ResizeObserver haelt das nach, wenn ein Panel waechst, schrumpft oder
+   zugeklappt wird. Neue Panels (Ansichten bauen sich per innerHTML auf)
+   meldet ein MutationObserver. Ohne ResizeObserver bleibt das gewoehnliche
+   Raster (Klasse ls-mauer fehlt) — dichter ist es dann nicht, aber heil. */
+var ncSeite=(function(){
+  'use strict';
+  var ZEILE=6, FUGE=12, ro=null;
+  function spanne(el){
+    var h=el.getBoundingClientRect().height;
+    var n=Math.max(1,Math.ceil((h+FUGE)/ZEILE));
+    if(el.style.gridRowEnd!=='span '+n) el.style.gridRowEnd='span '+n;
+  }
+  function feld(el){ if(!el||el.nodeType!==1||el._lsFeld) return; el._lsFeld=1; ro.observe(el); spanne(el); }
+  function bereich(sec){
+    sec.classList.add('ls-mauer');
+    Array.prototype.forEach.call(sec.children, function(c){
+      if(!c.classList.contains('view')){ feld(c); return; }
+      Array.prototype.forEach.call(c.children, feld);
+      new MutationObserver(function(ms){ ms.forEach(function(m){ m.addedNodes.forEach(feld); }); })
+        .observe(c,{childList:true});
+    });
+  }
+  function start(){
+    if(!window.ResizeObserver) return;
+    ro=new ResizeObserver(function(es){ es.forEach(function(e){ spanne(e.target); }); });
+    Array.prototype.forEach.call(document.querySelectorAll('#hauptinhalt > .ls-bereich'), bereich);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', start); else start();
+  return {spanne:spanne};
 })();
 
 async function loadOverview(){
@@ -14660,7 +14806,8 @@ VIEW_LOADERS['overview']=loadOverview;
    einen anderen Tab und zurueck ging. Nur anstossen, wenn die Uebersicht
    auch wirklich vorn liegt — sonst laedt ein Deep-Link auf /#brain die
    Uebersicht unnoetig mit. */
-try{ if(CURRENT_VIEW==='overview') loadOverview(); }catch(e){}
+/* v5.10-W208: kein Anstoss mehr noetig — ncBereichLaden laeuft nach
+   DOMContentLoaded, wenn alle Lader eingetragen sind. */
 
 // v4.0-W90: Stream-Archiv-Suche
 async function archStatus(){

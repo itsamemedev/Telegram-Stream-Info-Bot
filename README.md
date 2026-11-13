@@ -579,9 +579,10 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 
 **„Leitstand“** — die Übersicht als dichter Kommandostand:
 
-- **Jeder Tab ist eine Tafel:** Control, Streams, Community, System, AZRAEL,
-  Betrieb, Insights, Einstellungen und MCP stehen mit Lage, Hauptwert und einer
-  kleinen Live-Ansicht auf der Übersicht; ein Klick führt hinein.
+- **Alles auf einer Seite:** jede Ansicht (Control, Streams, Community, System,
+  AZRAEL, Betrieb, Insights, Einstellungen, MCP) ist ein Bereich der Übersicht —
+  Kopf, Lage-Tafel und alle ihre Panels, dicht im Mauerwerk-Raster. Die
+  Tab-Leiste springt nur noch; Bereiche laden beim Näherkommen.
 - **Lieferkette, Ereignisstrom, Schlüsselmomente:** Erfassen → Live → Aufnahme
   → Kodieren → Versand → Restream → Archiv als Leiste; Warnungen und
   gestartete Restreams springen auf und lassen ihre Tafel aufleuchten.

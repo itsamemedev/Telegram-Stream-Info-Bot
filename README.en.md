@@ -577,9 +577,10 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 
 **“Control Room”** — the overview as a dense command center:
 
-- **Every tab is a panel:** Control, Streams, Community, System, AZRAEL,
-  Operations, Insights, Settings and MCP appear on the overview with their
-  state, main value and a small live view; one click opens the tab.
+- **Everything on one page:** every view (Control, Streams, Community, System,
+  AZRAEL, Operations, Insights, Settings, MCP) is a section of the overview —
+  header, state panel and all of its panels in a dense masonry grid. The tab
+  bar only jumps; sections load as you approach them.
 - **Delivery chain, event stream, key moments:** Capture → Live → Recording →
   Encode → Upload → Restream → Archive as a strip; warnings and started
   restreams pop up and light up their panel.

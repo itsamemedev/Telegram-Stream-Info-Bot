@@ -9,7 +9,7 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
-## [5.10.0] — 2026-11-13 · „Leitstand" (W207)
+## [5.10.0] — 2026-11-13 · „Leitstand" (W207–W208)
 
 Der Betreiber schickte ein Video eines dichten Leitstands — viele kleine
 Panels, die gleichzeitig leben, Lichtströme dazwischen, Agenten, die
@@ -52,6 +52,40 @@ fabriziert hast. Bedenke, dass alle anderen Tabs integriert werden müssen."
   frisch und dann still, während daneben alles lebte — jetzt alle 24 s, mit
   Verlaufslinie.
 
+### Neu — alle Ansichten auf einer Seite (W208)
+
+Der Betreiber zur ersten Fassung: „Wieso denn noch mehr Panels, wenn man doch
+mehrere in die Übersicht einbauen kann? Wie in dem Video." Eine Tafel je Tab
+neben den Tabs war eine Zusammenfassung mehr, keine Integration. Jetzt ist die
+Übersicht **die ganze Oberfläche**:
+
+- **Jede Ansicht ist ein Bereich derselben Seite**, in der Reihenfolge der
+  Tab-Leiste: ein Kopf mit Nummer, Name, Lage und Satz, die Tafel als erstes
+  Feld, dann **alle echten Panels** der Ansicht. Die Tab-Leiste springt nur
+  noch zum Bereich und leuchtet mit, während man scrollt; `/#brain` als
+  Deep-Link springt ebenso.
+- **Mauerwerk-Raster:** Panels unterschiedlicher Höhe stehen dicht an dicht
+  (Spalten ab 400 px, Zeilen von 6 px, jedes Panel belegt so viele, wie es
+  hoch ist — per ResizeObserver nachgehalten). Ein Spalten-Layout hätte
+  Panels bei jeder Wertänderung von Spalte zu Spalte geschoben. Panels mit
+  Tabellen bekommen auf breiten Schirmen zwei Spalten.
+- **Geladen wird beim Näherkommen**, nicht alles beim Seitenaufruf, und erst
+  nach `DOMContentLoaded` — dann sind auch die Lader späterer Script-Blöcke
+  eingetragen; die beiden Einzel-„Anstöße" aus W198 sind damit überflüssig.
+- **Gepollt wird, was sichtbar ist.** Bisher fragte jeder Poller
+  `CURRENT_VIEW==='…'` — bei mehreren gleichzeitig sichtbaren Bereichen
+  stimmt das nicht mehr. Alle 39 Stellen fragen jetzt `ncSicht(bereich)`
+  (sichtbar mit 400 px Vorlauf, Tab im Vordergrund).
+- **Leinwand im Fenster:** Lichtströme und Drohnen liegen auf einer festen
+  Leinwand hinter allen Bereichen und folgen dem Scrollen; eine seitenhohe
+  Leinwand wäre bei zehn Bereichen über 16 Mio. Pixel. Die Drohnen fliegen zu
+  den Tafeln in den Bereichen; der Schlüsselmoment erscheint oben im Fenster,
+  wo man auch gerade ist.
+- **Lieferkette als Sprungleiste:** ein Klick auf ein Glied (Live, Kodieren,
+  Restream …) springt zu dem Bereich, der es führt — die Zuordnung steht in
+  `nc/leitstand.py` (`KETTE_TAB`).
+- Jedes Panel trägt die HUD-Ecken der Tafeln (nicht im Kontrast-Thema).
+
 ### Warum die Lage in Python entschieden wird
 
 Dieselbe Regel wie beim Lagebild (W112): eine Animation ist eine Aussage.
@@ -74,7 +108,7 @@ dieselbe Einstufung (`ton`, `moment`, `tafel`) wie das Protokoll.
 
 ### Geprüft
 
-Zwei Verträge (`_test_v510_w207_*`), 23 Mutationsproben. Gerendert im echten
+Drei Verträge (`_test_v510_w207_*`, `_test_v510_w208_eine_seite`), Mutationsproben je Welle. Gerendert im echten
 Chromium mit Beispieldaten in Leitstand, Messing und Blaupause, auf 1680, 1280
 und 390 px (kein Querscrollen).
 

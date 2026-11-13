@@ -6867,7 +6867,8 @@ def test_v40_w68_overview_landing():
     # ANKER GEWANDERT (v4.2-W112): ncCommandCenter -> ncLagebild.
     assert "function start(canvasId,viewName)" in h, "start() nicht parametrisiert"
     assert "ncLagebild.start('ov_cc','overview')" in h, "Zentrale nicht auf Übersicht gemountet"
-    assert "CURRENT_VIEW===OWNVIEW" in h, "Draw-Gate nicht auf OWNVIEW umgestellt"
+    # ANKER GEWANDERT (v5.10-W208): ncSicht(OWNVIEW) — sichtbar statt aktiv.
+    assert "ncSicht(OWNVIEW)" in h, "Draw-Gate nicht auf OWNVIEW umgestellt"
     # Übersicht ist Default-Landing.
     assert "dataset.view==='overview'" in h, "Übersicht nicht als Default-Landing"
     # health-score liefert overall (Backend).

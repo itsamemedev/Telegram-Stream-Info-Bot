@@ -27,9 +27,11 @@ CHANGELOG = [
         "version": "5.10.0",
         "date": "2026-11",
         "title": "Leitstand",
-        # Nebenversion: die Übersicht als Leitstand (W207).
+        # Nebenversion: die Übersicht als Leitstand (W207), alles auf einer Seite (W208).
         "highlights": [
-            "Die Übersicht ist ein Leitstand: jeder der neun Tabs steht als eigene Tafel da — Lage, Hauptwert und eine kleine Live-Ansicht; ein Klick fuehrt hinein",
+            "Alles auf einer Seite: die Übersicht ist die ganze Oberflaeche — jede Ansicht ein Bereich mit Kopf, Lage-Tafel und allen ihren Panels, dicht im Mauerwerk-Raster; die Tab-Leiste springt nur noch",
+            "Bereiche laden beim Naeherkommen und pollen nur, solange sie sichtbar sind — nicht alles beim Seitenaufruf",
+            "Jede Tafel zeigt Lage, Hauptwert und eine kleine Live-Ansicht ihres Bereichs; ein Glied der Lieferkette springt zu dem Bereich, der es fuehrt",
             "Live-Ansichten je Tafel: Restream-Spuren mit Tempo-Verlauf, Live-Wand mit REC, Chat-Puls, CPU/RAM/Platte samt groessten CPU-Fressern, Waechternetz mit KI-Wahl, Dienste-Schlangen, 14 Tage Aufnahmen, Konfigurationsstand, MCP",
             "Die Lieferkette einer Sendung als Leiste: Erfassen, Live, Aufnahme, Kodieren, Versand, Restream, Archiv — jedes Glied mit Zahl und Lage",
             "Ereignisstrom live ueber den Push; Warnungen, Fehler, ein gestarteter Restream und ein Hype-Clip springen als Schluesselmoment auf und lassen ihre Tafel aufleuchten",
