@@ -3068,65 +3068,66 @@ def test_v40_version():
        BUILD_STAMP und nc.version NICHT auseinanderlaufen (schon dreimal
        passiert: Modul auf neu, Footer blieb auf alt)."""
     from nc import version as v
-    # ANKER GEWANDERT (v5.7.0, nicht der Vertrag): 5.6.0 -> 5.7.0. Dieser Test
+    # ANKER GEWANDERT (v5.8.0, nicht der Vertrag): 5.7.0 -> 5.8.0. Dieser Test
     # wandert absichtlich mit jeder Fassung mit — er ist die Stelle, an der
     # ein halber Versionssprung auffliegt (Modul hochgezaehlt, Footer nicht).
-    assert v.VERSION == "5.7.0" and v.current()["version"] == "5.7.0"
-    assert v.summary_line().startswith("NIGHTCRAWLER v5.7.0")
+    assert v.VERSION == "5.8.0" and v.current()["version"] == "5.8.0"
+    assert v.summary_line().startswith("NIGHTCRAWLER v5.8.0")
     top = v.latest()
-    assert top["version"] == "5.7.0" and len(top["highlights"]) >= 3
-    assert [c["version"] for c in v.changelog()][:5] == ["5.7.0", "5.6.0", "5.5.0", "5.4.0", "5.3.1"]
+    assert top["version"] == "5.8.0" and len(top["highlights"]) >= 3
+    assert [c["version"] for c in v.changelog()][:5] == ["5.8.0", "5.7.0", "5.6.0", "5.5.0", "5.4.0"]
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
     # Der Sprung darf die Vorgaengerfassung nicht ausraeumen. Beim
     # Umhaengen der Highlights ist genau das die Gefahr — man verschiebt
     # versehentlich ALLE statt der neuen, und 4.4 steht danach leer im
     # "Was ist neu"-Panel.
     vor = v.changelog()[1]
-    assert vor["version"] == "5.6.0" and len(vor["highlights"]) >= 5, \
-        f"5.6.0 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
-        f"auf 5.7.0 ist die Vorgaengerfassung ausgeraeumt worden"
-    assert len(v.changelog()[2]["highlights"]) >= 5, "5.5.0 ausgeraeumt"
-    assert len(v.changelog()[3]["highlights"]) >= 5, "5.4.0 ausgeraeumt"
-    assert len(v.changelog()[4]["highlights"]) >= 5, "5.3.1 ausgeraeumt"
-    assert len(v.changelog()[5]["highlights"]) >= 5, "5.3.0 ausgeraeumt"
-    assert len(v.changelog()[6]["highlights"]) >= 5, "5.2.1 ausgeraeumt"
-    assert len(v.changelog()[7]["highlights"]) >= 5, "5.2.0 ausgeraeumt"
-    assert len(v.changelog()[8]["highlights"]) >= 5, "5.1.1 ausgeraeumt"
-    assert len(v.changelog()[9]["highlights"]) >= 5, "5.1.0 ausgeraeumt"
-    assert len(v.changelog()[10]["highlights"]) >= 5, "5.0.0 ausgeraeumt"
-    assert len(v.changelog()[11]["highlights"]) >= 5, "4.6.23 ausgeraeumt"
-    assert len(v.changelog()[12]["highlights"]) >= 5, "4.6.22 ausgeraeumt"
-    assert len(v.changelog()[13]["highlights"]) >= 5, "4.6.21 ausgeraeumt"
-    assert len(v.changelog()[14]["highlights"]) >= 4, "4.6.20 ausgeraeumt"
-    assert len(v.changelog()[15]["highlights"]) >= 5, "4.6.19 ausgeraeumt"
-    assert len(v.changelog()[16]["highlights"]) >= 5, "4.6.18 ausgeraeumt"
-    assert len(v.changelog()[17]["highlights"]) >= 5, "4.6.17 ausgeraeumt"
-    assert len(v.changelog()[18]["highlights"]) >= 5, "4.6.16 ausgeraeumt"
-    assert len(v.changelog()[19]["highlights"]) >= 5, "4.6.15 ausgeraeumt"
-    assert len(v.changelog()[20]["highlights"]) >= 5, "4.6.14 ausgeraeumt"
-    assert len(v.changelog()[21]["highlights"]) >= 5, "4.6.13 ausgeraeumt"
-    assert len(v.changelog()[22]["highlights"]) >= 5, "4.6.12 ausgeraeumt"
-    assert len(v.changelog()[23]["highlights"]) >= 5, "4.6.11 ausgeraeumt"
-    assert len(v.changelog()[24]["highlights"]) >= 5, "4.6.10 ausgeraeumt"
-    assert len(v.changelog()[25]["highlights"]) >= 5, "4.6.9 ausgeraeumt"
-    assert len(v.changelog()[26]["highlights"]) >= 5, "4.6.8 ausgeraeumt"
-    assert len(v.changelog()[27]["highlights"]) >= 5, "4.6.7 ausgeraeumt"
-    assert len(v.changelog()[28]["highlights"]) >= 5, "4.6.6 ausgeraeumt"
-    assert len(v.changelog()[29]["highlights"]) >= 5, "4.6.5 ausgeraeumt"
-    assert len(v.changelog()[30]["highlights"]) >= 5, "4.6.4 ausgeraeumt"
-    assert len(v.changelog()[31]["highlights"]) >= 5, "4.6.3 ausgeraeumt"
-    assert len(v.changelog()[32]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
-    assert len(v.changelog()[33]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
-    assert len(v.changelog()[34]["highlights"]) >= 5, "4.6 ausgeraeumt"
-    assert len(v.changelog()[35]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
-    assert len(v.changelog()[36]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
-    assert len(v.changelog()[37]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
-    assert len(v.changelog()[38]["highlights"]) >= 5, "4.5 ausgeraeumt"
-    assert len(v.changelog()[40]["highlights"]) >= 10, "4.4 ausgeraeumt"
+    assert vor["version"] == "5.7.0" and len(vor["highlights"]) >= 5, \
+        f"5.7.0 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
+        f"auf 5.8.0 ist die Vorgaengerfassung ausgeraeumt worden"
+    assert len(v.changelog()[2]["highlights"]) >= 5, "5.6.0 ausgeraeumt"
+    assert len(v.changelog()[3]["highlights"]) >= 5, "5.5.0 ausgeraeumt"
+    assert len(v.changelog()[4]["highlights"]) >= 5, "5.4.0 ausgeraeumt"
+    assert len(v.changelog()[5]["highlights"]) >= 5, "5.3.1 ausgeraeumt"
+    assert len(v.changelog()[6]["highlights"]) >= 5, "5.3.0 ausgeraeumt"
+    assert len(v.changelog()[7]["highlights"]) >= 5, "5.2.1 ausgeraeumt"
+    assert len(v.changelog()[8]["highlights"]) >= 5, "5.2.0 ausgeraeumt"
+    assert len(v.changelog()[9]["highlights"]) >= 5, "5.1.1 ausgeraeumt"
+    assert len(v.changelog()[10]["highlights"]) >= 5, "5.1.0 ausgeraeumt"
+    assert len(v.changelog()[11]["highlights"]) >= 5, "5.0.0 ausgeraeumt"
+    assert len(v.changelog()[12]["highlights"]) >= 5, "4.6.23 ausgeraeumt"
+    assert len(v.changelog()[13]["highlights"]) >= 5, "4.6.22 ausgeraeumt"
+    assert len(v.changelog()[14]["highlights"]) >= 5, "4.6.21 ausgeraeumt"
+    assert len(v.changelog()[15]["highlights"]) >= 4, "4.6.20 ausgeraeumt"
+    assert len(v.changelog()[16]["highlights"]) >= 5, "4.6.19 ausgeraeumt"
+    assert len(v.changelog()[17]["highlights"]) >= 5, "4.6.18 ausgeraeumt"
+    assert len(v.changelog()[18]["highlights"]) >= 5, "4.6.17 ausgeraeumt"
+    assert len(v.changelog()[19]["highlights"]) >= 5, "4.6.16 ausgeraeumt"
+    assert len(v.changelog()[20]["highlights"]) >= 5, "4.6.15 ausgeraeumt"
+    assert len(v.changelog()[21]["highlights"]) >= 5, "4.6.14 ausgeraeumt"
+    assert len(v.changelog()[22]["highlights"]) >= 5, "4.6.13 ausgeraeumt"
+    assert len(v.changelog()[23]["highlights"]) >= 5, "4.6.12 ausgeraeumt"
+    assert len(v.changelog()[24]["highlights"]) >= 5, "4.6.11 ausgeraeumt"
+    assert len(v.changelog()[25]["highlights"]) >= 5, "4.6.10 ausgeraeumt"
+    assert len(v.changelog()[26]["highlights"]) >= 5, "4.6.9 ausgeraeumt"
+    assert len(v.changelog()[27]["highlights"]) >= 5, "4.6.8 ausgeraeumt"
+    assert len(v.changelog()[28]["highlights"]) >= 5, "4.6.7 ausgeraeumt"
+    assert len(v.changelog()[29]["highlights"]) >= 5, "4.6.6 ausgeraeumt"
+    assert len(v.changelog()[30]["highlights"]) >= 5, "4.6.5 ausgeraeumt"
+    assert len(v.changelog()[31]["highlights"]) >= 5, "4.6.4 ausgeraeumt"
+    assert len(v.changelog()[32]["highlights"]) >= 5, "4.6.3 ausgeraeumt"
+    assert len(v.changelog()[33]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
+    assert len(v.changelog()[34]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
+    assert len(v.changelog()[35]["highlights"]) >= 5, "4.6 ausgeraeumt"
+    assert len(v.changelog()[36]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
+    assert len(v.changelog()[37]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
+    assert len(v.changelog()[38]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
+    assert len(v.changelog()[39]["highlights"]) >= 5, "4.5 ausgeraeumt"
+    assert len(v.changelog()[41]["highlights"]) >= 10, "4.4 ausgeraeumt"
     # Und keine Zeile darf in ZWEI Fassungen stehen.
     doppelt = set(top["highlights"]) & set(vor["highlights"])
-    assert not doppelt, f"in 5.7.0 und 5.6.0 gleichzeitig: {list(doppelt)[:1]}"
-    ok("v5.7.0: nc.version — 5.7.0 + Changelog mit Historie, 5.6.0 bis 4.5 und 4.4 unversehrt")
+    assert not doppelt, f"in 5.8.0 und 5.7.0 gleichzeitig: {list(doppelt)[:1]}"
+    ok("v5.8.0: nc.version — 5.8.0 + Changelog mit Historie, 5.7.0 bis 4.5 und 4.4 unversehrt")
 
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
@@ -3138,7 +3139,7 @@ def test_v40_version():
         "BUILD_STAMP haengt nicht an nc.version"
     # ANKER GEWANDERT (v4.3, nicht der Vertrag): der Stempel folgt RELEASE
     # und VERSION, beide aus nc/version.py.
-    assert v.build_stamp() == "2026.11 · v5.7.0", v.build_stamp()
+    assert v.build_stamp() == "2026.11 · v5.8.0", v.build_stamp()
     # v4.1-W26: Anker mitgewandert. Die Route liegt jetzt in
     # nc/routes/auskunft.py — der VERTRAG ist unveraendert (es gibt sie, und
     # sie meldet die Version), nur ihre Fundstelle nicht.
@@ -3171,7 +3172,6 @@ def test_v40_youtube_api():
     bp=y.ban_payload("LC","C",300)
     assert bp["snippet"]["type"]=="temporary" and bp["snippet"]["banDurationSeconds"]==300
     assert y.ban_payload("LC","C",0)["snippet"]["type"]=="permanent"
-    assert y.is_self({"channel_id":"C"},"C")
     src=open("bot.py").read()
     assert "async def _youtube_api_chat_loop(" in src and "async def _yt_timeout(" in src
     assert "await _youtube_api_chat_loop()" in src, "YT-Loop delegiert nicht an API"
@@ -3471,8 +3471,11 @@ def test_v40_w9_kick_and_listener():
     # Resolver existiert + liest user_id/user.id + cacht.
     # ANKER GEWANDERT (v4.1-W9, nicht der Vertrag): Resolver und Cache liegen
     # in nc/kickapi.py, damit nc/routes/kick.py sie direkt importieren kann.
-    # Der Bot haelt eine Weiterleitung, weil KickModerator sie dreimal aufruft.
-    assert "async def _kick_broadcaster_id(" in src, "kein Broadcaster-ID-Resolver im Bot"
+    # v5.8-W199: die Weiterleitung im Bot ist entfallen — KickModerator ruft
+    # sie laengst nicht mehr, die Route importiert direkt aus nc/kickapi.
+    assert "async def _kick_broadcaster_id(" not in src, "tote Weiterleitung wieder im Bot"
+    assert "from nc.kickapi import broadcaster_id as _kick_broadcaster_id" in \
+        open("nc/routes/kick.py", encoding="utf-8").read(), "Route loest die ID nicht mehr auf"
     _ka = open("nc/kickapi.py", encoding="utf-8").read()
     assert "async def broadcaster_id(" in _ka, "kein Broadcaster-ID-Resolver"
     assert 'j.get("user_id")' in _ka and '(j.get("user") or {}).get("id")' in _ka, "user_id nicht aufgeloest"
@@ -3631,7 +3634,8 @@ def test_v40_w12_audio_panel():
     arts = open("nc/routes/audio.py", encoding="utf-8").read()
     assert "def config(" in acfg, "keine Laufzeit-Audio-Konfig"
     assert '_cfgstore.get("audio.cue"' in acfg, "liest den gespeicherten Wert nicht"
-    assert '_nc_cfgstore.set_("audio.cue"' in arts, "nicht persistent"
+    # v5.8-W199: streng gelesen und geschrieben ueber nc/cfgstore.aendern.
+    assert '_nc_cfgstore.aendern("audio.cue"' in arts, "nicht persistent"
     # Die .env-Vorgaben werden hereingereicht, nicht im Modul eingefroren.
     assert "_nc_audiocue.configure(" in src, "die .env-Vorgaben erreichen das Modul nicht"
     assert "os.getenv" not in acfg, "nc/audiocue.py friert .env selbst ein"
@@ -3894,8 +3898,12 @@ def test_v40_w17_kick401_crowdsec():
     # CrowdSec: Port konfigurierbar, Standard 8083 (Henrys Setup).
     assert "CROWDSEC_LAPI_PORT" in src and "CROWDSEC_LAPI_HOST" in src
     assert '_env_int("CROWDSEC_LAPI_PORT", 8083)' in src, "Standard-Port nicht 8083"
-    assert 'hint = (f"CrowdSec-Dienst/LAPI ({CROWDSEC_LAPI_HOST}:{CROWDSEC_LAPI_PORT}) "' in src, \
-        "Hinweis nennt weiter fest 8080"
+    # ANKER GEWANDERT (v5.8-W199): der Hinweis steht mit der Abwehr in
+    # nc/abwehrlage.py und nennt den Port, den der Bot hereinreicht.
+    assert 'hint = (f"CrowdSec-Dienst/LAPI ({host}:{port}) "' in \
+        open("nc/abwehrlage.py", encoding="utf-8").read(), "Hinweis nennt weiter fest 8080"
+    assert "lapi_host=CROWDSEC_LAPI_HOST, lapi_port=CROWDSEC_LAPI_PORT" in src, \
+        "der konfigurierte Port erreicht das Modul nicht"
     ok("v4.0-w17: CrowdSec-LAPI Host/Port konfigurierbar (Default 8083)")
 
 
@@ -3933,12 +3941,17 @@ def test_v40_w18_crowdsec_lapi():
     ok("v4.0-w18: LAPI-Zugang — URL/Header/Auswertung/Fehlerdeutung korrekt")
 
     src = open("bot.py").read()
-    assert "def _crowdsec_via_lapi(" in src, "kein LAPI-Weg im Bot"
+    # ANKER GEWANDERT (v5.8-W199, nicht der Vertrag): der Abwehr-Block liegt
+    # in nc/abwehrlage.py; der Bot reicht nur die vier Werte der .env herein.
+    ab = open("nc/abwehrlage.py", encoding="utf-8").read()
+    assert "def crowdsec_via_lapi(" in ab, "kein LAPI-Weg"
     assert "CROWDSEC_BOUNCER_KEY" in src and "CROWDSEC_LAPI_URL" in src, "Zugang nicht konfigurierbar"
+    assert "bouncer_key=CROWDSEC_BOUNCER_KEY, lapi_url=CROWDSEC_LAPI_URL" in src, \
+        "die Werte erreichen das Modul nicht"
     # LAPI zuerst, cscli bleibt Rueckfallebene (kein Bruch fuer bestehende Setups).
-    assert "_lapi = _crowdsec_via_lapi()" in src and 'if _lapi is not None and _lapi.get("ok")' in src
-    assert "cscli = _cscli_path()" in src, "cscli-Fallback entfernt"
-    assert "if not CROWDSEC_BOUNCER_KEY:" in src, "ohne Schluessel muss der alte Weg greifen"
+    assert "_lapi = crowdsec_via_lapi()" in ab and 'if _lapi is not None and _lapi.get("ok")' in ab
+    assert "cscli = cscli_path()" in ab, "cscli-Fallback entfernt"
+    assert 'if not _KONF["bouncer_key"]:' in ab, "ohne Schluessel muss der alte Weg greifen"
     ok("v4.0-w18: Bot nutzt LAPI wenn Schluessel da, sonst weiter cscli")
 
 
@@ -4495,9 +4508,14 @@ def test_v40_w26_abo_and_sysrun():
     ok("v4.0-w26: nc.abo + nc.sysrun verhalten sich wie der Monolith")
 
     src = open("bot.py").read()
-    assert "from nc import abo as _nc_abo" in src and "from nc import sysrun as _nc_sysrun" in src
+    assert "from nc import abo as _nc_abo" in src
     assert "return _nc_abo.room_is_abo(room)" in src, "abo delegiert nicht"
-    assert "return _nc_sysrun.run_priv(" in src, "run_priv delegiert nicht"
+    # ANKER GEWANDERT (v5.8-W199): der einzige Nutzer von run_priv ist mit der
+    # Abwehr nach nc/abwehrlage.py gezogen und ruft nc.sysrun direkt.
+    ab = open("nc/abwehrlage.py", encoding="utf-8").read()
+    assert "from nc import sysrun as _nc_sysrun" in ab and "_nc_sysrun.run_priv(" in ab, \
+        "run_priv delegiert nicht"
+    assert "def _run_priv(" not in src, "tote Weiterleitung wieder im Bot"
     assert "Zeitüberschreitung nach" not in src, "alte run_priv-Logik noch im Monolithen"
     ok("v4.0-w26: Bot delegiert, keine Doppel-Logik mehr im Monolithen")
 
@@ -5838,43 +5856,6 @@ def test_v40_w44_ffbuild():
     ok("v4.0-w44: Bot delegiert den ffmpeg-Bau, keine Doppel-Logik")
 
 
-def test_v40_w45_chatstats():
-    """v4.0-W45: Monolith-Abtrag — die Chat-Health-Aggregation (_chat_stats_snapshot)
-       ist nach nc.chatstats gewandert. Bitgenau: Uptime-Quote (gedeckelt 100%),
-       Median/kürzeste/längste Session, laufende Session, letzte Gründe."""
-    from nc import chatstats as CS
-    stats = {"streamerX": {
-        "sessions": [10.0, 30.0, 20.0], "connected_since": 100.0, "first_seen": 0.0,
-        "connects": 5, "failed": 1, "disconnects": 4, "flaps": 2,
-        "total_uptime": 900.0, "backoff_s": 8.0,
-        "reasons": [(50.0, "net"), (80.0, "timeout")]}}
-    r = CS.summarize(stats, now_mono=150.0, now_wall=1000.0)["streamerX"]
-    assert r["connected"] is True and r["current_session_s"] == 50, "laufende Session falsch"
-    assert r["median_session_s"] == 20 and r["shortest_s"] == 10 and r["longest_s"] == 30
-    # uptime = (900 + 50) / (1000 - 0) = 95%
-    assert r["uptime_pct"] == 95.0, f"uptime falsch: {r['uptime_pct']}"
-    # jüngster Grund zuerst (reversed).
-    assert r["last_reasons"][0]["why"] == "timeout" and r["last_reasons"][0]["ago_s"] == 920
-    # nicht verbunden → current_session 0, uptime aus total_uptime.
-    stats2 = {"y": {**stats["streamerX"], "connected_since": 0.0}}
-    r2 = CS.summarize(stats2, 150.0, 1000.0)["y"]
-    assert r2["connected"] is False and r2["current_session_s"] == 0
-    # leere sessions → 0-Werte, kein Crash.
-    stats3 = {"z": {**stats["streamerX"], "sessions": [], "connected_since": 0.0}}
-    r3 = CS.summarize(stats3, 150.0, 1000.0)["z"]
-    assert r3["median_session_s"] == 0 and r3["shortest_s"] == 0 and r3["longest_s"] == 0
-    # uptime auf 100% gedeckelt (total_uptime > span).
-    stats4 = {"w": {**stats["streamerX"], "total_uptime": 99999.0, "connected_since": 0.0}}
-    assert CS.summarize(stats4, 150.0, 1000.0)["w"]["uptime_pct"] == 100.0, "uptime nicht gedeckelt"
-    ok("v4.0-w45: nc.chatstats — Uptime/Median/Sessions/Gründe bitgenau")
-
-    src = open("bot.py").read()
-    assert "from nc import chatstats as _nc_chatstats" in src
-    assert "_nc_chatstats.summarize(_CHAT_STATS, _time_mod.monotonic(), _time_mod.time())" in src, "delegiert nicht"
-    assert "Uptime-Quote: der ehrlichste" not in src, "alte Aggregation noch im Monolithen"
-    ok("v4.0-w45: Bot delegiert die Aggregation, keine Doppel-Logik")
-
-
 def test_v40_w46_json_and_telegram_launch():
     """v4.0-W46: zwei Betriebsfehler behoben. (1) Der orjson-JSON-Provider lehnte
        Nicht-String-Keys hart ab → HTTP 500 'Dict key must be str' auf jedem
@@ -6211,7 +6192,10 @@ def test_v40_w54_inspectcache():
     assert "from nc import inspectcache as _nc_inspectcache" in _rt, \
         "Blueprint importiert den Inspect-Cache nicht"
     assert "_nc_inspectcache.serialize(data)" in _rt, "Serialisierung nicht delegiert"
-    assert "return _nc_recdb.get_or_compute_inspect_sync(" in src, "Bot delegiert nicht an recdb"
+    # v5.8-W199: die Weiterleitung im Bot ist entfallen — das Blueprint ruft
+    # nc.recdb direkt. Geprueft wird der heutige Weg.
+    assert "recdb.get_or_compute_inspect_sync(" in _rt, "Blueprint fragt nc.recdb nicht"
+    assert "def get_or_compute_inspect_sync(" not in src, "tote Weiterleitung wieder im Bot"
     assert "json.dumps(data, ensure_ascii=False)[:200000]" not in src, "alte Serialisierung noch im Monolithen"
     assert "_nc_inspectcache.parse_row(row)" not in src, "Doppel-Logik: Parse noch im Monolithen"
     ok("v4.0-w54: (De-)Serialisierung delegiert — Parse in nc.recdb, serialize im Blueprint")
@@ -6305,11 +6289,12 @@ def test_v40_w55b_convmap():
     _aidb = open("nc/aidb.py", encoding="utf-8").read()
     assert "from nc import convmap as _nc_convmap" in _aidb
     assert "return _nc_convmap.messages(rows)" in _aidb, "delegiert nicht"
-    assert "return _nc_aidb.conv_messages(conv_id)" in src, "Bot delegiert nicht an nc.aidb"
-    # Die alte Inline-Map in _conv_messages ist weg (die in api_ai_log bleibt separat).
-    cm = src[src.find("def _conv_messages("):src.find("def _conv_messages(") + 500]
-    assert '"duration_ms": r["duration_ms"]' not in cm, "alte Map noch in _conv_messages"
-    ok("v4.0-w55b: Bot delegiert das Mapping, hält nur das SELECT")
+    # v5.8-W199: die Weiterleitung _conv_messages im Bot ist entfallen — die
+    # KI-Route importiert nc.aidb.conv_messages direkt. Keine Kopie im Bot.
+    assert "from nc.aidb import conv_messages as _conv_messages" in \
+        open("nc/routes/ai.py", encoding="utf-8").read(), "KI-Route fragt nc.aidb nicht"
+    assert "def _conv_messages(" not in src, "tote Weiterleitung wieder im Bot"
+    ok("v4.0-w55b: das Mapping liegt in nc.convmap, die Route fragt nc.aidb direkt")
 
 
 def test_v40_w56_admod():
@@ -6361,7 +6346,8 @@ def test_v40_w57_brain3d_and_attack_time():
     ok("v4.0-w57: 3D-Wissensgraph (drehen/zoomen/schwenken) + Angriffs-Zeitstempel")
 
     # Das Backend liefert den Zeitstempel bereits (last = Auth-Log-Zeitstempel).
-    src = open("bot.py").read()
+    # ANKER GEWANDERT (v5.8-W199): die Auswertung liegt in nc/abwehrlage.py.
+    src = open("nc/abwehrlage.py", encoding="utf-8").read()
     assert '"last": line[:15]' in src, "Backend liefert keinen Angriffs-Zeitstempel"
 
 
@@ -6448,9 +6434,11 @@ def test_v40_w60_binresolve():
     ok("v4.0-w60: nc.binresolve — which-zuerst/Kandidaten-Reihenfolge/None bewiesen")
 
     src = open("bot.py").read()
-    assert "from nc import binresolve as _nc_binresolve" in src
-    assert "_nc_binresolve.resolve(" in src, "delegiert nicht"
-    assert '/usr/local/sbin/cscli"):' not in src, "alte Fallback-Schleife noch im Monolithen"
+    # ANKER GEWANDERT (v5.8-W199): cscli_bin liegt mit der Abwehr in nc/abwehrlage.py.
+    ab = open("nc/abwehrlage.py", encoding="utf-8").read()
+    assert "from nc import binresolve as _nc_binresolve" in ab
+    assert "_nc_binresolve.resolve(" in ab, "delegiert nicht"
+    assert '/usr/local/sbin/cscli"):' not in src + ab, "alte Fallback-Schleife wieder da"
 
 
 def test_v40_w61_ffver():
@@ -6573,9 +6561,11 @@ def test_v40_w62b_journalperm():
     ok("v4.0-w62b: nc.journalperm — Gruppen/root-Entscheidung + None-Skip bewiesen")
 
     src = open("bot.py").read()
-    assert "from nc import journalperm as _nc_journalperm" in src
-    assert "_nc_journalperm.may_read(" in src, "delegiert nicht"
-    assert 'for name in ("adm", "systemd-journal")' not in src, "alte Entscheidung noch im Monolithen"
+    # ANKER GEWANDERT (v5.8-W199): darf_journal_lesen liegt in nc/abwehrlage.py.
+    ab = open("nc/abwehrlage.py", encoding="utf-8").read()
+    assert "from nc import journalperm as _nc_journalperm" in ab
+    assert "_nc_journalperm.may_read(" in ab, "delegiert nicht"
+    assert 'for name in ("adm", "systemd-journal")' not in src + ab, "alte Entscheidung wieder da"
 
 
 def test_v40_w62c_cfgstore():
@@ -7334,9 +7324,15 @@ def test_v40_w82_env_hardening_and_bridge_alert():
 
     # (A) konkrete vier: jetzt über envnum
     src = open("bot.py").read()
-    for name in ("RESTREAM_TTS_GAIN", "DEFENSE_SERVER_LAT",
-                 "DEFENSE_SERVER_LON", "HYPE_CLIP_ENERGY"):
+    for name in ("RESTREAM_TTS_GAIN", "HYPE_CLIP_ENERGY"):
         assert _re.search(r'env_float\("' + name + r'"', src), name + " nicht gehärtet"
+    # v5.8-W199: der Standort der Weltkarte wird nur in nc/defensecfg.py
+    # gelesen (Leer- und Komma-fest, eigener Vertrag) — die toten Lesungen im
+    # Bot sind mit dem Abwehr-Block entfallen.
+    _dcfg = open("nc/defensecfg.py", encoding="utf-8").read()
+    for name in ("DEFENSE_SERVER_LAT", "DEFENSE_SERVER_LON"):
+        assert '_komma(os.getenv("%s"' % name in _dcfg, name + " nicht gehärtet"
+        assert name not in src, name + " wieder als tote Lesung im Bot"
 
     # (A) Meta-Sperre: kein rohes int/float(os.getenv(...)) auf MODUL-EBENE
     # (läuft beim Import → killt den ganzen Prozess) ohne ' or default' oder
@@ -9361,11 +9357,13 @@ def test_v41_w12_kick_key_kollision():
 
     # (3) CrowdSec: ein Dauerzustand darf den Log nicht 109 Mal fuellen — und
     # die Abhilfe gehoert INS Log, nicht nur in die API-Antwort.
-    _cs = src[src.index("def _crowdsec_via_lapi("):]
+    # ANKER GEWANDERT (v5.8-W199): die LAPI-Abfrage liegt in nc/abwehrlage.py.
+    _ab = open("nc/abwehrlage.py", encoding="utf-8").read()
+    _cs = _ab[_ab.index("def crowdsec_via_lapi("):]
     _cs = _cs[:_cs.index("jails, total = _nc_crowdsec.parse_decisions")]
     assert "_CROWDSEC_LOG_STATE" in _cs, "keine Drosselung"
     assert "Abhilfe: %s" in _cs, "die Abhilfe steht weiter nur in der API-Antwort"
-    assert 'log.warning("Abwehr: CrowdSec-LAPI HTTP %s", e.code)' not in src, \
+    assert 'log.warning("Abwehr: CrowdSec-LAPI HTTP %s", e.code)' not in src + _ab, \
         "die ungedrosselte Zeile ist wieder da"
     ok("v4.1-W12: Einzel-Slot beim Start geprueft, Kollision immer gemeldet, "
        "CrowdSec gedrosselt mit Abhilfe")
@@ -10062,7 +10060,6 @@ def main():
     test_v40_w42_chat_listener_decoupled()
     test_v40_w43_send_status_panel()
     test_v40_w44_ffbuild()
-    test_v40_w45_chatstats()
     test_v40_w46_json_and_telegram_launch()
     test_v40_w47_executor_isolation()
     test_v40_w48_loop_lag_monitor()

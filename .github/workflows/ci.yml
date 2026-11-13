@@ -339,7 +339,7 @@ jobs:
           python brain/test_m5.py
           python brain/test_m7.py
 
-      - name: nc/intel — Archiv, Transkripte, Reels
+      - name: nc/intel — Transkripte, Stream-Archiv
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: python nc/intel/test_intel.py

@@ -89,3 +89,56 @@ def set_(key, value):
     with _db_conn() as conn:
         upsert(conn, key, payload, now)
     return value
+
+
+# ── v5.8-W199: Lesen-Aendern-Schreiben an EINER Stelle ──────────────────
+
+import copy as _copy                                          # noqa: E402
+import threading as _threading                                # noqa: E402
+
+# Eine Sperre fuer alle Schluessel: die Aenderungen sind Klicks im Deck,
+# selten und kurz. Je Schluessel eine eigene Sperre zu fuehren waere
+# Buchhaltung ohne messbaren Gewinn.
+_AENDERN = _threading.RLock()
+
+
+class FalscheForm(ValueError):
+    """Der gespeicherte Wert hat nicht die erwartete Form (Liste statt Objekt …).
+
+    Dann wird NICHT geschrieben: wer ihn ueberschriebe, loeschte etwas, das er
+    nicht versteht."""
+
+
+def aendern(key, aenderung, fehlt=None, art=None):
+    """Streng lesen, aendern, schreiben — unter Sperre. -> der neue Wert.
+
+    v5.8-W199. W198 hat die Klasse an EINER Stelle behoben (MCP-Server), und
+    sieben weitere standen daneben: /api/schedule/add|remove, die
+    Konfiguration von Marketing, News, Co-Host, Highlight-Radar und Signalton.
+    Jede las mit get(key, []) und schrieb das Ergebnis zurueck. get() liefert
+    bei einem Datenbankfehler die Vorgabe — „Zeitplan hinzufuegen" bei
+    gesperrter Datenbank (Alltag bei laufendem Recorder) schrieb damit eine
+    Liste mit EINEM Eintrag und loeschte alle anderen; „Takt aendern" setzte
+    Ziele und Ruhezeiten still auf die Vorgabe zurueck. Und ohne Sperre
+    verloren zwei gleichzeitige Klicks einen davon (waitress bedient parallel).
+
+    aenderung(alt) -> neu. `alt` kommt aus lesen(): ein Datenbankfehler oder
+    ein unlesbarer Wert fliegt durch, `fehlt` gilt NUR, wenn der Schluessel
+    wirklich fehlt oder JSON null traegt (als Kopie — eine Vorgabe-Liste wird
+    nie geteilt). `art` prueft die Form. Wirft die Aenderung, wird nichts
+    geschrieben.
+    """
+    with _AENDERN:
+        alt = lesen(key, None)
+        if alt is None:
+            # Fehlt der Schluessel oder steht dort JSON null (etwa aus einer
+            # wiederhergestellten Konfiguration): nichts gespeichert. Das ist
+            # kein Lesefehler — der fliegt oben in lesen() durch.
+            alt = _copy.deepcopy(fehlt)
+        if art is not None and not isinstance(alt, art):
+            raise FalscheForm("app_config[%s] ist %s, erwartet %s"
+                              % (key, type(alt).__name__,
+                                 getattr(art, "__name__", art)))
+        neu = aenderung(alt)
+        set_(key, neu)
+    return neu

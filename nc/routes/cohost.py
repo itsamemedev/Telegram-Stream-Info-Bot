@@ -20,8 +20,7 @@ from flask import Blueprint, jsonify, request
 
 from nc import cohost as _nc_cohost
 from nc import fehlertext as _nc_fehlertext
-from nc.cfgstore import get as _cfg_get
-from nc.cfgstore import set_ as _cfg_set
+from nc import cfgstore as _nc_cfgstore
 from nc.cohost import STATE as _COHOST
 from nc.cohost import config as _cohost_cfg
 
@@ -51,8 +50,23 @@ def api_cohost():
 @bp.route("/api/cohost/config", methods=["POST"])
 def api_cohost_config():
     """v4.0-W24: Co-Host live schalten/justieren (app_config, kein Neustart)."""
-    saved = dict(_cfg_get("azrael.cohost", None) or {})
     d = request.get_json(silent=True) or {}
+    # v5.8-W199: streng gelesen und in einem Schritt angewandt. get(…, None)
+    # setzte bei gesperrter Datenbank jedes nicht genannte Feld (auch die
+    # Abklingzeiten je Art) still auf die Vorgabe zurück (nc/cfgstore.aendern).
+    try:
+        _nc_cfgstore.aendern("azrael.cohost", lambda alt: _cohost_anwenden(dict(alt), d),
+                             fehlt={}, art=dict)
+    except Exception as e:
+        return jsonify(ok=False, error=_nc_fehlertext.nach_aussen(e, "api_cohost_config")), 503
+    cfg = _cohost_cfg()
+    return jsonify(ok=True, enabled=cfg["enabled"], min_gap_s=cfg["min_gap_s"],
+                   per_15min=cfg["per_15min"], kinds=cfg["kinds"])
+
+
+def _cohost_anwenden(saved, d):
+    """Die Felder aus `d` auf den gespeicherten Stand legen. Ungültige Werte
+    bleiben wie bisher unbeachtet (das Deck sendet Zahlen aus Schiebern)."""
     if "enabled" in d:
         saved["enabled"] = bool(d["enabled"])
     if "min_gap_s" in d:
@@ -79,7 +93,4 @@ def api_cohost_config():
                         pass
                 kd[name] = cur
         saved["kinds"] = kd
-    _cfg_set("azrael.cohost", saved)
-    cfg = _cohost_cfg()
-    return jsonify(ok=True, enabled=cfg["enabled"], min_gap_s=cfg["min_gap_s"],
-                   per_15min=cfg["per_15min"], kinds=cfg["kinds"])
+    return saved

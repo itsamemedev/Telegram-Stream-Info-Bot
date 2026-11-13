@@ -635,19 +635,6 @@ async def _ziele_sync_loop():
         await asyncio.sleep(takt * 60)
 
 
-def _tracked_usernames(limit):
-    out = []
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT DISTINCT username FROM trackings "
-                                "WHERE COALESCE(paused,0)=0 ORDER BY username "
-                                f"LIMIT {int(limit)}").fetchall()
-        out = [r["username"] for r in rows if r["username"]]
-    except Exception as e:
-        log.warning("Discord: Tracked-User-Query fehlgeschlagen: %s", e)
-    return out
-
-
 def _par_chat_id():
     return next(iter(ALLOWED_CHAT_IDS), next(iter(ALLOWED_USER_IDS), 0))
 
@@ -1189,9 +1176,6 @@ def _reg_community_setup(tree):
 
     # v4.2-W168: _provision_user_channels ist entfallen — es gibt keine
     # Nutzer-Bereiche mehr, nur den gemeinsamen Clip-Kanal.
-
-    # v4.2-W71: _tracked_usernames steht jetzt auf Modulebene (brauchte keine
-    # einzige Closure-Variable).
 
     @tree.command(name="setup_community", description=_nc_i18n.t("Community-Server einrichten: Ränge, Channels, Rechte"))
     async def _c_setup_community(inter):

@@ -1,6 +1,6 @@
 {
   "stille_bloecke": {
-    "bot.py": 294,
+    "bot.py": 285,
     "brain/__init__.py": 1,
     "brain/agents.py": 19,
     "brain/llm.py": 3,
@@ -16,6 +16,7 @@
     "nc/_vendor/segno/helpers.py": 4,
     "nc/_vendor/segno/writers.py": 5,
     "nc/abo.py": 1,
+    "nc/abwehrlage.py": 4,
     "nc/archive.py": 6,
     "nc/archivename.py": 1,
     "nc/archiverules.py": 4,
@@ -52,7 +53,6 @@
     "nc/i18n.py": 5,
     "nc/inspectcache.py": 1,
     "nc/intel/library.py": 3,
-    "nc/intel/reel.py": 2,
     "nc/intel/transcripts.py": 1,
     "nc/kick_oauth.py": 1,
     "nc/kickapi.py": 5,
@@ -108,7 +108,7 @@
     "nc/routes/restream.py": 23,
     "nc/routes/scheduler.py": 4,
     "nc/routes/selbsttest.py": 3,
-    "nc/routes/settings.py": 16,
+    "nc/routes/settings.py": 10,
     "nc/routes/stats.py": 6,
     "nc/routes/streamer.py": 12,
     "nc/routes/systemlage.py": 6,
@@ -142,5 +142,5 @@
     "nc/ytoauth.py": 4,
     "telegramversand.py": 13
   },
-  "summe": 1054
+  "summe": 1041
 }

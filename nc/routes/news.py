@@ -13,6 +13,7 @@ from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc import news as _nc_news
 from nc.util import _loop_not_ready
+from nc import cfgstore as _nc_cfgstore
 from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 
 from nc import ctx as _ctx
@@ -99,28 +100,33 @@ def api_news_toggle():
 @bp.route("/api/news/config", methods=["POST"])
 def api_news_config():
     payload = request.get_json(silent=True) or {}
-    stored = _cfg_get("news.config", {}) or {}
+    neu = {}
     if "auto" in payload:
-        stored["auto"] = bool(payload["auto"])
+        neu["auto"] = bool(payload["auto"])
     if "categories" in payload and isinstance(payload["categories"], list):
-        stored["categories"] = [c for c in payload["categories"] if c in _nc_news.CATEGORIES]
+        neu["categories"] = [c for c in payload["categories"] if c in _nc_news.CATEGORIES]
     if "cadence_hours" in payload:
         try:
-            stored["cadence_hours"] = max(0.5, float(payload["cadence_hours"]))
+            neu["cadence_hours"] = max(0.5, float(payload["cadence_hours"]))
         except (TypeError, ValueError):
             return jsonify(ok=False, error=_t("cadence_hours muss eine Zahl sein")), 400
     if "max_items" in payload:
         try:
-            stored["max_items"] = max(1, min(100, int(payload["max_items"])))
+            neu["max_items"] = max(1, min(100, int(payload["max_items"])))
         except (TypeError, ValueError):
             return jsonify(ok=False, error=_t("max_items muss eine Zahl sein")), 400
     for k in ("quiet_start", "quiet_end"):
         if k in payload:
             try:
-                stored[k] = int(payload[k]) % 24
+                neu[k] = int(payload[k]) % 24
             except (TypeError, ValueError):
                 return jsonify(ok=False, error=f"{k} muss 0-23 sein"), 400
-    _cfg_set("news.config", stored)
+    # v5.8-W199: streng gelesen, in einem Schritt angewandt (nc/cfgstore.aendern).
+    try:
+        stored = _nc_cfgstore.aendern("news.config", lambda alt: {**alt, **neu},
+                                      fehlt={}, art=dict)
+    except Exception as e:
+        return jsonify(ok=False, error=_nc_fehlertext.nach_aussen(e, "api_news_config")), 503
     return jsonify(ok=True, config=stored)
 
 

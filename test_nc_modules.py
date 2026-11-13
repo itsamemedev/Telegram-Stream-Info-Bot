@@ -342,18 +342,22 @@ def _test_recdb():
     src = open("bot.py", encoding="utf-8").read()
     assert "from nc import recdb as _nc_recdb" in src, "recdb nicht importiert"
     assert "_nc_recdb.configure(log_event=log_event)" in src, "log_event nicht injiziert"
-    for fn in ("get_all_recordings", "get_recording_by_id", "soft_delete_recording",
-               "restore_recording", "get_trash_recordings", "get_manual_recordings",
-               "get_recording_note", "get_annotations_for_recording",
-               "get_bookmarked_recordings", "get_recent_recording_attempts",
+    for fn in ("get_all_recordings", "get_recording_by_id", "get_recent_recording_attempts"):
+        assert ("return _nc_recdb.%s(" % fn) in src, "%s delegiert nicht" % fn
+    # v5.8-W199: die uebrigen zehn Weiterleitungen hatten keinen Aufrufer mehr
+    # — die Routen importieren seit den Blueprint-Wellen direkt aus nc.recdb.
+    # Die Aussage „keine zweite Kopie im Bot" gilt damit strenger: gar keine.
+    for fn in ("soft_delete_recording", "restore_recording", "get_trash_recordings",
+               "get_manual_recordings", "get_recording_note",
+               "get_annotations_for_recording", "get_bookmarked_recordings",
                "update_recording_fingerprint", "find_recordings_by_fingerprint",
                "get_or_compute_inspect_sync"):
-        assert ("return _nc_recdb.%s(" % fn) in src, "%s delegiert nicht" % fn
+        assert ("def %s(" % fn) not in src, "%s: tote Weiterleitung wieder im Bot" % fn
     # Kein Rumpf-Rest: die SQL darf nur noch im Modul stehen, sonst laufen die
     # beiden Kopien mit der Zeit auseinander.
     assert "SELECT * FROM recordings WHERE deleted_at IS NULL" not in src, \
         "alte SQL noch im Monolithen — Doppel-Logik"
-    ok("bot.py delegiert an nc.recdb (13 Funktionen, keine Doppel-Logik)")
+    ok("bot.py delegiert an nc.recdb (3 Funktionen, 10 tote Weiterleitungen weg, keine Doppel-Logik)")
 
 
 def _test_routes_recordings():
@@ -1695,11 +1699,11 @@ def _test_w22_restream_blueprint():
         _os.environ.pop("KICK_STREAM_KEY", None)
         _os.environ["TWITCH_ENABLED"] = "0"
         assert C.aktiv("kick") is True and C.aktiv("twitch") is False
-        assert C.bereite_ziele() == [], C.bereite_ziele()
+        assert not [z for z in C.ZIELE if C.aktiv(z) and C.key_gesetzt(z)]
         _os.environ["TWITCH_ENABLED"] = "1"
         _os.environ["TWITCH_STREAM_KEY"] = "geheim123"
         assert C.aktiv("twitch") is True and C.key_gesetzt("twitch") is True
-        assert C.bereite_ziele() == ["twitch"], C.bereite_ziele()
+        assert [z for z in C.ZIELE if C.aktiv(z) and C.key_gesetzt(z)] == ["twitch"]
         # LIVE gelesen, nicht eingefroren: der Betreiber aendert Keys und
         # erwartet, dass der naechste Restream sie benutzt.
         _os.environ["RESTREAM_VERIFY_S"] = "17"
@@ -2005,9 +2009,13 @@ def _test_w24_wartung_blueprint():
     # (7) Der Monolith ruft die geloesten Funktionen auf, statt sie ein
     # zweites Mal zu halten. Eine Kopie einer loeschenden Funktion laeuft
     # irgendwann auseinander — genau deshalb sind sie gewandert.
-    for ruf in ("_nc_retention.scan(", "_nc_storage.cleanup(",
-                "_nc_storage.stats(", "_nc_arules.run_archive_rules("):
+    for ruf in ("_nc_retention.scan(", "_nc_storage.cleanup(", "_nc_storage.stats("):
         assert ruf in b, "Monolith ruft %s nicht auf" % ruf
+    # v5.8-W199: die Archiv-Regeln ruft nur noch der Blueprint — die Huelle im
+    # Bot hatte keinen Aufrufer. Eine Wahrheit, und die steht hier:
+    _w = open("nc/routes/wartung.py", encoding="utf-8").read()
+    assert "_nc_arules.run_archive_rules(" in _w, "Blueprint fuehrt die Archiv-Regeln nicht aus"
+    assert "def run_archive_rules(" not in b, "tote Weiterleitung wieder im Bot"
 
     # (8) Ein fehlender Haken sagt es, statt Erfolg zu melden. Ohne diese
     # Pruefung startet threading.Thread(target=None) klaglos und die Route
@@ -2330,9 +2338,16 @@ def _test_w26_auskunft_blueprint():
     # dieselben Funktionen auf wie der Blueprint — sonst gaebe es zwei
     # Wahrheiten ueber denselben Wert.
     b = open("bot.py", encoding="utf-8").read()
+    # v5.8-W199: die vier Huellen im Monolithen hatten keinen Aufrufer mehr —
+    # der Blueprint ruft die Fachmodule direkt. Strenger als vorher: der Bot
+    # haelt gar keine Fassung dieser Werte, also keine zweite Wahrheit.
+    _ak = open("nc/routes/auskunft.py", encoding="utf-8").read()
     for ruf in ("_nc_suche.universal_search(", "_nc_outcomes.get_outcome_breakdown(",
-                "_nc_storage.forecast(", "_nc_recdb.get_all_checks("):
-        assert ruf in b, "Monolith ruft %s nicht auf" % ruf
+                "_nc_storage.forecast(", "get_all_checks(limit="):
+        assert ruf in _ak, "Blueprint ruft %s nicht auf" % ruf
+    for fn in ("universal_search", "get_outcome_breakdown", "compute_storage_forecast",
+               "get_all_checks"):
+        assert ("def %s(" % fn) not in b, "%s: tote Weiterleitung wieder im Bot" % fn
     # v5.6-W197: "_nc_band.messen()" stand hier mit — erfuellt nur von
     # sample_bandwidth_for_active(), einer Huelle, die nichts aufrief. Die
     # Aussage dahinter (EINE Wahrheit) gilt strenger: nur der Blueprint misst,
@@ -10627,7 +10642,9 @@ def _test_v42_w71_discord_run_once_geschrumpft():
             if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
     for name in ("_disc_sprache_setzen", "_is_admin", "_ensure_rank_roles",
                  "_provision_base_channels",   # _provision_user_channels: entfallen in W168
-                 "_tracked_usernames", "_par_chat_id", "_handle_voice_ai",
+                 # _tracked_usernames: entfallen in W199 (einziger Aufrufer war
+                 # _provision_user_channels, W168)
+                 "_par_chat_id", "_handle_voice_ai",
                  "_discord_automod"):
         assert name in oben, \
             "%s ist wieder in die Closure gewandert — dort ist es weder " \
@@ -25493,7 +25510,10 @@ def _test_v42_w133_drossel_und_loop():
         return next(n for n in baum.body if isinstance(n, (_ast.FunctionDef,
                     _ast.AsyncFunctionDef)) and n.name == name)
 
-    cs = _ast.unparse(_fn("_crowdsec_status"))
+    # ANKER GEWANDERT (v5.8-W199): die CrowdSec-Abfrage liegt in nc/abwehrlage.py.
+    _ab = _ast.parse(open("nc/abwehrlage.py", encoding="utf-8").read())
+    cs = _ast.unparse(next(n for n in _ab.body if isinstance(n, _ast.FunctionDef)
+                           and n.name == "crowdsec_status"))
     assert "_nc_meldetakt.melden('crowdsec'" in cs, "CrowdSec-Warnung ungedrosselt"
     assert cs.count("_nc_meldetakt.zuruecksetzen('crowdsec')") == 2, \
         "der Erfolgspfad (LAPI und cscli) setzt die Drossel nicht zurueck"
@@ -36733,6 +36753,526 @@ def _test_v56_w198_cfgstore_lesen_streng():
     ok("v5.6-W198: cfgstore.lesen — fehlt = Vorgabe, Datenbankfehler und Unlesbares werfen")
 
 
+def _w199_speicher():
+    """Eine app_config in :memory:, bei der gezielt nur das LESEN ausfaellt.
+
+    v5.8-W199. Fiele Lesen UND Schreiben aus, schriebe auch der alte Code
+    nichts — der Vertrag faenge die Regression nicht. Der Fehler, um den es
+    geht, ist genau die Lage dazwischen: eine gesperrte Datenbank beim Lesen,
+    einen Augenblick spaeter ein Schreibvorgang, der durchgeht.
+    -> (lage, roh, zurueck); lage["lesen_gesperrt"] schaltet, roh(k) liest
+    am Code vorbei."""
+    import contextlib as _cl
+    import json as _js
+    import sqlite3 as _sq
+    import nc.cfgstore as C
+    conn = _sq.connect(":memory:", check_same_thread=False)
+    conn.row_factory = _sq.Row
+    conn.execute("CREATE TABLE app_config (k TEXT PRIMARY KEY, v TEXT, updated_at TEXT)")
+    lage = {"lesen_gesperrt": False}
+
+    class _Verbindung:
+        def execute(self, sql, *a):
+            if lage["lesen_gesperrt"] and sql.lstrip().upper().startswith("SELECT"):
+                raise _sq.OperationalError("database is locked")
+            return conn.execute(sql, *a)
+
+        def commit(self):
+            conn.commit()
+
+    @_cl.contextmanager
+    def _db():
+        yield _Verbindung()
+
+    def roh(k):
+        r = conn.execute("SELECT v FROM app_config WHERE k=?", (k,)).fetchone()
+        return _js.loads(r["v"]) if r else None
+
+    alt = (C._db_conn, C.lesen, C.set_)
+    C._db_conn = _db
+
+    def zurueck():
+        C._db_conn, C.lesen, C.set_ = alt
+        conn.close()
+    return lage, roh, zurueck
+
+
+def _test_v58_w199_cfg_aendern():
+    """v5.8-W199: nc.cfgstore.aendern — streng lesen, unter Sperre schreiben.
+
+    W198 hat die Klasse „Lesen mit Vorgabe, dann zurueckschreiben" an einer
+    Stelle behoben; aendern() ist die eine Stelle fuer alle. Geprueft: fehlt
+    = Kopie der Vorgabe, falsche Form und eine werfende Aenderung schreiben
+    NICHTS, ein Lesefehler fliegt durch und schreibt nichts, und zwei
+    gleichzeitige Aenderungen verlieren keine."""
+    import sqlite3 as _sq
+    import threading as _th
+    import time as _tm
+    import nc.cfgstore as C
+    lage, roh, zurueck = _w199_speicher()
+    try:
+        vorgabe = []
+        assert C.aendern("w199.a", lambda a: (a.append(1), a)[1], fehlt=vorgabe, art=list) == [1]
+        assert vorgabe == [], "die Vorgabe des Aufrufers wurde veraendert"
+        assert roh("w199.a") == [1]
+        # JSON null heisst „nichts gespeichert", wie ein fehlender Schluessel —
+        # der alte Code las es per `or []` genauso; 503 fuer immer waere falsch.
+        C.set_("w199.n", None)
+        assert C.aendern("w199.n", lambda a: a + [3], fehlt=[], art=list) == [3]
+        C.set_("w199.d", {"x": 1})
+        try:
+            C.aendern("w199.d", lambda a: a + [2], fehlt=[], art=list)
+            raise AssertionError("falsche Form ueberschrieben")
+        except C.FalscheForm:
+            pass
+        assert roh("w199.d") == {"x": 1}
+
+        def _wirft(_a):
+            raise ValueError("kaputt")
+        try:
+            C.aendern("w199.a", _wirft, fehlt=[], art=list)
+            raise AssertionError("werfende Aenderung verschluckt")
+        except ValueError:
+            pass
+        assert roh("w199.a") == [1]
+        lage["lesen_gesperrt"] = True
+        try:
+            C.aendern("w199.a", lambda a: a + [9], fehlt=[], art=list)
+            raise AssertionError("Lesefehler als Vorgabe gelesen")
+        except _sq.OperationalError:
+            pass
+        lage["lesen_gesperrt"] = False
+        assert roh("w199.a") == [1], "bei Lesefehler geschrieben: %r" % roh("w199.a")
+
+        # Zwei gleichzeitige Klicks: ohne Sperre liest B, waehrend A noch
+        # rechnet — einer der beiden Eintraege ist danach weg.
+        def _langsam(n):
+            def f(a):
+                _tm.sleep(0.002)
+                return a + [n]
+            return f
+        fehler = []
+
+        def _lauf(basis):
+            try:
+                for i in range(15):
+                    C.aendern("w199.p", _langsam(basis + i), fehlt=[], art=list)
+            except Exception as e:           # an den Vertrag weiterreichen
+                fehler.append(e)
+        ts = [_th.Thread(target=_lauf, args=(b,)) for b in (0, 100)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(20)
+        assert not fehler, fehler
+        assert len(roh("w199.p")) == 30, "verlorene Aenderung: %d von 30" % len(roh("w199.p"))
+    finally:
+        zurueck()
+    ok("v5.8-W199: cfgstore.aendern — Vorgabe als Kopie, falsche Form/Ausnahme/Lesefehler "
+       "schreiben nichts, gleichzeitige Aenderungen gehen nicht verloren")
+
+
+def _test_v58_w199_routen_lesen_streng():
+    """v5.8-W199: die sieben Routen, die app_config lesen, aendern und
+    zurueckschreiben, ueber die echte Flask-App mit ihren Blueprints.
+
+    Je Route: bei einem Lesefehler 503 und der Bestand UNVERAENDERT — vorher
+    schrieb „Zeitplan hinzufuegen" eine Liste mit nur dem neuen Eintrag, und
+    jede Konfigurationsseite setzte die Felder, die der Klick nicht nannte,
+    auf die Vorgabe. Danach, mit lesbarer Datenbank, bleiben genau diese
+    Felder erhalten. (Der Highlight-Radar steht in bot.py — test_smoke.py.)"""
+    from flask import Flask
+    import nc.cfgstore as C
+    import nc.routes.audio as RA
+    import nc.routes.cohost as RC
+    import nc.routes.marketing as RM
+    import nc.routes.news as RN
+    import nc.routes.settings as RS
+    import nc.marketing as M
+    import nc.news as N
+    lage, roh, zurueck = _w199_speicher()
+    try:
+        app = Flask(__name__)
+        for bp in (RA.bp, RC.bp, RM.bp, RN.bp, RS.bp):
+            app.register_blueprint(bp)
+        cl = app.test_client()
+        e1 = {"id": 1, "username": "a", "weekday": 1, "hour": 2, "duration_min": 3}
+        e2 = {"id": 2, "username": "b", "weekday": 4, "hour": 5, "duration_min": 6}
+        C.set_("scheduled_recordings", [e1, e2])
+        C.set_("marketing.config", {"targets": [M.TARGETS[0]], "quiet_start": 3})
+        C.set_("news.config", {"categories": [N.CATEGORIES[0]], "max_items": 7})
+        C.set_("azrael.cohost", {"per_15min": 2,
+                                 "kinds": {"highlight": {"on": False, "cooldown_s": 99.0}}})
+        C.set_("audio.cue", {"tone": True, "freq": 880.0, "ms": 120, "vol": 0.3,
+                             "gap_ms": 40, "duck": 0.5})
+        vorher = {k: roh(k) for k in ("scheduled_recordings", "marketing.config",
+                                      "news.config", "azrael.cohost", "audio.cue")}
+        faelle = (
+            ("/api/schedule/add", {"username": "c", "weekday": 0, "hour": 1}),
+            ("/api/schedule/remove", {"id": 1}),
+            ("/api/marketing/config", {"cadence_hours": 4}),
+            ("/api/news/config", {"cadence_hours": 4}),
+            ("/api/cohost/config", {"min_gap_s": 30}),
+            ("/api/audio/config", {"vol": 0.9}),
+        )
+        lage["lesen_gesperrt"] = True
+        for pfad, rumpf in faelle:
+            r = cl.post(pfad, json=rumpf)
+            assert r.status_code == 503, (pfad, r.status_code, r.get_data(as_text=True)[:200])
+        lage["lesen_gesperrt"] = False
+        for k, v in vorher.items():
+            assert roh(k) == v, "%s bei Lesefehler ueberschrieben: %r" % (k, roh(k))
+
+        # Mit lesbarer Datenbank: die Aenderung kommt an, der Rest bleibt.
+        for pfad, rumpf in faelle:
+            r = cl.post(pfad, json=rumpf)
+            assert r.status_code == 200 and r.get_json()["ok"], (pfad, r.get_data(as_text=True))
+        sched = roh("scheduled_recordings")
+        assert [s["username"] for s in sched] == ["b", "c"], sched
+        assert roh("marketing.config") == {"targets": [M.TARGETS[0]], "quiet_start": 3,
+                                           "cadence_hours": 4.0}
+        assert roh("news.config") == {"categories": [N.CATEGORIES[0]], "max_items": 7,
+                                      "cadence_hours": 4.0}
+        co = roh("azrael.cohost")
+        assert co["per_15min"] == 2 and co["min_gap_s"] == 30.0, co
+        assert co["kinds"]["highlight"] == {"on": False, "cooldown_s": 99.0}, co
+        au = roh("audio.cue")
+        assert au["vol"] == 0.9 and au["freq"] == 880.0 and au["ms"] == 120, au
+        # Eingabefehler bleiben 400 und schreiben nichts.
+        r = cl.post("/api/schedule/add", json={"username": "d", "hour": "abc"})
+        assert r.status_code == 400, r.status_code
+        assert len(roh("scheduled_recordings")) == 2
+        # Eine Liste, die keine ist, wird nicht ueberschrieben.
+        C.set_("scheduled_recordings", {"kaputt": True})
+        assert cl.post("/api/schedule/add", json={"username": "e"}).status_code == 503
+        assert roh("scheduled_recordings") == {"kaputt": True}
+    finally:
+        zurueck()
+    ok("v5.8-W199: Zeitplan, Marketing, News, Co-Host, Signalton — Lesefehler 503 ohne "
+       "Schreiben, nicht genannte Felder bleiben erhalten")
+
+
+def _test_v58_w199_uhr_beim_schreiben():
+    """v5.8-W199: zwei Caches nahmen die Uhr VOR der Sonde (die Klasse aus W103).
+
+    nc.systemprobe.cached_probe (TTL 5 s) und _quick_validate_proxy in
+    bot.py (TTL 90 s). Dauert die Sonde laenger als die TTL, ist der Eintrag
+    beim Schreiben schon abgelaufen — der Cache wirkt genau im Stoerfall
+    nicht. Geprueft mit einer Attrappen-Uhr, die die Sonde vorstellt; die
+    Bot-Stelle im Syntaxbaum (sie haengt an _test_proxy und dem Netz)."""
+    import ast as _ast
+    import nc.systemprobe as P
+    uhr = {"t": 1000.0}
+
+    class _Uhr:
+        @staticmethod
+        def monotonic():
+            return uhr["t"]
+    alt = P._time
+    P._time = _Uhr
+    P.cache_leeren()
+    n = {"sonden": 0}
+
+    def _zaeh():
+        n["sonden"] += 1
+        uhr["t"] += 6.0                      # laenger als TTL (5 s)
+        return "PONG"
+    try:
+        assert P.cached_probe("w199", _zaeh) == "PONG"
+        uhr["t"] += 1.0
+        assert P.cached_probe("w199", _zaeh) == "PONG"
+        assert n["sonden"] == 1, "zaehe Sonde bei jedem Aufruf wiederholt (%d)" % n["sonden"]
+    finally:
+        P._time = alt
+        P.cache_leeren()
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.py"),
+              encoding="utf-8") as f:
+        baum = _ast.parse(f.read())
+    fn = next(k for k in baum.body if isinstance(k, _ast.FunctionDef)
+              and k.name == "_quick_validate_proxy")
+    schreib = [k for k in _ast.walk(fn) if isinstance(k, _ast.Assign)
+               and any(isinstance(t, _ast.Subscript) and _ast.unparse(t.value)
+                       == "_PROXY_PREFLIGHT_CACHE" for t in k.targets)]
+    assert len(schreib) == 1 and "monotonic()" in _ast.unparse(schreib[0].value), \
+        "_PROXY_PREFLIGHT_CACHE muss mit der Uhr NACH der Probe geschrieben werden"
+    ok("v5.8-W199: Caches nehmen die Uhr beim Schreiben — systemprobe (Verhalten), "
+       "Proxy-Vorpruefung (Syntaxbaum)")
+
+
+def _test_v58_w199_linkvideo_nur_arbeitsordner():
+    """v5.8-W199 (SEC): Link-Video sendet nur eine Datei aus seinem Arbeitsordner.
+
+    Der Pfad kommt aus der yt-dlp-Ausgabe, und dieselbe Ausgabe traegt fremden
+    Text. Eine Datei ausserhalb des Ordners, den holen() selbst angelegt hat,
+    geht nie hinaus — geprueft mit einer Attrappe fuer den Unterprozess."""
+    import asyncio as _aio
+    import nc.linkvideo as L
+    d = _ph.verzeichnis()
+    draussen = os.path.join(d, "draussen.mp4")
+    with open(draussen, "wb") as f:
+        f.write(b"x")
+    alt = (L._kind.ausfuehren, L.werkzeug, dict(L._KONF))
+    L._KONF["arbeitsdir"] = d
+    L.werkzeug = lambda which=None: "/usr/bin/yt-dlp"
+    ziel = {}
+
+    async def _ausfuehren(cmd, frist, art=""):
+        ordner = os.path.dirname(cmd[cmd.index("-o") + 1])
+        pfad = ziel["pfad"] if ziel["pfad"] else os.path.join(ordner, "v.mp4")
+        if not ziel["pfad"]:
+            with open(pfad, "wb") as f:
+                f.write(b"v")
+        return 0, ("%s\tTitel\n" % pfad).encode(), b""
+    L._kind.ausfuehren = _ausfuehren
+    try:
+        ziel["pfad"] = ""
+        erg = _aio.run(L.holen("https://youtu.be/abcdefghijk", 50))
+        assert erg["pfad"] and erg["pfad"].startswith(erg["ordner"]), erg
+        L.aufraeumen(erg)
+        ziel["pfad"] = draussen
+        erg = _aio.run(L.holen("https://youtu.be/abcdefghijk", 50))
+        assert erg["pfad"] == "" and erg["grund"], erg
+        L.aufraeumen(erg)
+    finally:
+        L._kind.ausfuehren, L.werkzeug = alt[0], alt[1]
+        L._KONF.clear()
+        L._KONF.update(alt[2])
+    ok("v5.8-W199: Link-Video — nur eine Datei aus dem eigenen Arbeitsordner geht hinaus")
+
+
+def _test_v58_w199_abwehrlage():
+    """v5.8-W199: Sperrliste und SSH-Angriffe liegen in nc/abwehrlage.py.
+
+    Monolith-Abtrag: rund 350 Zeilen aus bot.py, woertlich uebernommen, die
+    vier CROWDSEC_*-Werte per configure(). Geprueft wird das VERHALTEN der
+    Wege, die das Deck zeigt — mit einer Attrappe fuer den privilegierten
+    Aufruf, nicht gegen den Quelltext: cscli fehlt (Programm, nicht Recht),
+    sudo fehlt (Hinweis mit dem ECHTEN Pfad), LAPI tot (konfigurierter Port im
+    Hinweis), kaputtes JSON, `null` als Erfolg, Zusammenfassen nach Herkunft,
+    und die Auswertung des Auth-Logs ohne private Adressen."""
+    import nc.abwehrlage as A
+    alt = (A._nc_sysrun.run_priv, A.cscli_bin, dict(A._KONF), list(A._CSCLI_CACHE))
+    antwort = {}
+
+    def _priv(args, timeout=6, sudo_first=False):
+        return antwort["r"]
+    A._nc_sysrun.run_priv = _priv
+    try:
+        A.configure(lapi_host="10.0.0.9", lapi_port=8099, bouncer_key="", lapi_url="")
+        A._CSCLI_CACHE[0] = None
+        A.cscli_bin = lambda: None
+        r = A.crowdsec_status()
+        assert r["status"] == "fehlt" and "nicht installiert" in r["hint"], r
+        A.cscli_bin = lambda: "/opt/cs/cscli"
+        assert A.crowdsec_via_lapi() is None, "ohne Schluessel kein LAPI-Weg"
+        antwort["r"] = (1, "", "sudo: a password is required", False)
+        r = A.crowdsec_status()
+        assert r["status"] == "kein_sudo" and "/opt/cs/cscli" in r["hint"], r
+        antwort["r"] = (1, "", "dial tcp 10.0.0.9:8099: connection refused", False)
+        r = A.crowdsec_status()
+        assert r["status"] == "lapi_tot" and "10.0.0.9:8099" in r["hint"], r
+        antwort["r"] = (124, "", "", False)
+        assert A.crowdsec_status()["status"] == "timeout"
+        antwort["r"] = (0, "WARN alt\n[", "", True)
+        assert A.crowdsec_status()["status"] == "json_kaputt"
+        # Ohne Entscheidungen sagt cscli `null` — oder gar nichts. Beides ist
+        # ein Erfolg (niemand gesperrt), kein kaputtes JSON.
+        for leer in ("null", ""):
+            antwort["r"] = (0, leer, "", True)
+            r = A.crowdsec_status()
+            assert r["ok"] and r["status"] == "leer" and r["total_banned"] == 0, (leer, r)
+        antwort["r"] = (0, '[{"decisions": [{"value": "1.2.3.4", "origin": "crowdsec", '
+                           '"scenario": "crowdsecurity/ssh-bf"}, {"value": "1.2.3.4", '
+                           '"origin": "crowdsec", "scenario": "crowdsecurity/ssh-bf"}]}, '
+                           '{"value": "5.6.7.8", "origin": "CAPI"}]', "", True)
+        r = A.crowdsec_status()
+        by = {j["jail"]: j for j in r["jails"]}
+        assert r["total_banned"] == 2 and r["via_sudo"] is True, r
+        assert by["crowdsec"]["ips"] == ["1.2.3.4"] and by["crowdsec"]["scenarios"] == {"ssh-bf": 2}
+        assert by["CAPI"]["ips"] == ["5.6.7.8"]
+        # Der cscli-Pfad wird gemerkt, ein Fehlschlag nicht (B138).
+        A._CSCLI_CACHE[0] = None
+        A.cscli_bin = lambda: None
+        assert A.cscli_path() is None and A._CSCLI_CACHE[0] is None
+        A.cscli_bin = lambda: "/usr/local/bin/cscli"
+        assert A.cscli_path() == "/usr/local/bin/cscli" == A._CSCLI_CACHE[0]
+    finally:
+        A._nc_sysrun.run_priv, A.cscli_bin = alt[0], alt[1]
+        A._KONF.clear()
+        A._KONF.update(alt[2])
+        A._CSCLI_CACHE[:] = alt[3]
+    log = ("Nov 13 01:00:01 h sshd[1]: Failed password for root from 45.33.32.156 port 1 ssh2\n"
+           "Nov 13 01:00:02 h sshd[1]: Failed password for invalid user bob from 45.33.32.156 port 2\n"
+           "Nov 13 01:00:03 h sshd[1]: Invalid user ftp from 91.198.174.192 port 3\n"
+           "Nov 13 01:00:04 h sshd[1]: Failed password for root from 192.168.1.5 port 4\n"
+           "Nov 13 01:00:05 h sshd[1]: Accepted publickey for ubuntu from 45.33.32.157\n")
+    r = A.auswerten(log, "attrappe")
+    assert r["total"] == 3 and r["unique_ips"] == 2, r
+    assert r["attacks"][0]["ip"] == "45.33.32.156" and r["attacks"][0]["users"] == ["bob", "root"]
+    assert all(a["ip"] != "192.168.1.5" for a in r["attacks"]), "privates Netz als Angriff"
+    assert A.auswerten("", "x")["status"] == "leer"
+    # Und der Bot haelt keine zweite Kopie.
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.py"),
+              encoding="utf-8") as f:
+        bot = f.read()
+    for alt_name in ("def _crowdsec_status(", "def _parse_ssh_attacks(", "def _crowdsec_via_lapi(",
+                     "def _cscli_path("):
+        assert alt_name not in bot, "%s steht wieder im Monolithen" % alt_name
+    assert "_nc_abwehrlage.configure(" in bot, "die CROWDSEC_*-Werte erreichen das Modul nicht"
+    ok("v5.8-W199: nc.abwehrlage — cscli fehlt/kein sudo/LAPI tot/Zeitlimit/kaputtes JSON/"
+       "null/Zusammenfassen, Auth-Log ohne private Adressen; keine Kopie im Bot")
+
+
+def _test_v58_w199_geocache_anreichern():
+    """v5.8-W199: die Proxy-Anreicherung liegt neben dem Cache (nc/geocache.py).
+
+    Treffer aus dem Cache sofort, Unbekannte in EINEM Stapel, gemerkt ueber
+    den einen Schreibweg put(). Dazu die Korrektur beim Umzug: die Ruhezeit
+    gegen ip-api.com wurde nur bei Erfolg gestempelt — ein gestoerter Dienst
+    kostete jede Pool-Auffrischung erneut den 10-s-Timeout (W102-Klasse)."""
+    import nc.geocache as G
+    alt = (G._abrufen, G._time, list(G._LETZTER_ABRUF))
+    uhr = {"t": 5000.0}
+
+    class _Uhr:
+        @staticmethod
+        def monotonic():
+            return uhr["t"]
+    abrufe = []
+
+    def _api(ips, timeout=10):
+        abrufe.append(list(ips))
+        if uhr.get("kaputt"):
+            raise OSError("ip-api gestoert")
+        return [{"status": "success", "query": ip, "lat": 1.0, "lon": 2.0, "country": "X",
+                 "city": "Y", "isp": "Z" * 80} for ip in ips if ip != "9.9.9.9"]
+    G._abrufen, G._time = _api, _Uhr
+    G._LETZTER_ABRUF[0] = 0.0
+    G.leeren()
+    try:
+        G.put("1.1.1.1", {"lat": 9.0, "lon": 9.0, "country": "C", "city": "c", "isp": "i"})
+        px = [{"url": "1.1.1.1:80"}, {"url": "2.2.2.2:8080"}, {"url": "9.9.9.9:3128"}, {"url": ""}]
+        G.anreichern(px)
+        assert px[0]["lat"] == 9.0, "Cache-Treffer nicht angewandt"
+        assert abrufe == [["2.2.2.2", "9.9.9.9"]], abrufe
+        assert px[1]["lat"] == 1.0 and len(px[1]["isp"]) == 50 and "lat" not in px[2]
+        assert G.get("2.2.2.2") and G.get("9.9.9.9") is None
+        # Innerhalb der Ruhezeit kein zweiter Abruf.
+        uhr["t"] += 1.0
+        G.anreichern([{"url": "3.3.3.3:1"}])
+        assert len(abrufe) == 1, "Ruhezeit nicht eingehalten"
+        # Ein FEHLSCHLAG haelt die Ruhe ebenfalls ein.
+        uhr["t"] += 10.0
+        uhr["kaputt"] = True
+        G.anreichern([{"url": "4.4.4.4:1"}])
+        uhr["t"] += 1.0
+        G.anreichern([{"url": "4.4.4.4:1"}])
+        assert len(abrufe) == 2, "nach einem Fehlschlag sofort wieder abgefragt (%d)" % len(abrufe)
+    finally:
+        G._abrufen, G._time = alt[0], alt[1]
+        G._LETZTER_ABRUF[:] = alt[2]
+        G.leeren()
+    ok("v5.8-W199: geocache.anreichern — Cache zuerst, ein Stapel, Ruhezeit auch nach Fehlschlag")
+
+
+def _test_v58_w199_zusammenschnitt_nicht_nach_telegram():
+    """v5.8-W199: der Highlights-&-Memes-Zusammenschnitt geht nur noch nach
+    Discord — Telegram nur mit MEME_REEL_TELEGRAM=1.
+
+    W159 hatte ihn ungefragt auch in jede Telegram-Gruppe des Trackings
+    geschickt (Vorgabe an); der Betreiber: „Davon war nie die Rede." Geprueft
+    wird die Bedingung selbst, ausgewertet mit und ohne Variable — nicht ihr
+    Wortlaut."""
+    import ast as _ast
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.py"),
+              encoding="utf-8") as f:
+        baum = _ast.parse(f.read())
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_meme_zusammenschnitt")
+    tg = next(n for n in _ast.walk(fn) if isinstance(n, _ast.If)
+              and "MEME_REEL_TELEGRAM" in _ast.unparse(n.test))
+    bedingung = compile(_ast.Expression(tg.test), "<MEME_REEL_TELEGRAM>", "eval")
+    alt = os.environ.pop("MEME_REEL_TELEGRAM", None)
+    try:
+        assert not eval(bedingung, {"os": os}), "ohne Variable geht der Zusammenschnitt nach Telegram"
+        for wert, soll in (("", False), ("0", False), ("nein", False), ("1", True),
+                           ("on", True), (" TRUE ", True)):
+            os.environ["MEME_REEL_TELEGRAM"] = wert
+            assert bool(eval(bedingung, {"os": os})) is soll, (wert, soll)
+    finally:
+        os.environ.pop("MEME_REEL_TELEGRAM", None)
+        if alt is not None:
+            os.environ["MEME_REEL_TELEGRAM"] = alt
+    # Discord bleibt das Ziel, unabhaengig vom Schalter.
+    vor_if = [n for n in fn.body if n.lineno < tg.lineno]
+    assert any("_clip_to_discord(" in _ast.unparse(n) for n in vor_if), \
+        "der Zusammenschnitt geht nicht mehr nach Discord"
+    ok("v5.8-W199: Zusammenschnitt nur nach Discord, Telegram nur mit MEME_REEL_TELEGRAM=1")
+
+
+def _test_v58_w199_evolution_schnappschuesse():
+    """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
+
+    Jeder Lernzyklus schreibt eine volle Kopie des Monolithen (1,4 MB); das
+    Manifest behielt 20 Eintraege, die Dateien blieben alle liegen — rund
+    2 GB im Jahr. Und die Route sortierte nach NAMEN: bot_v9 stand vor
+    bot_v10. Geprueft am echten write_build mit 25 alten Schnappschuessen."""
+    from flask import Flask
+    import nc.evolution as E
+    import nc.routes.evolution as RE
+    import logging as _lg
+    d = _ph.verzeichnis()
+    bdir = os.path.join(d, "build")
+    os.makedirs(bdir)
+    quelle = os.path.join(d, "bot.py")
+    with open(quelle, "w", encoding="utf-8") as f:
+        f.write("print('bot')\n")
+    for v in range(1, 26):
+        with open(os.path.join(bdir, "bot_v%d.py" % v), "w", encoding="utf-8") as f:
+            f.write("# alt\n")
+    for fremd in ("bot_latest.py", "bot_vx.py", "notizen.txt"):
+        with open(os.path.join(bdir, fremd), "w", encoding="utf-8") as f:
+            f.write("bleibt\n")
+    alt_conf = dict(E._conf)
+    alt_env = os.environ.get("BUILD_DIR")
+    os.environ["BUILD_DIR"] = bdir
+    E._conf.clear()
+    E.configure(log=_lg.getLogger("w199"), log_event=lambda *a, **k: None,
+                llm_chat_sync=lambda *a, **k: (None, "aus"), bot_file=quelle,
+                db_path=os.path.join(d, "x.db"), enabled=True, interval_hours=6,
+                use_llm=False, window_days=7)
+    try:
+        assert [v for v, _p in E.schnappschuesse(bdir)][:3] == [25, 24, 23]
+        E.write_build(26, "w199", ["a"], [], {}, None)
+        rest = sorted(n for n in os.listdir(bdir) if n.startswith("bot_v") and n != "bot_vx.py")
+        versionen = sorted(int(n[5:-3]) for n in rest)
+        assert versionen == list(range(7, 27)), versionen
+        for fremd in ("bot_latest.py", "bot_vx.py", "notizen.txt"):
+            assert os.path.isfile(os.path.join(bdir, fremd)), fremd
+        assert E.schnappschuesse_kappen(bdir) == 0
+        assert E.schnappschuesse(os.path.join(d, "gibtsnicht")) == []
+        # Die Route ohne Manifest: nach Zahl, nicht nach Namen.
+        os.remove(os.path.join(bdir, "snapshots.json"))
+        for v in range(7, 26):
+            os.remove(os.path.join(bdir, "bot_v%d.py" % v))
+        for v in (9, 10):
+            with open(os.path.join(bdir, "bot_v%d.py" % v), "w", encoding="utf-8") as f:
+                f.write("#\n")
+        app = Flask(__name__)
+        app.register_blueprint(RE.bp)
+        j = app.test_client().get("/api/evolution/snapshots").get_json()
+        assert [s["file"] for s in j["snapshots"]] == ["bot_v26.py", "bot_v10.py",
+                                                       "bot_v9.py"], j["snapshots"]
+    finally:
+        E._conf.clear()
+        E._conf.update(alt_conf)
+        if alt_env is None:
+            os.environ.pop("BUILD_DIR", None)
+        else:
+            os.environ["BUILD_DIR"] = alt_env
+    ok("v5.8-W199: Evolution — hoechstens 20 Schnappschuesse, fremde Dateien bleiben, "
+       "Route sortiert nach Versionsnummer")
+
+
 def _test_v57_w198_mcp_verbindung_zu():
     """v5.7-W198: ein MCP-Server, der nach jeder Antwort die Verbindung schliesst.
 
@@ -39584,6 +40124,14 @@ def main():
     _test_v56_w198_mcp_lage()
     _test_v56_w198_cfgstore_lesen_streng()
     _test_v56_w197_cookie_bereinigen()
+    _test_v58_w199_cfg_aendern()
+    _test_v58_w199_routen_lesen_streng()
+    _test_v58_w199_evolution_schnappschuesse()
+    _test_v58_w199_uhr_beim_schreiben()
+    _test_v58_w199_linkvideo_nur_arbeitsordner()
+    _test_v58_w199_abwehrlage()
+    _test_v58_w199_geocache_anreichern()
+    _test_v58_w199_zusammenschnitt_nicht_nach_telegram()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

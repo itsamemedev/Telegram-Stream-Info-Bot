@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **27.956 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
+`bot.py` hat **27.312 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 386 Routen (34 in `bot.py`, 352 in
-`nc/routes/`), 67 Slash-Commands, 668 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 67 Slash-Commands, 630 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -1262,6 +1262,18 @@ Messwert gegen ein Panel, Zustände gehen als 0/1 je Wert nach Prometheus
 sieht aus wie ein Bot, der nichts meldet), und das Deck fragt Prometheus
 selbst, ob es den Bot abfragt. **`.env` schreibt nur `nc/envdatei.py`** —
 Sicherung, Rechte, Besitzer, atomar, kein Zeilenumbruch im Wert.
+
+**Lesen mit Vorgabe, dann zurückschreiben, ist bei gesperrter Datenbank ein
+Löschbefehl.** `nc.cfgstore.get()` liefert bei einem Fehler die Vorgabe — für
+eine Anzeige richtig. Wer damit eine Liste liest, einen Eintrag anhängt und
+zurückschreibt, macht aus einem gesperrten SQLite (Alltag bei laufendem
+Recorder) „alle anderen Einträge weg". W198 hat das für die MCP-Server
+behoben; W199 fand sieben weitere Stellen daneben (Zeitpläne, Marketing,
+News, Co-Host, Highlight-Radar, Signalton). Seither gibt es **eine** Stelle:
+`nc/cfgstore.aendern()` — streng gelesen, Form geprüft, unter Sperre
+geschrieben. Wer `app_config` ändert, geht darüber. **Ist eine Klasse an
+einer Stelle behoben, steht sie meistens daneben — suchen, bevor die Welle
+schließt.**
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

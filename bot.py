@@ -591,7 +591,6 @@ from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisie
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
 from nc import ffbuild as _nc_ffbuild        # v4.0-W44: ffmpeg-Kommandobauer (extrahiert)
 from nc import ffmpeg_filters as _nc_ff    # v4.2-W54: Panel-Masse (Chat-Umbruch)
-from nc import chatstats as _nc_chatstats    # v4.0-W45: Chat-Health-Aggregation (extrahiert)
 # v4.1-W9: nc.oauthpage ist raus — beide Rueckmeldeseiten (Kick, Twitch)
 # werden nur noch von den OAuth-Blueprints gebaut, nicht mehr vom Monolithen.
 from nc import trackingdb as _nc_trackingdb  # v4.0-W50: Tracking-Status-Helfer (conn-injiziert)
@@ -646,9 +645,7 @@ from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (g
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
-from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
 from nc import netstat as _nc_netstat        # v4.0-W61b: Netzdurchsatz-Parsing/Delta (rein)
-from nc import journalperm as _nc_journalperm  # v4.0-W62b: Journal-Leserecht-Entscheidung (rein)
 from nc import cfgstore as _nc_cfgstore      # v4.0-W62c/W111: app_config lesen+schreiben
 from nc import recdb as _nc_recdb        # v4.0-W104: Aufnahmen-DB-Zugriffe (extrahiert)
 from nc import aidb as _nc_aidb          # v4.0-W112: KI-Datenzugriff (extrahiert)
@@ -985,16 +982,13 @@ from nc.stats import get_per_user_stats, _collect_session_stats  # noqa: F401
 from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
 from nc import backupcfg as _nc_backup     # v4.1-W24: Sicherung, Aufbewahrung
 from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibweg
-from nc import geoip as _nc_geoip         # v4.1-W25: ip-api-Stapelabfrage
+from nc import abwehrlage as _nc_abwehrlage  # v5.8-W199: Sperrliste + SSH-Angriffe
 from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
 from nc import dashauth as _nc_dashauth   # v4.1-W30: ist das Deck offen?
 from nc import webserver as _nc_webserver  # v4.2-W84: Server + Bindung
 from nc import schemastand as _nc_schemastand  # v4.2-W85: Schema-Zaehler
 from nc import auslieferung as _nc_auslieferung  # v4.2-W85: welcher Stand laeuft?
 from nc import fehlertext as _nc_fehlertext  # v4.1-W30: Fehlertext nach aussen
-from nc import outcomes as _nc_outcomes   # v4.1-W26: Ausgaenge der Aufnahmen
-from nc import suche as _nc_suche         # v4.1-W26: bestandsweite Suche
-from nc import archiverules as _nc_arules  # v4.1-W24: Auto-Archiv-Regeln
 from nc import retention as _nc_retention  # v4.1-W24: Aufbewahrungs-Scan
 from nc import storage as _nc_storage      # v4.1-W24: Platz und Aufraeumen
 from nc.notes import delete_annotation  # noqa: F401
@@ -1071,7 +1065,6 @@ from nc import schema as _nc_schema  # B164: DB-Schema (aus init_db extrahiert)
 from nc import modheuristics as _nc_mod  # B165: plattformunabh. Mod-Heuristik
 from nc import piper_voices as _nc_piper  # B166: Piper-Stimm-/Modell-Auflösung
 from nc import audio_cue as _nc_audio  # v4.0-W11: Signalton + Ducking
-from nc import crowdsec as _nc_crowdsec  # v4.0-W18: LAPI-Zugang ohne sudo
 from nc import replygate as _nc_replygate  # v4.0-W20: Bremse fuer Chat-Antworten
 from nc import sendrate as _nc_sendrate    # v4.0-W23: YT-Sende-Bremse (Anti-Flood)
 from nc import cohost as _nc_cohost        # v4.0-W24: proaktiver Live-Co-Host
@@ -1091,7 +1084,6 @@ from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln
 from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)
 from nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)
 from nc import abo as _nc_abo              # v4.0-W26: Abo-Erkennung (extrahiert)
-from nc import sysrun as _nc_sysrun        # v4.0-W26: privilegierter Kommando-Runner (extrahiert)
 from nc import filepayload as _nc_fp         # v4.0-W28: reine Datei-Klassifikation (extrahiert)
 from nc import highlights as _nc_highlights  # v4.0-W22: Highlight-Radar
 from nc import evolution as _nc_evolution  # B167: Selbstanalyse-Kern
@@ -4448,15 +4440,6 @@ def init_db():
 # F21: Archive-Helpers
 
 
-# F38: Kind-Klassifikation für Type-Filter (video/audio/image).
-# Wird vom Dashboard-Filter und vom Bulk-Listing benutzt. Single source of truth,
-# damit Frontend und Backend nicht auseinanderlaufen wenn neue Extensions
-# zu ARCHIVE_ALLOWED_EXTS dazukommen.
-def _kind_from_filename(filename: str) -> str:
-    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
-    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
-    return _nc_archive._kind_from_filename(filename)
-
 # F38: Paginierte + gefilterte Archive-Liste.
 # 600+ Files in einem Rutsch zum Browser zu schicken ist a) langsam,
 # b) für Mobile-Use unbrauchbar, c) renderts dort 600 DOM-Nodes auf einmal.
@@ -4479,23 +4462,12 @@ def _kind_from_filename(filename: str) -> str:
 #   - DB-Zeile wird IMMER aktualisiert wenn der Rename auf Disk geklappt hat,
 #     auch wenn die Datei vorher fehlte (dann ist's nur DB-Rename).
 
-# Backwards-compat: einige interne Aufrufer (z.B. /diag, Tests) erwarten weiterhin
-# eine einfache Liste. Wir lassen die alte Signatur am Leben aber die neue paged-
-# Variante ist das was /api/archive jetzt benutzt.
-def add_archive_entry(filename, filepath, title, notes, size, mime, source_url):
-    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
-    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
-    return _nc_archive.add_archive_entry(filename, filepath, title, notes, size, mime, source_url)
 
 def get_archive_entry(eid):
     # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
     # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
     return _nc_archive.get_archive_entry(eid)
 
-def delete_archive_entry(eid):
-    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
-    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
-    return _nc_archive.delete_archive_entry(eid)
 
 def start_recording_attempt(tracking_id, username, recorder):
     """F19: legt einen neuen Attempt-Eintrag an. Returns die ID für späteres Update."""
@@ -4580,9 +4552,6 @@ def save_tiktok_check(user_id: int, username: str, data: dict):
              datetime.now(timezone.utc).isoformat()))
         conn.commit()
 
-def get_all_checks(limit=100, offset=0):
-    # v4.1-W26: nach nc/recdb.py geloest.
-    return _nc_recdb.get_all_checks(limit=limit, offset=offset)
 
 # B122-PERF: Ergebnis-Cache fuer die teuren Gesamt-Aggregate.
 #
@@ -4608,11 +4577,6 @@ def get_all_checks(limit=100, offset=0):
 # lean-Modus, der die Aggregate fuer den Puls komplett auslaesst.
 STATS_CACHE_TTL = _env_int("STATS_CACHE_TTL", 120)   # Sekunden, 0 = aus
 
-
-def get_stats(force: bool = False):
-    # v4.0-W117: Koerper und Cache nach nc/stats.py — der /api/stats-Blueprint
-    # braucht sie ebenso wie der Bot, und ueber nc.ctx waere das ein Slot mehr.
-    return _nc_stats.get_stats(force)
 
 # F64: Per-Chat Tracking-Quota
 # Verhindert dass ein einzelner Chat hunderte Trackings anlegt → DB-Bloat,
@@ -5097,13 +5061,6 @@ def get_event_log(limit: int = 100, kind: Optional[str] = None,
     with db_conn() as conn:
         return conn.execute(sql, params).fetchall()
 
-# ---------- X2: Tracking-Tags ----------
-
-
-def get_all_tags_with_counts() -> List[dict]:
-    """Alle Tags + Anzahl Trackings die diesen Tag haben."""
-    return _nc_trackingdb.get_all_tags_with_counts()
-
 # ---------- X3: Tracking-Priority (VIP) ----------
 
 
@@ -5111,56 +5068,6 @@ def get_priority_poll_interval(tracking_id: int, default_interval: int) -> int:
     """Polling-Intervall basierend auf Priority. Wird von _schedule_next_check
        benutzt. Hoehere Priority = kuerzeres Intervall."""
     return _nc_trackingdb.get_priority_poll_interval(tracking_id, default_interval)
-
-# ---------- X4: Recording-Notes ----------
-
-def get_recording_note(recording_id: int) -> Optional[str]:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_recording_note(recording_id=recording_id)
-
-# ---------- X5: Bookmarks ----------
-
-def get_bookmarked_recordings(limit: int = 50) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_bookmarked_recordings(limit=limit)
-
-# ---------- X6: Recording Annotations ----------
-
-def get_annotations_for_recording(recording_id: int) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_annotations_for_recording(recording_id=recording_id)
-
-
-# ---------- X7: ffprobe-Inspect mit Cache ----------
-
-def get_or_compute_inspect_sync(recording_id: int) -> Optional[dict]:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_or_compute_inspect_sync(recording_id=recording_id)
-
-
-# ---------- X8: Quality-Score ----------
-
-# ---------- X9: Hash-Fingerprint ----------
-
-def update_recording_fingerprint(recording_id: int) -> Optional[str]:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.update_recording_fingerprint(recording_id=recording_id)
-
-def find_recordings_by_fingerprint(h: str) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.find_recordings_by_fingerprint(h=h)
-
-# ---------- X10: Storage-Forecast ----------
-def compute_storage_forecast() -> dict:
-    # v4.1-W26: nach nc/storage.py geloest — "wann ist die Platte voll" steht
-    # dort neben "wie viel Platz ist da".
-    return _nc_storage.forecast(RECORDINGS_DIR)
 
 # ---------- X11: Live-Bandwidth-Monitor ----------
 _NET_SAMPLE = {"ts": 0.0, "bytes": 0}
@@ -5188,33 +5095,6 @@ def _sample_net_throughput():
 _nc_routes_auskunft.HAKEN["netzdurchsatz"]["fn"] = _sample_net_throughput
 
 
-# ---------- X12: Heatmaps ----------
-
-
-# ---------- X13: Profile-Snapshots ----------
-
-
-# ---------- X14: Auto-Archive-Rules ----------
-def list_archive_rules() -> list:
-    # v4.1-W24: nach nc/archiverules.py geloest.
-    return _nc_arules.list_archive_rules()
-
-def add_archive_rule(name: str, condition: dict, action: dict) -> Optional[int]:
-    # v4.1-W24: nach nc/archiverules.py geloest.
-    return _nc_arules.add_archive_rule(name, condition, action)
-
-def delete_archive_rule(rule_id: int) -> bool:
-    # v4.1-W24: nach nc/archiverules.py geloest.
-    return _nc_arules.delete_archive_rule(rule_id)
-
-
-def run_archive_rules(rule_id: Optional[int] = None) -> dict:
-    # v4.1-W24: nach nc/archiverules.py geloest. Archivverzeichnis und
-    # Ereignisprotokoll gehen als Argument hinueber — beides kennt nur der
-    # laufende Monolith.
-    return _nc_arules.run_archive_rules(rule_id, archive_dir=ARCHIVE_DIR,
-                                        log_event=log_event)
-
 # ---------- X15: TikTok-Status-Code-Tracker ----------
 _TIKTOK_STATUS_COUNTER = _collections.Counter()    # in-memory counter
 _TIKTOK_STATUS_FIRST_SEEN = _time_mod.monotonic()
@@ -5226,11 +5106,6 @@ def record_tiktok_status(status_code: int):
 def get_tiktok_status_distribution() -> dict:
     """Returns: {since_seconds, total, by_code: [{code, count, pct}]}"""
     return _nc_stats.get_tiktok_status_distribution()
-
-# ---------- X16: Failure-Pattern-Clusterer ----------
-
-
-# ---------- X17: Activity-Pulse (1min-Resolution) ----------
 
 # ---------- X18: Manual Recording ----------
 _MANUAL_RECORDINGS = {}    # manual_id -> asyncio.subprocess.Process
@@ -5428,41 +5303,7 @@ def stop_manual_recording(manual_id: int) -> dict:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-def get_manual_recordings(limit: int = 50, only_active: bool = False) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_manual_recordings(limit=limit, only_active=only_active)
 
-# ---------- X19: Soft-Delete (Trash/Restore) ----------
-def soft_delete_recording(recording_id: int) -> bool:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.soft_delete_recording(recording_id=recording_id)
-
-def restore_recording(recording_id: int) -> bool:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.restore_recording(recording_id=recording_id)
-
-def get_trash_recordings(limit: int = 50) -> list:
-    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
-    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
-    return _nc_recdb.get_trash_recordings(limit=limit)
-
-# ---------- X20: Universal Search ----------
-def universal_search(q, limit=20):
-    # v4.1-W26: nach nc/suche.py geloest.
-    return _nc_suche.universal_search(q, limit=limit)
-
-# ---------- X21: Recording-Manifest-Export ----------
-
-# ---------- X22: Cookie-Refresh-Days ----------
-
-# ---------- X23: Tracking Quick-Restart ----------
-
-# ---------- X24: Stream-URL-Inspector (live test) ----------
-
-# ---------- X25: Audio-Waveform-Peaks ----------
 # ============================================================================
 # End X-Series Helpers
 # ============================================================================
@@ -5529,10 +5370,6 @@ _OUTCOME_META = {
     "running":               ("Running",            "muted"),
 }
 
-def get_outcome_breakdown(days: int = 7) -> dict:
-    # v4.1-W26: nach nc/outcomes.py geloest — mitsamt _OUTCOME_META, damit
-    # Ausgang und Klartext nicht an zwei Stellen gepflegt werden muessen.
-    return _nc_outcomes.get_outcome_breakdown(days)
 
 # -----------------------------
 # TikTok Profil-Scraper
@@ -7004,10 +6841,6 @@ async def _viewer_sample_loop():
 # zweite Kopie und die Diagnose meldete ewig "noch kein Sendeversuch".
 _KICK_BID_CACHE = _nc_kickapi.BID_CACHE
 _KICK_SEND_LAST = _nc_kickapi.SEND_LAST
-
-
-async def _kick_broadcaster_id():
-    return await _nc_kickapi.broadcaster_id()
 
 
 async def _db_vacuum_loop():
@@ -11266,11 +11099,6 @@ AI_CHAT_CONTEXT_CHARS    = _env_int("AI_CHAT_CONTEXT_CHARS", 16000)
 AI_CHAT_TITLE_MAX        = 60
 
 
-def _conv_messages(conv_id):
-    # v4.0-W112: nach nc/aidb.py geloest (KI-Datenzugriff).
-    return _nc_aidb.conv_messages(conv_id)
-
-
 # F78: LLM-Modellliste mit Cache.
 # V37: Modell-Cache lebt in _llm_list_models (60s, Brain→freeai).
 
@@ -11480,88 +11308,17 @@ def _quick_validate_proxy(proxy):
             return c[1]
     ok, _lat = _test_proxy(proxy)
     with _PROXY_PREFLIGHT_LOCK:
-        _PROXY_PREFLIGHT_CACHE[proxy] = (now, ok)
+        # v5.8-W199: Zeitstempel nach der Probe (W103) — sie darf
+        # _PROXY_TEST_TIMEOUT dauern, und um die waere der Eintrag sonst kuerzer.
+        _PROXY_PREFLIGHT_CACHE[proxy] = (_time_mod.monotonic(), ok)
         if len(_PROXY_PREFLIGHT_CACHE) > 256:        # klein halten (FIFO)
             _PROXY_PREFLIGHT_CACHE.pop(next(iter(_PROXY_PREFLIGHT_CACHE)), None)
     return ok
 
 
-# F79: GeoIP-Cache für die Proxy-Globe-Visualisierung.
-# Source: ip-api.com Batch-Endpoint (free, no API-Key, 45 req/min limit).
-# B57 (Bug-Hunt): Cache hatte kein Limit → unbounded growth. Bei Pool-Refresh
-# alle 30min × neue IPs jedesmal sind das ~10MB/Jahr. Jetzt: einfacher LRU-
-# v4.1-W25: Cache, Sperre und Obergrenze liegen jetzt in nc/geocache.py — mit
-# genau EINEM Schreibweg. Vorher gab es hier zwei: diesen Helfer, der die
-# Grenze durchsetzt, und einen Direktzugriff in der Geo-Auflösung der Abwehr,
-# der an ihr vorbeiging. Bei einer Angriffswelle mit vielen verschiedenen
-# Adressen wuchs der Cache dadurch unbegrenzt — ohne Fehler und ohne Logzeile.
-_PROXY_GEO_LAST_FETCH = 0   # monotonic ts der letzten ip-api Anfrage
-_proxy_geo_cache_put = _nc_geocache.put
-
-def _enrich_proxies_with_geo(proxies):
-    """Fügt jedem Proxy-Dict {lat, lon, country, city, isp} hinzu.
-       Cache hits = sofort, Cache misses = ein Batch-Call zu ip-api.com.
-       Falls ip-api down: kein crash, fehlt halt das geo-Feld."""
-    global _PROXY_GEO_LAST_FETCH
-    import urllib.request, json as _json
-
-    # Phase 1: cache hits direkt anwenden, misses sammeln
-    unknown = []
-    for p in proxies:
-        ip = (p.get("url", "").split(":") or [""])[0]
-        if not ip:
-            continue
-        cached = _nc_geocache.get(ip)
-        if cached:
-            p.update(cached)
-        else:
-            unknown.append((p, ip))
-
-    if not unknown:
-        return proxies
-
-    # Phase 2: rate-limit gegen ip-api.com (45 req/min — wir machen max 1 batch
-    # alle 5s damit pool-refresh-storms uns nicht bannen)
-    now = _time_mod.monotonic()
-    if now - _PROXY_GEO_LAST_FETCH < 5:
-        log.info(f"GeoIP rate-limit: skip enrichment ({len(unknown)} unknown remain)")
-        return proxies
-
-    # Phase 3: batch fetch (max 100 IPs pro request laut ip-api docs)
-    batch_ips = [ip for _, ip in unknown[:100]]
-    body = _json.dumps([{"query": ip,
-                         "fields": "status,lat,lon,country,city,isp,query"}
-                        for ip in batch_ips]).encode()
-    try:
-        req = urllib.request.Request(
-            "http://ip-api.com/batch",
-            data=body,
-            headers={"Content-Type": "application/json",
-                     "User-Agent": "TKT-OPS/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            results = _json.loads(resp.read().decode("utf-8", errors="ignore"))
-        _PROXY_GEO_LAST_FETCH = now
-        # Index by IP (results are in request order but safer to map by query field)
-        ip_to_geo = {}
-        for r in results:
-            if isinstance(r, dict) and r.get("status") == "success":
-                ip_to_geo[r.get("query", "")] = {
-                    "lat": r.get("lat"),
-                    "lon": r.get("lon"),
-                    "country": r.get("country", ""),
-                    "city": r.get("city", ""),
-                    "isp": (r.get("isp", "") or "")[:50],
-                }
-        # Apply + cache
-        for proxy_dict, ip in unknown:
-            geo = ip_to_geo.get(ip)
-            if geo:
-                proxy_dict.update(geo)
-                _proxy_geo_cache_put(ip, geo)   # B57: bounded cache write
-        log.info(f"GeoIP enriched {len(ip_to_geo)}/{len(batch_ips)} proxies")
-    except Exception as e:
-        log.warning(f"GeoIP batch fetch failed: {e}")
-    return proxies
+# F79/B57: GeoIP fuer die Proxy-Weltkugel — Cache und Anreicherung liegen in
+# nc/geocache.py (v4.1-W25 der Cache mit EINEM Schreibweg, v5.8-W199 die
+# Anreicherung selbst).
 
 
 # B68: Anonymitäts-Klassifizierung für Pool-Proxies (cached, concurrent).
@@ -11671,7 +11428,7 @@ def _refresh_proxy_pool():
     # B68: Pool-Einträge mit Land (GeoIP) UND Anonymität anreichern, damit das
     # Dashboard beides anzeigt — nicht erst nach manuellem Test pro Proxy.
     try:
-        _enrich_proxies_with_geo(working)
+        _nc_geocache.anreichern(working)   # v5.8-W199: neben dem Cache, dem sie gehoert
     except Exception as e:
         log.debug(f"geo enrich on refresh failed: {e}")
     try:
@@ -11902,12 +11659,6 @@ def api_automation_toggle():
 
 
 # ═══ v37: POLEN-VPS-TUNNEL — Aufnahme-Proxy zur Laufzeit steuern ═══
-
-def _tunnel_effective():
-    # v4.0-W116: Koerper nach nc/proxyutil.py — dort liegt _TUNNEL ohnehin schon
-    # (per configure_proxy_select derselbe Dict), und die Tunnel-Routen im
-    # Blueprint kommen so ohne einen weiteren nc.ctx-Eintrag aus.
-    return _nc_proxyutil_sel.tunnel_effective()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -12720,26 +12471,11 @@ def _scraper_session():
         return None
 
 
-# ---------- X20: Universal Search ----------
-
-# ---------- X7+X8: Recording-Inspect (ffprobe) ----------
-
-
-# ---------- X4: Recording-Notes ----------
-
-# ---------- X5: Bookmarks ----------
-
-
 # ---------- X6: Annotations ----------
 
 @dashboard_app.route("/api/annotations/<int:aid>", methods=["DELETE"])
 def api_annotation_delete(aid):
     return jsonify(ok=delete_annotation(aid))
-
-# ---------- X2: Tags ----------
-
-
-# ---------- X3: Priority ----------
 
 # ---------- X1: Event-Log ----------
 @dashboard_app.route("/api/events")
@@ -12753,26 +12489,6 @@ def api_events():
         "severity": r["severity"], "summary": r["summary"],
         "payload": (json.loads(r["payload"]) if r["payload"] else None),
     } for r in rows])
-
-# ---------- X10: Storage-Forecast ----------
-
-# ---------- X11: Bandwidth-Live ----------
-
-# ---------- X12: Heatmaps ----------
-
-
-# ---------- X13: Profile-Snapshots ----------
-
-# ---------- X14: Auto-Archive-Rules ----------
-
-
-# ---------- X21: Recording-Manifest ----------
-
-# ---------- X25: Waveform ----------
-
-# ---------- X24: Stream-Inspect ----------
-
-# ---------- X9: Fingerprint + Dedup ----------
 
 # ---------- X15: TikTok-Status-Distribution ----------
 
@@ -12843,28 +12559,6 @@ def api_proxy_heatmap():
     except Exception:
         pass
     return jsonify(ok=True, cells=cells)
-
-# ---------- X16: Failure-Patterns ----------
-
-# ---------- X17: Activity-Pulse ----------
-
-# ---------- X18: Manual Recording ----------
-
-
-# ---------- X19: Trash/Restore ----------
-
-
-# ---------- X23: Quick-Restart ----------
-
-# ---------- X22: Cookie-Age + X26: Multi-status overview ----------
-
-# ---------- X27: Bulk Profile-Lookup ----------
-
-# ---------- X28: Watchlist-Export ----------
-
-# ---------- X29: Recording-Stats-Summary (dashboard overview) ----------
-
-# ---------- X30: Dedup-Scan (fingerprint-based) ----------
 
 # =============================================================================
 # End X-Series Routes
@@ -13349,12 +13043,6 @@ def _chat_disconnected(username, reason=""):
         s["reasons"].append((_time_mod.time(), str(reason)[:160]))
         del s["reasons"][:-_CHAT_STATS_MAX_REASONS]
     return dur
-
-
-def _chat_stats_snapshot():
-    """Fuers Dashboard: die Zahlen, an denen man Disconnect-Muster erkennt.
-       v4.0-W45: Aggregation nach nc/chatstats.py extrahiert (bitgenau geprüft)."""
-    return _nc_chatstats.summarize(_CHAT_STATS, _time_mod.monotonic(), _time_mod.time())
 
 
 # F92e: TikTokLive nutzt den EulerStream-Sign-Server — der Gratis-Tier hat ein
@@ -19401,7 +19089,8 @@ async def _meme_zusammenschnitt(username, output_file):
     Gemeldet: „der Hype-Director schneidet gar keine Memes zusammen". Jeder
     Clip trägt seit dieser Welle den Chat seines Fensters; hier werden sie
     hintereinandergesetzt und an dieselben Ziele geschickt wie die Clips
-    (Discord-Clip-Kanal, W168) und an die Telegram-Gruppen des Trackings."""
+    (Discord-Clip-Kanal, W168). An die Telegram-Gruppen des Trackings nur mit
+    MEME_REEL_TELEGRAM=1 (seit v5.8-W199; vorher ungefragt an)."""
     # Review #204: erst warten, bis kein Clip dieser Aufnahme mehr geschnitten
     # wird — sonst fehlt der letzte Hype-Moment, oder die Mindestzahl faellt.
     await _clips_abwarten(output_file)
@@ -19440,7 +19129,11 @@ async def _meme_zusammenschnitt(username, output_file):
     titel = f"🎬 Highlights & Memes @{username} — {len(pfade)} Momente" + \
         (f" ({gruende})" if gruende else "")
     await _clip_to_discord(username, ziel, titel)
-    if os.getenv("MEME_REEL_TELEGRAM", "1") != "0":
+    # v5.8-W199: Telegram nur auf ausdruecklichen Wunsch. W159 hat den
+    # Zusammenschnitt gebaut, weil „der Hype-Director keine Memes
+    # zusammenschneidet" — dass er auch in jede Telegram-Gruppe des Trackings
+    # geht, hat niemand verlangt, und der Betreiber wollte es nicht.
+    if (os.getenv("MEME_REEL_TELEGRAM", "0") or "0").strip().lower() in ("1", "true", "yes", "on"):
         app = globals().get("bot_app")
         rows = await db_async(lambda c: c.execute(
             "SELECT DISTINCT group_id FROM trackings WHERE username=?", (username,)).fetchall())
@@ -20703,16 +20396,24 @@ def api_debug_threads():
 
 @dashboard_app.route("/api/highlights/config", methods=["POST"])
 def api_highlights_config():
-    new = dict(_highlight_cfg())
     d = request.get_json(silent=True) or {}
+    wunsch = {}
     if "enabled" in d:
-        new["enabled"] = bool(d["enabled"])
+        wunsch["enabled"] = bool(d["enabled"])
     if "min_score" in d:
         try:
-            new["min_score"] = max(20, min(95, int(d["min_score"])))
+            wunsch["min_score"] = max(20, min(95, int(d["min_score"])))
         except (TypeError, ValueError):
             return jsonify(ok=False, error="min_score ungueltig"), 400
-    _cfg_set("highlights", new)
+    # v5.8-W199: streng gelesen. _highlight_cfg() liest nachsichtig — bei
+    # gesperrter Datenbank schrieb ein Klick die .env-Vorgaben ueber jeden
+    # gespeicherten Wert, den er nicht nannte (nc/cfgstore.aendern).
+    try:
+        new = _nc_cfgstore.aendern(
+            "highlights", lambda alt: {**_nc_cfgnorm.normalize_highlights(alt), **wunsch},
+            fehlt={}, art=dict)
+    except Exception as e:
+        return jsonify(ok=False, error=_fehler_text(e, "api_highlights_config")), 503
     return jsonify(ok=True, **new)
 
 
@@ -21624,361 +21325,16 @@ _ai_calls_total_sync      = _nc_probe.ai_calls_total
 # Bootstrap
 # -----------------------------
 # ==================== DEFENSE — Server-Angriffe & CrowdSec ====================
-# Zeigt Angriffe (fehlgeschlagene SSH-Logins) + die fail2ban-Banliste, geo-lokalisiert
-# für eine Weltkarte. Liest Server-Logs/fail2ban; wo dem Bot-User Rechte fehlen, wird
-# 'sudo -n' versucht und sonst ein klarer Hinweis zurückgegeben (kein Crash).
-DEFENSE_SERVER_LAT = _nc_envnum.env_float("DEFENSE_SERVER_LAT", 50.69)   # OVH Gravelines, FR; v4.0-W82: leere .env robust
-DEFENSE_SERVER_LON = _nc_envnum.env_float("DEFENSE_SERVER_LON", 2.13)   # v4.0-W82: leere .env robust
-# B132: fail2ban laeuft auf diesem Server nicht mehr — ersetzt durch CrowdSec.
-# Der alte Aufruf blieb im Code stehen und lieferte dauerhaft "nicht
-# erreichbar": leere Bannliste, leere Weltkarte, ohne dass irgendwo stand warum.
-def _cscli_bin():
-    """Absoluter cscli-Pfad. Wichtig fuer sudoers: eine Regel wie
-       'NOPASSWD: /usr/bin/cscli' matcht nur, wenn sudo GENAU diesen Pfad
-       aufruft. Liegt cscli in /usr/local/bin (haeufig bei CrowdSec), scheiterte
-       'sudo -n cscli' bisher stumm → Passwortabfrage → Panic vom rechtelosen
-       Direktaufruf. Deshalb den echten Pfad ermitteln und ueberall nutzen.
-
-       B138: Rueckgabe None statt des Platzhalters "cscli". Mit dem Platzhalter
-       lief 'sudo -n cscli' los, sudo antwortete 'sudo: cscli: command not
-       found', und die Fehlerzuordnung sah darin wegen des Praefix 'sudo:' ein
-       fehlendes Recht — der Betreiber befolgte eine sudoers-Anleitung fuer ein
-       Programm, das es auf dem Server gar nicht gibt."""
-    # v4.0-W60: Auflösung nach nc/binresolve.py (which zuerst, dann Kandidaten,
-    # sonst None — which/exists injiziert, gegen Mocks bewiesen).
-    return _nc_binresolve.resolve(
-        "cscli",
-        ("/usr/bin/cscli", "/usr/local/bin/cscli", "/usr/sbin/cscli",
-         "/usr/local/sbin/cscli"),
-        shutil.which, os.path.exists)
-
-_CSCLI_CACHE = [None]      # gefundener Pfad; solange None wird neu gesucht
-# v4.1-W25: liegt als Register in nc/defensecfg.py. REGISTER und nicht Alias,
-# weil eine Zeichenkette unteilbar ist: der frueher hier stehende `global`
-# band den Namen neu, ein Alias haette danach fuer immer auf den alten leeren
-# Wert gezeigt.
-
-
-def _cscli_path():
-    """Pfad zur Laufzeit ermitteln statt beim Import einzufrieren.
-
-       B138: vorher stand das Ergebnis in der Modul-Konstante _CSCLI. Wer
-       CrowdSec nachinstalliert hatte, bekam bis zum naechsten Bot-Neustart
-       weiter 'cscli nicht gefunden'. Ein Fund wird gemerkt, ein Fehlschlag
-       nicht — nur so wirkt eine Nachinstallation sofort, und shutil.which plus
-       vier os.path.exists sind pro Panel-Aufruf billig genug."""
-    if _CSCLI_CACHE[0]:
-        return _CSCLI_CACHE[0]
-    p = _cscli_bin()
-    if p:
-        _CSCLI_CACHE[0] = p
-    return p
-
-
-def _f2b_sudo_hint():
-    """Hinweis mit dem ECHTEN Pfad. sudoers verlangt einen absoluten Pfad — der
-       frueher eingebaute Platzhalter 'cscli' haette eine Regel ergeben, die
-       sudo stillschweigend nie anwendet."""
-    p = _cscli_path() or "/usr/bin/cscli"
-    return ("CrowdSec nicht abfragbar: dem Bot-User (ubuntu) passwortlosen Zugriff geben — "
-            f"/etc/sudoers.d/nightcrawler: 'ubuntu ALL=(root) NOPASSWD: {p}' "
-            "(Pfad muss exakt stimmen), danach prüfen: sudo systemctl status crowdsec")
-
-
-_AUTHLOG_HINT = ("Auth-Log nicht lesbar: Bot-User in die Gruppen 'adm' und 'systemd-journal' "
-                 "aufnehmen und den Dienst neu starten — Gruppenrechte greifen erst im neuen "
-                 "Prozess, ein blosses 'usermod' ohne Neustart aendert nichts.")
-
-
-def _darf_journal_lesen():
-    """Darf dieser Prozess Auth-Logs/Journal ueberhaupt lesen?
-
-       Braucht es, weil journalctl ohne Gruppenrecht mit rc=0 und
-       '-- No entries --' antwortet: Erfolg im Rueckgabecode, Leere im Inhalt.
-       Ohne diese Pruefung ist 'niemand greift an' nicht von 'ich darf nicht
-       hinsehen' zu unterscheiden — genau das leere Panel."""
-    try:
-        import grp
-        def _gid_of(name):
-            try:
-                return grp.getgrnam(name).gr_gid
-            except KeyError:
-                return None
-        # v4.0-W62b: Entscheidung nach nc/journalperm.py (Werte injiziert, bewiesen).
-        return _nc_journalperm.may_read(set(os.getgroups()), _gid_of, os.geteuid())
-    except Exception:
-        return True   # Nicht-Linux/unklar: lieber nicht faelschlich Alarm schlagen
-
-
-def _is_private_ip(ip):
-    # v4.1-W25: nach nc/geoip.py geloest.
-    return _nc_geoip.ist_privat(ip)
-
-
-def _run_priv(args, timeout=6, sudo_first=False):
-    # v4.0-W26: verbatim nach nc/sysrun.py extrahiert (bitgenau geprüft, inkl.
-    # Aufrufreihenfolge und Fehlercodes 124/127).
-    return _nc_sysrun.run_priv(args, timeout=timeout, sudo_first=sudo_first)
-
-
-def _crowdsec_via_lapi():
-    """v4.0-W18: Sperrliste ueber die CrowdSec-LAPI mit einem Bouncer-Schluessel.
-       Braucht KEIN Root (der cscli-Weg schon — daher die sudoers-Regel). Gibt
-       None zurueck, wenn kein Schluessel gesetzt ist -> Aufrufer nimmt cscli."""
-    if not CROWDSEC_BOUNCER_KEY:
-        return None
-    import json as _json
-    import urllib.error
-    import urllib.request
-    url = _nc_crowdsec.decisions_url(CROWDSEC_LAPI_URL, CROWDSEC_LAPI_HOST,
-                                     CROWDSEC_LAPI_PORT)
-    req = urllib.request.Request(url, headers=_nc_crowdsec.headers(CROWDSEC_BOUNCER_KEY))
-    try:
-        with urllib.request.urlopen(req, timeout=6) as r:      # noqa: S310 (feste URL)
-            raw = r.read().decode("utf-8", "replace")
-        data = _json.loads(raw) if raw.strip() else []
-    except urllib.error.HTTPError as e:
-        status, hint, fix = _nc_crowdsec.explain_status(e.code)
-        # v4.1-W12: gedrosselt UND mit Abhilfe. Vorher stand hier 109 Mal in
-        # dreieinhalb Stunden dieselbe Zeile "CrowdSec-LAPI HTTP 403" — der
-        # Dashboard-Takt ruft diesen Weg alle zwei Minuten auf, und ein 403
-        # ist ein DAUERZUSTAND (Schluessel nicht registriert), kein Ereignis.
-        # Was dabei fehlte, war ausgerechnet das Wichtige: hint und fix gingen
-        # nur an die API zurueck, nie ins Log. Wer den Log las, sah 109 Mal
-        # eine Zahl und nie, was zu tun ist. Jetzt: beim ersten Mal und danach
-        # hoechstens alle 15 Minuten, dafuer mit Grund und Abhilfe.
-        _st = globals().setdefault("_CROWDSEC_LOG_STATE", {})
-        _now = _time_mod.time()
-        _prev = _st.get(e.code) or {"ts": 0.0, "n": 0}
-        _prev["n"] += 1
-        if _now - _prev["ts"] >= 900:
-            _sup = _prev["n"] - 1
-            log.warning("Abwehr: CrowdSec-LAPI HTTP %s — %s Abhilfe: %s%s",
-                        e.code, hint, fix,
-                        (f" (×{_sup} unterdrueckt seit der letzten Meldung)"
-                         if _sup > 0 else ""))
-            _prev["ts"] = _now
-            _prev["n"] = 0
-        _st[e.code] = _prev
-        return {"ok": False, "status": status, "error": f"HTTP {e.code}",
-                "hint": hint, "fix": fix, "jails": [], "total_banned": 0,
-                "engine": "crowdsec", "via": "lapi"}
-    except Exception as e:
-        return {"ok": False, "status": "lapi_tot", "error": str(e)[:160],
-                "hint": (f"CrowdSec-LAPI ({CROWDSEC_LAPI_HOST}:{CROWDSEC_LAPI_PORT}) "
-                         "nicht erreichbar."),
-                "fix": "sudo systemctl restart crowdsec && sudo cscli lapi status",
-                "jails": [], "total_banned": 0, "engine": "crowdsec", "via": "lapi"}
-    jails, total = _nc_crowdsec.parse_decisions(data)
-    return {"ok": True, "status": ("ok" if total else "leer"), "via_sudo": False,
-            "engine": "crowdsec", "via": "lapi", "jails": jails,
-            "total_banned": total}
-
-
-def _crowdsec_status():
-    """B132: Bannliste aus CrowdSec statt fail2ban.
-
-    CrowdSec ist hier nicht nur das Vorhandene, sondern der bessere Partner:
-    `cscli -o json` liefert strukturierte Daten. Das alte fail2ban-Modul
-    parste Freitext ("Jail list:", "Currently banned:") — bei jeder
-    Formataenderung ein stiller Ausfall.
-
-    Die Rueckgabeform bleibt bewusst identisch (jails / total_banned), damit
-    Weltkarte und alle Aufrufer unveraendert weiterlaufen. Eine CrowdSec-
-    Entscheidung wird auf das Jail-Modell abgebildet: 'jail' ist die Herkunft
-    (crowdsec, cscli, CAPI), 'ips' sind die gesperrten Adressen.
-    """
-    # W18: wenn ein Bouncer-Schluessel hinterlegt ist, ueber die LAPI gehen —
-    # kein Root noetig. Nur wenn das fehlschlaegt/fehlt, der alte cscli-Weg.
-    _lapi = _crowdsec_via_lapi()
-    if _lapi is not None and _lapi.get("ok"):
-        _nc_meldetakt.zuruecksetzen("crowdsec")
-        return _lapi
-    import json as _json
-    cscli = _cscli_path()
-    if not cscli:
-        # B138: zuerst pruefen, OB es das Programm gibt. sudo meldet ein
-        # fehlendes Programm mit einer Zeile, die mit 'sudo:' beginnt — die
-        # Zuordnung unten hat das bisher als fehlendes Recht gedeutet und den
-        # Betreiber in eine sudoers-Datei geschickt, die nichts repariert.
-        log.warning("Abwehr: cscli nicht gefunden — weder im PATH noch in /usr/bin, "
-                    "/usr/local/bin, /usr/sbin, /usr/local/sbin")
-        return {"ok": False, "status": "fehlt",
-                "error": "cscli nicht gefunden",
-                "hint": "CrowdSec ist auf diesem Server nicht installiert — "
-                        "es fehlt also nicht das Recht, sondern das Programm.",
-                "fix": "sudo apt install crowdsec && sudo systemctl enable --now crowdsec",
-                "jails": [], "total_banned": 0, "engine": "crowdsec"}
-    rc, out, err, sudo = _run_priv([cscli, "decisions", "list", "-o", "json"],
-                                   sudo_first=True)
-    if rc != 0:
-        e = ((err or out or "").strip())
-        el = e.lower()
-        if rc == 124 or "zeitüberschreitung" in el or "timed out" in el:
-            status = "timeout"
-            hint = "cscli antwortet nicht innerhalb des Zeitlimits — haengt die LAPI?"
-            fix = "sudo systemctl restart crowdsec && sudo cscli lapi status"
-        elif ("password is required" in el or "a terminal is required" in el
-              or el.startswith("sudo:")):
-            status = "kein_sudo"
-            hint = _f2b_sudo_hint()
-            fix = (f"echo 'ubuntu ALL=(root) NOPASSWD: {cscli}' | sudo tee "
-                   "/etc/sudoers.d/nightcrawler && sudo systemctl restart tiktok-bot")
-        elif ("connection refused" in el or f":{CROWDSEC_LAPI_PORT}" in el
-              or ":8080" in el or "panic" in el
-              or "nil pointer" in el or "unable to list decisions" in el
-              or "dial tcp" in el):
-            status = "lapi_tot"
-            # W17: Port ist konfigurierbar (Henry faehrt die LAPI auf 8083) —
-            # ein fest verdrahtetes 8080 im Hinweis schickt den Betreiber sonst
-            # auf die falsche Faehrte.
-            hint = (f"CrowdSec-Dienst/LAPI ({CROWDSEC_LAPI_HOST}:{CROWDSEC_LAPI_PORT}) "
-                    "antwortet nicht.")
-            fix = "sudo systemctl restart crowdsec && sudo cscli lapi status"
-        else:
-            status = "fehler"
-            hint = _f2b_sudo_hint()
-            fix = f"sudo -n {cscli} decisions list -o json"
-        # log.warning statt stillem Verschlucken: ein leeres Abwehr-Panel war
-        # bisher im journalctl nicht wiederzufinden.
-        # v4.2-W133: gedrosselt — das Deck fragt im Minutentakt, und ein
-        # Dauerzustand schrieb 106 gleiche Zeilen in dreieinhalb Stunden.
-        # Ein neuer Status meldet sich sofort (nc/meldetakt.py).
-        laut, weg = _nc_meldetakt.melden("crowdsec", status, _time_mod.monotonic())
-        if laut:
-            log.warning("Abwehr: cscli rc=%s status=%s: %s — Abhilfe: %s%s", rc,
-                        status, e[:200], fix, _nc_meldetakt.zusatz(weg))
-        return {"ok": False, "status": status,
-                "error": (e or "cscli nicht erreichbar")[:300],
-                "hint": hint, "fix": fix, "jails": [], "total_banned": 0,
-                "engine": "crowdsec"}
-    try:
-        data = _json.loads(out or "null")
-    except ValueError:
-        log.warning("Abwehr: cscli lieferte kein JSON (%d Zeichen Ausgabe)", len(out or ""))
-        return {"ok": False, "status": "json_kaputt",
-                "error": "cscli lieferte kein gueltiges JSON",
-                "hint": "Das Ausgabeformat hat sich geaendert oder eine Warnung stand vor dem JSON.",
-                "fix": f"{cscli} decisions list -o json | head -c 400",
-                "jails": [], "total_banned": 0, "engine": "crowdsec"}
-    # Ohne Entscheidungen gibt cscli 'null' aus, nicht '[]'. Das ist ein
-    # Erfolg, kein Fehler — dann ist schlicht niemand gesperrt.
-    _nc_meldetakt.zuruecksetzen("crowdsec")   # naechster Ausfall meldet sofort
-    rows = data or []
-    by_origin, total = {}, 0
-    for d in rows:
-        # Je nach cscli-Version flach oder unter 'decisions' geschachtelt.
-        # Beides akzeptieren, statt sich auf eine Variante zu verlassen.
-        for dec in (d.get("decisions") or [d]):
-            ip = (dec.get("value") or "").strip()
-            if not ip:
-                continue
-            origin = (dec.get("origin") or "crowdsec").strip()
-            e = by_origin.setdefault(origin, {"jail": origin, "ips": [],
-                                              "banned_now": 0,
-                                              "banned_total": None,
-                                              "scenarios": {}})
-            if ip not in e["ips"]:
-                e["ips"].append(ip)
-                e["banned_now"] += 1
-                total += 1
-            sc = (dec.get("scenario") or "").split("/")[-1]
-            if sc:
-                e["scenarios"][sc] = e["scenarios"].get(sc, 0) + 1
-    # B138: 'leer' ist ein Erfolgszustand — cscli hat geantwortet, es ist nur
-    # niemand gesperrt. Das Frontend muss das vom Rechteproblem trennen koennen.
-    return {"ok": True, "status": ("ok" if total else "leer"), "via_sudo": sudo,
-            "engine": "crowdsec", "cscli": cscli,
-            "jails": list(by_origin.values()), "total_banned": total}
-
-
-def _parse_ssh_attacks(limit=300):
-    """Aggregiert fehlgeschlagene SSH-Logins (Angriffe) pro IP aus auth.log/secure,
-       Fallback journalctl bzw. sudo. Returns {ok, attacks:[{ip,count,last,users}], ...}."""
-    # B138: die Ursache wird festgehalten statt weggeworfen. Vorher verschluckte
-    # 'except (PermissionError, FileNotFoundError, OSError): continue' beide
-    # Faelle gleich, und journalctl antwortet ohne Gruppenrecht mit rc=0 und
-    # '-- No entries --' — das Panel meldete dann 'Keine Angriffe protokolliert',
-    # obwohl es nichts lesen durfte. Auf Ubuntu 24.04 gibt es /var/log/auth.log
-    # gar nicht mehr, damit war das der Normalfall, nicht der Ausnahmefall.
-    text, source, denied = "", None, False
-    for p in ("/var/log/auth.log", "/var/log/auth.log.1", "/var/log/secure"):
-        if not os.path.exists(p):
-            continue
-        try:
-            with open(p, "r", errors="ignore") as f:
-                text += f.read()
-                source = p
-        except PermissionError:
-            denied = True
-        except OSError as ex:
-            log.warning("Abwehr: %s existiert, ist aber nicht lesbar: %s", p, ex)
-    if not text:
-        rc, out, _e, sudo = _run_priv(["journalctl", "-u", "ssh", "-u", "sshd",
-                                       "--no-pager", "-n", "8000"], timeout=8)
-        leer = (rc == 0 and "no entries" in (out or "").strip().lower())
-        if rc == 0 and out and not leer:
-            text, source = out, "journalctl" + ("+sudo" if sudo else "")
-        elif leer and _darf_journal_lesen():
-            # Wir duerfen lesen und es steht wirklich nichts drin: der gute Fall.
-            return {"ok": True, "status": "leer", "source": "journalctl",
-                    "attacks": [], "total": 0, "unique_ips": 0}
-        else:
-            denied = True
-    if not text:
-        rc, out, _e, sudo = _run_priv(["cat", "/var/log/auth.log"], timeout=8)
-        if rc == 0 and out:
-            text, source = out, "auth.log+sudo"
-        else:
-            denied = True
-    if not text:
-        status = "keine_rechte" if denied else "keine_logs"
-        log.warning("Abwehr: kein Auth-Log lesbar (status=%s)", status)
-        return {"ok": False, "status": status,
-                "error": ("Auth-Log vorhanden, aber nicht lesbar" if status == "keine_rechte"
-                          else "kein Auth-Log und kein Journal-Eintrag gefunden"),
-                "hint": (_AUTHLOG_HINT if status == "keine_rechte" else
-                         "Weder /var/log/auth.log noch das Journal liefern SSH-Zeilen — "
-                         "laeuft auf diesem Server ueberhaupt ein sshd?"),
-                "fix": ("sudo usermod -aG adm,systemd-journal ubuntu && "
-                        "sudo systemctl restart tiktok-bot"
-                        if status == "keine_rechte" else "systemctl status ssh"),
-                "attacks": [], "total": 0, "unique_ips": 0}
-    agg = {}
-    pat_fail = re.compile(r"Failed password for (?:invalid user )?(\S+) from (\d{1,3}(?:\.\d{1,3}){3})")
-    pat_inv = re.compile(r"Invalid user (\S+) from (\d{1,3}(?:\.\d{1,3}){3})")
-    pat_ip = re.compile(r"from (\d{1,3}(?:\.\d{1,3}){3})")
-    for line in text.splitlines():
-        if not ("Failed password" in line or "Invalid user" in line
-                or "authentication failure" in line or "Connection closed by authenticating" in line):
-            continue
-        mm = pat_fail.search(line) or pat_inv.search(line)
-        if mm:
-            user, ip = mm.group(1), mm.group(2)
-        else:
-            ipm = pat_ip.search(line)
-            if not ipm:
-                continue
-            user, ip = "?", ipm.group(1)
-        if _is_private_ip(ip):
-            continue
-        d = agg.setdefault(ip, {"ip": ip, "count": 0, "last": line[:15], "users": set()})
-        d["count"] += 1
-        d["last"] = line[:15]
-        if user and user != "?":
-            d["users"].add(user)
-    attacks = sorted(agg.values(), key=lambda x: x["count"], reverse=True)[:limit]
-    for a in attacks:
-        a["users"] = sorted(a["users"])[:6]
-    return {"ok": True, "status": ("ok" if agg else "leer"), "source": source,
-            "attacks": attacks, "total": sum(a["count"] for a in agg.values()),
-            "unique_ips": len(agg)}
-
-# v4.1-W25: Haken fuer nc/routes/abwehr.py. Beide brauchen den laufenden
-# Server — cscli (Root, ausser mit Bouncer-Schluessel) und das Journal.
-# Sichtbare Kopplung statt eines Kontext-Slots.
-_nc_routes_abwehr.HAKEN["sperrliste"]["fn"] = _crowdsec_status
-_nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _parse_ssh_attacks
+# v5.8-W199: Sperrliste (CrowdSec) und SSH-Angriffe liegen in nc/abwehrlage.py,
+# woertlich uebernommen. Hier bleibt nur, was der Bot weiss: die vier
+# CROWDSEC_*-Werte aus der .env und die Haken fuer nc/routes/abwehr.py — beide
+# Wege brauchen den laufenden Server (cscli mit Root, ausser mit
+# Bouncer-Schluessel, und das Journal). Den Standort der Weltkarte liest
+# nc/defensecfg.py selbst.
+_nc_abwehrlage.configure(lapi_host=CROWDSEC_LAPI_HOST, lapi_port=CROWDSEC_LAPI_PORT,
+                         bouncer_key=CROWDSEC_BOUNCER_KEY, lapi_url=CROWDSEC_LAPI_URL)
+_nc_routes_abwehr.HAKEN["sperrliste"]["fn"] = _nc_abwehrlage.crowdsec_status
+_nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _nc_abwehrlage.ssh_angriffe
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -26376,7 +25732,7 @@ def _brain_crowdsec_snap():
     # M8: schlanker Snapshot fuer den SentinelAgent — kein cscli-Parsing
     # in brain/. running/bans/hint aus _crowdsec_status().
     try:
-        cs = _crowdsec_status() or {}
+        cs = _nc_abwehrlage.crowdsec_status() or {}
     except Exception as e:
         return {"running": False, "hint": str(e)}
     return {"running": bool(cs.get("ok")),

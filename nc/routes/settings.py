@@ -17,6 +17,7 @@ from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 from typing import Optional
 import time as _time_mod
+from nc import cfgstore as _nc_cfgstore
 from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc import cookiebezug as _nc_cookiebezug
 from nc import cookieholen as _nc_cookieholen
@@ -499,12 +500,17 @@ def api_schedule_add():
                  "username": u, "weekday": int(data.get("weekday", 0)) % 7,
                  "hour": int(data.get("hour", 20)) % 24,
                  "duration_min": int(data.get("duration_min", 60))}
-        sched = _cfg_get("scheduled_recordings", []) or []
-        sched.append(entry)
-        _cfg_set("scheduled_recordings", sched)
-        return jsonify(ok=True, added=entry, count=len(sched))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error=_t("weekday, hour und duration_min müssen Zahlen sein")), 400
+    try:
+        # v5.8-W199: streng gelesen. Mit get(…, []) schrieb ein Klick bei
+        # gesperrter Datenbank eine Liste mit nur diesem Eintrag — alle
+        # anderen Zeitpläne waren weg (nc/cfgstore.aendern).
+        sched = _nc_cfgstore.aendern("scheduled_recordings", lambda alt: alt + [entry],
+                                     fehlt=[], art=list)
     except Exception as e:
-        return jsonify(ok=False, error=_fehler_text(e, "api_schedule_add")), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_schedule_add")), 503
+    return jsonify(ok=True, added=entry, count=len(sched))
 
 
 @bp.route("/api/schedule/remove", methods=["POST"])
@@ -512,10 +518,14 @@ def api_schedule_remove():
     """Entfernt ein geplantes Fenster per id."""
     data = request.get_json(silent=True) or {}
     sid = data.get("id")
+    vorher = []
+
+    def _ohne(alt):
+        vorher.append(len(alt))
+        return [s for s in alt if not (isinstance(s, dict) and str(s.get("id")) == str(sid))]
+
     try:
-        sched = _cfg_get("scheduled_recordings", []) or []
-        new = [s for s in sched if str(s.get("id")) != str(sid)]
-        _cfg_set("scheduled_recordings", new)
-        return jsonify(ok=True, removed=len(sched) - len(new), count=len(new))
+        new = _nc_cfgstore.aendern("scheduled_recordings", _ohne, fehlt=[], art=list)
     except Exception as e:
-        return jsonify(ok=False, error=_fehler_text(e, "api_schedule_remove")), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_schedule_remove")), 503
+    return jsonify(ok=True, removed=vorher[0] - len(new), count=len(new))

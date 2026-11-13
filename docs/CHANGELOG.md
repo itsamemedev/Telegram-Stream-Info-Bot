@@ -9,6 +9,102 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.8.0] — 2026-11-13 · „Nachlese" (W199)
+
+Der Betreiber: Bughunt einschließlich Sicherheit, das Repo aufräumen und
+nicht benötigte Dateien entfernen, den Monolithen abtragen — dann PR, Merge
+und Release. Gesucht wurde nach **Klassen**, nicht nach Einzelfällen: wo eine
+Welle einen Fehler an einer Stelle behoben hat, wurde nachgesehen, wo er
+sonst noch steht.
+
+### Befunde (Bughunt)
+
+- **Lesen-Ändern-Schreiben mit nachsichtigem Lesen** — sieben Stellen. W198
+  hat die Klasse für die MCP-Server behoben; dieselbe stand daneben in
+  `/api/schedule/add|remove`, in der Konfiguration von Marketing, News,
+  Co-Host, Highlight-Radar und Signalton. Jede las mit `get(key, [])` und
+  schrieb das Ergebnis zurück. `get()` liefert bei einem Datenbankfehler die
+  Vorgabe — „Zeitplan hinzufügen" bei gesperrter Datenbank (Alltag bei
+  laufendem Recorder) schrieb eine Liste mit **einem** Eintrag und löschte alle
+  anderen; „Takt ändern" setzte Ziele und Ruhezeiten still auf die Vorgabe
+  zurück. Gegen den alten Stand gemessen: ein Klick auf „aus" im
+  Highlight-Radar setzte die Schwelle von 70 auf 55. Und ohne Sperre verloren
+  zwei gleichzeitige Klicks einen davon (waitress bedient parallel; im
+  Vertrag 15 von 30). **Eine** Stelle für alle: `nc/cfgstore.aendern()` —
+  streng lesen, Form prüfen, unter Sperre schreiben; die Routen antworten bei
+  unlesbarem Bestand 503 und schreiben nichts.
+- **`build/` wuchs ohne Ende.** Jeder Lernzyklus der Evolution (Vorgabe alle
+  6 h, dazu jeder Klick im Deck) schreibt eine **volle Kopie des Monolithen**
+  nach `build/bot_vN.py`, 1,4 MB. Das Manifest wurde auf 20 Einträge gekürzt,
+  die Dateien nie — rund 6 MB am Tag, 2 GB im Jahr, und `build/` geht in jede
+  Systemsicherung mit. Jetzt höchstens 20. Die Route sortierte dazu nach
+  **Namen**: ab dem zehnten Zyklus stand `bot_v9.py` vor `bot_v10.py`.
+- **Die Uhr vor der Sonde** (die Klasse aus W103), zweimal:
+  `nc/systemprobe.cached_probe` (TTL 5 s) und die Proxy-Vorprüfung (90 s).
+  Dauert die Sonde länger als die TTL, ist der Eintrag beim Schreiben schon
+  abgelaufen — der Cache wirkt genau im Störfall nicht. Beim Umzug der
+  GeoIP-Anreicherung dieselbe Klasse in anderer Form: die Ruhezeit gegen
+  ip-api.com wurde nur bei **Erfolg** gestempelt, ein gestörter Dienst kostete
+  jede Pool-Auffrischung den 10-s-Timeout.
+
+### Geändert
+
+- **Der Highlights-&-Memes-Zusammenschnitt geht nicht mehr nach Telegram.**
+  Der Betreiber: „Wieso landen Hype-Moment-Videos und Meme-Videos in
+  Telegram? Davon war nie die Rede." Gebaut hat ihn W159 auf die Meldung „der
+  Hype-Director schneidet gar keine Memes zusammen" — und ihn dabei
+  ungefragt auch an jede Telegram-Gruppe des Trackings geschickt, als Vorgabe
+  an. Er geht jetzt nur noch an den Discord-Clip-Kanal;
+  `MEME_REEL_TELEGRAM=1` schaltet Telegram wieder zu. Einzelne Clips kommen
+  nach Telegram weiterhin nur über ⭐ in Discord (`CLIP_HIGHLIGHT_TO_TG`,
+  im Deck „Highlights → Telegram").
+
+### Sicherheit
+
+- **Link-Video sendet nur eine Datei aus seinem eigenen Arbeitsordner.** Der
+  Pfad kommt aus der yt-dlp-Ausgabe, und dieselbe Ausgabe trägt fremden Text.
+  Eine Datei außerhalb des Ordners, den `holen()` selbst angelegt hat, wird
+  verworfen und laut gemeldet (`nc.sicherpfad.unter`).
+- Geprüft und ohne Befund: Escaping im Deck (630 `esc()`, Template-Literale
+  und Verkettungen maschinell abgesucht), OAuth-Rückrufe (`state` zeitkonstant,
+  Fehlerseite escaped), DNS-Rebinding, GET-Routen ohne Nebenwirkung, dynamisches
+  SQL (nur feste Spaltennamen und Platzhalter), Zip-Slip im Updater,
+  Datei-Routen, die öffentliche Statistik.
+
+### Aufgeräumt
+
+- `bot.py`: 27 Weiterleitungen ohne Aufrufer — die Routen importieren seit
+  den Blueprint-Wellen direkt aus `nc/`, die Hüllen waren stehen geblieben;
+  dazu neun frei gewordene Importe und 51 leere „X-Serie"-Überschriften.
+  Außer den entfernten Funktionen ist kein Funktionskörper geändert
+  (Syntaxbaum gegen den vorigen Stand verglichen).
+- `nc/chatstats.py` entfernt: einziger Aufrufer war `_chat_stats_snapshot`,
+  das niemand rief, und das Deck liest die Verdichtung nirgends.
+- `discordbot._tracked_usernames` (Aufrufer seit W168 weg),
+  `youtube_api.is_self` (der Schutz gegen Selbstantworten läuft über
+  `isChatOwner`), `restreamcfg.bereite_ziele`.
+- `docs/README.md`: neun Dokumente, die im Index fehlten — darunter
+  `INSTALL.md`, `TROUBLESHOOTING.md` und die Prometheus/Grafana-Anleitung.
+- CI: der Schritt für `nc/intel` heißt nicht mehr „…, Reels".
+
+### Monolith
+
+- `nc/abwehrlage.py`: Sperrliste (CrowdSec, LAPI und cscli) und
+  SSH-Angriffe, rund 350 Zeilen wörtlich aus `bot.py`, die vier
+  `CROWDSEC_*`-Werte per `configure()`. Die Auswertung des Auth-Logs ist als
+  reine Funktion `auswerten()` herausgelöst und damit ohne `/var/log` prüfbar.
+- `nc/geocache.anreichern()`: die Proxy-GeoIP neben dem Cache, dem sie gehört.
+- `bot.py` 27.956 → 27.312 Zeilen.
+
+### Gegenprobe
+
+- Jeder Befund mit Vertrag; 29 Mutationsproben. Zwei entwischten im ersten
+  Durchgang: eine war äquivalent (`None` im cscli-Cache zu speichern wirkt
+  wie nichts zu speichern), die andere ein Loch — `cscli` mit leerer Ausgabe
+  war nicht geprüft. Gedeckt.
+- Die Verträge, die am Text der entfernten Hüllen ankerten, prüfen jetzt die
+  strengere Aussage: der Bot hält keine Kopie, der Blueprint ruft `nc/` direkt.
+
 ## [5.7.0] — 2026-11-13 · „Werkzeugkasten" (W198)
 
 Der Betreiber: „Ich hätte gern den Tab im Dashboard, um MCPs verwalten zu
