@@ -28823,7 +28823,9 @@ def _test_v42_w153_discord_bereiche_folgen_den_trackings():
 
     # (1)–(5) Anlegen/Loeschen je Nutzer: abgeloest durch W168 (ein Clip-Kanal,
     # Bereiche werden umgezogen statt angelegt) — dort geprueft.
-    assert not hasattr(Z, "plan"), "W168: es werden wieder Nutzer-Bereiche geplant"
+    # v5.11-W209: wieder Bereiche je Nutzer (W168 zurueckgenommen) — der Plan
+    # steht in nc.discordziele.plan, geprueft in _test_v511_w209_bereiche_je_nutzer.
+    assert hasattr(Z, "plan"), "W209: die Bereiche je Nutzer werden nicht geplant"
 
     # (6) Verdrahtung: eigene Schleife, /setup_targets nutzt denselben Abgleich,
     # pausierte Trackings zaehlen mit.
@@ -28834,7 +28836,7 @@ def _test_v42_w153_discord_bereiche_folgen_den_trackings():
     assert '_spawn(_ziele_sync_loop(), name="discord-ziele")' in d
     assert "await _ziele_abgleichen(inter.guild, erzwingen=True)" in d
     assert "DISCORD_ZIELE_SYNC_MIN=10" in open(".env.example", encoding="utf-8").read()
-    ok("W153: Discord-Abgleich laeuft von selbst und per /setup_targets (Inhalt seit W168: Umzug)")
+    ok("W153: Discord-Abgleich laeuft von selbst und per /setup_targets (seit W209: anlegen, nie loeschen)")
 
 
 def _test_v42_w154_verschlossen_cluster_decimal():
@@ -29718,9 +29720,12 @@ def _test_v42_w161_tiefengrund():
     assert not Z.loeschbar("🎯 Ziele", ["planung"]), "eine fremde 🎯-Kategorie wird geloescht"
     assert not Z.loeschbar("Anna", [])
     db = open("discordbot.py", encoding="utf-8").read()
+    # ANKER GEWANDERT (v5.11-W209): der Abgleich loescht gar nicht mehr; die
+    # Herkunftsregel entscheidet nur noch, welcher Bereich als „verwaist"
+    # gemeldet wird (nc.discordziele.plan) — eine fremde 🎯-Kategorie nie.
     za = rumpf_ab(db, db.index("async def _ziele_abgleichen("))
-    assert za.index("_nc_ziele.loeschbar(") < za.index("await _bereich_umziehen("), \
-        "geloescht wird ohne Blick auf den Inhalt"
+    assert ".delete(" not in za, "der Abgleich loescht wieder"
+    assert Z.plan([], {"🎯 Ziele": ["planung"], "🎯 anna": ["anna-hype"]})["verwaist"] == ["🎯 anna"]
     ok("W161: Tiefengrund — Cluster-Bestaetigung je Cluster, Raum endet mit dem Live, "
        "Chat-Waechter mit der Aufnahme, Clips vor dem Einarbeiten, fremde 🎯-Bereiche tabu")
 
@@ -30578,8 +30583,9 @@ def _test_v42_w168_ein_thema_ein_kanal():
     assert Z.clip_kanal({}) == "clips" and Z.clip_kanal({"DISCORD_CLIP_CHANNEL": "Meine Clips!"}) \
         == "meine-clips"
     assert Z.clip_kanal_des_bereichs("🎯 anna") == "anna-clips"
-    assert not hasattr(Z, "plan") and "_provision_user_channels" not in {
-        getattr(n, "name", "") for n in dbaum.body}, "es werden wieder Nutzer-Bereiche angelegt"
+    # ZURUECKGENOMMEN (v5.11-W209, Betreiber 14.11.): es gibt wieder Bereiche je
+    # Nutzer — geprueft in _test_v511_w209_bereiche_je_nutzer. Der gemeinsame
+    # Clip-Kanal bleibt als Rueckfall, das prueft dieser Vertrag weiter.
 
     class _Ch:
         def __init__(self, name):
@@ -30598,121 +30604,19 @@ def _test_v42_w168_ein_thema_ein_kanal():
     assert _aio.run(Z.clip_kanal_holen([_G(4, []), g3], 3, "clips")).name == "clips"
     assert g3.neu == ["clips"], "der Kanal wird nicht in der bevorzugten Guild angelegt"
     assert _aio.run(Z.clip_kanal_holen([_G(5, [])], 5, "clips", anlegen=False)) is None
+    # ANKER GEWANDERT (v5.11-W209): der Clip geht ueber ziel_kanal (Bereich,
+    # Rueckfall #clips) — nie mehr an einen gebauten „-clips"-Namen vorbei.
     cd = rumpf_ab(src, src.index("async def _clip_to_discord("))
-    assert "clip_kanal_holen(" in cd and '-clips"' not in cd
+    assert "ziel_kanal(" in cd and '-clips"' not in cd
 
-    # (8) Umzug eines Bereichs: erst kopieren, dann loeschen — nie umgekehrt.
-    ablauf = []
-
-    class _Att:
-        async def to_file(self):
-            return "datei"
-
-    class _Msg:
-        def __init__(self, mid, anh=True, bot=True):
-            self.id, self.content = mid, "Clip %d" % mid
-            self.attachments = [_Att()] if anh else []
-            self.author = _ty.SimpleNamespace(bot=bot, display_name="Eve")
-
-        async def delete(self):
-            ablauf.append(("weg", self.id))
-
-    class _Quelle(_Ch):
-        def __init__(self, name, msgs):
-            super().__init__(name)
-            self.msgs = msgs
-
-        def history(self, limit=None, oldest_first=True):
-            async def _gen():
-                for m in self.msgs:
-                    yield m
-            return _gen()
-
-        async def delete(self, reason=None):
-            ablauf.append(("kanal", self.name))
-
-    class _Ziel:
-        name = "clips"
-        guild = _ty.SimpleNamespace(id=1)
-
-        def __init__(self, fehler_bei=None):
-            self.fehler_bei = fehler_bei
-
-        async def send(self, content=None, files=None):
-            if content and self.fehler_bei and str(self.fehler_bei) in content:
-                raise RuntimeError("413")
-            ablauf.append(("kopie", content))
-            neu = _ty.SimpleNamespace(id=900 + len(ablauf), guild=self.guild,
-                                      channel=_ty.SimpleNamespace(id=55))
-
-            async def _r(_e):
-                return None
-            neu.add_reaction = _r
-            return neu
-
-    class _Cat:
-        name = "🎯 anna"
-
-        def __init__(self, chans):
-            self.channels = chans
-
-        async def delete(self, reason=None):
-            ablauf.append(("kategorie", self.name))
-
-    db_rufe = []
-
-    async def _dba(fn):
-        class _C:
-            def execute(self, sql, args):
-                db_rufe.append(args)
-        return fn(_C())
-    fake_discord = _ty.SimpleNamespace(
-        utils=_ty.SimpleNamespace(get=lambda it, name: next((x for x in it if x.name == name), None)),
-        HTTPException=Exception)
+    # (8) ZURUECKGENOMMEN (v5.11-W209): der Umzug, der Bereiche nach #clips zog
+    # und dann loeschte, ist entfernt — er lief alle zehn Minuten und war der
+    # Grund fuer „die getrackten Nutzer sind verschwunden". Die Marken, an
+    # denen eine Kopie ihre Quelle erkennt, bleiben (das Einsortieren nutzt sie).
     assert Z.umzugsmarke_lesen("Clip" + Z.umzugsmarke(42)) == 42
     assert Z.umzugsmarke_lesen("Clip ↪ 42") == 0 and Z.umzugsmarke_lesen(None) == 0
     assert Z.umzugsmarke_lesen("1234") == 0, "eine Nachricht „1234“ gilt als Kopie von Clip 1234"
-    ns5 = _exec(dbaum, ["_clip_kopieren", "_bereich_umziehen", "_umzugsmarken"],
-                {"discord": fake_discord, "_nc_ziele": Z, "log": lg, "db_async": _dba})
-    quelle = _Quelle("anna-clips", [_Msg(1), _Msg(2, anh=False), _Msg(3, bot=False)])
-    cat = _Cat([quelle, _Quelle("anna-chat", [])])
-    assert _aio.run(ns5["_bereich_umziehen"](cat, _Ziel(), {})) == 2
-    k1 = ("kopie", "Clip 1" + Z.umzugsmarke(1))
-    assert ablauf.index(("weg", 1)) > ablauf.index(k1), "geloescht vor der Kopie"
-    assert ("kopie", "(von Eve) Clip 3" + Z.umzugsmarke(3)) in ablauf
-    assert ablauf[-1] == ("kategorie", "🎯 anna") and ("weg", 2) not in ablauf
-    assert db_rufe and db_rufe[0][3] == 1, "discord_clips zeigt weiter auf die alte Nachricht"
-    del ablauf[:]
-    quelle = _Quelle("anna-clips", [_Msg(1), _Msg(3)])
-    try:
-        _aio.run(ns5["_bereich_umziehen"](_Cat([quelle]), _Ziel(fehler_bei="Clip 3"), {}))
-        raise AssertionError("ein Kopierfehler wird verschluckt")
-    except RuntimeError:
-        pass
-    assert ("weg", 3) not in ablauf and not any(a[0] in ("kanal", "kategorie") for a in ablauf), \
-        ("nach einem Kopierfehler wird geloescht", ablauf)
-    # Review #210: schon kopiert (Loeschen der Quelle scheiterte) -> keine
-    # zweite Kopie, nur die Quelle weg und discord_clips auf die alte Kopie.
-    del ablauf[:], db_rufe[:]
-    vorhanden = _ty.SimpleNamespace(id=777, content="Clip 1" + Z.umzugsmarke(1),
-                                    guild=_ty.SimpleNamespace(id=1),
-                                    channel=_ty.SimpleNamespace(id=55))
-
-    class _ZielMitVerlauf(_Ziel):
-        def history(self, limit=None):
-            async def _gen():
-                for m in (vorhanden, _ty.SimpleNamespace(content="Hallo")):
-                    yield m
-            return _gen()
-    zv = _ZielMitVerlauf()
-    schon = _aio.run(ns5["_umzugsmarken"](zv))
-    assert set(schon) == {1}
-    _aio.run(ns5["_bereich_umziehen"](_Cat([_Quelle("anna-clips", [_Msg(1)])]), zv, schon))
-    assert not [a for a in ablauf if a[0] == "kopie"], ("jeder Abgleich postet eine Kopie mehr", ablauf)
-    assert ("weg", 1) in ablauf and db_rufe[0][2] == 777
-    za = rumpf_ab(dsrc, dsrc.index("async def _ziele_abgleichen("))
-    assert za.index("_nc_ziele.loeschbar(") < za.index("await _bereich_umziehen(")
-    assert za.count("_umzugsmarken(") == 1 and za.index("_umzugsmarken(") < za.index("for cat in alte")
+    assert "_bereich_umziehen" not in {getattr(n, "name", "") for n in dbaum.body}
     lg.handlers.clear()
     ok("W168: Discord-/track nur Discord, Dashboard-Standard Telegram samt Bestand, ein Clip-Kanal")
 
@@ -38438,6 +38342,248 @@ def _test_v510_w208_eine_seite():
        "Naehern, pollen nur sichtbar, Mauerwerk-Raster, Leinwand im Fenster")
 
 
+def _test_v511_w209_bereiche_je_nutzer():
+    """v5.11-W209: der Betreiber am 14.11. — „irgendwie sind die getrackten
+    Nutzer samt Aufnahmen, Channel und Hype-Channel verschwunden. Das sollte
+    doch der /setup-Befehl regeln. Aber dieser erstellt nur ein paar
+    Standard-Channel." Ein Automat (W168) zog jeden 🎯-Bereich alle zehn
+    Minuten nach #clips und loeschte ihn. Jetzt: je getracktem Nutzer ein
+    Bereich, Aufnahmen und Hype-Clips dorthin, nichts wird geloescht."""
+    import ast as _ast
+    import asyncio as _aio
+    import itertools as _it
+    import logging as _lg
+    import sqlite3 as _sq
+    import time as _tm
+    import types as _ty
+    from nc import discordziele as Z
+    from nc import discordrang as RG
+    from nc import meldetakt as M
+
+    # (1) Namen und Plan.
+    assert Z.bereich_name("@Anna_K") == "🎯 anna-k" and Z.kanal_name("Anna_K", "hype") == "anna-k-hype"
+    try:
+        Z.kanal_name("anna", "clips")
+        raise AssertionError("eine unbekannte Kanalart wird angelegt")
+    except ValueError:
+        pass
+    p = Z.plan(["Anna_K", "anna_k", "@ben", ""],
+               {"🎯 anna-k": ["anna-k-chat", "von-hand"], "🎯 alt": ["alt-clips", "alt 🔊"],
+                "🎯 Ziele": ["planung"], "📋 INFO": ["regeln"]})
+    assert p["anlegen"] == ["ben"], p
+    assert p["ergaenzen"] == {"Anna_K": ["anna-k-aufnahmen", "anna-k-hype"]}, \
+        "ein vorhandener Bereich wird nicht ergaenzt (oder zweimal, je Schreibweise)"
+    assert p["verwaist"] == ["🎯 alt"], "eine fremde 🎯-Kategorie gilt als Bereich des Bots"
+    assert Z.platz(400) == Z.LIMIT_KANAELE - Z.RESERVE - 400 and Z.platz(10 ** 6) == 0
+    # (2) Was in #clips liegt, wird am Text erkannt — und nur dann.
+    assert Z.einsortieren("🎬 Aufnahme @anna\\_k · 13.11.2026 · Teil 1/3 · 98.0 MB") == ("aufnahmen", "anna_k")
+    assert Z.einsortieren("✂ Highlight @ben.x\n⭐ = Vote") == ("hype", "ben.x")
+    assert Z.einsortieren("Clip" + Z.umzugsmarke(5)) == (None, None)
+    assert Z.einsortieren("(von Eve) lol") == (None, None)
+    assert Z.einsortieren(None) == (None, None)
+    assert Z.bereiche_an({}) and not Z.bereiche_an({"DISCORD_BEREICHE": "0"})
+
+    # Attrappe eines Discord-Servers: zaehlt alles, was angelegt und geloescht wird.
+    ids = _it.count(1000)
+    tagebuch = []
+
+    class _Datei:
+        async def to_file(self):
+            return "datei"
+
+    class _Nachricht:
+        def __init__(self, inhalt, kanal, anhang=True, bot=True):
+            self.id, self.content, self.channel, self.guild = next(ids), inhalt, kanal, kanal.guild
+            self.attachments = [_Datei()] if anhang else []
+            self.author = _ty.SimpleNamespace(bot=bot, display_name="Eve")
+
+        async def add_reaction(self, e):
+            return None
+
+        async def delete(self):
+            tagebuch.append(("loeschen", self.id))
+
+    class _Kanal:
+        def __init__(self, name, gilde):
+            self.name, self.guild, self.id, self.verlauf = name, gilde, next(ids), []
+
+        async def send(self, content=None, files=None, file=None):
+            m = _Nachricht(content, self)
+            self.verlauf.append(m)
+            tagebuch.append(("gesendet", self.name))
+            return m
+
+        def history(self, limit=None, oldest_first=False):
+            async def _gen():
+                for m in list(self.verlauf):
+                    yield m
+            return _gen()
+
+        async def delete(self, reason=None):
+            tagebuch.append(("loeschen", self.name))
+
+    class _Kategorie(_Kanal):
+        def __init__(self, name, gilde):
+            super().__init__(name, gilde)
+            self.text_channels = []
+            self.channels = self.text_channels
+
+        async def create_text_channel(self, name, topic=None):
+            ch = _Kanal(name, self.guild)
+            self.text_channels.append(ch)
+            self.guild.channels.append(ch)
+            tagebuch.append(("kanal", name))
+            return ch
+
+    class _Gilde:
+        def __init__(self, gid=1, grenze=10 ** 6):
+            self.id, self.categories, self.channels, self.text_channels = gid, [], [], []
+            self.grenze = grenze
+
+        async def create_category(self, name, reason=None):
+            await _aio.sleep(0)               # zwei Aufrufer koennen sich hier kreuzen
+            if len(self.channels) >= self.grenze:
+                raise PermissionError("403 Forbidden")
+            k = _Kategorie(name, self)
+            self.categories.append(k)
+            self.channels.append(k)
+            tagebuch.append(("kategorie", name))
+            return k
+
+        async def create_text_channel(self, name, topic=None):
+            ch = _Kanal(name, self)
+            self.text_channels.append(ch)
+            self.channels.append(ch)
+            return ch
+
+    # (3) Holen und anlegen: ein Bereich je Nutzer, auch bei gleichzeitigen Clips.
+    Z._SPERRE["obj"] = None
+    g = _Gilde()
+
+    async def _zwei():
+        return await _aio.gather(Z.bereich_kanal_holen(g, "anna", "hype"),
+                                 Z.bereich_kanal_holen(g, "Anna", "hype"))
+    a, b = _aio.run(_zwei())
+    assert a is b and [k.name for k in g.categories] == ["🎯 anna"], \
+        ("zwei gleichzeitige Clips legen zwei Bereiche an", [k.name for k in g.categories])
+    Z._SPERRE["obj"] = None
+    assert _aio.run(Z.bereich_kanal_holen(g, "ben", "chat", anlegen=False)) is None
+    voll = _Gilde()
+    voll.channels = [object()] * (Z.LIMIT_KANAELE - Z.RESERVE)
+    Z._SPERRE["obj"] = None
+    try:
+        _aio.run(Z.bereich_kanal_holen(voll, "carl", "hype"))
+        raise AssertionError("ein voller Server bekommt noch einen Bereich")
+    except Z.KeinPlatz:
+        pass
+    # (4) Wohin: Bereich, sonst #clips — mit Grund, nie still.
+    Z._SPERRE["obj"] = None
+    ch, grund = _aio.run(Z.ziel_kanal([g], 1, "anna", "aufnahmen"))
+    assert ch.name == "anna-aufnahmen" and grund == ""
+    Z._SPERRE["obj"] = None
+    gesperrt = _Gilde(grenze=0)
+    gemeldet = []
+
+    class _Fang(_lg.Handler):
+        def emit(self, rec):
+            gemeldet.append((rec.levelno, rec.getMessage()))
+    fang = _Fang()
+    _lg.getLogger("TikTokBot").addHandler(fang)
+    M.ZUSTAND.clear()
+    try:
+        ch, grund = _aio.run(Z.ziel_kanal([gesperrt], 1, "dora", "hype"))
+    finally:
+        _lg.getLogger("TikTokBot").removeHandler(fang)
+    assert ch.name == "clips" and "Forbidden" in grund, (ch.name, grund)
+    assert any(lv >= _lg.ERROR and "@dora" in m and "Kanaele verwalten" in m for lv, m in gemeldet), \
+        ("der Rueckfall nach #clips ist still", gemeldet)
+    import os as _os
+    _os.environ["DISCORD_BEREICHE"] = "0"
+    try:
+        ch, grund = _aio.run(Z.ziel_kanal([g], 1, "anna", "hype"))
+        assert ch.name == "clips" and grund == "DISCORD_BEREICHE=0"
+    finally:
+        del _os.environ["DISCORD_BEREICHE"]
+
+    # (5) Der Abgleich des Bots: legt an, ergaenzt, meldet verwaiste — loescht nie.
+    dsrc = open("discordbot.py", encoding="utf-8").read()
+    dbaum = _ast.parse(dsrc)
+    teile = [n for n in dbaum.body if getattr(n, "name", "") in (
+        "_getrackte_nutzer", "_ziele_abgleichen", "_clips_einsortieren", "_clip_kopieren",
+        "_umzugsmarken", "_bereiche_bericht")]
+    con = _sq.connect(":memory:")
+    con.row_factory = _sq.Row
+    con.executescript(
+        "CREATE TABLE trackings (id INTEGER PRIMARY KEY, username TEXT, paused INTEGER);"
+        "INSERT INTO trackings VALUES (1,'anna',0),(2,'ben',0),(3,'Ben',0),(4,'pausiert',1);"
+        "CREATE TABLE discord_clips (id INTEGER PRIMARY KEY, guild_id INTEGER, channel_id INTEGER,"
+        " message_id INTEGER, username TEXT);")
+
+    async def _dba(fn):
+        return fn(con)
+    lg = _lg.getLogger("w209")
+    lg.propagate = False
+    M.ZUSTAND.clear()
+    ns = {"_nc_ziele": Z, "_nc_rang": RG, "db_async": _dba, "log": lg, "_nc_meldetakt": M,
+          "_time_mod": _tm, "discord": _ty.SimpleNamespace(HTTPException=Exception),
+          "_nc_i18n": _ty.SimpleNamespace(t=lambda s, **k: s)}
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "discordbot.py", "exec"), ns)
+    Z._SPERRE["obj"] = None
+    g = _Gilde()
+    alt = _aio.run(g.create_category("🎯 alt"))
+    _aio.run(alt.create_text_channel("alt-clips"))
+    del tagebuch[:]
+    r = _aio.run(ns["_ziele_abgleichen"](g, erzwingen=True))
+    assert sorted(r["angelegt"]) == ["anna", "ben"] and r["verwaist"] == ["🎯 alt"], r
+    namen = {k.name: sorted(c.name for c in k.text_channels) for k in g.categories}
+    assert namen["🎯 anna"] == ["anna-aufnahmen", "anna-chat", "anna-hype"], namen
+    assert "🎯 pausiert" not in namen, "ein pausiertes Tracking bekommt einen Bereich"
+    assert not [x for x in tagebuch if x[0] == "loeschen"], ("der Abgleich loescht", tagebuch)
+    r2 = _aio.run(ns["_ziele_abgleichen"](g))
+    assert r2["angelegt"] == [] and r2["ergaenzt"] == [], "ein zweiter Lauf legt doppelt an"
+    assert "🎯 alt" in ns["_bereiche_bericht"](r), "der Bericht verschweigt verwaiste Bereiche"
+
+    # (6) Einsortieren aus #clips: kopieren, nicht loeschen, nichts doppelt.
+    clips = _aio.run(g.create_text_channel("clips"))
+    m_auf = _Nachricht("🎬 Aufnahme @anna · 13.11.2026 · 412.0 MB", clips)
+    m_hyp = _Nachricht("✂ Highlight @ben\n⭐ = Vote", clips)
+    m_db = _Nachricht("Clip ohne Namen", clips)
+    m_weg = _Nachricht("✂ Highlight @nicht_mehr", clips)
+    m_text = _Nachricht("nur Text", clips, anhang=False)
+    clips.verlauf = [m_auf, m_hyp, m_db, m_weg, m_text]
+    con.execute("INSERT INTO discord_clips (guild_id, channel_id, message_id, username) "
+                "VALUES (1, ?, ?, 'anna')", (clips.id, m_db.id))
+    del tagebuch[:]
+    e = _aio.run(ns["_clips_einsortieren"](g))
+    assert e == {"kopiert": 3, "ohne_nutzer": 0, "nicht_getrackt": 1, "fehler": 0}, e
+    kan = {c.name: c for k in g.categories for c in k.text_channels}
+    assert len(kan["anna-aufnahmen"].verlauf) == 1 and len(kan["anna-hype"].verlauf) == 1
+    assert len(kan["ben-hype"].verlauf) == 1
+    assert Z.umzugsmarke_lesen(kan["ben-hype"].verlauf[0].content) == m_hyp.id
+    assert not [x for x in tagebuch if x[0] == "loeschen"], "in #clips wird geloescht"
+    zeile = con.execute("SELECT channel_id, message_id FROM discord_clips").fetchone()
+    assert (zeile[0], zeile[1]) == (kan["anna-hype"].id, kan["anna-hype"].verlauf[0].id), \
+        "die Sterne des Clip-of-the-Week zaehlen an der alten Nachricht"
+    e2 = _aio.run(ns["_clips_einsortieren"](g))
+    assert e2["kopiert"] == 0, "ein zweiter Lauf kopiert doppelt"
+
+    # (7) Verdrahtung: Aufnahme und Clip gehen ueber ziel_kanal, /setup legt an.
+    src = open("bot.py", encoding="utf-8").read()
+    au = rumpf_ab(src, src.index("async def _aufnahme_nach_discord("))
+    assert '"aufnahmen")' in au and "ziel_kanal(" in au
+    cd = rumpf_ab(src, src.index("async def _clip_to_discord("))
+    assert 'username, "hype")' in cd and "ziel_kanal(" in cd
+    assert 'os.getenv("CLIP_HIGHLIGHT_TO_TG", "0")' in src, "⭐-Highlights gehen wieder ungefragt nach Telegram"
+    sc = dsrc[dsrc.index("async def _c_setup_community("):dsrc.index("async def _c_setup_targets(")]
+    assert "await _ziele_abgleichen(inter.guild, erzwingen=True)" in sc, "/setup legt keine Bereiche an"
+    st = dsrc[dsrc.index("async def _c_setup_targets("):dsrc.index("async def _c_rank(")]
+    assert "await _clips_einsortieren(inter.guild)" in st
+    assert "_bereich_umziehen" not in dsrc, "der loeschende Umzug ist zurueck"
+    assert "DISCORD_BEREICHE=1" in open(".env.example", encoding="utf-8").read()
+    ok("v5.11-W209: je getracktem Nutzer ein Discord-Bereich (Aufnahmen, Chat, Hype), "
+       "/setup legt an, Einsortieren aus #clips ohne Loeschen, ⭐ nicht mehr nach Telegram")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -41377,6 +41523,7 @@ def main():
     _test_v510_w207_leitstand_lage()
     _test_v510_w207_leitstand_route_und_deck()
     _test_v510_w208_eine_seite()
+    _test_v511_w209_bereiche_je_nutzer()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

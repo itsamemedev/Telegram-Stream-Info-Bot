@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **27.575 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
+`bot.py` hat **27.587 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 391 Routen (34 in `bot.py`, 357 in
-`nc/routes/`), 67 Slash-Commands, 639 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 67 Slash-Commands, 641 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -276,8 +276,9 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **501** (v5.6-W197: drei
-verschwanden mit totem Code; v5.8-W200: sechs begründet dazu; v5.9-W202: vier, s. u.), und wie bei
+`tools/blindstellen.py` misst diese Klasse, Bestand **502** (v5.6-W197: drei
+verschwanden mit totem Code; v5.8-W200: sechs begründet dazu; v5.9-W202: vier;
+v5.11-W209: eine, s. u.), und wie bei
 W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
 Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
 „dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
@@ -320,6 +321,9 @@ Und die vier aus v5.9-W201/W202: `bot._ki_nach_deckwahl()` → `None` heisst
 Stundendeckel immer), `_plaetze_messen()` → `None` „der Server nennt keine
 Zahl, es gilt 1" (jede gescheiterte Abfrage steht schon als INFO im Log) und
 `nc.freeai.abhilfe()` → `""` „kein Handgriff zu diesem Fehler".
+Und die eine aus v5.11-W209: `nc.discordziele.einsortieren()` → `(None, None)`
+heisst „diese Nachricht in #clips traegt keinen @Namen" — sie bleibt, wo sie
+ist, und `/setup_targets` zaehlt sie als „ohne Nutzer" im Bericht.
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
 pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —
@@ -1313,7 +1317,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 623 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 624 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

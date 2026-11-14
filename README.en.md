@@ -121,7 +121,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolith · 27,575 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT["bot.py<br/>monolith · 27,587 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
     BOT -->|configure| NC["nc/ — 185 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>16 watchdog agents"]:::brain
@@ -554,8 +554,8 @@ python3 -m pytest -k w145          # one wave on its own
 python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
 ```
 
-`bot.py` has 27,575 lines and is never read in full — the navigation map
-`.claude/INDEX.md` knows 391 routes and 639 functions with line numbers. Before
+`bot.py` has 27,587 lines and is never read in full — the navigation map
+`.claude/INDEX.md` knows 391 routes and 641 functions with line numbers. Before
 every pull request the full verification chain from
 **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
 documentation figures, locks against silent failure paths and giant functions,
@@ -572,6 +572,16 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 ```
 
 ---
+
+## 🆕 New in v5.11
+
+**“Homecoming”** — the per-user Discord areas are back:
+
+- Every tracked user has `🎯 name` again with `-aufnahmen`, `-chat` and
+  `-hype`; full recordings and hype clips go there. `/setup_community`
+  creates them, nothing is deleted automatically any more.
+- `/setup_targets` sorts what sits in `#clips` into the areas.
+- ⭐ highlights no longer go to Telegram unasked.
 
 ## 🆕 New in v5.10
 
@@ -795,7 +805,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **5.10.0** — “Control Room” (2026.11) |
+| Current version | **5.11.0** — “Homecoming” (2026.11) |
 | Flask routes | 391 (34 in `bot.py` · 357 in `nc/routes/`) |
 | Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |

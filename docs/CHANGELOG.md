@@ -9,6 +9,55 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.11.0] — 2026-11-14 · „Heimkehr" (W209)
+
+Der Betreiber am 14.11.: „Irgendwie sind die getrackten Nutzer samt Aufnahmen,
+Channel und Hype-Channel verschwunden. Das sollte doch der /setup-Befehl
+regeln. Aber dieser erstellt nur ein paar Standard-Channel." Dazu: die
+⭐-Highlights sollen nicht nach Telegram.
+
+### Behoben — die Nutzer-Bereiche in Discord sind zurück
+
+- **Was sie gelöscht hat:** W168 (07.11., „das sollte unterbunden werden …
+  alle anderen Channel löschen") legte alle Clips in einen gemeinsamen
+  `#clips` und baute einen Automaten, der **alle zehn Minuten** jeden
+  `🎯`-Bereich dorthin zog und danach löschte. Für Telegram ist das seit W175
+  zurückgenommen (wieder ein Thema je Nutzer) — für Discord lief der Automat
+  weiter, und `/setup_community` legte nur die Standardkanäle an.
+- **Jetzt:** je getracktem Nutzer (Telegram, Discord, Deck; pausierte nicht)
+  eine Kategorie `🎯 name` mit `name-aufnahmen`, `name-chat` und
+  `name-hype`. Ganze Aufnahmen gehen nach `-aufnahmen`, Hype- und
+  Highlight-Clips nach `-hype` (Clip-of-the-Week zählt die Sterne dort).
+  `/setup_community` legt die Bereiche mit an, der Abgleich ergänzt neue
+  Trackings binnen `DISCORD_ZIELE_SYNC_MIN`.
+- **Es wird nichts mehr automatisch gelöscht.** Ein Bereich, dessen Nutzer
+  nicht mehr getrackt wird, bleibt stehen und wird im Bericht als „ohne
+  getrackten Nutzer" genannt; von Hand angelegte Kanäle darin bleiben
+  unberührt.
+- **`/setup_targets` sortiert ein, was seit dem Umzug in `#clips` liegt:**
+  Aufnahmen (am Text „🎬 Aufnahme @name") nach `-aufnahmen`, Highlights nach
+  `-hype`, Clips ohne Namen über ihre `discord_clips`-Zeile. Kopiert, nicht
+  verschoben — in `#clips` wird nichts gelöscht; jede Kopie trägt die
+  Quell-ID, ein zweiter Lauf kopiert nichts doppelt.
+- **Rückfall laut statt still:** kann ein Bereich nicht angelegt werden
+  (Recht „Kanäle verwalten" fehlt, Server mit 475 von 500 Kanälen voll),
+  geht der Clip nach `#clips` — und das Log sagt warum und was zu tun ist.
+  Zwei gleichzeitige Clips eines neuen Nutzers legen einen Bereich an, nicht
+  zwei. `DISCORD_BEREICHE=0` schaltet zurück auf den gemeinsamen Kanal.
+
+### Geändert
+
+- **⭐-Highlights gehen nicht mehr ungefragt nach Telegram**
+  (`CLIP_HIGHLIGHT_TO_TG`, Vorgabe jetzt 0; der Schalter im Deck und die
+  Variable holen es zurück).
+
+### Geprüft
+
+`_test_v511_w209_bereiche_je_nutzer` gegen einen Attrappen-Server (anlegen,
+ergänzen, nie löschen, Einsortieren ohne Doppel, Rückfall mit Grund,
+gleichzeitige Clips). Die Verträge aus W153, W161 und W168, die den Umzug
+festhielten, prüfen jetzt die Rücknahme.
+
 ## [5.10.0] — 2026-11-13 · „Leitstand" (W207–W208)
 
 Der Betreiber schickte ein Video eines dichten Leitstands — viele kleine
