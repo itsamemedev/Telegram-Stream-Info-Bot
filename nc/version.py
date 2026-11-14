@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.10.0"
-CODENAME = "Leitstand"
+VERSION = "5.11.0"
+CODENAME = "Heimkehr"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.11.0",
+        "date": "2026-11",
+        "title": "Heimkehr",
+        # Nebenversion: Discord-Bereiche je Nutzer zurueck (W209).
+        "highlights": [
+            "Discord: jeder getrackte Nutzer hat wieder seinen Bereich — 🎯 name mit -aufnahmen, -chat und -hype; ganze Aufnahmen und Hype-Clips gehen dorthin",
+            "/setup_community legt die Nutzer-Bereiche mit an, der Abgleich alle zehn Minuten ergaenzt neue Trackings",
+            "Nichts wird mehr automatisch geloescht: ein Bereich ohne getrackten Nutzer bleibt stehen und wird gemeldet — bisher zog ein Automat jeden Bereich nach #clips und loeschte ihn",
+            "/setup_targets sortiert, was seit dem Umzug in #clips liegt, in die Bereiche ein (Aufnahmen und Highlights getrennt, nichts doppelt, in #clips wird nichts geloescht)",
+            "Geht ein Clip doch nach #clips (Recht fehlt, Server voll), sagt das Log warum und was zu tun ist",
+            "⭐-Highlights gehen nicht mehr ungefragt nach Telegram (CLIP_HIGHLIGHT_TO_TG Vorgabe 0)",
+        ],
+    },
     {
         "version": "5.10.0",
         "date": "2026-11",

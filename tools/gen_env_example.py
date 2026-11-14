@@ -479,6 +479,13 @@ def _umbruch(text, breite):
 # Quelltext nicht mehr liest, bricht den Generator ab (siehe main): sonst
 # erklaert die Vorlage still einen Schalter, den es nicht gibt.
 ERKLAERUNG = {
+    "DISCORD_BEREICHE":
+        "v5.11-W209: je getracktem Nutzer ein Discord-Bereich (🎯 name mit -aufnahmen, "
+        "-chat, -hype); ganze Aufnahmen und Hype-Clips gehen dorthin, /setup_community "
+        "legt sie an, nichts wird automatisch geloescht. 0 = alles in DISCORD_CLIP_CHANNEL.",
+    "CLIP_HIGHLIGHT_TO_TG":
+        "⭐-Highlights aus Discord nach Telegram pushen. Seit v5.11-W209 Vorgabe 0 "
+        "(der Betreiber wollte Hype-Videos nicht ungefragt in Telegram).",
     "RESTREAM_TRACKINGS":
         "v5.9-W204: getrackte Nutzer (Telegram, Discord, Deck) automatisch in die "
         "Restream-Auto-Liste — Keys aus der .env, im Deck geloeschte bleiben draussen. "

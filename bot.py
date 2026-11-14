@@ -21657,7 +21657,10 @@ DISCORD_DAILY_STREAK_XP = _env_int("DISCORD_DAILY_STREAK_XP", 25)     # Bonus pr
 DISCORD_EVENTS_CHANNEL = os.getenv("DISCORD_EVENTS_CHANNEL", "events").strip()  # Channel für Event-Ankündigungen
 CLIP_CMD_COOLDOWN_S    = _env_int("CLIP_CMD_COOLDOWN_S", 120)         # /clip-Cooldown pro Discord-User
 CLIP_HIGHLIGHT_STARS   = _env_int("CLIP_HIGHLIGHT_STARS", 3)          # ab so vielen ⭐ wird ein Clip zum Highlight
-CLIP_HIGHLIGHT_TO_TG   = os.getenv("CLIP_HIGHLIGHT_TO_TG", "1").strip().lower() in ("1","true","yes","on","y")  # Highlights automatisch nach Telegram
+# v5.11-W209: Vorgabe AUS. Der Betreiber am 13./14.11.: Hype- und Meme-Videos
+# landeten ungefragt in Telegram (W199), und die ⭐-Highlights sollen es auch
+# nicht. CLIP_HIGHLIGHT_TO_TG=1 (oder der Schalter im Deck) holt es zurueck.
+CLIP_HIGHLIGHT_TO_TG   = os.getenv("CLIP_HIGHLIGHT_TO_TG", "0").strip().lower() in ("1","true","yes","on","y")  # Highlights automatisch nach Telegram
 DISCORD_OPS_ALERTS     = os.getenv("DISCORD_OPS_ALERTS", "1").strip().lower() in ("1","true","yes","on","y")    # kritische Recording-Fehler nach #mod-log
 # v4.1-W16: der laufende discord.py-Client steht im Register
 # nc.discordstate.CLIENT. Ein direkter Alias ginge NICHT: der Bot bindet den
@@ -22542,7 +22545,9 @@ async def _shrink_for_discord(path, limit_mb):
 
 
 async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None):
-    """v4.2-W175: die GANZE Aufnahme in den Clip-Kanal, in Teilen <= Guild-Limit.
+    """v4.2-W175: die GANZE Aufnahme nach Discord, in Teilen <= Guild-Limit.
+    v5.11-W209: in `<nutzer>-aufnahmen` im Bereich des Nutzers, #clips nur als
+    Rueckfall (und dann laut, warum).
 
     Gewuenscht am 11.11. („die gesamte Aufnahme soll nach Discord"). Die
     Rechnung steht in nc/discordaufnahme, hier nur Kanal, Limit und Versand.
@@ -22561,8 +22566,10 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None)
     try:
         import discord
         client = _nc_discordstate.CLIENT["obj"]
-        ch = (await _nc_discordziele.clip_kanal_holen(client.guilds, DISCORD_GUILD_ID)
-              if client else None)
+        # Ein Rueckfall nach #clips meldet nc.discordziele.ziel_kanal selbst.
+        ch, _rueckfall = ((await _nc_discordziele.ziel_kanal(client.guilds, DISCORD_GUILD_ID,
+                                                              username, "aufnahmen"))
+                          if client else (None, ""))
         if ch is None:
             ergebnis.update(fehler=ergebnis.get("fehler", 0) + 1,
                             grund="Discord nicht verbunden oder in keiner Guild" if client
@@ -22570,6 +22577,8 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None)
         else:
             _lim = _nc_dclimits.effective_upload_mb(getattr(ch.guild, "filesize_limit", 0),
                                                     _DISCORD_UPLOAD_OVERRIDE)
+
+            ergebnis["kanal"] = ch.name
 
             async def _senden(teil, text):
                 await ch.send(content=text[:1900], file=discord.File(teil))
@@ -22582,7 +22591,8 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None)
                         grund="%s: %s" % (type(e).__name__, e))
     if _nc_uschlange.angekommen(ergebnis):
         log.info("Aufnahme @%s → Discord (#%s): %d Teil(e), %s", username,
-                 _nc_discordziele.clip_kanal(), ergebnis["gesendet"], os.path.basename(path))
+                 ergebnis.get("kanal") or _nc_discordziele.clip_kanal(), ergebnis["gesendet"],
+                 os.path.basename(path))
         _nc_meldetakt.zuruecksetzen("discord-aufnahme")
     else:
         laut, weg = _nc_meldetakt.melden("discord-aufnahme", str(ergebnis.get("grund"))[:60],
@@ -22592,13 +22602,15 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None)
                       "gesendet). Fehlt dem Bot das Recht, in #%s Dateien zu posten? Die "
                       "Aufnahme bleibt auf dem Server: %s%s", username,
                       ergebnis.get("grund") or "?", ergebnis.get("gesendet", 0),
-                      ergebnis.get("teile", "?"), _nc_discordziele.clip_kanal(), path,
+                      ergebnis.get("teile", "?"),
+                      ergebnis.get("kanal") or _nc_discordziele.clip_kanal(), path,
                       _nc_meldetakt.zusatz(weg))
     return ergebnis
 
 
 async def _clip_to_discord(username, path, caption=""):
-    """Postet einen Highlight-Clip in den gemeinsamen Clip-Kanal (Discord).
+    """Postet einen Highlight-Clip nach Discord — seit v5.11-W209 in
+       `<nutzer>-hype` im Bereich des Nutzers, #clips nur als Rueckfall.
        No-op wenn CLIP_DISCORD_UPLOAD aus oder Client nicht da."""
     if not CLIP_DISCORD_UPLOAD or not _nc_discordstate.CLIENT["obj"]:
         return
@@ -22615,11 +22627,11 @@ async def _clip_to_discord(username, path, caption=""):
         # guild-genaue Pruefung steht unten nach dem Channel-Fund — erst dort
         # ist ch.guild.filesize_limit bekannt (Boost-Stufen!). Der tote Zweig
         # las sich wie ein Fehler und war nur ein Ueberbleibsel.
-        # v4.2-W168: EIN Clip-Kanal fuer alle (DISCORD_CLIP_CHANNEL, Vorgabe
-        # #clips) statt {slug}-clips je Nutzer — entschieden am 07.11. Fehlt
-        # er, wird er angelegt; fehlt das Recht dazu, sagt das Log es laut.
-        ch = await _nc_discordziele.clip_kanal_holen(
-            _nc_discordstate.CLIENT["obj"].guilds, DISCORD_GUILD_ID)
+        # v5.11-W209: wieder der Bereich des Nutzers (`<nutzer>-hype`); W168
+        # hatte alles in EINEN Kanal gelegt. Fehlt der Bereich, wird er
+        # angelegt; geht das nicht, #clips — und das Log sagt warum.
+        ch, _rueckfall = await _nc_discordziele.ziel_kanal(
+            _nc_discordstate.CLIENT["obj"].guilds, DISCORD_GUILD_ID, username, "hype")
         if ch is None:
             log.error("Clip-Discord: der Bot ist in keiner Guild — Clip @%s nicht gepostet.",
                       username)

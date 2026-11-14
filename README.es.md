@@ -66,7 +66,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 27.575 líneas"]:::core
+    BOT["bot.py<br/>monolito · 27.587 líneas"]:::core
     BOT -->|configure| NC["nc/ — 185 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
@@ -451,7 +451,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.10.0** — “Sala de control” (2026.11) |
+| Versión actual | **5.11.0** — “Regreso” (2026.11) |
 | Rutas Flask | 391 (34 en `bot.py` · 357 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |
