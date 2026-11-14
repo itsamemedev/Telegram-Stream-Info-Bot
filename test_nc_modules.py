@@ -33484,6 +33484,12 @@ def _test_v42_w175_discord_ganze_aufnahme():
 
     async def _holen(gilden, bevorzugt=0, name=None, anlegen=True):
         return kanal[0]
+
+    # ANKER GEWANDERT (v5.11-W209): die Aufnahme fragt ziel_kanal (Bereich des
+    # Nutzers, Rueckfall #clips) — die Aussage hier ist Limit, Kanal, Lautheit.
+    async def _ziel(gilden, bevorzugt, nutzer, art):
+        assert art == "aufnahmen", art
+        return kanal[0], ""
     client = _ty.SimpleNamespace(guilds=[1])
     fake_dc = _ty.ModuleType("discord")
     fake_dc.File = lambda p: ("datei", p)
@@ -33497,7 +33503,7 @@ def _test_v42_w175_discord_ganze_aufnahme():
                                                   hochladen=_hoch),
             "os": _ty.SimpleNamespace(getenv=lambda k, v="": "tok", path=_os.path),
             "_nc_discordstate": _ty.SimpleNamespace(CLIENT={"obj": client}),
-            "_nc_discordziele": _ty.SimpleNamespace(clip_kanal_holen=_holen,
+            "_nc_discordziele": _ty.SimpleNamespace(clip_kanal_holen=_holen, ziel_kanal=_ziel,
                                                     clip_kanal=Z.clip_kanal),
             "DISCORD_GUILD_ID": 0, "_nc_dclimits": DL, "_DISCORD_UPLOAD_OVERRIDE": None,
             "_nc_uschlange": U, "_nc_meldetakt": M, "_time_mod": __import__("time"),
