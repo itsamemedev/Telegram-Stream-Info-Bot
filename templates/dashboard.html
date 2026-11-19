@@ -8011,7 +8011,11 @@ async function loadSystem(){
     // Vorher: truthy-Check auf nicht-leere Liste -> zeigte IMMER "present".
     const cp = Array.isArray(cookHealth.critical_present) ? cookHealth.critical_present : [];
     const cm = Array.isArray(cookHealth.critical_missing) ? cookHealth.critical_missing : [];
-    if(cp.length) ch+=`<tr><th>Vorhanden</th><td>${cp.map(n=>`<span class="pill ok">${esc(n)}</span>`).join(' ')}</td></tr>`;
+    // BH-4: der Name allein sagt nicht, ob der GESENDETE Wert noch gilt.
+    // Ein kritischer Cookie ohne gueltige Variante stand hier gruen, waehrend
+    // der Bot den abgelaufenen Wert schickte und TikTok 403 antwortete.
+    const cx = Array.isArray(cookHealth.critical_expired) ? cookHealth.critical_expired : [];
+    if(cp.length) ch+=`<tr><th>Vorhanden</th><td>${cp.map(n=>cx.includes(n)?`<span class="pill off">${esc(n)} (${T('abgelaufen')})</span>`:`<span class="pill ok">${esc(n)}</span>`).join(' ')}</td></tr>`;
     if(cm.length) ch+=`<tr><th>Fehlend</th><td>${cm.map(n=>`<span class="pill off">${esc(n)}</span>`).join(' ')}</td></tr>`;
     // BUG-FIX: neues Feld duplicate_domain_cookies sichtbar machen -- direkte
     // Anzeige der 403-trotz-aktueller-Cookies Ursache.
@@ -12256,8 +12260,11 @@ async function ops6Summary(){
   box.innerHTML='<div class="faint" style="font-size:11px">…</div>';
   const d=await apiGet('/api/summary/preview');
   if(!d||!d.ok){ box.innerHTML='<div class="faint" style="font-size:11px">Nicht verfügbar.</div>'; return; }
-  const tmp=document.createElement('div'); tmp.innerHTML=d.text||'';
-  box.innerHTML='<div class="kc-code" style="max-height:300px;overflow:auto;white-space:pre-wrap">'+esc(tmp.textContent||tmp.innerText||'')+'</div>';
+  // BH-12: NICHT per innerHTML auf einem losen Knoten parsen — ein Element
+  // aus `document` laedt auch losgeloest Ressourcen, ein <img onerror> im
+  // Text liefe also. DOMParser baut ein inertes Dokument: kein Skript, kein Laden.
+  const txt=new DOMParser().parseFromString(String(d.text||''),'text/html').body.textContent||'';
+  box.innerHTML='<div class="kc-code" style="max-height:300px;overflow:auto;white-space:pre-wrap">'+esc(txt)+'</div>';
 }
 
 async function loadSendStatus(){
@@ -12272,7 +12279,7 @@ async function loadSendStatus(){
       var dot=ok?'<span style="color:var(--neon)">●</span>':'<span style="color:var(--magenta)">●</span>';
       var name=k.charAt(0).toUpperCase()+k.slice(1);
       var state=ok?'<span style="color:var(--neon)">sende-bereit</span>'
-                  :'<span style="color:var(--text-dim)">'+(v.hint||'nicht verbunden')+'</span>';
+                  :'<span style="color:var(--text-dim)">'+esc(v.hint||'nicht verbunden')+'</span>';   // BH-12: Server-Text, escapen
       rows+='<div style="display:flex;gap:8px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border)">'
            +'<span style="width:14px">'+dot+'</span>'
            +'<b style="width:70px;font-family:var(--mono)">'+name+'</b>'

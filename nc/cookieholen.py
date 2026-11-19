@@ -489,19 +489,21 @@ def _plan(alle, kritisch, jetzt):
          behalten, die auswahl() waehlt — dieselbe Funktion, nach der
          load_dict() den gesendeten Wert bestimmt.
 
-    Warum erst 1, dann 2: auswahl() liest abgelaufene mit (ignore_expires),
-    und der Rang der Domain steht VOR der Expiry. Ein abgelaufenes
-    `www.tiktok.com sessionid` schlaegt damit ein gueltiges `.tiktok.com
-    sessionid` — der Bot sendet heute den toten Wert. Andersherum gerechnet
-    behielte die Bereinigung genau ihn, um ihn im zweiten Schritt zu
-    loeschen, und der gueltige waere schon weg. So herum bleibt der Wert,
-    den auch ein Browser senden wuerde (der sendet abgelaufene nie).
+    Warum erst 1, dann 2: so bleibt der Wert, den auch ein Browser senden
+    wuerde (der sendet abgelaufene nie). Bis BH-4 war das zugleich die
+    einzige Stelle mit dieser Regel — auswahl() las abgelaufene mit, der
+    Rang der Domain stand VOR der Expiry, und der Bot sendete eine
+    abgelaufene `www.tiktok.com sessionid` statt der gueltigen `.tiktok.com`.
+    Seither stellt auswahl() selbst jede gueltige Variante vor jede
+    abgelaufene; `vorher` (was der Bot JETZT sendet) rechnet deshalb mit
+    derselben Uhr.
 
-    Fuer jeden Namen, dessen gesendete Variante NICHT abgelaufen ist, aendert
-    das nichts am gesendeten Wert: der Sieger bleibt, und ein Gleichstand
-    mit ihm hat dieselbe Expiry, ist also ebenfalls nicht abgelaufen.
-    Wechselt der Wert doch (der Sieger war tot), steht der Name in
-    `wert_wechselt` — die Vorschau sagt es, bevor geschrieben wird."""
+    Fuer jeden Namen mit einer gueltigen Variante aendert die Bereinigung
+    damit nichts am gesendeten Wert: der Sieger unter den gueltigen ist
+    derselbe, vorher wie nachher. Wechselt der Wert doch (die gesendete
+    Variante ist eine Zeile, die _feld_zeile() nicht schreiben kann), steht
+    der Name in `wert_wechselt` — die Vorschau sagt es, bevor geschrieben
+    wird."""
     weg = {}                                      # id(cookie) -> Grund
     for c in alle:
         if abgelaufen(c.expires, jetzt):
@@ -513,7 +515,7 @@ def _plan(alle, kritisch, jetzt):
             # still zu fehlen.
             weg[id(c)] = "unbrauchbar"
     lebend = [c for c in alle if id(c) not in weg]
-    gewaehlt = auswahl(lebend)
+    gewaehlt = auswahl(lebend, jetzt)
     je_name = {}
     for c in lebend:
         je_name.setdefault(c.name, []).append(c)
@@ -525,8 +527,8 @@ def _plan(alle, kritisch, jetzt):
                     weg[id(c)] = "doppelt"
     behalten = [c for c in alle if id(c) not in weg]
 
-    vorher = auswahl(alle)
-    nachher = auswahl(behalten)
+    vorher = auswahl(alle, jetzt)
+    nachher = auswahl(behalten, jetzt)
     doppelt = []
     for name in sorted({c.name for c in alle if weg.get(id(c)) == "doppelt"}):
         doppelt.append({"name": name, "behalten": _ort(nachher[name]),

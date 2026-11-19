@@ -3138,7 +3138,13 @@ def _test_w32_sondenschicht_und_systemlage():
         f.write("# Netscape HTTP Cookie File\n")
         f.write("\t".join([".tiktok.com", "TRUE", "/", "FALSE", "9999999999",
                            "sessionid", "ALT"]) + "\n")
-        f.write("\t".join(["www.tiktok.com", "FALSE", "/", "FALSE", "1111111111",
+        # BH-4: hier stand 1111111111 (2005) — eine ABGELAUFENE exakte Domain.
+        # Die Aussage ist der Domain-Rang unter gueltigen Varianten; eine
+        # abgelaufene schlaegt seit BH-4 keine gueltige mehr. Also gueltig,
+        # aber mit kuerzerer Expiry als die Wildcard: der Rang muss trotzdem gewinnen.
+        import time as _time_w32
+        f.write("\t".join(["www.tiktok.com", "FALSE", "/", "FALSE",
+                           str(int(_time_w32.time()) + 10 * 86400),
                            "sessionid", "GENAU"]) + "\n")
 
     class _Still:
@@ -35590,7 +35596,10 @@ def _test_v56_w197_cookie_bereinigen():
         # (Laeuft nur ein Cookie ab, das ohnehin als Duplikat ginge, bleibt es
         # derselbe Plan und derselbe Stand: entfernt werden dieselben Zeilen.)
         assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 50)["stand"] == v["stand"]
-        assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 3)["wert_wechselt"] == ["sessionid"]
+        # Seit BH-4 sendet der Bot schon VOR der Bereinigung die gueltige
+        # Variante (auswahl() stellt gueltig vor abgelaufen) — der gesendete
+        # Wert wechselt durch das Bereinigen also nicht mehr.
+        assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 3)["wert_wechselt"] == []
         spaeter = CH.bereinigen(f, erwartet=v["stand"], jetzt=zuk - 3)
         assert not spaeter["ok"] and spaeter["art"] == "veraltet", \
             ("der Stand haengt nur am Dateiinhalt, nicht am Plan", spaeter)
@@ -35620,7 +35629,9 @@ def _test_v56_w197_cookie_bereinigen():
         assert nichts["ok"] and not nichts["noetig"] and _bytes(f + ".bak") == stand_bak, \
             "ohne Aenderung geschrieben — das setzt die mtime und das Deck meldet 'frisch'"
 
-        # (3) Der gesendete Wert war tot: er wechselt — und die Vorschau sagt es.
+        # (3) Die gesendete Variante haette nach Domain-Rang die tote sein
+        # muessen. Seit BH-4 sendet der Bot schon vorher die gueltige, und die
+        # Bereinigung behaelt genau sie — kein Wechsel des gesendeten Werts.
         # Drei Varianten, weil erst dann die Reihenfolge der beiden Schritte
         # zaehlt: wer die Duplikate ueber ALLE aufloest (der tote Sieger
         # bliebe), wirft beide gueltigen als Duplikat und danach den toten
@@ -35631,9 +35642,10 @@ def _test_v56_w197_cookie_bereinigen():
             ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "GENAU_TOT"),
             (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid", "ALT_GUELTIG"),
             (".m.tiktok.com", "TRUE", "/", "TRUE", zuk - 10, "sessionid", "ALT_KURZ")])
-        assert _lade(f2)["sessionid"] == "GENAU_TOT"
+        assert _lade(f2)["sessionid"] == "ALT_GUELTIG", \
+            "BH-4: der Bot sendet die abgelaufene Variante, weil ihre Domain spezifischer ist"
         v2 = CH.bereinigen(f2, vorschau=True)
-        assert v2["ok"] and v2["wert_wechselt"] == ["sessionid"], v2
+        assert v2["ok"] and v2["wert_wechselt"] == [], v2
         assert v2["doppelt"] == [{"name": "sessionid", "behalten": ".tiktok.com",
                                   "entfernt": [".m.tiktok.com"]}], v2["doppelt"]
         e2 = CH.bereinigen(f2, erwartet=v2["stand"])
@@ -42060,6 +42072,313 @@ def _test_v511_bh6_pausenbild_vortritt():
        "Stillstands-Karenz), offline nach 20 s, Freigabe ohne Quellbild laut")
 
 
+def _test_bh4_gueltiger_cookie_schlaegt_abgelaufenen():
+    """BH-4: ein abgelaufener Cookie schlug den gueltigen.
+
+    lade_jar() liest mit ignore_expires, und auswahl() rangierte nach
+    (Domain-Spezifitaet, Expiry) — die Domain VOR dem Ablauf. Eine
+    abgelaufene `www.tiktok.com sessionid` schlug damit die gueltige
+    `.tiktok.com sessionid`; load_dict() lieferte den toten Wert, der Bot
+    sendete ihn, TikTok antwortete 403 — und das Deck zeigte „sessionid
+    vorhanden", weil es den NAMEN zaehlte. Der Import (_dedupe_cookie_text)
+    nahm dieselbe Regel und loeschte den gueltigen Login aus der Datei.
+
+    Gesichert: gueltig vor abgelaufen beim Senden UND beim Import; ein
+    Sitzungs-Cookie (Ablauf 0) gilt nicht als abgelaufen; sind alle
+    Varianten abgelaufen, geht die beste trotzdem hinaus (bisheriges
+    Verhalten, kein stiller Gast-Abruf) — aber das Deck meldet die tote
+    Anmeldung als kritisch und faerbt den Namen rot."""
+    import os as _os
+    import time as _time
+    from nc import cookieholen as CH
+    from nc import cookies as CK
+
+    jetzt = int(_time.time())
+    zuk, verg = jetzt + 30 * 86400, jetzt - 30 * 86400
+    krit = ("sessionid_ss", "sessionid", "msToken", "ttwid")
+    d = _ph.verzeichnis()
+
+    def _datei(name, zeilen):
+        pfad = _os.path.join(d, name)
+        with open(pfad, "w", encoding="utf-8") as fh:
+            fh.write("# Netscape HTTP Cookie File\n"
+                     + "".join("\t".join(map(str, z)) + "\n" for z in zeilen))
+        return pfad
+
+    class _Still:
+        def __getattr__(self, n):
+            return lambda *a, **k: None
+
+    def _lade(pfad):
+        CK.configure(datei=pfad)
+        CK.CACHE.clear()
+        return CK.load_dict()
+
+    alt_konf, alt_krit = dict(CK._KONF), CK._KRITISCH
+    try:
+        CK.configure(log=_Still(), kritisch=krit, autorefresh_info=dict,
+                     autofetch_info=dict, reparieren=lambda: False)
+
+        # (1) Der gemeldete Fall, plus die beiden Raender der Regel.
+        f = _datei("bh4.txt", [
+            # Abgelaufen und spezifischer gegen gueltig und Wildcard.
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "TOT_GENAU"),
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid", "LEBT_WILD"),
+            # Sitzung (Ablauf 0) gegen abgelaufen und spezifischer: Sitzung ist
+            # NICHT abgelaufen — wer `expires < jetzt` ohne Null-Pruefung
+            # rechnet, wirft hier jeden Header-Import weg.
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid_ss", "SS_TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", 0, "sessionid_ss", "SS_SITZUNG"),
+            # Alle Varianten abgelaufen: die beste geht trotzdem hinaus.
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg - 10, "msToken", "MS_GENAU_TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", verg, "msToken", "MS_WILD_TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", 0, "ttwid", "TT")])
+        gesendet = _lade(f)
+        assert gesendet["sessionid"] == "LEBT_WILD", \
+            ("der abgelaufene Wert schlaegt den gueltigen", gesendet)
+        assert gesendet["sessionid_ss"] == "SS_SITZUNG", \
+            ("ein Sitzungs-Cookie (Ablauf 0) zaehlt als abgelaufen", gesendet)
+        assert gesendet.get("msToken") == "MS_GENAU_TOT", \
+            ("alle Varianten abgelaufen: der Name fehlt oder die Regel darunter "
+             "hat sich geaendert", gesendet)
+        h = CK.gesundheit()
+        assert h["critical_expired"] == ["msToken"], h["critical_expired"]
+        assert h["status"] == "warning" and "Anmeldung abgelaufen" not in h["headline"], h
+
+        # (2) Die Anmeldung hat KEINE gueltige Variante mehr: das Deck sagt es
+        # laut (kritisch), statt „1 Cookie(s) abgelaufen" wie bei einem
+        # Analyse-Token — und der Name steht in critical_expired.
+        f2 = _datei("bh4_tot.txt", [
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", verg - 5, "sessionid", "TOTER"),
+            (".tiktok.com", "TRUE", "/", "TRUE", 0, "ttwid", "TT")])
+        assert _lade(f2)["sessionid"] == "TOT"
+        h2 = CK.gesundheit()
+        assert h2["status"] == "critical" and "Anmeldung abgelaufen" in h2["headline"] \
+            and "sessionid" in h2["headline"], h2
+        assert h2["critical_expired"] == ["sessionid"], h2["critical_expired"]
+        assert CK._cookie_alarm_level(h2)[0] == "crit"
+        # Eine gueltige zweite Anmeldung (sessionid_ss) haelt den Login am
+        # Leben — dann kein Alarm, nur die Warnung ueber den toten Eintrag.
+        _datei("bh4_tot.txt", [
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid_ss", "SS")])
+        CK.CACHE.clear()
+        h3 = CK.gesundheit()
+        assert h3["status"] == "warning" and h3["critical_expired"] == ["sessionid"], h3
+
+        # (3) Der Import: _dedupe_cookie_text() loeschte den gueltigen Login
+        # physisch aus der Datei. Ueber uebernehmen(), den Weg von Deck und
+        # Telegram-Dokument, und danach load_dict().
+        roh = ("# Netscape HTTP Cookie File\n"
+               "www.tiktok.com\tFALSE\t/\tTRUE\t%d\tsessionid\tTOT_GENAU\n"
+               ".tiktok.com\tTRUE\t/\tTRUE\t%d\tsessionid\tLEBT_WILD\n"
+               ".tiktok.com\tTRUE\t/\tTRUE\t0\tttwid\tTT\n") % (verg, zuk)
+        text, weg = CK._dedupe_cookie_text(roh)
+        assert weg == 1 and "\tLEBT_WILD" in text and "TOT_GENAU" not in text, text
+        ziel = _os.path.join(d, "bh4_import.txt")
+        r = CH.uebernehmen(roh, ziel)
+        assert r["ok"], r
+        assert _lade(ziel)["sessionid"] == "LEBT_WILD", \
+            "der Import hat den gueltigen Login aus der Datei geloescht"
+        # Ohne gueltige Variante bleibt beim Import die beste abgelaufene —
+        # dieselbe Regel wie beim Senden, keine zweite Lesart.
+        text2, _ = CK._dedupe_cookie_text(roh.replace(str(zuk), str(verg - 5)))
+        assert "\tTOT_GENAU" in text2 and "LEBT_WILD" not in text2, text2
+    finally:
+        CK._KONF.clear()
+        CK._KONF.update(alt_konf)
+        CK._KRITISCH = alt_krit
+        CK.CACHE.clear()
+
+    # (4) Das Deck: ein kritischer Name ohne gueltige Variante steht unter
+    # „Vorhanden" nicht mehr gruen.
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    zeile = next(z for z in dash.splitlines()
+                 if z.lstrip().startswith("if(cp.length)") and "Vorhanden" in z)
+    assert "cx.includes(n)" in zeile and "pill off" in zeile \
+        and "T('abgelaufen')" in zeile, zeile
+    assert "cookHealth.critical_expired" in dash
+    ok("BH-4: ein gueltiger Cookie schlaegt beim Senden und beim Import jeden "
+       "abgelaufenen; eine tote Anmeldung meldet das Deck als kritisch")
+
+
+def _test_bh7_bh10_chat_eine_regel_eine_sperre():
+    """BH-7 und BH-10: der Sendebild-Chat.
+
+    BH-7: chat_eintraege() (Chromium-Kasten) verglich den Quell-Nutzer ohne,
+    _chat_block() (drawtext) MIT Gross-/Kleinschreibung — „Name" aus der
+    Datenbank gegen „name" aus dem Listener liess nur den gebrannten Kasten
+    leer. Begruessung und Rangaufstieg hingen mit origin=None im Ring: jeder
+    gefilterte Kasten liess sie weg, ein ungefilterter zeigte sie ueberall.
+    Twitch-/YouTube-Ereignisse fielen schon beim Einlass heraus, sobald ein
+    Restream lief.
+
+    BH-10: der Restream-Start duennte den Ring per Listen-Abzug, clear() und
+    extend() aus — ohne Sperre gegen den Chat-Arbeiter (eigener Thread):
+    was dazwischen ankam, war weg, und der Ring stand kurz leer."""
+    import ast as _ast
+    import threading as _thr
+    from nc import channels as C
+
+    alt = list(C.RESTREAM_CHAT)
+    C.RESTREAM_CHAT.clear()
+    try:
+        for src, who, origin, kanal in (("tiktok", "coco", "name", None),
+                                        ("tiktok", "fremd", "berta", None),
+                                        ("kick", "luna", None, None),
+                                        ("event", "", "name", "tiktok"),     # Begruessung
+                                        ("event", "", "berta", "tiktok"),
+                                        ("event", "", None, "twitch"),       # Twitch-Follow
+                                        ("event", "", None, None)):          # ohne Herkunft
+            C.RESTREAM_CHAT.append({"ts": 1.0, "src": src, "who": who or "x",
+                                    "text": "t_%s_%s_%s" % (src, origin, kanal),
+                                    "origin": origin, "kanal": kanal})
+        erwartet = ["t_tiktok_name_None", "t_kick_None_None", "t_event_name_tiktok",
+                    "t_event_None_twitch"]
+        # (1) Beide Renderer, dieselbe Auswahl — auch bei anderer Schreibweise.
+        for su in ("Name", "@NAME", "name"):
+            assert [e["text"] for e in C.chat_eintraege(anzahl=50, source_user=su)] == erwartet, su
+            block = C._chat_block(maxlines=50, width=200, source_user=su)
+            gebrannt = [z.split()[-1] for z in block.splitlines()]
+            assert gebrannt == erwartet, ("drawtext-Kasten weicht ab", su, gebrannt)
+        assert len(C.chat_eintraege(anzahl=50)) == 7, "ohne Quelle wird nichts gefiltert"
+        assert C.quelle_aktiv("name", {"Name"}) and C.quelle_aktiv("@Name", ["name"])
+        assert not C.quelle_aktiv(None, {"name"}) and not C.quelle_aktiv("", {""})
+
+        # (2) Ausduennen: nur die fremde Quelle und das herkunftslose Ereignis
+        # gehen, die Reihenfolge bleibt — und „Name" ist die laufende Quelle.
+        assert C.chat_ausduennen(["Name"]) == 3
+        assert [m["text"] for m in C.RESTREAM_CHAT] == erwartet
+        # „@" ist wahr, bereinigt aber leer: ohne den Riegel in
+        # chat_ausduennen() passte darauf KEINE TikTok-Zeile mehr, und der
+        # Ring verloere den Chat der laufenden Quelle. ("" allein faengt
+        # schon gehoert_in_kasten ab — die Probe ist daran entwischt.)
+        for leer in ("", "@", None):
+            assert C.chat_ausduennen([leer]) == 0 and len(C.RESTREAM_CHAT) == 4, \
+                ("eine leere Quelle hat den Ring ausgeduennt", leer)
+        assert C.letzte_zeit() == 1.0
+
+        # (3) Beide Veraenderer nehmen CHAT_SPERRE.
+        for name, fn in (("chat_ausduennen", lambda: C.chat_ausduennen(["name"])),
+                         ("chat_anhaengen", lambda: C.chat_anhaengen(
+                             {"ts": 2.0, "src": "kick", "who": "k", "text": "neu", "origin": None}))):
+            fertig = []
+            with C.CHAT_SPERRE:
+                t = _thr.Thread(target=lambda f=fertig, g=fn: f.append(g()))
+                t.start()
+                t.join(0.3)
+                assert not fertig, "%s veraendert den Ring an CHAT_SPERRE vorbei" % name
+            t.join(5)
+            assert fertig, name
+        assert C.letzte_zeit() == 2.0
+        C.RESTREAM_CHAT.clear()
+        assert C.letzte_zeit() == 0.0
+    finally:
+        C.RESTREAM_CHAT.clear()
+        C.RESTREAM_CHAT.extend(alt)
+
+    # (4) bot.py: keine Veraenderung am Ring vorbei, kein Ereignis ohne Herkunft.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    for n in _ast.walk(baum):
+        if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute) \
+                and isinstance(n.func.value, _ast.Name) and n.func.value.id == "_RESTREAM_CHAT":
+            assert n.func.attr not in ("append", "clear", "extend", "remove", "popleft"), \
+                ("Zeile %d: _RESTREAM_CHAT.%s an CHAT_SPERRE vorbei" % (n.lineno, n.func.attr))
+    push = next(n for n in baum.body
+                if isinstance(n, _ast.FunctionDef) and n.name == "_restream_chat_push")
+    for d in (x for x in _ast.walk(push) if isinstance(x, _ast.Dict)):
+        for k, v in zip(d.keys, d.values):
+            if isinstance(k, _ast.Constant) and k.value == "origin":
+                assert not (isinstance(v, _ast.Constant) and v.value is None), \
+                    "Zeile %d: Ereignis mit origin=None — es landet in keinem/jedem Kasten" % d.lineno
+    gerufen = {_ast.unparse(c.func) for c in _ast.walk(push) if isinstance(c, _ast.Call)}
+    assert "_nc_channels.quelle_aktiv" in gerufen, "der Einlass vergleicht mit eigener Regel"
+    assert "_nc_channels.chat_anhaengen" in gerufen
+    # Jedes Ereignis traegt seine Herkunft: TikTok-Nutzer (origin) oder eigener Kanal (kanal).
+    for c in _ast.walk(baum):
+        if isinstance(c, _ast.Call) and _ast.unparse(c.func) == "_restream_chat_push_async" \
+                and c.args and isinstance(c.args[0], _ast.Constant) and c.args[0].value == "event":
+            kws = {k.arg for k in c.keywords}
+            assert kws & {"origin", "kanal"}, \
+                "Zeile %d: Ereignis ohne origin/kanal — faellt bei laufendem Restream heraus" % c.lineno
+    start = next(f for k in baum.body if isinstance(k, _ast.ClassDef)
+                 and any(getattr(m, "name", "") == "_nebenlaeufer_abraeumen" for m in k.body)
+                 for f in k.body if isinstance(f, _ast.AsyncFunctionDef) and f.name == "start")
+    assert "_nc_channels.chat_ausduennen" in {_ast.unparse(c.func) for c in _ast.walk(start)
+                                              if isinstance(c, _ast.Call)}
+    ok("BH-7/BH-10: eine Kasten-Regel fuer beide Renderer und den Einlass, "
+       "Ereignisse mit Herkunft, Ring nur unter CHAT_SPERRE veraendert")
+
+
+def _test_bh8_bh9_bh11_restream_start():
+    """BH-8, BH-9, BH-11: Restream-Start und Avatar-Takt (statisch, im Syntaxbaum).
+
+    BH-8: startete die Sendebruecke nicht, stand im except nur _br.stop() —
+    und dann Status „live", Ping, Monitor, desired=1 und ok=True.
+    BH-11: der Discord-Ping nannte die globalen Ziele statt der dieses
+    Restreams (Overrides). BH-9: der Avatar-Writer schluckte jeden Fehler mit
+    `pass`, zweimal."""
+    import ast as _ast
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    klasse = next(k for k in baum.body if isinstance(k, _ast.ClassDef)
+                  and any(getattr(m, "name", "") == "_nebenlaeufer_abraeumen" for m in k.body))
+    start = next(f for f in klasse.body if isinstance(f, _ast.AsyncFunctionDef) and f.name == "start")
+
+    # BH-8: der Try um `to_thread(_br.start)` kehrt im Fehlerfall mit ok=False zurueck.
+    versuch = next(t for t in _ast.walk(start) if isinstance(t, _ast.Try)
+                   and "_br.start" in _ast.unparse(t.body))
+    h = versuch.handlers[0]
+    rufe = [_ast.unparse(c) for c in _ast.walk(h) if isinstance(c, _ast.Call)]
+    rueck = [r for r in _ast.walk(h) if isinstance(r, _ast.Return)]
+    assert rueck and "'ok': False" in _ast.unparse(rueck[-1]), \
+        "BH-8: Bruecken-Fehlstart kehrt nicht zurueck — es folgt Status live und ok=True"
+    for teil in ("_reap_proc(proc)", "self._bruecke_abraeumen(", "self._nebenlaeufer_abraeumen(",
+                 "self._set_status(rid, 'error'", "log.error("):
+        assert any(teil in r for r in rufe), ("BH-8: im Fehlerpfad fehlt", teil)
+    namen = [_ast.unparse(c.func) for c in _ast.walk(h) if isinstance(c, _ast.Call)]
+    assert namen.index("_reap_proc") < namen.index("self._bruecke_abraeumen"), \
+        "BH-8: erst den Sender, dann die Bruecke (W179)"
+
+    # BH-11: _plats aus den Zielen dieses Restreams.
+    zuw = next(a for a in _ast.walk(start) if isinstance(a, _ast.Assign)
+               and any(isinstance(t, _ast.Name) and t.id == "_plats" for t in a.targets))
+    quelle = _ast.unparse(zuw.value)
+    assert "active_targets" not in quelle and "_targets" in quelle, \
+        ("BH-11: der Ping nennt die globale Zielliste", quelle)
+
+    # BH-9: im Avatar-Writer kein stiller except mehr, Fehler ueber _loop_fehler.
+    feeder = next(f for f in baum.body if isinstance(f, _ast.FunctionDef)
+                  and f.name == "_restream_avatar_feeder_start")
+    writer = next(f for f in _ast.walk(feeder) if isinstance(f, _ast.FunctionDef) and f.name == "_writer")
+    melder = 0
+    for h in (x for x in _ast.walk(writer) if isinstance(x, _ast.ExceptHandler)):
+        assert not all(isinstance(s, _ast.Pass) for s in h.body), \
+            "BH-9: Zeile %d schluckt den Fehler wieder still" % h.lineno
+        if h.type is not None and _ast.unparse(h.type) == "Exception":
+            assert "_loop_fehler(f'avatar-fifo#{rid}'" in _ast.unparse(h), _ast.unparse(h)
+            melder += 1
+    assert melder == 2, "BH-9: Bild-Schreiben UND Schleife melden ueber _loop_fehler"
+    ok("BH-8/BH-9/BH-11: Bruecken-Fehlstart ist ein Fehlstart, Avatar-Fehler laut, "
+       "Ping nennt die Ziele dieses Restreams")
+
+
+def _test_bh12_deck_servertext_escaped():
+    """BH-12: Server-Text im Deck nur escaped, HTML nie per innerHTML geparst."""
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    a = dash.index("async function loadSendStatus(")
+    rumpf = dash[a:dash.index("\n}\n", a)]
+    assert "v.hint" in rumpf and rumpf.count("v.hint") == rumpf.count("esc(v.hint"), \
+        "BH-12: der Hinweis vom Server geht unescaped ins innerHTML"
+    a = dash.index("async function ops6Summary(")
+    rumpf = dash[a:dash.index("\n}\n", a)]
+    assert "DOMParser" in rumpf, "BH-12: Zusammenfassung nicht inert geparst"
+    import re as _re_bh12
+    assert not _re_bh12.search(r"\.innerHTML\s*=\s*d\.text", rumpf), \
+        "BH-12: d.text wird wieder per innerHTML geparst (ein <img onerror> liefe)"
+    ok("BH-12: Sende-Hinweis escaped, Zusammenfassung per DOMParser")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -42528,6 +42847,10 @@ def main():
     _test_v511_bh_sendebild_je_restream()
     _test_v511_bh3_clip_tonspur()
     _test_v511_bh6_pausenbild_vortritt()
+    _test_bh4_gueltiger_cookie_schlaegt_abgelaufenen()
+    _test_bh7_bh10_chat_eine_regel_eine_sperre()
+    _test_bh8_bh9_bh11_restream_start()
+    _test_bh12_deck_servertext_escaped()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

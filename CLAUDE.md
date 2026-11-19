@@ -561,6 +561,29 @@ Dabei fiel die Sperre aus W74 zu Recht: `main()` stand genau auf der
 300er-Stufe, und fünf zusätzliche Zeilen hätten sie darüber gehoben. Die Zeile
 herauszulösen war deshalb nicht Kosmetik, sondern die Arbeit.
 
+**Und zum dritten Mal: die Adresse, die sich der Bot SELBST gibt.** Der
+Betreiber am 19.11., Screenshot: im Studio-Sendebild stand statt des Chats
+Chromiums Fehlerseite „This site can't be reached — The connection was
+reset.“ Der Chat-Kasten (W205) und das HTML-Overlay riefen fest
+`http://127.0.0.1:<port>` auf; beim Betreiber hängt TLS direkt am Deck. Dass
+HTTP gegen den TLS-Socket genau diese Seite ergibt, ist gemessen, nicht
+vermutet. Seit v5.11.2-W211 beantwortet `nc/webserver.intern_basis()` die
+Frage neben `schema()` und `bindung()`, und Chromium nimmt das
+Domain-Zertifikat mit `--allow-insecure-localhost` an, das **nur** auf Loopback
+wirkt. `--ignore-certificate-errors` hätte die Prüfung auch für eine fremde
+Overlay-Seite abgeschaltet.
+
+Die schlimmere Hälfte war eine Schicht tiefer: `Page.navigate` meldet einen
+Netzfehler im Feld `errorText`, und der Dauerbrowser warf das Ergebnis weg.
+**Eine Fehlerseite ist für einen Browser eine Seite** — `readyState` wird
+`complete`, der Screenshot hat 6 KB, und jede Prüfung auf „Bild leer?“ ist
+grün. Der Rückfall auf den Text-Chat griff deshalb nie. Seither ist
+`SeiteNichtErreichbar` (errorText oder HTTP ≥ 400) ein Fehler, der Tab geht zu,
+der nächste Versuch wartet `NEUSTART_RUHE_S`, und der Rückfall steht auf
+ERROR. Für das HTML-Overlay heißt das: kein Einzelschuss bei toter Seite, der
+fotografierte dieselbe Fehlerseite nur teurer. **Wer ein Bild aus einem
+Browser holt, prüft, ob die Seite kam — nicht, ob das Bild Bytes hat.**
+
 **Ein Release-Build machte die Suite rot.** `tools/build_release.py` schreibt
 `AUSLIEFERUNG.json` in den Arbeitsbaum, damit der Stempel ins Archiv wandert —
 und räumte ihn dort nie weg. Die Datei steht in `.gitignore`, fällt bei `git
