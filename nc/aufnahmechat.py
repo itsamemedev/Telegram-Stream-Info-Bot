@@ -259,6 +259,36 @@ def concat_liste(pfade) -> str:
     return "".join("file '%s'\n" % os.path.abspath(p).replace("'", "'\\''") for p in pfade)
 
 
+def clip_cmd(video, start, dauer, ziel, vf=None, threads=None, nice=None) -> list:
+    """Ein Highlight-Clip aus der LAUFENDEN Aufnahme (BH-3, aus bot.py
+    `_clip_schneiden` herausgeloest, damit er pruefbar ist).
+
+    Bis hierher stand der Befehl ohne `-map` im Monolithen. Die Aufnahme mappt
+    Ton optional (`nc/reccmd`: `0:a:0?`), und `tonspur.sichern()` ruestet die
+    Stille erst nach dem Stream-Ende nach — ein Clip schneidet aber WAEHREND der
+    Aufnahme. Gemessen (ffmpeg 6.1) an einer tonlosen Aufnahme: rc=0, der Clip
+    traegt nur Bild, `-c:a aac` greift ins Leere, keine Zeile im Log. Im
+    Zusammenschnitt nahm ein stummer ERSTER Clip allen folgenden den Ton (die
+    concat-Liste uebernimmt die Spuren der ersten Datei), ein stummer spaeterer
+    hinterliess 6 s Ton auf 12 s Bild.
+
+    Ton deshalb ausdruecklich, aber optional gemappt — vorab ist nicht sicher
+    zu wissen, ob die wachsende Datei Ton traegt —, und der Aufrufer prueft den
+    FERTIGEN Clip mit `tonspur.sichern()`, genau wie der Recorder seine
+    Aufnahme. Das Tonformat ist AAC_ARGS (44,1 kHz Stereo) und damit dasselbe
+    wie das der nachgeruesteten Stille: sonst trueben ein Clip mit Quellton
+    (z. B. 48 kHz Mono) und ein nachgeruesteter im Zusammenschnitt per
+    `-c copy` verschiedene Tonparameter in eine Spur."""
+    from nc.tonspur import AAC_ARGS
+    cmd = ["ffmpeg", "-y", "-ss", "%.2f" % float(start), "-i", video,
+           "-t", "%.2f" % float(dauer), "-map", "0:v:0", "-map", "0:a:0?"]
+    if vf:
+        cmd += ["-vf", ",".join(vf)]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            *AAC_ARGS, "-movflags", "+faststart", ziel]
+    return ff_cmd(cmd, threads=threads, nice=nice)
+
+
 def zusammenschnitt_cmd(liste_pfad, ziel, neu=False, threads=1) -> list:
     """Clips hintereinander. Erst als Kopie — die Clips einer Aufnahme tragen
     dasselbe Format —, bei `neu` neu kodiert, falls die Kopie scheitert."""

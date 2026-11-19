@@ -368,7 +368,7 @@ class Bruecke:
                  erste_url=None, luecke_s=3.0, offline_s=120.0, redigieren=None,
                  name="", uhr=time.monotonic, popen=subprocess.Popen,
                  neustart_min_s=1.0, neustart_max_s=30.0, unklar_s=600.0,
-                 start_warten_s=20.0, anlauf_s=20.0):
+                 start_warten_s=20.0, anlauf_s=20.0, start_warten_max_s=45.0):
         self._fd = schreib_fd
         self._fueller_cmd = fueller_cmd
         self._zubringer_cmd = zubringer_cmd
@@ -384,6 +384,7 @@ class Bruecke:
         self._neustart_max = float(neustart_max_s)
         self.unklar_s = float(unklar_s)
         self.start_warten_s = float(start_warten_s)
+        self.start_warten_max_s = max(self.start_warten_s, float(start_warten_max_s))
         self.anlauf_s = float(anlauf_s)
         self._fueller_frei = False
 
@@ -487,7 +488,7 @@ class Bruecke:
                 # Pausenbild erst, wenn sie einmal lief oder zu lange ausbleibt.
                 # Verzerrt wird dabei nichts Sichtbares: das Pausenbild ist eine
                 # einfarbige Flaeche.
-                if self._uhr() - self._t0 < self.start_warten_s:
+                if self._quelle_hat_vortritt():
                     return False
                 self._fueller_frei = True
             if wer != self.aktiv:
@@ -541,6 +542,39 @@ class Bruecke:
                 self._abbruch("Sender nimmt nichts mehr an (%s)" % e)
                 return False
         return True
+
+    def _quelle_hat_vortritt(self) -> bool:
+        """Darf das Pausenbild den Sender noch NICHT einrichten? (unter self._sperre)
+
+        BH-6: hier stand eine harte Freigabe nach start_warten_s (20 s). Der
+        erste Quell-Keyframe kommt aber oft spaeter: der Zubringer probt bis
+        10 s (-analyzeduration), ein Zubringer ohne erstes Byte wird erst nach
+        anlauf_s (20 s) ersetzt, danach folgen Pause, neue Aufloesung und
+        wieder die Probe — und der Durchreicher startet vorher noch yt-dlp.
+        Kam der Keyframe nach 20 s, richtete das Pausenbild den Sender ein,
+        und eine 1080x1920-Quelle lief die ganze Sitzung als 720x1280 hinaus.
+
+        Jetzt behaelt die Quelle den Vortritt bis start_warten_max_s (45 s:
+        ein gescheiterter Anlauf plus ein zweiter), und nur eine nachweislich
+        OFFLINE Quelle gibt das Pausenbild schon nach start_warten_s frei —
+        dort bringt Warten keine Bildgroesse, nur eine Sendung ohne Bild. Die
+        Obergrenze bleibt unter der Anlaufkarenz des Stillstands-Waechters
+        (RESTREAM_STALL_GRACE_S, 60 s): ein Sender, der bis dahin nie ein
+        Paket sah, meldete sonst „keine Fortschrittsdaten" auf ERROR."""
+        seit = self._uhr() - self._t0
+        if seit < self.start_warten_s:
+            return True
+        if self._offline_seit is None and self.ende is None:
+            if seit < self.start_warten_max_s:
+                return True
+            # Gemeldet, weil die Folge erst Stunden spaeter auffaellt: die
+            # Groesse des Pausenbilds gilt ab hier fuer die ganze Sitzung.
+            log.warning("Sendebrücke %s: nach %.0f s noch kein Quellbild — das "
+                        "Pausenbild richtet den Sender ein. Kommt die Quelle in "
+                        "anderer Groesse, laeuft sie diese Sitzung darauf skaliert; "
+                        "ein Neustart des Restreams setzt die Groesse neu.",
+                        self.name, seit)
+        return False
 
     def _wuensche(self, wer, grund):
         with self._sperre:
