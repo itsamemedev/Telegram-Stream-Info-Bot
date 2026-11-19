@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **27.587 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
+`bot.py` hat **27.646 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 391 Routen (34 in `bot.py`, 357 in
-`nc/routes/`), 67 Slash-Commands, 641 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 67 Slash-Commands, 646 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -1019,8 +1019,8 @@ Die größte Funktion steht ohnehin nicht in `bot.py`:
 `discordbot.py` wurde in v4.2-W15 aus `bot.py` herausgelöst, genau gegen dieses
 Problem. Die Masse zog um, statt zu schrumpfen. `tools/monolith.py` misst deshalb den **ganzen**
 Produktionscode und zählt, wie viele Funktionen über einer Stufe liegen —
-seit v5.6-W197 sind das 61 über 100, 15 über 200, 8 über 300 und 1 über 500
-Zeilen, dazu 20 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
+seit v5.11.2 sind das 60 über 100, 15 über 200, 8 über 300 und 1 über 500
+Zeilen, dazu 19 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
 wird die Anzahl, nicht die Länge: eine Sperre, die jede zusätzliche
 Zeile meldet, fällt bei jeder Fehlerbehebung und ist in einer Woche
 abgeschaltet.

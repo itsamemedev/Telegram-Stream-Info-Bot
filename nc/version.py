@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.11.1"
-CODENAME = "Türschild"
+VERSION = "5.11.2"
+CODENAME = "Gegenprobe"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,23 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.11.2",
+        "date": "2026-11",
+        "title": "Gegenprobe",
+        # Patch-Fassung: Chat im Studio-Sendebild bei TLS am Deck (W211) und der
+        # zweite Bughunt-Durchgang (BH-1 bis BH-13).
+        "highlights": [
+            "Studio-Sendebild: statt des Chats stand bei TLS am Deck Chromiums Fehlerseite — der Bot ruft sein Deck jetzt mit dem Schema auf, unter dem es wirklich laeuft, und eine Fehlerseite wird nie mehr gesendet (Rueckfall auf den Text-Chat, laut im Log)",
+            "Mehrere Restreams gleichzeitig: jedes Sendebild zeigt seine Quelle, seine AZRAEL-Reaktion, seine Follower-Zahl und seinen TikTok-Alert — bisher bekamen alle die des zuletzt gestarteten; das HTML-Overlay hat je Restream eine eigene Seite",
+            "Cookies: ein abgelaufener Wert schlaegt den gueltigen nicht mehr (auch beim Import wurde der gueltige bisher geloescht); eine abgelaufene Anmeldung meldet das Deck rot",
+            "Highlight-Clips tragen immer eine Tonspur — ein stummer erster Clip machte den ganzen Zusammenschnitt stumm",
+            "Das Pausenbild wartet bis 45 s auf die Quelle — eine spaet startende 1080x1920-Quelle lief sonst die ganze Sitzung als 720x1280",
+            "Studio-Chat: Gross-/Kleinschreibung des Quellnamens leert den Kasten nicht mehr, Begruessung und Rangaufstieg stehen im richtigen Kasten, der Chat-Ring verliert beim zweiten Start keine Zeilen",
+            "Ein Fehlstart der Sendebruecke gilt als Fehlstart (vorher Status live, Ping und Wiederanlauf-Budget); der Discord-Ping nennt die Ziele DIESES Restreams",
+            "Overlay- und Avatar-Schreiber melden ein kaputtes Bild statt still einzufrieren; ein Server-Hinweis im Deck wird escaped",
+        ],
+    },
     {
         "version": "5.11.1",
         "date": "2026-11",
