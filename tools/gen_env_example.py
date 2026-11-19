@@ -494,6 +494,10 @@ ERKLAERUNG = {
         "v5.9-W205: den Chat im Studio-Sendebild zeichnet Chromium (Emoji farbig, "
         "braucht fonts-noto-color-emoji) statt ffmpeg-drawtext. Rund 0,08 CPU-s je "
         "Bild, ein Bild je Sekunde. 0 = Text-Chat (Emoji dort herausgefiltert).",
+    "RESTREAM_OVERLAY_HTML_URL":
+        "Leer (Vorgabe) = das eigene Deck, Schema und Host wie es wirklich laeuft "
+        "(v5.11.2: bei TLS am Deck https — das feste http://127.0.0.1:8050 brachte "
+        "Chromiums Fehlerseite ins Sendebild). Nur fuer eine FREMDE Overlay-Seite setzen.",
     "BRAIN_LLM_MAX_CALLS_H":
         "v5.9-W202: Stundendeckel fuer lokale Antworten. 0 (Vorgabe) = keiner — "
         "die Inferenz-Plaetze und die Unit (Nice/CPUWeight) schuetzen die "
