@@ -249,7 +249,6 @@ winget ist der Paketmanager von Windows, er steckt in der App 'App Installer' au
 # Kurze Beschriftungen stehen bewusst mit drin, auch wo Deutsch und
 # Englisch gleich lauten (CPU, RAM, Bot): sie sind Senken-Argumente und
 # muessen einen Eintrag haben, sonst meldet --check sie als fehlend.
-(Stand: vor %ss)	(as of %ss ago)
 (ohne Argument)  Vorschau — aendert nichts	(no argument)    preview — changes nothing
 .env	.env
 /etc/motd wurde seither neu beschrieben	/etc/motd has been rewritten since then
@@ -258,7 +257,6 @@ winget ist der Paketmanager von Windows, er steckt in der App 'App Installer' au
 AUFNAHMEN	RECORDINGS
 Abwehr blind	defence blind
 Anpassen ueber	Adjust via
-Aufnahme	Recording
 Aufnahmen brechen ab	recordings will abort
 BOT_DIR in der Konfiguration setzen	set BOT_DIR in the configuration
 BOT_TOKEN fehlt in der .env — ohne ihn startet der Telegram-Teil nicht	BOT_TOKEN missing from .env — without it the Telegram side will not start
@@ -277,7 +275,6 @@ Erkennung	Detection
 Falsch erkannt? Werte in	Detected wrongly? Enter values in
 Fehler	Errors
 Fehler heute	errors today
-Getrackt	Tracked
 Grund	Reason
 HINWEISE	NOTES
 Hinweis:	Note:
@@ -287,7 +284,6 @@ Kerne	cores
 Kindprozesse	child processes
 Konfig	Config
 Log	Log
-NIGHTCRAWLER	NIGHTCRAWLER
 Netzteil pruefen, sonst bricht ffmpeg weg	check the power supply, otherwise ffmpeg will drop out
 Pi meldet Drosselung	Pi reports throttling
 Platte fast voll	Disk almost full
@@ -295,18 +291,12 @@ Port offen, keine Antwort	port open, no answer
 Prozess, kein systemd-Dienst	process, not a systemd service
 RAM	RAM
 RESTREAM	RESTREAM
-Restream	Restream
-Restream Control Room	Restream Control Room
 SYSTEM	SYSTEM
 Sicherung bleibt unter	the backup stays at
 Standard-MOTD war bereits still	the default MOTD was already silent
-Streamer	streamers
 Swap	Swap
 System	System
-TRACKING	TRACKING
 Wirksam nach:	Takes effect after:
-Zahlen nur im Dashboard	figures only in the dashboard
-Ziel(e) live	target(s) live
 Zombie-Kindprozesse — ffmpeg/streamlink werden nicht abgeraeumt	zombie child processes — ffmpeg/streamlink are not being reaped
 aktiv	active
 bleibt liegen (harmlos, enthaelt nur Pfade)	stays behind (harmless, contains only paths)
@@ -327,7 +317,6 @@ nicht gefunden	not found
 nicht installiert	not installed
 oder Umgebung:	or the environment:
 oder alte Dateien loeschen	or delete old files
-pausiert	paused
 up	up
 zeigt, was erkannt wurde und woher	shows what was detected and from where
 ▣ bereit · ▨ ohne Key · ▢ aus	▣ ready · ▨ no key · ▢ off
@@ -1058,3 +1047,78 @@ MariaDB liess sich nicht einrichten — DB_BACKEND steht schon vorher auf mariad
 MariaDB liess sich nicht einrichten — die Installation bleibt bei SQLite. Spaeter: bash tools/update.sh --mariadb	MariaDB could not be set up — the installation stays on SQLite. Later: bash tools/update.sh --mariadb
 LLM_PLAETZE muss zwischen 1 und 16 liegen: %s	LLM_PLAETZE must be between 1 and 16: %s
 Emoji-Schrift fehlt — Paket: %s	Emoji font missing — package: %s
+%s Stoerung(en)	%s fault(s)
+%s Warnung(en)	%s warning(s)
+/etc/motd verweist auf die dynamische MOTD	/etc/motd points to the dynamic MOTD
+ARCHIV	ARCHIVE
+AUFNAHME	RECORD
+Bot steht	bot down
+Bruecke steht	bridge stalled
+Chat-Hype	chat hype
+DIENST	SERVICE
+Deck antwortet nicht — die Tafeln kommen von /api/leitstand	deck not answering — the panels come from /api/leitstand
+Deck antwortet nicht, Zahlen aus der Datenbank	deck not answering, numbers from the database
+Deck aus	deck down
+Deck stockt	deck stalling
+Doppelte Anzeige	Shown twice
+Drosselung	throttled
+EREIGNISSE	EVENTS
+ERFASSEN	CAPTURE
+GETRACKT	TRACKED
+KODIEREN	ENCODE
+LEITSTAND	CONTROL ROOM
+LIVE	LIVE
+LIVE JETZT	LIVE NOW
+Last hoch	load high
+Neustart noetig	restart needed
+Oberflaeche fehlt	web UI missing
+Platte knapp	disk low
+Platte voll	disk full
+Quelle	Source
+Quote	rate
+Quote niedrig	rate low
+Shell-Startdatei ruft das Statusbild noch einmal	a shell startup file runs the status screen again
+Speicher knapp	memory low
+Speicher voll	memory full
+Statusbild erscheint doppelt	status screen shown twice
+Statusbild veraltet (installiert %s, im Bestand %s)	status screen outdated (installed %s, in the bot directory %s)
+Swap hoch	swap high
+TAFELN	PANELS
+Tafeln	Panels
+Ueberlast	overload
+VERSAND	UPLOAD
+Verweis /etc/motd beiseitegelegt	set aside the /etc/motd link
+WAECHTER	WATCHERS
+Waechter ueberfaellig	watchers overdue
+Waechter-Fehler	watcher error
+Zahlen oben aus der Datenbank gelesen	numbers above read from the database
+Zeile %s in %s entfernen	remove line %s in %s
+aktuell	up to date
+alte Kopie beiseitegelegt:	set aside old copy:
+bereit	ready
+curl oder python3 fehlt	curl or python3 missing
+das Deck lieferte keine Tafeln (Fassung vor 5.10?)	the deck returned no panels (version before 5.10?)
+denkt	thinking
+eine der pam_motd-Zeilen in /etc/pam.d/sshd mit noupdate versehen	add noupdate to one of the pam_motd lines in /etc/pam.d/sshd
+gestoert	faulty
+getrennt	disconnected
+im Bestand	in the bot directory
+keine Server	no servers
+keine bekannte Ursache gefunden	no known cause found
+langsam	slow
+live	live
+lokale KI aus	local AI down
+nicht geladen	not loaded
+niemand live	nobody live
+ohne Deck keine Zahlen	no numbers without the deck
+pam_motd laeuft zweimal mit Aktualisierung	pam_motd runs twice with updating
+patrouilliert	patrolling
+python3 fehlt — es liest die Tafeln aus /api/leitstand	python3 missing — it reads the panels from /api/leitstand
+ruhig	calm
+ruht	idle
+sendet	sending
+statische Kopie des Statusbilds	static copy of the status screen
+verbunden	connected
+wach	awake
+zweites Statusbild gedaempft:	silenced second status screen:
+zweites Statusbild in /etc/update-motd.d	second status screen in /etc/update-motd.d

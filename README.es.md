@@ -451,7 +451,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.11.0** — “Regreso” (2026.11) |
+| Versión actual | **5.11.1** — “Placa” (2026.11) |
 | Rutas Flask | 391 (34 en `bot.py` · 357 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |

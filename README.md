@@ -577,6 +577,11 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 
 ## 🆕 Neu in v5.11
 
+**„Türschild“ (5.11.1)** — das Login-Statusbild sieht aus wie die Übersicht:
+Kopf mit Ampel und `ON AIR`, Kennzahl-Kacheln, Lieferkette und die neun
+Tafeln — aus `/api/leitstand`, also auch unter MariaDB mit Zahlen. Erscheint
+es doppelt, nennt es die Ursache; `sudo tools/motd.sh --install` räumt auf.
+
 **„Heimkehr“** — die Discord-Bereiche je Nutzer sind zurück:
 
 - Jeder getrackte Nutzer hat wieder `🎯 name` mit `-aufnahmen`, `-chat` und
@@ -846,7 +851,7 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.11.0** — „Heimkehr“ (2026.11) |
+| Aktuelle Version | **5.11.1** — „Türschild“ (2026.11) |
 | Flask-Routen | 391 (34 in `bot.py` · 357 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
 | Fachmodule | 217 in `nc/` (+41 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |

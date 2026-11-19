@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.11.0"
-CODENAME = "Heimkehr"
+VERSION = "5.11.1"
+CODENAME = "Türschild"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.11.1",
+        "date": "2026-11",
+        "title": "Türschild",
+        # Patch-Fassung: das Login-Statusbild als Leitstand, und nur noch einmal (W210).
+        "highlights": [
+            "Das Login-Statusbild (MOTD) sieht aus wie die Uebersicht: Kopf mit Ampel und ON AIR, fuenf Kennzahl-Kacheln, Lieferkette, die neun Tafeln mit Lage, Ereignisstrom — in den Farben des Leitstand-Themas",
+            "Dieselbe Quelle wie das Deck (/api/leitstand ueber Loopback) — damit stehen die Zahlen auch unter MariaDB da; bisher hiess es dort nur 'Zahlen nur im Dashboard'",
+            "Doppelte Anzeige: fuenf Ursachen werden erkannt (Verweis /etc/motd, alte Kopie, zweites Stueck, Shell-Startdatei, pam_motd zweimal); --install raeumt weg, was der MOTD gehoert, --doctor und das Statusbild selbst nennen den Rest mit Abhilfe",
+            "Die installierte Kopie meldet, wenn im Bestand eine neuere Fassung liegt (die Update-Funktion erreicht /etc/update-motd.d nie)",
+            "Der Kopf nennt die Fassung wieder (las BUILD_STAMP als Literal aus bot.py, dort steht seit v5 ein Funktionsaufruf)",
+        ],
+    },
     {
         "version": "5.11.0",
         "date": "2026-11",

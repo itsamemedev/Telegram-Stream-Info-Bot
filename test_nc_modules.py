@@ -7279,11 +7279,16 @@ def _test_v42_w14_motd_spricht_englisch():
     # Ausgabe nicht, und beim naechsten Label waere es zu spaet. Deshalb hier
     # ausnahmsweise am Wortlaut, mit genau dieser Begruendung.
     motd = open("tools/motd.sh", encoding="utf-8").read()
-    for senke in ('sect(){ printf "  ${DIM}${B}%s${R}\\n" "$(t "$1")"',
-                  'gauge(){ printf "  ${DIM}%-6s${R} %b ${FNT}%s${R}\\n" "$(t "$1")"',
-                  'row(){ printf "  ${DIM}%-11s${R}%b %b\\n" "$(t "$1")"'):
-        assert senke in motd, \
-            "eine Senke uebersetzt ihre Beschriftung nicht mehr: %s" % senke[:14]
+    # v5.11.1-W210: geprueft an der KOPFZEILE der Senke, nicht am ganzen
+    # Wortlaut — sect zeichnet seit dem Leitstand-Umbau einen Tafelkopf mit
+    # Lage rechts, und kachel ist als vierte Senke dazugekommen. Die Aussage
+    # bleibt dieselbe: das erste Argument laeuft an der Senke durch t().
+    zeilen = motd.split("\n")
+    for senke in ("sect", "gauge", "row", "kachel"):
+        kopf = [z for z in zeilen if z.startswith(senke + "(){")]
+        assert len(kopf) == 1, "Senke %s nicht (eindeutig) gefunden" % senke
+        assert '"$(t "$1")"' in kopf[0], \
+            "eine Senke uebersetzt ihre Beschriftung nicht mehr: %s" % kopf[0][:40]
 
     # ── (3) ES WIRKT WIRKLICH. Der Vertrag laesst die MOTD zweimal laufen und
     # vergleicht. Ohne diesen Lauf waere alles oben nur die Behauptung, dass
@@ -38590,6 +38595,264 @@ def _test_v511_w209_bereiche_je_nutzer():
        "/setup legt an, Einsortieren aus #clips ohne Loeschen, ⭐ nicht mehr nach Telegram")
 
 
+def _test_v511_w210_motd_leitstand():
+    """v5.11.1-W210: die MOTD als Leitstand — und warum sie doppelt erschien.
+
+    Der Betreiber am 14.11.: „Kannst du mir die motd.sh anpassen, dass es
+    aussieht wie die Uebersicht im Dashboard? Zumal die aktuelle mir 2x
+    untereinander angezeigt wird."
+    """
+    import json as _json
+    import shutil as _sh
+    import subprocess as _sp
+    import threading as _th
+    import time as _t
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from nc import leitstand as _L
+
+    motd_pfad = os.path.abspath("tools/motd.sh")
+    quelle = open(motd_pfad, encoding="utf-8").read()
+
+    # ── (1) DIESELBE QUELLE WIE DIE UEBERSICHT. Ein Attrappen-Deck liefert
+    # /healthz und /api/leitstand, gebaut von nc.leitstand.bauen — also genau
+    # das, was der Browser bekommt. Darin ein Ereignistext mit ESC-Folge: er
+    # kommt von aussen, und die MOTD laeuft als root im Terminal.
+    roh = {
+        "zaehler": {"trackings": 41, "live": 5},
+        "lagebild": {"ziele": [{"name": "dora_live", "live": True, "aufnahme": True, "restream": "gesund"},
+                               {"name": "kai_beats", "live": True, "aufnahme": True, "restream": "langsam"},
+                               {"name": "lena.k", "live": True, "aufnahme": True},
+                               {"name": "mo_talks", "live": True}, {"name": "emil.stream", "live": True}],
+                     "agenten": [{"name": "a%d" % i, "lage": "wach"} for i in range(13)]
+                     + [{"name": "aus", "lage": "aus"}],
+                     "dienste": [{"name": "encode", "lage": "aktiv", "werte": {"laeuft": 1, "wartet": 1}},
+                                 {"name": "upload", "lage": "ok", "werte": {"wartend": 2}}]},
+        "restream": [{"user": "@dora_live", "ntargets": 3}, {"user": "@kai_beats", "slow": True}],
+        "system": {"last": {"avg": {"1m": 1.2}, "per_core": 0.27, "state": "ok"}, "kerne": 8,
+                   "speicher_prozent": 61.0, "platte_prozent": 72.0, "swap_pct": 3},
+        "ki": {"wahl": "auto", "bruecke_ok": True, "llm": {}},
+        "community": {"discord_verbunden": True, "mitglieder": 312},
+        "insights": {"quote": 81.0, "versuche": 200, "tage": [{"count": 3}, {"count": 5}]},
+        "einstellungen": {"zahl": {"datenbank": 14}, "neustart": []},
+        "mcp": {"anzahl": 0, "aktiv": 0},
+        "ereignisse": [{"ts": _t.time() - 60, "kind": "restream.start", "severity": "info",
+                        "summary": "Restream gestartet @dora_live \x1b]0;gekapert\x07\x1b[31mROT"}],
+    }
+    gelesen = {k: True for k in roh}
+    abrufe = []
+
+    class _Deck(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            abrufe.append((self.path, self.headers.get("Authorization"), self.headers.get("Cookie")))
+            if self.path.startswith("/healthz"):
+                body = {"ok": True, "procs": 4, "zombies": 0}
+            elif self.path.startswith("/api/leitstand"):
+                body = _L.bauen(roh, gelesen, _t.time())
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            b = _json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b)
+
+    deck = HTTPServer(("127.0.0.1", 0), _Deck)
+    _th.Thread(target=deck.serve_forever, daemon=True).start()
+    port = deck.server_address[1]
+
+    heim = _ph.verzeichnis()
+    bot = os.path.join(heim, "bot")
+    os.makedirs(os.path.join(bot, "nc"))
+    os.makedirs(os.path.join(bot, "tools"))
+    open(os.path.join(bot, "bot.py"), "w").close()
+    _sh.copy("nc/version.py", os.path.join(bot, "nc", "version.py"))
+    with open(os.path.join(bot, ".env"), "w", encoding="utf-8") as f:
+        f.write("BOT_TOKEN=x\nDASHBOARD_TOKEN=geheim-darf-nicht-raus\nDASHBOARD_PORT=%d\n" % port)
+    # Der Bot laeuft (systemctl-Attrappe) — sonst ueberdeckte „Bot laeuft
+    # nicht" in der Ampel alles, was die Tafeln melden.
+    stub = _ph.verzeichnis()
+    with open(os.path.join(stub, "systemctl"), "w", encoding="utf-8") as f:
+        f.write('#!/bin/bash\ncase "$*" in\n  *"is-active --quiet"*) exit 0;;\n'
+                '  *"show -p NRestarts"*) echo 0;;\n  *list-unit-files*) exit 1;;\nesac\nexit 0\n')
+    os.chmod(os.path.join(stub, "systemctl"), 0o755)
+
+    def lauf(pfad=motd_pfad, **mehr):
+        e = {k: v for k, v in os.environ.items() if k not in (
+            "SERVICE", "BOT_DIR", "DASH_PORT", "DB", "WIDTH", "COLOR_MODE", "NC_LANG", "DEST")}
+        e.update(CONF=os.devnull, BOT_DIR=bot, SERVICE="nc-pruef", COLOR_MODE="off",
+                 CPU_SAMPLE="0", NC_LANG="de", PATH=stub + os.pathsep + os.environ.get("PATH", ""))
+        e.update(mehr)
+        return _sp.run(["bash", pfad], capture_output=True, text=True, env=e, timeout=120).stdout
+
+    aus = lauf()
+    zeilen = aus.splitlines()
+    kopf = "\n".join(zeilen[:6])
+    assert "LEITSTAND" in kopf and "NIGHTCRAWLER" in kopf, kopf
+    # Die Fassung aus nc/version.py — BUILD_STAMP in bot.py ist seit v5 ein
+    # Funktionsaufruf, der alte sed fand dort nichts.
+    ver = re.search(r'^VERSION\s*=\s*"([^"]+)"', open("nc/version.py", encoding="utf-8").read(),
+                    re.M).group(1)
+    assert "v" + ver in kopf, "der Kopf nennt die Fassung nicht: %r" % kopf
+    assert "ON AIR" in kopf, "zwei Restreams laufen, der Kopf sagt OFF AIR"
+    # Die Kennzahlen kommen aus dem Deck: 5 live, 41 getrackt, 13/14 Waechter.
+    i = next(n for n, z in enumerate(zeilen) if "LIVE JETZT" in z)
+    werte = zeilen[i + 1].split()
+    assert werte[:5] == ["5", "41", "3", "2", "13/14"], werte
+    assert "01 ERFASSEN 41" in aus and "07 ARCHIV" in aus, "die Lieferkette fehlt"
+    for _tab, nr, kennung in _L.TAFELN:
+        assert re.search(r"^  %s %s\s" % (nr, re.escape(kennung)), aus, re.M), \
+            "Tafel %s %s fehlt" % (nr, kennung)
+    assert re.search(r"01 restream\.spuren\s+▲ langsam\s+2\s+@kai_beats", aus), \
+        "die Restream-Tafel traegt ihre Lage nicht"
+    # Die Ampel hoert auf die Tafeln — erst NACH den eigenen Befunden.
+    assert "restream.spuren: langsam" in kopf, "die Ampel uebergeht die Tafeln: %r" % kopf
+    # Kein Steuerzeichen aus fremdem Text erreicht das Terminal.
+    assert "\x1b" not in aus and "\x07" not in aus, "ESC-Folge aus einem Ereignistext im Terminal"
+    assert "Restream gestartet @dora_live" in aus, "der Ereignisstrom fehlt"
+    # Und kein Geheimnis geht mit: der Abruf traegt weder Token noch Cookie.
+    assert abrufe and all(a[1] is None and a[2] is None for a in abrufe), abrufe
+    assert "geheim-darf-nicht-raus" not in aus
+
+    # ── (2) BREITE. Jede Tafelkopf- und Kopfzeile ist genau WIDTH breit — auch
+    # mit „◆", „─" und „▲", die unter LC_ALL=C je drei Bytes zaehlen.
+    for breite in ("62", "50"):
+        a = lauf(WIDTH=breite)
+        koepfe = [z for z in a.splitlines() if z.startswith("── ")]
+        assert len(koepfe) >= 5, koepfe
+        for z in koepfe:
+            assert len(z) == int(breite), "Tafelkopf %d statt %s breit: %r" % (len(z), breite, z)
+        oben = a.splitlines()[2:5]
+        for z in oben:
+            assert len(z) <= int(breite), "Kopfzeile laenger als WIDTH=%s: %r" % (breite, z)
+        assert len(oben[0]) == int(breite), "ON AIR steht nicht rechtsbuendig: %r" % oben[0]
+
+    # ── (3) NICHTS GELADEN IST NICHT NICHTS DA (W99). Ohne Deck steht „—",
+    # keine 0, und die Tafel-Zeile sagt warum.
+    ohne = lauf(DASH_PORT="1")
+    oz = ohne.splitlines()
+    i = next(n for n, z in enumerate(oz) if "LIVE JETZT" in z)
+    assert oz[i + 1].split()[:5] == ["—"] * 5, oz[i + 1]
+    # Und grau, nicht in der Farbe einer gesunden Zahl: „—" in Gruen oder
+    # Leuchtblau laese sich wie ein Messwert. Sichtbar nur in Farbe.
+    bunt = lauf(DASH_PORT="1", COLOR_MODE="16").splitlines()
+    i = next(n for n, z in enumerate(bunt) if "LIVE JETZT" in z)
+    assert bunt[i + 1].count("\x1b[90m\x1b[1m—") == 5, repr(bunt[i + 1])
+    assert "Deck antwortet nicht" in ohne and "nicht geladen" in ohne, ohne
+    # Und unter MariaDB sagt sie, dass es ohne Deck keinen Rueckweg gibt.
+    with open(os.path.join(bot, ".env"), "a", encoding="utf-8") as f:
+        f.write("DB_BACKEND=mariadb\n")
+    assert "ohne Deck keine Zahlen" in lauf(DASH_PORT="1")
+
+    # ── (4) DIE INSTALLIERTE KOPIE SAGT, DASS SIE ALT IST. Die Update-Funktion
+    # schreibt tools/motd.sh, erreicht /etc/update-motd.d aber nie.
+    _sh.copy(motd_pfad, os.path.join(bot, "tools", "motd.sh"))
+    alt = os.path.join(heim, "99-nightcrawler")
+    with open(alt, "w", encoding="utf-8") as f:
+        f.write(re.sub(r'^NC_MOTD_VERSION="[^"]*"', 'NC_MOTD_VERSION="2.9"', quelle, flags=re.M))
+    a = lauf(pfad=alt)
+    assert "Statusbild veraltet (installiert 2.9" in a and "motd.sh --install" in a, a[-600:]
+    assert "Statusbild veraltet" not in lauf(), "Fehlalarm bei gleicher Fassung"
+    # Ausgefuehrt wird die neue Fassung NICHT: eine Datei, die der Bot-Nutzer
+    # schreiben darf, bei jedem Login als root zu starten, waere ein Weg zu root.
+    assert not re.search(r'^\s*(?:exec|bash|sh|\.)\s+"?\$BOT_DIR/tools/motd\.sh', quelle, re.M)
+
+    # ── (5) DOPPELT: die fuenf Wege, jeder einzeln erkannt. Die Funktionen
+    # laufen gegen eine nachgebaute Wurzel (NC_WURZEL), nicht gegen /etc.
+    def fn(name):
+        return re.search(r"^%s\(\)\{.*?^\}" % name, quelle, re.S | re.M).group(0)
+    hilfen = "\n".join(fn(n) for n in ("pam_motd_laeufe", "doppelt_befunde", "doppelt_text",
+                                         "doppelt_abhilfe", "motd_pfad", "doppelt_beheben"))
+
+    def doppelt(wurzel, befehl):
+        skript = ("t(){ printf '%%s' \"$*\"; }\n"
+                  "tf(){ _f=\"$1\"; shift; printf -- \"$_f\" \"$@\"; }\n"
+                  "OS=Linux; DEST=/etc/update-motd.d/99-nightcrawler; BOT_DIR=/srv/bot\n"
+                  "NC_MARKE='NIGHTCRAWLER — Message of the Day'\n"
+                  "NC_STATE=%(w)s/state; NC_MOTD_SAVED=%(w)s/motd-static.bak; NC_KOPIEN=%(w)s/kopien\n"
+                  "OK=; WRN=; FNT=; TXT=; R=\n%(h)s\n%(b)s\n") % {"w": wurzel, "h": hilfen, "b": befehl}
+        return _sp.run(["bash", "-c", skript], capture_output=True, text=True, timeout=60,
+                       env=dict(os.environ, NC_WURZEL=wurzel, LC_ALL="C")).stdout
+
+    w = _ph.verzeichnis()
+    for d in ("etc/motd.d", "etc/update-motd.d", "etc/pam.d", "run", "home/nc"):
+        os.makedirs(os.path.join(w, d))
+    with open(os.path.join(w, "run", "motd.dynamic"), "w") as f:
+        f.write("das Statusbild\n")
+    os.symlink("../run/motd.dynamic", os.path.join(w, "etc", "motd"))
+    with open(os.path.join(w, "etc", "motd.d", "50-alt"), "w") as f:
+        f.write("◆ NIGHTCRAWLER · alter Schnappschuss\n")
+    eigen = os.path.join(w, "etc", "update-motd.d", "99-nightcrawler")
+    zweit = os.path.join(w, "etc", "update-motd.d", "98-nc-alt")
+    for p in (eigen, zweit):
+        with open(p, "w") as f:
+            f.write("#!/bin/bash\n# NIGHTCRAWLER — Message of the Day\n")
+        os.chmod(p, 0o755)
+    bashrc = os.path.join(w, "home", "nc", ".bashrc")
+    with open(bashrc, "w") as f:
+        f.write("# tools/motd.sh von Hand\nalias motd='~/bot/tools/motd.sh'\nexport X=1\n"
+                "~/bot/tools/motd.sh\n")
+    sshd = os.path.join(w, "etc", "pam.d", "sshd")
+    with open(sshd, "w") as f:
+        f.write("session optional pam_motd.so motd=/run/motd.dynamic\n"
+                "session optional pam_motd.so\n")
+    befunde = dict(z.split("|", 1) for z in doppelt(w, "doppelt_befunde").splitlines())
+    assert set(befunde) == {"verweis", "kopie", "stueck", "startdatei", "pam"}, befunde
+    assert befunde["stueck"].endswith("98-nc-alt"), "das eigene Stueck gilt als zweites"
+    assert befunde["startdatei"] == bashrc + ":4", "Kommentar oder alias als Aufruf gezaehlt: %s" \
+        % befunde["startdatei"]
+    assert befunde["kopie"].endswith("50-alt")
+
+    # Die Vorgabe von Ubuntu und Debian ist KEIN Befund: eine Zeile rechnet,
+    # die zweite (noupdate) zeigt /etc/motd. Ein Melder, der jede Installation
+    # anschreit, erzieht zum Wegsehen.
+    ruhig = _ph.verzeichnis()
+    os.makedirs(os.path.join(ruhig, "etc", "pam.d"))
+    with open(os.path.join(ruhig, "etc", "pam.d", "sshd"), "w") as f:
+        f.write("session optional pam_motd.so motd=/run/motd.dynamic\n"
+                "session optional pam_motd.so noupdate\n@include common-session\n")
+    with open(os.path.join(ruhig, "etc", "pam.d", "common-session"), "w") as f:
+        f.write("session required pam_unix.so\n")
+    assert doppelt(ruhig, "doppelt_befunde") == "", "Fehlalarm auf der Ubuntu-Vorgabe"
+    # ... aber ein pam_motd in einer eingebundenen Datei zaehlt mit.
+    with open(os.path.join(ruhig, "etc", "pam.d", "common-session"), "a") as f:
+        f.write("session optional pam_motd.so\n")
+    assert doppelt(ruhig, "doppelt_befunde").startswith("pam|"), "@include nicht gelesen"
+
+    # Wegraeumen: nur was der MOTD gehoert. Verweis und Kopie liegen danach
+    # beiseite, das zweite Stueck ist still und vermerkt — Startdatei und PAM
+    # bleiben unberuehrt und werden mit Abhilfe genannt.
+    bashrc_vor, sshd_vor = open(bashrc).read(), open(sshd).read()
+    bericht = doppelt(w, "doppelt_beheben")
+    etc_motd = os.path.join(w, "etc", "motd")
+    assert not os.path.islink(etc_motd) and os.path.isfile(etc_motd) \
+        and os.path.getsize(etc_motd) == 0, "der Verweis steht noch"
+    assert os.path.islink(os.path.join(w, "motd-static.bak")), "der Verweis ist weg statt beiseite"
+    assert not os.path.exists(os.path.join(w, "etc", "motd.d", "50-alt"))
+    assert any(n.startswith("50-alt.") for n in os.listdir(os.path.join(w, "kopien")))
+    assert not os.access(zweit, os.X_OK) and os.access(eigen, os.X_OK)
+    assert "98-nc-alt" in open(os.path.join(w, "state")).read()
+    assert open(bashrc).read() == bashrc_vor and open(sshd).read() == sshd_vor, \
+        "fremde Startdatei oder PAM angefasst"
+    assert "Zeile 4 in " + bashrc + " entfernen" in bericht and "noupdate" in bericht, bericht
+    rest = dict(z.split("|", 1) for z in doppelt(w, "doppelt_befunde").splitlines())
+    assert set(rest) == {"startdatei", "pam"}, rest
+
+    # Ein zweites --install ergaenzt die Liste der gedaempften Stuecke, statt
+    # sie zu ueberschreiben — sonst holte --uninstall die ersten nie zurueck.
+    sd = fn("silence_defaults")
+    assert '{ cat "$NC_STATE"' in sd and "sort -u" in sd, "die Liste wird ueberschrieben"
+    assert "doppelt_beheben" in fn("install_linux"), "--install raeumt die Doppelung nicht weg"
+
+    deck.shutdown()
+    ok("W210: die MOTD zeigt den Leitstand aus derselben Quelle wie das Deck, sagt, "
+       "wenn sie veraltet ist, und findet jeden der fuenf Wege zur doppelten Anzeige")
+
+
 def _test_v58_w199_evolution_schnappschuesse():
     """v5.8-W199: build/bot_vN.py waechst nicht mehr ohne Ende.
 
@@ -41530,6 +41793,7 @@ def main():
     _test_v510_w207_leitstand_route_und_deck()
     _test_v510_w208_eine_seite()
     _test_v511_w209_bereiche_je_nutzer()
+    _test_v511_w210_motd_leitstand()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
