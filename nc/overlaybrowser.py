@@ -48,6 +48,22 @@ class OverlayBrowserFehler(RuntimeError):
     """Browser nicht startbar, gestorben oder ohne Antwort."""
 
 
+class SeiteNichtErreichbar(OverlayBrowserFehler):
+    """Der Browser laeuft, aber die Seite kam nicht: Netzfehler (net::ERR_…)
+    oder HTTP-Status >= 400.
+
+    v5.11.2. Bis hierher wurde das Ergebnis von Page.navigate verworfen. Eine
+    Navigation, die an net::ERR_CONNECTION_RESET scheitert, zeigt aber trotzdem
+    eine Seite — Chromiums eigene Fehlerseite —, und `schuss()` fotografierte
+    sie. Beim Betreiber stand so „This site can't be reached" mitten im
+    Sendebild, wo der Chat stehen sollte (Screenshot vom 19.11.). Ein Bild
+    davon ist schlimmer als gar keins: der Aufrufer faellt bei einem Fehler
+    auf den Text-Chat bzw. drawtext zurueck, bei einem Bild nicht.
+    Eigene Klasse, damit der Aufrufer „Seite tot" von „Browser tot"
+    unterscheiden kann — ein Einzelschuss-Rueckweg wuerde dieselbe
+    Fehlerseite nur teurer fotografieren."""
+
+
 # Nach einem Absturz nicht in jedem Takt neu starten: ein Chromium, der beim
 # Start stirbt, waere sonst genau der Kaltstart je Bild, den dieses Modul
 # abschafft — nur mit Fehlermeldung.
@@ -71,6 +87,12 @@ def browser_cmd(binpath, nice=None):
     cmd = [binpath, "--headless=new", "--disable-gpu", "--no-sandbox",
            "--hide-scrollbars", "--mute-audio", "--no-first-run",
            "--disable-background-networking", "--disable-extensions",
+           # v5.11.2: bei TLS am Deck ruft der Bot https://127.0.0.1 auf, das
+           # Zertifikat lautet auf die Domain. Ohne den Schalter:
+           # net::ERR_CERT_AUTHORITY_INVALID (gemessen, Chrome headless=new).
+           # Er wirkt NUR auf Loopback — eine fremde Overlay-Seite bleibt
+           # voll geprueft.
+           "--allow-insecure-localhost",
            "--remote-debugging-pipe", "about:blank"]
     # Das Overlay ist Teil des Sendebilds, aber ein verspaetetes Overlay-Bild
     # wiederholt nur das letzte — ein verspaeteter Transcode verliert die
@@ -275,6 +297,7 @@ class Dauerbrowser:
         self._sitzung = None
         self._gen = -1
         self.starts = 0
+        self._seite_fehler_t = 0.0   # monotonic des letzten gescheiterten Ladens
 
     @property
     def _proc(self):
@@ -308,17 +331,29 @@ class Dauerbrowser:
         ziel = v.aufruf("Target.createTarget", {"url": "about:blank"},
                         frist=frist)["targetId"]
         self._ziel = ziel
-        sitzung = v.aufruf("Target.attachToTarget", {"targetId": ziel, "flatten": True},
-                           frist=frist)["sessionId"]
-        # Transparenter Hintergrund: ohne das deckt das Overlay-Bild das
-        # Quellbild weiss ab.
-        v.aufruf("Emulation.setDefaultBackgroundColorOverride",
-                 {"color": {"r": 0, "g": 0, "b": 0, "a": 0}}, frist=frist, sitzung=sitzung)
-        v.aufruf("Emulation.setDeviceMetricsOverride",
-                 {"width": breite, "height": hoehe,
-                  "deviceScaleFactor": 1, "mobile": False}, frist=frist, sitzung=sitzung)
-        v.aufruf("Page.navigate", {"url": self.url}, frist=frist, sitzung=sitzung)
-        self._warten_bis_geladen(v, sitzung, frist)
+        try:
+            sitzung = v.aufruf("Target.attachToTarget", {"targetId": ziel, "flatten": True},
+                               frist=frist)["sessionId"]
+            # Transparenter Hintergrund: ohne das deckt das Overlay-Bild das
+            # Quellbild weiss ab.
+            v.aufruf("Emulation.setDefaultBackgroundColorOverride",
+                     {"color": {"r": 0, "g": 0, "b": 0, "a": 0}}, frist=frist, sitzung=sitzung)
+            v.aufruf("Emulation.setDeviceMetricsOverride",
+                     {"width": breite, "height": hoehe,
+                      "deviceScaleFactor": 1, "mobile": False}, frist=frist, sitzung=sitzung)
+            nav = v.aufruf("Page.navigate", {"url": self.url}, frist=frist, sitzung=sitzung)
+            if nav.get("errorText"):
+                raise SeiteNichtErreichbar("%s bei %s" % (nav["errorText"], self.url))
+            self._warten_bis_geladen(v, sitzung, frist)
+            self._http_status_pruefen(v, sitzung, frist)
+        except OverlayBrowserFehler:
+            # v5.11.2: den Tab schliessen. Er blieb bis hierher offen, und
+            # schuss() legte beim naechsten Takt einen WEITEREN an — bei einer
+            # toten Seite einen je Sekunde, bis der Speicher voll ist.
+            self._seite_fehler_t = time.monotonic()
+            self._tab_schliessen(v)
+            raise
+        self._seite_fehler_t = 0.0
         self._sitzung = sitzung
         self._gen = v.generation
 
@@ -347,6 +382,32 @@ class Dauerbrowser:
                 letzter = e
             time.sleep(0.1)
         raise OverlayBrowserFehler("Seite nicht geladen: %s" % (letzter or self.url))
+
+    def _tab_schliessen(self, v):
+        """Den eigenen Tab schliessen, den Browser (und die anderen Tabs) lassen."""
+        if self._ziel and v.lebt():
+            try:
+                v.aufruf("Target.closeTarget", {"targetId": self._ziel},
+                         frist=time.monotonic() + 5)
+            except OverlayBrowserFehler as e:
+                log.warning("Overlay-Browser: Tab nach Ladefehler nicht schliessbar (%s) "
+                            "— er belegt Speicher bis zum naechsten Neustart.", e)
+        self._ziel = self._sitzung = None
+
+    def _http_status_pruefen(self, v, sitzung, frist):
+        """Ein 401/404 laedt ohne errorText — und zeigt dann die Anmeldeseite
+        oder „Chat-Kasten fehlt" im Sendebild. Der Status kommt aus der
+        Navigation Timing API (Chrome >= 109); fehlt er (0/None), gilt die
+        Seite als geladen — ein aelterer Chromium soll nicht am Pruefen
+        scheitern, sondern weiter Bilder liefern."""
+        erg = v.aufruf("Runtime.evaluate",
+                       {"expression": "(performance.getEntriesByType('navigation')[0]"
+                                      "||{}).responseStatus||0",
+                        "returnByValue": True},
+                       frist=min(frist, time.monotonic() + VERSUCH_S), sitzung=sitzung)
+        status = (erg.get("result") or {}).get("value") or 0
+        if isinstance(status, (int, float)) and int(status) >= 400:
+            raise SeiteNichtErreichbar("HTTP %d bei %s" % (int(status), self.url))
 
     def beenden(self):
         """Den Tab schliessen; war er der letzte, den ganzen Browser."""
@@ -378,6 +439,14 @@ class Dauerbrowser:
                         raise OverlayBrowserFehler(
                             "Chromium gestorben (rc %s), Neustart in %.0f s"
                             % (v._proc.returncode if v._proc else "?", rest))
+                elif self._seite_fehler_t:
+                    # Dieselbe Ruhe fuer eine tote SEITE: sonst laedt jeder
+                    # Takt sie neu (Tab auf, Navigation, Tab zu — je Sekunde).
+                    rest = NEUSTART_RUHE_S - (time.monotonic() - self._seite_fehler_t)
+                    if rest > 0:
+                        raise SeiteNichtErreichbar(
+                            "Seite nicht erreichbar, neuer Versuch in %.0f s: %s"
+                            % (rest, self.url))
                 self._starten(timeout)
             try:
                 erg = v.aufruf("Page.captureScreenshot", {"format": "png"},

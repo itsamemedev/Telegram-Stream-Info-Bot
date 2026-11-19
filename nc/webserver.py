@@ -189,6 +189,92 @@ def schema(cert, key) -> str:
     return "https" if lage == "an" else "http"
 
 
+# Bindungen, hinter denen das Deck auch ueber 127.0.0.1 erreichbar ist.
+_ALLE_V4 = ("", "0.0.0.0", "*")
+_ALLE_V6 = ("::", "[::]", "::1", "[::1]")
+
+
+def _intern_host(bind) -> str:
+    """Host, unter dem der Bot SEIN EIGENES Deck erreicht, fuer eine Bindung.
+
+    0.0.0.0 und Loopback-Namen -> 127.0.0.1; "::" -> [::1] (auch ohne
+    Dual-Stack erreichbar). Eine konkrete Adresse bleibt, wie sie ist —
+    127.0.0.1 waere dort "connection refused"."""
+    b = (bind or "").strip()
+    if b in _ALLE_V4 or b == "localhost" or b.startswith("127."):
+        return "127.0.0.1"
+    if b in _ALLE_V6:
+        return "[::1]"
+    if ":" in b and not b.startswith("["):
+        return "[%s]" % b
+    return b
+
+
+def intern_basis(web_host, geschuetzt: bool, port, cert, key) -> str:
+    """"schema://host:port" — die Adresse, unter der der BOT SELBST sein Deck
+    erreicht (Chromium fuer den Chat-Kasten und das HTML-Overlay).
+
+    v5.11.2. DER ANLASS (Screenshot des Betreibers vom 19.11.): im
+    Studio-Sendebild stand statt des Chats die Chromium-Fehlerseite „This
+    site can't be reached — The connection was reset." Der Chat-Kasten (W205)
+    rief fest `http://127.0.0.1:<port>/overlay/chat` auf; beim Betreiber
+    haengt TLS direkt am Deck. HTTP gegen einen TLS-Socket ergibt
+    net::ERR_CONNECTION_RESET — nachgemessen, wortgleich mit dem Screenshot.
+
+    Es ist zum dritten Mal derselbe Befund: W84 (der Host), W93 (das Schema
+    in der Adresszeile), jetzt das Schema fuer die bot-eigenen Aufrufe. Die
+    Antwort steht deshalb hier, neben `schema()` und `bindung()`, und nicht
+    noch einmal als Literal an der Aufrufstelle.
+
+    Bei TLS heisst die Adresse https://127.0.0.1 — das Zertifikat lautet auf
+    die Domain, nicht auf 127.0.0.1. Chromium nimmt es nur mit
+    `--allow-insecure-localhost` (nc/overlaybrowser.browser_cmd), und der
+    Schalter wirkt ausschliesslich auf Loopback."""
+    bind, _ = bindung(web_host, geschuetzt)
+    return "%s://%s:%d" % (schema(cert, key), _intern_host(bind), int(port))
+
+
+def _url_teile(url):
+    """(schema, host, port, rest) einer Adresse — host klein, ohne IPv6-Klammern.
+
+    Bewusst ohne urllib.parse.urlsplit: das wirft bei einer kaputten
+    IPv6-Klammer oder einem Port wie ":80x" ValueError, und der Fang waere ein
+    stiller except-Block. Eine unlesbare Adresse ist hier schlicht nicht das
+    eigene Deck — sie geht unveraendert weiter, und Chromium meldet sie dann
+    laut (nc.overlaybrowser.SeiteNichtErreichbar)."""
+    u = (url or "").strip()
+    schema, sep, rest = u.partition("://")
+    if not sep:
+        schema = rest = ""          # kein Schema: keine Adresse, alles leer
+    enden = [i for i in (rest.find("/"), rest.find("?"), rest.find("#")) if i >= 0]
+    ende = min(enden) if enden else len(rest)
+    hostport, pfad = rest[:ende].rsplit("@", 1)[-1], rest[ende:]
+    if hostport.startswith("["):
+        host, _, nach = hostport[1:].partition("]")
+        port_s = nach[1:] if nach.startswith(":") else ""
+    else:
+        host, _, port_s = hostport.partition(":")
+    return schema.lower(), host.lower(), (int(port_s) if port_s.isdigit() else None), pfad
+
+
+def eigene_url(url, basis) -> str:
+    """Zeigt `url` auf DIESES Deck (Loopback-Host, Deck-Port), gilt Schema und
+    Host aus `basis`; jede andere Adresse bleibt unveraendert.
+
+    Fuer RESTREAM_OVERLAY_HTML_URL: wer die Zeile aus .env.example
+    (`http://127.0.0.1:8050/overlay`) einkommentiert hat, meint das eigene
+    Deck — und bekaeme bei TLS am Deck dieselbe Fehlerseite ins Sendebild.
+    Eine fremde Overlay-Seite (anderer Host oder Port) wird nicht angefasst."""
+    s, h, p, pfad = _url_teile(url)
+    bs, _bh, bp, _bpfad = _url_teile(basis)
+    if s not in ("http", "https") or not bs:
+        return url
+    lokal = h in LOOPBACK or h.startswith("127.")
+    if not lokal or (p or (443 if s == "https" else 80)) != bp:
+        return url
+    return basis.rstrip("/") + pfad
+
+
 def waehle(tls: bool):
     """Welcher Server traegt das Dashboard? -> (name, meldung)
 

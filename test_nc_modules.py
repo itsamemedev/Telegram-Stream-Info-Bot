@@ -41330,6 +41330,247 @@ def _test_v56_w197_keine_ausnahme_auf_vorrat():
     ok("v5.6-w197: jede Anmelde-/Herkunfts-Ausnahme hat eine Route (keine Luecke auf Vorrat)")
 
 
+def _test_v511_w211_chat_kasten_tls():
+    """v5.11.2: im Studio-Sendebild stand statt des Chats Chromiums Fehlerseite
+    „This site can't be reached — The connection was reset." (Screenshot des
+    Betreibers vom 19.11.). Der Chat-Kasten rief fest http://127.0.0.1 auf,
+    beim Betreiber haengt TLS direkt am Deck — HTTP gegen einen TLS-Socket ist
+    net::ERR_CONNECTION_RESET. Und der Dauerbrowser verwarf das Ergebnis von
+    Page.navigate, fotografierte die Fehlerseite also, statt den Rueckfall auf
+    den Text-Chat auszuloesen. Geprueft: die Adresse (Schema, Host), der
+    Zertifikats-Schalter nur fuer Loopback, die Navigation als Fehler, Tab zu
+    und Ruhe nach dem Fehler, der laute Rueckfall — und mit echtem Chromium
+    gegen einen TLS-Server genau das Fehlerbild des Screenshots."""
+    import ast as _ast
+    import http.server as _hs
+    import json as _json
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import socketserver as _ss
+    import ssl as _ssl
+    import subprocess as _sp
+    import threading as _th
+    import time as _t
+    from nc import chatbild as CB
+    from nc import meldetakt as MT
+    from nc import overlaybrowser as OB
+    from nc import webserver as W
+
+    # (1) Die Adresse: Schema aus der TLS-Lage, Host aus der WIRKLICHEN Bindung.
+    d = _ph.verzeichnis()
+    cert, key = _os.path.join(d, "c.pem"), _os.path.join(d, "k.pem")
+    for p in (cert, key):
+        open(p, "w").close()
+    assert W.intern_basis("0.0.0.0", True, 8050, cert, key) == "https://127.0.0.1:8050", \
+        "TLS am Deck, der Bot spricht HTTP — das ist der Screenshot"
+    assert W.intern_basis("0.0.0.0", True, 8050, "", "") == "http://127.0.0.1:8050"
+    assert W.intern_basis("127.0.0.1", False, 9000, "", "") == "http://127.0.0.1:9000"
+    assert W.intern_basis("::", True, 8050, "", "") == "http://[::1]:8050"
+    assert W.intern_basis("10.0.0.5", True, 8050, "", "") == "http://10.0.0.5:8050", \
+        "feste Adresse: 127.0.0.1 waere dort connection refused"
+    # ohne Schutz faellt die Bindung auf Loopback zurueck (W84) — dorthin rufen
+    assert W.intern_basis("10.0.0.5", False, 8050, "", "") == "http://127.0.0.1:8050"
+    assert W.intern_basis("0.0.0.0", True, 8050, cert, "") == "http://127.0.0.1:8050", \
+        "unvollstaendiges TLS startet das Deck als HTTP"
+    b = "https://127.0.0.1:8050"
+    assert W.eigene_url("http://127.0.0.1:8050/overlay", b) == "https://127.0.0.1:8050/overlay"
+    assert W.eigene_url("http://localhost:8050/overlay?x=1", b) == "https://127.0.0.1:8050/overlay?x=1"
+    assert W.eigene_url("http://127.0.0.1:9000/overlay", b) == "http://127.0.0.1:9000/overlay", \
+        "fremder Port ist nicht das Deck"
+    assert W.eigene_url("https://ov.example/x", b) == "https://ov.example/x"
+
+    # (2) Der Bot baut die Adresse nirgends mehr selbst zusammen.
+    # Deck-Adresse heisst: ein festes http-Literal mit DASHBOARD_PORT daneben
+    # (f-String) oder mit dem Vorgabeport 8050. Twitch-Rueckruf und
+    # llama-server sind andere Dienste und duerfen ihre Vorgabe behalten.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    _pre = ("http://127.0.0.1:", "http://localhost:")
+
+    def _deck_literal(n):
+        if isinstance(n, _ast.JoinedStr):
+            teile = [t.value for t in n.values if isinstance(t, _ast.Constant)]
+            namen = {x.id for x in _ast.walk(n) if isinstance(x, _ast.Name)}
+            return bool(teile) and str(teile[0]).startswith(_pre) and "DASHBOARD_PORT" in namen
+        return (isinstance(n, _ast.Constant) and isinstance(n.value, str)
+                and n.value.startswith(tuple(p + "8050" for p in _pre)))
+    fest = sorted({n.lineno for n in _ast.walk(baum) if _deck_literal(n)})
+    assert not fest, "bot.py baut die Deck-Adresse wieder fest als http (Zeilen %s)" % fest
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_restream_chatbild_start")
+    assert any(isinstance(n, _ast.Call) and getattr(n.func, "id", "") == "_deck_intern_url"
+               for n in _ast.walk(fn)), "Chat-Kasten ohne _deck_intern_url"
+
+    # (3) Zertifikat: nur Loopback darf ungeprueft sein, nie alles.
+    cmd = OB.browser_cmd("/x/chrome")
+    assert "--allow-insecure-localhost" in cmd, "https://127.0.0.1 scheitert am Domain-Zertifikat"
+    assert not any(a.startswith("--ignore-certificate-errors") for a in cmd), \
+        "das schaltet die Pruefung auch fuer fremde Overlay-Seiten ab"
+
+    # (4) Navigation mit Attrappe: Fehlerseite ist ein Fehler, der Tab geht zu,
+    # und der naechste Takt laedt NICHT sofort neu.
+    class _V:
+        def __init__(self, nav, status=200):
+            self.sperre, self.tabs, self.generation = _th.RLock(), set(), 1
+            self.letzter_start, self._proc, self.nav, self.status = 0.0, None, nav, status
+            self.aufrufe = []
+
+        def lebt(self):
+            return True
+
+        def starten(self):
+            pass
+
+        def beenden(self):
+            pass
+
+        def aufruf(self, methode, params, frist, sitzung=None):
+            self.aufrufe.append(methode)
+            if methode == "Target.createTarget":
+                return {"targetId": "T%d" % self.aufrufe.count(methode)}
+            if methode == "Target.attachToTarget":
+                return {"sessionId": "S"}
+            if methode == "Page.navigate":
+                return dict(self.nav)
+            if methode == "Runtime.evaluate":
+                if "readyState" in params["expression"]:
+                    return {"result": {"value": "complete"}}
+                return {"result": {"value": self.status}}
+            if methode == "Page.captureScreenshot":
+                return {"data": ""}
+            return {}
+
+    alt_vf = OB._verbindung_fuer
+    try:
+        v = _V({"frameId": "F", "errorText": "net::ERR_CONNECTION_RESET"})
+        OB._verbindung_fuer = lambda _b, _n: v
+        br = OB.Dauerbrowser("/x", "http://127.0.0.1:1/overlay/chat", "40,20")
+        try:
+            br.starten(timeout=5)
+            raise AssertionError("Fehlerseite als geladen behandelt")
+        except OB.SeiteNichtErreichbar as e:
+            assert "ERR_CONNECTION_RESET" in str(e), e
+        assert v.aufrufe.count("Target.closeTarget") == 1, \
+            "Tab nach Ladefehler offen — schuss() legte je Takt einen neuen an"
+        assert not br.lebt()
+        try:
+            br.schuss(timeout=5)
+            raise AssertionError("tote Seite sofort neu geladen")
+        except OB.SeiteNichtErreichbar as e:
+            assert "neuer Versuch" in str(e), e
+        assert v.aufrufe.count("Target.createTarget") == 1, "Ruhe nach Ladefehler fehlt"
+        # Ein 401/404 laedt ohne errorText — und zeigt Anmeldeseite oder Fehlertext.
+        v = _V({"frameId": "F"}, status=401)
+        br = OB.Dauerbrowser("/x", "http://10.0.0.5:8050/overlay/chat", "40,20")
+        try:
+            br.starten(timeout=5)
+            raise AssertionError("HTTP 401 als geladen behandelt")
+        except OB.SeiteNichtErreichbar as e:
+            assert "HTTP 401" in str(e), e
+        # Gesunde Seite (und ein Chromium ohne responseStatus) bleibt gesund.
+        for st in (200, 0, None):
+            v = _V({"frameId": "F"}, status=st)
+            br = OB.Dauerbrowser("/x", "https://127.0.0.1:8050/overlay/chat", "40,20")
+            br.starten(timeout=5)
+            assert br.lebt() and "Target.closeTarget" not in v.aufrufe, st
+    finally:
+        OB._verbindung_fuer = alt_vf
+
+    # (5) Der Rueckfall auf den Text-Chat ist laut (ERROR, nicht warning) und gedrosselt.
+    class _Tot:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def starten(self, timeout=20):
+            raise OB.SeiteNichtErreichbar("net::ERR_CONNECTION_RESET bei http://127.0.0.1:8050/x")
+
+        def beenden(self):
+            pass
+    zeilen = []
+
+    class _Fang(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+    h = _Fang()
+    CB.log.addHandler(h)
+    MT.zuruecksetzen(CB.KANAL)
+    try:
+        for _ in range(3):
+            assert CB.starten("w211", _Tot, "/x", "http://127.0.0.1:8050/x", "1,1", d,
+                              anlauf_s=0) is None
+    finally:
+        CB.log.removeHandler(h)
+        MT.zuruecksetzen(CB.KANAL)
+        MT.STOERER.pop(CB.KANAL, None)
+    laut = [z for z in zeilen if z[0] >= _lg.ERROR]
+    assert len(laut) == 1, ("ungedrosselt oder still", zeilen)
+    assert "bleibt Text" in laut[0][1] and "https" in laut[0][1], laut
+
+    # (6) Echt: Chromium gegen einen TLS-Server — der Screenshot, nachgestellt.
+    binpath = next((p for p in (_sh.which("google-chrome"), _sh.which("chromium"),
+                                _sh.which("chromium-browser")) if p), None)
+    if not binpath or not _sh.which("openssl"):
+        print("  w211: kein Chromium/openssl — echter TLS-Lauf uebersprungen")
+        ok("v5.11.2-W211: Chat-Kasten erreicht das Deck auch mit TLS (ohne echten Lauf)")
+        return
+    r = _sp.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key,
+                 "-out", cert, "-days", "1", "-subj", "/CN=deck.example"],
+                capture_output=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    seite = open("templates/chatbild.html", "rb").read()
+
+    class _H(_hs.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/overlay/chat.json"):
+                rumpf = _json.dumps({"ok": True, "zeilen": [
+                    {"src": "tiktok", "who": "anna", "text": "hallo"}]}).encode()
+            elif self.path.startswith("/overlay/chat"):
+                rumpf = seite
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(rumpf)
+
+        def log_message(self, *_a):
+            return None
+
+    srv = _ss.ThreadingTCPServer(("127.0.0.1", 0), _H)
+    srv.daemon_threads = True
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        basis = W.intern_basis("0.0.0.0", True, port, cert, key)
+        fifo = CB.starten("w211a", OB.Dauerbrowser, binpath, basis + "/overlay/chat?user=anna",
+                          "320,120", d, anlauf_s=1.0)
+        assert fifo, "Chat-Kasten erreicht das TLS-Deck nicht (Zertifikat auf Loopback?)"
+        png = open(_os.path.join(d, "chatbild_w211a.png"), "rb").read()
+        assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 300, len(png)
+        CB.beenden("w211a")
+        MT.zuruecksetzen(CB.KANAL)
+        t0 = _t.monotonic()
+        alt = CB.starten("w211b", OB.Dauerbrowser, binpath,
+                         "http://127.0.0.1:%d/overlay/chat?user=anna" % port,
+                         "320,120", d, anlauf_s=0)
+        assert alt is None, "Chromiums Fehlerseite ging als Chat-Bild ins Sendebild"
+        assert _t.monotonic() - t0 < 25
+    finally:
+        CB.beenden("w211a")
+        CB.beenden("w211b")
+        MT.zuruecksetzen(CB.KANAL)
+        MT.STOERER.pop(CB.KANAL, None)
+        srv.shutdown()
+        srv.server_close()
+    ok("v5.11.2-W211: Chat-Kasten erreicht das Deck auch mit TLS — Schema aus der "
+       "TLS-Lage, Zertifikat nur auf Loopback nachsichtig, eine Fehlerseite ist ein "
+       "Fehler (Tab zu, Ruhe, lauter Rueckfall auf Text), echt gegen TLS gemessen")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -41794,6 +42035,7 @@ def main():
     _test_v510_w208_eine_seite()
     _test_v511_w209_bereiche_je_nutzer()
     _test_v511_w210_motd_leitstand()
+    _test_v511_w211_chat_kasten_tls()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

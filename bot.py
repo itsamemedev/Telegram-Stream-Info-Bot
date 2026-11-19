@@ -1123,8 +1123,11 @@ RESTREAM_OVERLAY   = _nc_rscfg.overlay()
 RESTREAM_OVERLAY_MODE = os.getenv("RESTREAM_OVERLAY_MODE", "html").strip().lower()
 if RESTREAM_OVERLAY_MODE not in ("text", "html"):
     RESTREAM_OVERLAY_MODE = "text"
-RESTREAM_OVERLAY_HTML_URL  = os.getenv("RESTREAM_OVERLAY_HTML_URL",
-                                       "http://127.0.0.1:8050/overlay").strip()
+# v5.11.2: leer = das eigene Deck, Adresse zur Laufzeit aus _deck_intern_url
+# (Schema und Host wie das Deck wirklich laeuft). Die feste Vorgabe
+# "http://127.0.0.1:8050/overlay" stimmte weder bei TLS am Deck noch bei
+# anderem DASHBOARD_PORT — siehe _htmlov_basis_url.
+RESTREAM_OVERLAY_HTML_URL  = os.getenv("RESTREAM_OVERLAY_HTML_URL", "").strip()
 RESTREAM_OVERLAY_HTML_FPS  = max(1, min(5, _env_int("RESTREAM_OVERLAY_HTML_FPS", 1)))
 # "auto" (Default) = Overlay wird in EXAKT der Auflösung der Quelle gerendert.
 # Das ist der einzig richtige Weg: der Restream skaliert das Video nicht, und
@@ -12320,6 +12323,30 @@ def _dashboard_adresse():
     return f"{schema}://{bind}:{DASHBOARD_PORT}  ({schranke})"
 
 
+def _deck_intern_url(pfad):
+    """v5.11.2: die Adresse, unter der der Bot SEIN Deck selbst aufruft
+    (Chromium fuer Chat-Kasten und HTML-Overlay). Bis hierher stand an jeder
+    Aufrufstelle fest `http://127.0.0.1:<port>` — bei TLS am Deck setzte der
+    Socket das zurueck, und im Sendebild stand Chromiums Fehlerseite statt des
+    Chats (Screenshot vom 19.11.). Schema und Host beantwortet jetzt EINE
+    Stelle, dieselbe wie fuer die Adresszeile im Log (nc/webserver.py)."""
+    return _nc_webserver.intern_basis(
+        WEB_HOST, bool(DASHBOARD_TOKEN or DASHBOARD_PIN), DASHBOARD_PORT,
+        os.getenv("DASHBOARD_TLS_CERT", ""), os.getenv("DASHBOARD_TLS_KEY", "")) + pfad
+
+
+def _htmlov_basis_url():
+    """Die Seite, die das HTML-Overlay fotografiert. Ohne Eintrag das eigene
+    Deck; ein Eintrag, der auf das eigene Deck zeigt (die Zeile aus
+    .env.example einkommentiert), bekommt Schema und Host von dort — sonst
+    stuende bei TLS am Deck dieselbe Fehlerseite im Sendebild wie beim
+    Chat-Kasten. Nur http(s) geht auf die Kommandozeile (v4.1-W10)."""
+    eigen = _deck_intern_url("/overlay")
+    return _nc_rutil.http_url(
+        _nc_webserver.eigene_url(RESTREAM_OVERLAY_HTML_URL, eigen) if RESTREAM_OVERLAY_HTML_URL
+        else eigen, eigen)
+
+
 def run_flask():
     # F24-Hang-Fix: threaded=True — sonst blockiert eine slow sync Route
     # (Redis/KI-Probes) den ganzen Server. Multi-threaded reicht für
@@ -13833,10 +13860,10 @@ def _htmlov_screenshot_cmd(binpath, png_tmp, size=None):
     _sz = _nc_rutil.fenstergroesse(
         size or RESTREAM_OVERLAY_HTML_FALLBACK_SIZE,
         _nc_rutil.fenstergroesse(RESTREAM_OVERLAY_HTML_FALLBACK_SIZE))
-    _url = _nc_rutil.http_url(RESTREAM_OVERLAY_HTML_URL,
-                              f"http://127.0.0.1:{DASHBOARD_PORT}/overlay")
+    _url = _htmlov_basis_url()
     return [binpath, "--headless=new", "--disable-gpu", "--no-sandbox",
             "--hide-scrollbars", "--default-background-color=00000000",
+            "--allow-insecure-localhost",     # v5.11.2: TLS am Deck, s. browser_cmd
             f"--window-size={_sz}",
             f"--screenshot={png_tmp}", "--virtual-time-budget=2500",
             _url]
@@ -13845,8 +13872,7 @@ def _htmlov_screenshot_cmd(binpath, png_tmp, size=None):
 def _htmlov_dauerbrowser(binpath, size, png):
     """v4.2-W170: dauerhaften Overlay-Browser starten und das erste Bild
        schreiben (= Preflight). None → Aufrufer nimmt den Einzelschuss."""
-    _url = _nc_rutil.http_url(RESTREAM_OVERLAY_HTML_URL,
-                              f"http://127.0.0.1:{DASHBOARD_PORT}/overlay")
+    _url = _htmlov_basis_url()
     browser = _nc_ovbrowser.Dauerbrowser(binpath, _url, size, nice=FFMPEG_NICE_BG)
     try:
         browser.starten(timeout=20)
@@ -13998,7 +14024,7 @@ def _restream_html_overlay_start(rid, source_url=None):
     _HTMLOV[rid] = {"fifo": fifo, "png": png, "stop": stop, "task": task, "thread": th,
                     "browser": browser}
     log.info("OVERLAY html aktiv für #%s: %s @%sfps, %s px (%s, %s)", rid,
-             RESTREAM_OVERLAY_HTML_URL, RESTREAM_OVERLAY_HTML_FPS, _size, binpath,
+             _htmlov_basis_url(), RESTREAM_OVERLAY_HTML_FPS, _size, binpath,
              "dauerhaft" if browser is not None else "Einzelschuss je Bild")
     return fifo
 
@@ -14032,9 +14058,9 @@ def _restream_chatbild_start(rid, nutzer, drossel=0):
         return None
     _nc_schriftzeichen.emoji_hinweis("Chat-Kasten")
     _x, _y, breite, hoehe = _nc_rscmd.chat_kasten(drossel)
-    url = (f"http://127.0.0.1:{DASHBOARD_PORT}/overlay/chat?user="
-           + quote(clean_username(nutzer or "")) + "&fs=%d&abstand=%d"
-           % (_nc_ff.CHAT_FS, _nc_ff.CHAT_ABSTAND))
+    url = _deck_intern_url("/overlay/chat?user="
+                           + quote(clean_username(nutzer or "")) + "&fs=%d&abstand=%d"
+                           % (_nc_ff.CHAT_FS, _nc_ff.CHAT_ABSTAND))
     return _nc_chatbild.starten(rid, _nc_ovbrowser.Dauerbrowser, binpath, url,
                                 "%d,%d" % (breite, hoehe),
                                 os.path.join(RECORDINGS_DIR, "overlay_live"),
