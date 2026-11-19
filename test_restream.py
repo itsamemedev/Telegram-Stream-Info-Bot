@@ -460,7 +460,9 @@ def test_overlay_size_contract():
     i = src.find("def _restream_html_overlay_start")
     body = src[i:i + 3000]
     assert "_size = _overlay_render_size(source_url)" in body
-    assert "_htmlov_screenshot_cmd(binpath, png, _size)" in body
+    # ANKER GEWANDERT (BH-2, nicht der Vertrag): der Screenshot bekommt
+    # zusaetzlich den rid, damit die Seite den Zustand DIESES Restreams zeigt.
+    assert "_htmlov_screenshot_cmd(binpath, png, _size, rid)" in body
     # Aufrufer reicht die Quelle durch.
     # ANKER GEWANDERT (v4.2-W39, nicht der Vertrag): der Starter laeuft seit
     # W39 ueber asyncio.to_thread, der Aufruf steht deshalb als Argumentliste
@@ -607,15 +609,26 @@ def test_azrael_overlay_source():
     # find("def _write_restream_overlay") zuerst `..._async` — und das
     # 3000-Zeichen-Fenster lag dann auf deren Docstring statt auf dem
     # Funktionsrumpf. Der Parameter im Anker macht die Fundstelle eindeutig.
-    i = src.find("def _write_restream_overlay(reaction_fresh_secs")
-    assert i > 0, "Overlay-Schreiber nicht gefunden"
-    body = src[i:i + 3000]
-    j = body.find("AZRAEL-Reaktion unten")
-    zone = body[j:]
-    assert "r = _AZRAEL_REACTION" in zone, "drawtext liest die Reaktion nicht"
-    assert 'if r.get("text"):' in zone
+    # ANKER GEWANDERT (BH-1, nicht der Vertrag): die Auswahl steht seit dem
+    # Sendebild je Restream in nc/overlaytext.reaktion_fuer, gelesen wird
+    # in _overlay_kanalweit. Geprueft wird jetzt das VERHALTEN, im Syntaxbaum
+    # nur die Verdrahtung.
+    import ast as _ast
+    from nc import overlaytext as _OT
+    _baum = _ast.parse(src)
+    _kw = _ast.unparse(next(n for n in _baum.body
+                            if getattr(n, "name", "") == "_overlay_kanalweit"))
+    assert "dict(_AZRAEL_REACTION)" in _kw, "drawtext liest die Reaktion nicht"
+    assert "last_spoken" in _kw, "der Rueckfall auf den Kick-Chat fehlt"
+    _sb = _ast.unparse(next(n for n in _baum.body
+                            if getattr(n, "name", "") == "_overlay_sendebild_schreiben"))
+    assert "_nc_ovtext.reaktion_fuer(kanal['reaktion'], kanal['gesprochen']" in _sb
+    _r = {"text": "Reaktion", "ts": 100.0, "source": ""}
+    _ls = {"text": "Chatzeile", "ts": 50.0}
+    assert _OT.reaktion_fuer(_r, _ls, "anna", 20, 105.0, 55.0) == "Reaktion", \
+        "die Reaktion ist nicht mehr die Primaerquelle"
     # last_spoken bleibt Fallback, ist aber NICHT mehr die einzige Quelle
-    assert 'last_spoken' in zone and "if not txt:" in zone
+    assert _OT.reaktion_fuer({}, _ls, "anna", 20, 105.0, 55.0) == "Chatzeile"
     # react() füllt die Quelle
     k = src.find("_AZRAEL_REACTION.update(")
     assert k > 0 and "text=text, active=True" in src[k:k + 300]
@@ -1339,8 +1352,11 @@ def test_azrael_overlay_toggle():
     src = open("bot.py").read()
     assert "AZRAEL_OVERLAY_REACT" in src, "Schalter fehlt"
     # Der react-Block hängt am Schalter
-    i = src.find("if AZRAEL_OVERLAY_REACT and _OVERLAY.get")
+    # ANKER GEWANDERT (BH-1, nicht der Vertrag): der Schalter wird einmal je
+    # Takt in _overlay_kanalweit gelesen; die Sendebilder fragen kanal["azrael"].
+    i = src.find('"azrael": bool(AZRAEL_OVERLAY_REACT and _OVERLAY.get("azrael_show"))')
     assert i > 0, "react-Overlay-Block nicht am Schalter"
+    assert 'if kanal["azrael"]:' in src, "die Sendebilder fragen den Schalter nicht"
     ok("AZRAEL: Overlay-Reaktion per AZRAEL_OVERLAY_REACT abschaltbar")
 
     # Chat-Antwort (_KICK_MOD._handle / send_message) darf NICHT am Schalter hängen
@@ -8489,7 +8505,11 @@ def test_v40_w117_ankerhygiene():
             eng.append("Zeile %d: Fenster %d, letzte Nadel bei %d -> nur %d Zeichen "
                        "Luft (%r)" % (i + 1, n, weit, n - weit, wovon[:40]))
 
-    assert geprueft >= 10, ("Anker-Messung greift nicht mehr (%d Fenster erkannt) — "
+    # BH-1: 9 statt 10 — der B99-Vertrag (test_azrael_overlay_source) misst
+    # seit dem Sendebild je Restream im Syntaxbaum und am Verhalten, sein
+    # 3000er-Fenster ist weg. Die Untergrenze prueft, dass die Messung greift,
+    # nicht dass es Fenster geben MUSS.
+    assert geprueft >= 9, ("Anker-Messung greift nicht mehr (%d Fenster erkannt) — "
                             "Muster geaendert?" % geprueft)
     assert not eng, (
         "Zu enge Fenster — der naechste kleine Umbau macht daraus einen "

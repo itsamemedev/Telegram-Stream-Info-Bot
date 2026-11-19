@@ -41379,6 +41379,10 @@ def _test_v511_w211_chat_kasten_tls():
     assert W.eigene_url("http://127.0.0.1:9000/overlay", b) == "http://127.0.0.1:9000/overlay", \
         "fremder Port ist nicht das Deck"
     assert W.eigene_url("https://ov.example/x", b) == "https://ov.example/x"
+    # Die Basis kommt mit Pfad herein (_deck_intern_url("/overlay")) — gilt nur
+    # schema://host:port, sonst …/overlay/overlay.
+    assert W.eigene_url("http://127.0.0.1:8050/overlay?theme=x", b + "/overlay") == \
+        "https://127.0.0.1:8050/overlay?theme=x"
 
     # (2) Der Bot baut die Adresse nirgends mehr selbst zusammen.
     # Deck-Adresse heisst: ein festes http-Literal mit DASHBOARD_PORT daneben
@@ -41399,6 +41403,30 @@ def _test_v511_w211_chat_kasten_tls():
     fn = next(n for n in baum.body if getattr(n, "name", "") == "_restream_chatbild_start")
     assert any(isinstance(n, _ast.Call) and getattr(n.func, "id", "") == "_deck_intern_url"
                for n in _ast.walk(fn)), "Chat-Kasten ohne _deck_intern_url"
+
+    # (2b) HTML-Overlay: eine tote SEITE geht nicht in den Einzelschuss (der
+    # fotografierte dieselbe Fehlerseite), sondern auf drawtext zurueck.
+    def _fang(funk, ausnahme):
+        f = next(n for n in baum.body if getattr(n, "name", "") == funk)
+        for t in _ast.walk(f):
+            if not isinstance(t, _ast.Try):
+                continue
+            for i, h in enumerate(t.handlers):
+                if h.type is not None and ausnahme in _ast.unparse(h.type):
+                    return t, i, h
+        return None, None, None
+    t, i, h = _fang("_htmlov_dauerbrowser", "SeiteNichtErreichbar")
+    assert h and any(isinstance(n, _ast.Raise) for n in h.body), \
+        "_htmlov_dauerbrowser schluckt die tote Seite (Einzelschuss fotografiert die Fehlerseite)"
+    assert i < next(j for j, x in enumerate(t.handlers)
+                    if x.type is not None and _ast.unparse(x.type) == "Exception"), \
+        "der allgemeine Fang steht vor SeiteNichtErreichbar und gewinnt"
+    t, i, h = _fang("_restream_html_overlay_start", "SeiteNichtErreichbar")
+    assert h and any(isinstance(n, _ast.Return) for n in _ast.walk(h)) \
+        and "_htmlov_dauerbrowser(" in _ast.unparse(t.body), \
+        "Overlay-Start faengt die tote Seite nicht ab"
+    assert "log.error" in _ast.unparse(h) and "_nc_meldetakt.melden" in _ast.unparse(h), \
+        "Rueckfall auf drawtext still oder ungedrosselt"
 
     # (3) Zertifikat: nur Loopback darf ungeprueft sein, nie alles.
     cmd = OB.browser_cmd("/x/chrome")
@@ -41569,6 +41597,268 @@ def _test_v511_w211_chat_kasten_tls():
     ok("v5.11.2-W211: Chat-Kasten erreicht das Deck auch mit TLS — Schema aus der "
        "TLS-Lage, Zertifikat nur auf Loopback nachsichtig, eine Fehlerseite ist ein "
        "Fehler (Tab zu, Ruhe, lauter Rueckfall auf Text), echt gegen TLS gemessen")
+
+
+def _test_v511_bh_sendebild_je_restream():
+    """BH-1/BH-2/BH-9 (Bughunt v5.11): jedes Sendebild zeigt SEINEN Restream.
+
+    BH-1: der Text-Schreiber fuellte den Wurzelordner aus dem zuletzt
+    gestarteten Restream und kopierte Reaktion, Alert, Follower in jeden
+    weiteren — A zeigte AZRAELs Reaktion auf B, Bs Zahl, Bs Gifts.
+    BH-2: die HTML-Seite kannte keinen Restream; jeder Tab bekam dieselbe
+    Reaktion. BH-9: der FIFO-Schreiber schluckte jeden Lesefehler und endete
+    bei einem fehlenden PNG still. Geprueft am Verhalten, mit Attrappen."""
+    import ast as _ast
+    import logging as _lg
+    import os as _os
+    import threading as _th
+    import time as _t
+    from contextlib import contextmanager as _cm
+    from nc import overlaytext as OT
+    from nc import overlaybrowser as OB
+    from nc import textmore as TM
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name):
+        return next(n for n in baum.body if getattr(n, "name", "") == name)
+
+    def _lade(namen, ns):
+        exec(compile(_ast.Module(body=[_fn(n) for n in namen], type_ignores=[]),
+                     "bot.py", "exec"), ns)
+        return ns
+
+    # ── (1) nc.overlaytext: die Zuordnungsregeln ────────────────────────────
+    assert OT.gehoert_zu("berta", None), "ohne rid (OBS) muss alles durch"
+    assert OT.gehoert_zu("", "anna") and OT.gehoert_zu(None, "anna"), "kanalweit gilt allen"
+    assert OT.gehoert_zu("@Anna", "anna") and not OT.gehoert_zu("berta", "anna")
+    assert not OT.gehoert_zu("berta", ""), "unbekannter Restream zeigt fremde Reaktion"
+    assert OT.alert_fuer({"name": "x", "ts": 0.0}, "anna", 9.0) == "", "Alert verfaellt nicht"
+    assert OT.overlay_url("http://127.0.0.1:8050/overlay", 7) == \
+        "http://127.0.0.1:8050/overlay?rid=7"
+    assert OT.overlay_url("https://h:9/overlay?a=b%20c&rid=3#f", 5) == \
+        "https://h:9/overlay?a=b%20c&rid=5#f", "Query umkodiert, rid doppelt oder Fragment weg"
+    assert OT.overlay_url("http://h/overlay?x=1", None) == "http://h/overlay?x=1"
+
+    # ── (2) BH-1: der Text-Schreiber mit zwei Restreams ─────────────────────
+    wurzel = "/ov"
+    alle = {1: {"user": "anna", "label": "Hauptbuehne", "rid": 1, "ovdir": wurzel},
+            2: {"user": "berta", "label": "", "rid": 2, "ovdir": wurzel + "/rid_2"}}
+    geschrieben, fehler = {}, []
+
+    class _Conn:
+        def execute(self, *a):
+            return type("R", (), {"fetchone": lambda s: {"name": "fan"}})()
+
+    @_cm
+    def _db():
+        yield _Conn()
+
+    def _dateien(rid=None):
+        d = (alle.get(rid) or {}).get("ovdir") or wurzel
+        return {k: d + "/" + k for k in ("title", "react", "source", "goal", "follow",
+                                         "alert", "chat", "caption", "brand")}
+    ns = {"_nc_ovtext": OT, "_RESTREAM_ACTIVE_ALL": alle, "_RESTREAM_OV_DIR": wurzel,
+          "_restream_active": lambda: {"user": "berta", "label": "", "rid": 2},
+          "_restream_overlay_files": _dateien,
+          "_ov_atomic_write": lambda p, t: geschrieben.__setitem__(p, t),
+          "_loop_fehler": lambda n, e: fehler.append((n, e)),
+          "_RESTREAM_OV_DBCACHE": {"ts": 0.0, "goal": "", "follow": ""},
+          "_time_mod": _t, "db_conn": _db,
+          "_nc_spendenziel": type("S", (), {"stand": staticmethod(
+              lambda c: {"ziel_eur": 100, "aktuell_eur": 40})}),
+          "_ov_bar": OT.ov_bar, "_ov_oneline": OT.ov_oneline, "_ov_wrap": TM._ov_wrap,
+          "_overlay_src_ok": lambda s: True,
+          "_latest_popularity": lambda c, u: {"anna": 1000, "berta": 2000}[u],
+          "_OVERLAY": {"title": "Sender", "azrael_show": True}, "AZRAEL_OVERLAY_REACT": True,
+          "_AZRAEL_REACTION": {"text": "Berta tanzt", "ts": _t.time(), "source": "berta"},
+          "_KICK_MOD": type("K", (), {"last_spoken": {}})(),
+          "_RESTREAM_LAST_EVENT": {"ts": _t.monotonic(), "kind": "gift", "name": "geber",
+                                   "amount": "5", "origin": "anna"},
+          "_restream_layout_mode": lambda: "studio", "_chat_src_ok": lambda s: True,
+          "KICK_CHANNEL_URL": "https://kick.com/x", "DISCORD_INVITE_URL": "",
+          "_RESTREAM_MGR": type("M", (), {"_procs": {1: 1, 2: 2}})(),
+          "AZRAEL_OVERLAY_PREFIX": "AZ", "AZRAEL_OVERLAY_WRAP_W": 38,
+          "AZRAEL_OVERLAY_WRAP_LINES": 3,
+          "_chat_block": lambda source_user=None: "chat:%s" % source_user,
+          "RESTREAM_REACT_HOLD": 20}
+    _lade(("_write_restream_overlay", "_overlay_kanalweit", "_overlay_sendebild_schreiben"), ns)
+    ns["_write_restream_overlay"]()
+    a, b = _dateien(1), _dateien(2)
+    assert not fehler, fehler
+    assert {p.rsplit("/", 1)[0] for p in geschrieben} == {wurzel, wurzel + "/rid_2"}, \
+        "ein drittes Sendebild beschrieben: %r" % sorted(geschrieben)
+    assert geschrieben[a["react"]] == "" and "Berta tanzt" in geschrieben[b["react"]], \
+        "AZRAELs Reaktion auf B steht im Sendebild von A"
+    assert "geber" in geschrieben[a["alert"]] and geschrieben[b["alert"]] == "", \
+        "das Gift aus As Raum steht im Sendebild von B"
+    assert "1.000" in geschrieben[a["follow"]] and "2.000" in geschrieben[b["follow"]], \
+        "Follower-Zahl nicht je Quellnutzer: %r / %r" % (geschrieben[a["follow"]],
+                                                         geschrieben[b["follow"]])
+    assert "+fan" in geschrieben[a["follow"]] and "+fan" in geschrieben[b["follow"]]
+    assert geschrieben[a["source"]].startswith("└ @anna") and \
+        geschrieben[b["source"]] == "└ @berta"
+    assert (geschrieben[a["chat"]], geschrieben[b["chat"]]) == ("chat:anna", "chat:berta")
+    for k in ("title", "goal", "caption", "brand"):       # kanalweit, mit Grund
+        assert geschrieben[a[k]] == geschrieben[b[k]] and geschrieben[a[k]], k
+    # Eine Reaktion ohne Quelle gilt allen; kein Restream: der Altweg (rid=None).
+    ns["_AZRAEL_REACTION"] = {"text": "Hallo alle", "ts": _t.time(), "source": ""}
+    ns["_write_restream_overlay"]()
+    assert "Hallo alle" in geschrieben[a["react"]] and "Hallo alle" in geschrieben[b["react"]]
+    alle.clear()
+    geschrieben.clear()
+    ns["_write_restream_overlay"]()
+    assert {p.rsplit("/", 1)[0] for p in geschrieben} == {wurzel}
+    assert geschrieben[wurzel + "/source"] == "└ @berta", "Altweg ohne Registry kaputt"
+
+    # Das Gift traegt seinen Raum: _overlay_push speichert origin, und beide
+    # TikTok-Aufrufer im Chat-Listener geben ihn mit.
+    ns_p = {"_OV_PLATFORMS": ("kick", "tiktok"), "is_revenue_platform": lambda p: p == "kick",
+            "db_conn": _db, "log": _lg.getLogger("t"), "_time_mod": _t,
+            "datetime": __import__("datetime").datetime,
+            "timezone": __import__("datetime").timezone}
+    _lade(("_overlay_push",), ns_p)
+    ns_p["_overlay_push"]("gift", "geber", 5, "Rose", platform="tiktok", origin="anna")
+    assert ns_p["_RESTREAM_LAST_EVENT"]["origin"] == "anna", "Herkunft des Gifts verloren"
+    ns_p["_overlay_push"]("follow", "f", platform="kick")
+    assert ns_p["_RESTREAM_LAST_EVENT"]["origin"] == "", "eigener Kanal muss kanalweit sein"
+    tiktok = [c for c in _ast.walk(_fn("_start_chat_listener")) if isinstance(c, _ast.Call)
+              and getattr(c.func, "id", "") == "_overlay_push"
+              and any(k.arg == "platform" and getattr(k.value, "value", "") == "tiktok"
+                      for k in c.keywords)]
+    assert len(tiktok) == 2 and all(any(k.arg == "origin" for k in c.keywords)
+                                    for c in tiktok), "TikTok-Event ohne origin="
+
+    # ── (3) BH-2: die Seite je Restream ─────────────────────────────────────
+    ns_u = {"_nc_ovtext": OT, "_nc_rutil": __import__("nc.restream_util", fromlist=["x"]),
+            "RESTREAM_OVERLAY_HTML_URL": "http://127.0.0.1:8050/overlay?theme=x",
+            "DASHBOARD_PORT": 8050, "RESTREAM_OVERLAY_HTML_FALLBACK_SIZE": "1080,1920",
+            # W211: die Basis kommt aus _htmlov_basis_url (Schema/Host des Decks)
+            "_nc_webserver": __import__("nc.webserver", fromlist=["x"]),
+            "_deck_intern_url": lambda pfad: "http://127.0.0.1:8050" + pfad}
+    _lade(("_htmlov_basis_url", "_htmlov_url", "_htmlov_screenshot_cmd",
+           "_htmlov_dauerbrowser"), ns_u)
+    assert ns_u["_htmlov_screenshot_cmd"]("/c", "/p.png", "720,1280", 5)[-1] == \
+        "http://127.0.0.1:8050/overlay?theme=x&rid=5", "Einzelschuss ohne rid"
+    gesehen = []
+
+    class _DB:
+        def __init__(self, binpath, url, groesse, nice=None):
+            gesehen.append((url, groesse))
+
+        def starten(self, timeout=20):
+            raise OB.OverlayBrowserFehler("Attrappe")
+
+        def beenden(self):
+            pass
+    ns_u.update(_nc_ovbrowser=type("O", (), {"Dauerbrowser": _DB,
+                                             "SeiteNichtErreichbar": OB.SeiteNichtErreichbar}),
+                FFMPEG_NICE_BG=12,
+                log=_lg.getLogger("t-bh2"), _time_mod=_t)
+    assert ns_u["_htmlov_dauerbrowser"]("/c", "720,1280", "/p.png", 5) is None
+    assert gesehen == [("http://127.0.0.1:8050/overlay?theme=x&rid=5", "720,1280")], \
+        "der Tab im (geteilten) Chromium oeffnet die Seite ohne rid: %r" % gesehen
+    st = _ast.unparse(_fn("_restream_html_overlay_start"))
+    for aufruf in ("_htmlov_dauerbrowser(binpath, _size, png, rid)",
+                   "_htmlov_screenshot_cmd(binpath, png, _size, rid)",
+                   "_htmlov_screenshot_cmd(binpath, tmp, _size, rid)"):
+        assert aufruf in st, aufruf
+    # Die Route: mit rid nur die Reaktion auf DIESEN Quellnutzer, und die Quelle.
+    from flask import Flask
+    import nc.routes.overlay as RO
+    from nc import azraelstate as A
+    from nc import restreamstate as RS
+    app = Flask(__name__)
+    app.register_blueprint(RO.bp)
+    alt = (dict(A.OVERLAY), dict(A.REACTION), dict(RS.ACTIVE_ALL))
+    try:
+        A.OVERLAY.update(title="Sender", azrael_show=True)
+        RS.ACTIVE_ALL.clear()
+        RS.ACTIVE_ALL[7] = {"user": "anna", "label": "Hauptbuehne", "rid": 7}
+        A.REACTION.clear()
+        A.REACTION.update(text="Berta tanzt", ts=_t.time(), source="berta")
+        with app.test_client() as cl:
+            def _z(q=""):
+                return cl.get("/api/overlay/state" + q).get_json()
+            j = _z("?rid=7")
+            assert j["quelle"] == {"user": "anna", "label": "Hauptbuehne"}, j.get("quelle")
+            assert j["azrael"]["active"] is False, "AZRAEL spricht im Sendebild von A ueber B"
+            o = _z()
+            assert o["azrael"]["active"] is True and o["quelle"] is None, "OBS-Seite veraendert"
+            assert _z("?rid=99")["azrael"]["active"] is False, "unbekannter rid zeigt Fremdes"
+            A.REACTION.update(source="anna")
+            assert _z("?rid=7")["azrael"]["active"] is True, "eigene Reaktion fehlt"
+            A.REACTION.update(source="")
+            assert _z("?rid=99")["azrael"]["active"] is True, "kanalweite Reaktion fehlt"
+            assert j["title"] == "Sender", "der Sendername ist kanalweit"
+    finally:
+        A.OVERLAY.clear()
+        A.OVERLAY.update(alt[0])
+        A.REACTION.clear()
+        A.REACTION.update(alt[1])
+        RS.ACTIVE_ALL.clear()
+        RS.ACTIVE_ALL.update(alt[2])
+    # Die Seite reicht ihren rid weiter (JS ohne Kommentare gelesen).
+    import re as _re
+    html = open("templates/overlay.html", encoding="utf-8").read()
+    js = _re.sub(r"/\*.*?\*/", "", html, flags=_re.S)
+    assert "get('rid')" in js and "fetch(_STATE_URL" in js, "die Seite ignoriert ?rid="
+    assert "fetch('/api/overlay/state'" not in js, "ein Abruf ohne rid ist geblieben"
+
+    # ── (4) BH-9: der FIFO-Schreiber meldet, statt zu schweigen ─────────────
+    th_start = [c for c in _ast.walk(_fn("_restream_html_overlay_start"))
+                if isinstance(c, _ast.Call) and _ast.unparse(c.func) == "threading.Thread"]
+    assert th_start and "_nc_ovbrowser.fifo_schreiben" in _ast.unparse(th_start[0]) \
+        and "_loop_fehler" in _ast.unparse(th_start[0]), "Writer wieder ohne Drosselkanal"
+    gut = b"\x89PNG\r\n\x1a\n" + b"x" * 40 + b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    assert OB.png_vollstaendig(gut) and not OB.png_vollstaendig(gut[:-3])
+    d = _ph.verzeichnis()
+    png, fifo = _os.path.join(d, "o.png"), _os.path.join(d, "o.fifo")
+    with open(png, "wb") as f:
+        f.write(gut)
+    _os.mkfifo(fifo)
+    gemeldet, stop = [], _th.Event()
+    infos = []
+    h = _lg.Handler()
+    h.emit = lambda r: infos.append(r.getMessage())
+    OB.log.addHandler(h)
+    alt_stufe = OB.log.level
+    OB.log.setLevel(_lg.INFO)
+    try:
+        w = _th.Thread(target=OB.fifo_schreiben,
+                       args=(fifo, png, stop, 0.02, lambda n, e: gemeldet.append((n, e))),
+                       daemon=True)
+        w.start()
+        lese = open(fifo, "rb")
+        assert lese.read(len(gut)) == gut
+        with open(png, "wb") as f:                  # abgeschnitten
+            f.write(gut[:30])
+        _t.sleep(0.15)
+        _os.remove(png)                             # verschwunden
+        _t.sleep(0.15)
+        assert lese.read(len(gut) * 3).count(b"IEND") >= 2, \
+            "nach dem kaputten PNG kommt nicht mehr das letzte gute Bild"
+        namen = {n for n, _e in gemeldet}
+        arten = {type(e).__name__ for _n, e in gemeldet}
+        assert namen == {"html-overlay-fifo"}, gemeldet
+        assert "OverlayBrowserFehler" in arten and "FileNotFoundError" in arten, \
+            "abgeschnittenes oder fehlendes PNG ohne Meldung: %r" % arten
+        assert w.is_alive(), "ein fehlendes PNG beendet den Schreiber (Overlay steht still)"
+        n_vorher = len(gemeldet)
+        with open(png, "wb") as f:
+            f.write(gut)
+        lese.close()                                # ffmpeg weg
+        w.join(3)
+        assert not w.is_alive(), "Schreiber endet nicht, wenn ffmpeg weg ist"
+        assert not any(isinstance(e, BrokenPipeError) for _n, e in gemeldet[n_vorher:]), \
+            "ffmpeg weg ist ein normales Ende, kein Fehler"
+        assert any("Schreiber endet" in z for z in infos), "das Ende steht nicht im Log"
+    finally:
+        OB.log.removeHandler(h)
+        OB.log.setLevel(alt_stufe)
+        stop.set()
+    ok("BH-1/BH-2/BH-9: jedes Sendebild zeigt seinen Restream, der Overlay-Writer meldet")
 
 
 def main():
@@ -42036,6 +42326,7 @@ def main():
     _test_v511_w209_bereiche_je_nutzer()
     _test_v511_w210_motd_leitstand()
     _test_v511_w211_chat_kasten_tls()
+    _test_v511_bh_sendebild_je_restream()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

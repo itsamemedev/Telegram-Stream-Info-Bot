@@ -266,13 +266,17 @@ def eigene_url(url, basis) -> str:
     Deck — und bekaeme bei TLS am Deck dieselbe Fehlerseite ins Sendebild.
     Eine fremde Overlay-Seite (anderer Host oder Port) wird nicht angefasst."""
     s, h, p, pfad = _url_teile(url)
-    bs, _bh, bp, _bpfad = _url_teile(basis)
+    bs, _bh, bp, bpfad = _url_teile(basis)
     if s not in ("http", "https") or not bs:
         return url
     lokal = h in LOOPBACK or h.startswith("127.")
     if not lokal or (p or (443 if s == "https" else 80)) != bp:
         return url
-    return basis.rstrip("/") + pfad
+    # Von der Basis gilt nur schema://host:port — ihr Pfad nicht. Der Aufrufer
+    # reicht _deck_intern_url("/overlay") herein; mit Pfad entstand
+    # …/overlay/overlay (gefangen vom BH-2-Vertrag, nicht vom eigenen).
+    wurzel = basis.strip()[:len(basis.strip()) - len(bpfad)] if bpfad else basis.strip()
+    return wurzel.rstrip("/") + pfad
 
 
 def waehle(tls: bool):

@@ -2018,7 +2018,7 @@ def _proc_is_recorder(pid: Optional[int]) -> bool:
 _nc_routes_auskunft.HAKEN["ist_aufnehmer"]["fn"] = _proc_is_recorder
 
 # V37-MOD: reine Text-Utils nach nc/textutil.py extrahiert.
-from nc.textutil import (clean_username, fmt_number, safe,  # noqa: F401
+from nc.textutil import (clean_username, safe,  # noqa: F401
                          is_valid_tiktok_username)         # B125
 # V37-MOD: Proxy-URL-Helfer früh importieren (get_random_proxy ~Z.1180 nutzt
 # _normalize_proxy_url — der Import muss VOR der ersten Nutzung stehen).
@@ -13530,162 +13530,123 @@ async def _write_restream_overlay_async(reaction_fresh_secs=None):
 
 def _write_restream_overlay(reaction_fresh_secs=None):
     """Aktualisiert ALLE Overlay-Textdateien aus dem aktuellen Zustand.
-       Leere Datei = drawtext zeichnet nichts (Element blendet sich aus)."""
+       Leere Datei = drawtext zeichnet nichts (Element blendet sich aus).
+
+    BH-1 (Bughunt v5.11): JEDES Sendebild bekommt seine eigenen Zeilen.
+    Bis hierher fuellte dieser Schreiber den Wurzelordner aus dem zuletzt
+    GESTARTETEN Restream (_restream_active()) und kopierte Titel, Reaktion,
+    Ziel, Follower, Alert, Caption und Brand von dort in jeden weiteren
+    rid-Ordner. Mit zwei Restreams brannte A AZRAELs Reaktion auf B, Bs
+    Follower-Zahl und Bs TikTok-Gifts ins Bild — und der zweite Start
+    ueberschrieb, was der erste zeigte. Jetzt: das Kanalweite einmal je Takt
+    (_overlay_kanalweit), der Rest je Sendebild. Welches Feld was ist, steht
+    mit Begruendung in nc/overlaytext.py."""
     if reaction_fresh_secs is None:
         reaction_fresh_secs = RESTREAM_REACT_HOLD
-    f = _restream_overlay_files()
-    _ov_atomic_write(f["title"], f"[ LIVE ]  {_ov_oneline(_OVERLAY.get('title') or 'LIVE', 80)}")
-    # Quell-Streamer (nur wenn der aktive Restream wirklich läuft)
-    src_line = ""
-    try:
-        act = _restream_active()
-        if act.get("user") and act.get("rid") in getattr(_RESTREAM_MGR, "_procs", {}):
-            src_line = "\u2514 @" + str(act["user"])
-            if act.get("label"):
-                src_line += "  \u00b7 " + str(act["label"])
-    except Exception:
-        pass
-    _ov_atomic_write(f["source"], _ov_oneline(src_line, 80))
-    # AZRAEL-Reaktion unten.
-    # V37-B99: Vorher las das NUR _KICK_MOD.last_spoken — das wird aber
-    # ausschließlich gesetzt, wenn der Bot in den KICK-CHAT schreibt. Die
-    # Live-Reaction-Engine ruft _KICK_MOD.react() auf und schickt NICHTS in
-    # den Chat → AZRAELs eigentliche Antworten tauchten im Sendebild nie auf.
-    # Primärquelle ist deshalb _AZRAEL_REACTION (das setzt react() selbst);
-    # last_spoken bleibt Fallback für echte Chat-Nachrichten des Bots.
-    react = ""
-    try:
-        # V37-AZHIDE: nur wenn die Overlay-Reaktion erlaubt ist (Env-Schalter)
-        # UND das Overlay-Panel azrael_show gesetzt hat. Aus = AZRAEL bleibt im
-        # Sendebild unsichtbar; seine Chat-Antworten laufen davon unberührt.
-        if AZRAEL_OVERLAY_REACT and _OVERLAY.get("azrael_show"):
-            txt, age = "", 1e9
-            r = _AZRAEL_REACTION
-            if r.get("text"):
-                txt = _ov_oneline(r.get("text") or "", 140)
-                age = _time_mod.time() - (r.get("ts") or 0.0)
-            if not txt:
-                ls = getattr(_KICK_MOD, "last_spoken", None) or {}
-                txt = _ov_oneline(ls.get("text") or "", 140)
-                age = _time_mod.monotonic() - (ls.get("ts") or 0.0)
-            if txt and age <= reaction_fresh_secs:
-                # V37-OVFIX: 38 Zeichen passen zum ENGEREN (Portrait-)Panel; beide
-                # drawtext-Ketten lesen dieselbe Datei, also bestimmt das schmalste
-                # Panel die Breite. Vorher 2 Zeilen → AZRAELs Antworten (bis 140
-                # Zeichen) wurden nach ~76 Zeichen STILL abgeschnitten, mitten im
-                # Satz und ohne Hinweis (das hängende Komma auf Henrys Screenshots).
-                # Jetzt 3 Zeilen + Ellipse: mehr Text, und wenn doch gekappt wird,
-                # sagt ein sichtbares »…«, dass es weitergeht.
-                react = _ov_wrap(f"{AZRAEL_OVERLAY_PREFIX} {txt}",
-                                 AZRAEL_OVERLAY_WRAP_W, AZRAEL_OVERLAY_WRAP_LINES,
-                                 ellipsis=True)
-    except Exception:
-        pass
-    _ov_atomic_write(f["react"], react)
-    # Spendenziel + letzter Follower: DB nur alle 5s lesen — NICHT jede Sekunde im async-
-    # Hot-Path, sonst blockt der Full-Scan über donation-Events den Event-Loop (Monitor,
-    # Kick-WS, andere Reader). Titel/Quelle/Reaktion/Alert bleiben sekündlich (In-Memory). B72
-    c = _RESTREAM_OV_DBCACHE
-    if (_time_mod.monotonic() - c.get("ts", 0.0)) > 5.0:
-        goal_line = follow_line = ""
+    ziele = _nc_ovtext.ziele(_RESTREAM_ACTIVE_ALL, _restream_active(), _RESTREAM_OV_DIR)
+    kanal = _overlay_kanalweit([i.get("user") for _rid, i in ziele])
+    for rid, info in ziele:
         try:
-            fr = None
-            _fc = 0
+            _overlay_sendebild_schreiben(_restream_overlay_files(rid), info, kanal,
+                                         reaction_fresh_secs)
+        except Exception as e:
+            # War je Feld `pass`: ein dauerhaft scheiterndes Sendebild friert
+            # seinen Text ein, und das sah der Betreiber nur im Stream.
+            _loop_fehler("overlay-sendebild", e)
+
+
+def _overlay_kanalweit(nutzer):
+    """BH-1: was in JEDEM Sendebild gleich ist — einmal je Takt, nicht je Restream.
+
+    Dazu Schnappschuesse dessen, woraus je Sendebild ausgewaehlt wird
+    (Reaktion, letztes Event, Follower-Zahl je Quellnutzer): der Schreiber
+    laeuft seit W26 im Thread, der Loop veraendert die Originale weiter.
+    `nutzer` = die Quellnutzer der Sendebilder dieses Takts."""
+    # Spendenziel, letzter Follower, Follower-Zahlen: DB nur alle 5 s lesen —
+    # NICHT jede Sekunde im Hot-Path, sonst blockt der Full-Scan ueber
+    # donation-Events (B72). Neu gelesen wird auch, sobald ein Quellnutzer
+    # dazukommt: sonst stuende ein frisch gestarteter Restream bis zu 5 s ohne
+    # Zahl da. (Die Schluessel "name"/"zahlen"/"fuer" stehen nicht in der
+    # Anlage von _RESTREAM_OV_DBCACHE — gelesen wird mit Vorgabe.)
+    c = _RESTREAM_OV_DBCACHE
+    jetzt = _time_mod.monotonic()
+    fuer = tuple(sorted({u for u in nutzer if u}))
+    if (jetzt - c.get("ts", 0.0)) > 5.0 or c.get("fuer") != fuer:
+        goal_line, name, zahlen = "", "", {}
+        try:
             with db_conn() as conn:
-                # v4.2-W173: dasselbe Ziel wie Website und /spenden
-                # (nc/spendenziel.py) — bis hier zaehlte das Sendebild nur
-                # ab Stream-Start und gegen ein eigenes Ziel.
+                # v4.2-W173: dasselbe Ziel wie Website und /spenden.
                 _z = _nc_spendenziel.stand(conn)
                 if _z["ziel_eur"] > 0:
                     cur, tgt = _z["aktuell_eur"], _z["ziel_eur"]
                     goal_line = f"[{_ov_bar(cur, tgt, 10)}]  {cur:.0f}/{float(tgt):.0f}"
                 fr = conn.execute("SELECT name FROM overlay_events WHERE kind='follow' "
                                   "ORDER BY id DESC LIMIT 1").fetchone()
-                # Follower-Zahl nur wenn Overlay-Quelle TikTok zulässt — bei Kick ist der
-                # TikTok-Wert irreführend (Publikum sitzt auf Kick, nicht beim Quell-Streamer).
-                try:
-                    _act = _restream_active()
-                    if _act.get("user") and _overlay_src_ok("tiktok"):
-                        _fc = _latest_popularity(conn, _act["user"])
-                except Exception:
-                    _fc = 0
-            _fname = (fr["name"] if (fr and fr["name"]) else "")
-            if _fc and _fname:
-                follow_line = f"\u25b2 {fmt_number(_fc)}  \u00b7 +{_ov_oneline(_fname, 22)}"
-            elif _fc:
-                follow_line = f"\u25b2 {fmt_number(_fc)} FOLLOWER"
-            elif _fname:
-                follow_line = "\u25b2 FOLLOWER  " + _ov_oneline(_fname, 32)
-        except Exception:
-            pass
-        c["goal"], c["follow"], c["ts"] = goal_line, follow_line, _time_mod.monotonic()
-    _ov_atomic_write(f["goal"], _ov_oneline(c.get("goal", ""), 70))
-    _ov_atomic_write(f["follow"], _ov_oneline(c.get("follow", ""), 60))
-    # Alert (transient: letztes Event in den letzten 8s — aus _RESTREAM_LAST_EVENT)
-    alert_line = ""
-    try:
-        ev = _RESTREAM_LAST_EVENT or {}
-        if ev.get("name") and (_time_mod.monotonic() - (ev.get("ts") or 0.0)) <= 8:
-            if ev.get("kind") == "follow":
-                alert_line = "\u25b2\u25b2 FOLLOWER  " + _ov_oneline(ev["name"], 30)
-            else:
-                amt = ev.get("amount") or ""
-                extra = ((": " + str(amt)) if amt
-                         else ((" \u00b7 " + str(ev.get("message"))) if ev.get("message") else ""))
-                alert_line = "\u25c6 " + _ov_oneline(ev["name"], 30) + extra
-    except Exception:
-        pass
-    _ov_atomic_write(f["alert"], _ov_oneline(alert_line, 70))
-    # F92: Studio-Panel — Live-Chat, Panel-Caption und Branding-Footer.
-    try:
-        if _restream_layout_mode() == "studio":
-            _ov_atomic_write(f["chat"], _chat_block(
-                source_user=_restream_active().get("user")))
-            legend = []
-            if _chat_src_ok("tiktok"):
-                legend.append("\u25b8 TIKTOK")
-            if _chat_src_ok("kick"):
-                legend.append("\u25cf KICK")
-            cap = "LIVE CHAT" + (("   " + " \u00b7 ".join(legend)) if legend else "")
-            _ov_atomic_write(f["caption"], cap)
-            brand = []
-            for u in (KICK_CHANNEL_URL, DISCORD_INVITE_URL):
-                u = (u or "").strip()
-                if u:
-                    brand.append(u.replace("https://", "").replace("http://", "").rstrip("/"))
-            _ov_atomic_write(f["brand"], _ov_oneline("  \u00b7  ".join(brand), 110))
-    except Exception:
-        pass
-    # V37-P6 (BH3-Fix): Quelle + Chat werden PRO Registry-Eintrag in dessen
-    # eingefrorenes Verzeichnis geschrieben — auch für den Root-Besitzer.
-    # Vorher schrieb der Legacy-Block Root-source/chat aus _RESTREAM_ACTIVE
-    # (= NEUESTER Stream): sobald ein zweiter startete, zeigte der laufende
-    # Root-Stream dessen Quelle/Chat. Kanalweite Texte (Titel, Reaktion,
-    # Ziel, Follower, Alert, Caption, Brand) werden nur in Nicht-Root-Dirs
-    # gespiegelt (Root hat sie frisch vom Legacy-Block).
-    try:
-        for _rid, _info in list(_RESTREAM_ACTIVE_ALL.items()):
-            fr = _restream_overlay_files(_rid)
-            _is_root = (_info or {}).get("ovdir") == _RESTREAM_OV_DIR
-            if not _is_root:
-                for _k in ("title", "react", "goal", "follow", "alert",
-                           "caption", "brand"):
-                    try:
-                        with open(f[_k], encoding="utf-8") as _fh:
-                            _ov_atomic_write(fr[_k], _fh.read())
-                    except OSError:
-                        _ov_atomic_write(fr[_k], "")
-            _sline = ""
-            if _rid in getattr(_RESTREAM_MGR, "_procs", {}):
-                _sline = "\u2514 @" + str(_info.get("user") or "")
-                if _info.get("label"):
-                    _sline += "  \u00b7 " + str(_info["label"])
-            _ov_atomic_write(fr["source"], _ov_oneline(_sline, 80))
-            if _restream_layout_mode() == "studio":
-                _ov_atomic_write(fr["chat"],
-                                 _chat_block(source_user=_info.get("user")))
-    except Exception:
-        pass
+                name = (fr["name"] if (fr and fr["name"]) else "")
+                # Follower-Zahl nur wenn die Overlay-Quelle TikTok zulaesst — bei
+                # Kick ist der TikTok-Wert irrefuehrend (Publikum sitzt auf Kick).
+                if _overlay_src_ok("tiktok"):
+                    zahlen = {u: _latest_popularity(conn, u) for u in fuer}
+        except Exception as e:
+            _loop_fehler("overlay-db", e)
+        c["goal"], c["name"], c["zahlen"], c["fuer"], c["ts"] = goal_line, name, zahlen, fuer, jetzt
+    k = {"title": f"[ LIVE ]  {_ov_oneline(_OVERLAY.get('title') or 'LIVE', 80)}",
+         "goal": c.get("goal", ""), "name": c.get("name", ""),
+         "zahlen": dict(c.get("zahlen") or {}),
+         # V37-AZHIDE: nur wenn die Overlay-Reaktion erlaubt ist (Env-Schalter)
+         # UND das Overlay-Panel azrael_show gesetzt hat. Aus = AZRAEL bleibt im
+         # Sendebild unsichtbar; seine Chat-Antworten laufen davon unberuehrt.
+         "azrael": bool(AZRAEL_OVERLAY_REACT and _OVERLAY.get("azrael_show")),
+         "reaktion": dict(_AZRAEL_REACTION),
+         "gesprochen": dict(getattr(_KICK_MOD, "last_spoken", None) or {}),
+         "ereignis": dict(_RESTREAM_LAST_EVENT or {}),
+         "studio": _restream_layout_mode() == "studio",
+         "wand": _time_mod.time(), "mono": _time_mod.monotonic()}
+    if k["studio"]:
+        # F92: Studio-Panel — Caption (Legende) und Branding-Footer.
+        legend = []
+        if _chat_src_ok("tiktok"):
+            legend.append("\u25b8 TIKTOK")
+        if _chat_src_ok("kick"):
+            legend.append("\u25cf KICK")
+        k["caption"] = "LIVE CHAT" + (("   " + " \u00b7 ".join(legend)) if legend else "")
+        brand = []
+        for u in (KICK_CHANNEL_URL, DISCORD_INVITE_URL):
+            u = (u or "").strip()
+            if u:
+                brand.append(u.replace("https://", "").replace("http://", "").rstrip("/"))
+        k["brand"] = _ov_oneline("  \u00b7  ".join(brand), 110)
+    return k
+
+
+def _overlay_sendebild_schreiben(f, info, kanal, frisch_s):
+    """BH-1: EIN Sendebild — Kanalweites aus `kanal`, der Rest fuer DIESEN Quellnutzer."""
+    nutzer = info.get("user") or ""
+    _ov_atomic_write(f["title"], kanal["title"])
+    laeuft = info.get("rid") in getattr(_RESTREAM_MGR, "_procs", {})
+    _ov_atomic_write(f["source"], _ov_oneline(_nc_ovtext.quelle_zeile(info, laeuft), 80))
+    react = ""
+    if kanal["azrael"]:
+        txt = _nc_ovtext.reaktion_fuer(kanal["reaktion"], kanal["gesprochen"], nutzer,
+                                       frisch_s, kanal["wand"], kanal["mono"])
+        if txt:
+            # V37-OVFIX: 38 Zeichen passen zum ENGEREN (Portrait-)Panel; beide
+            # drawtext-Ketten lesen dieselbe Datei, also bestimmt das schmalste
+            # Panel die Breite. 3 Zeilen + Ellipse: wird doch gekappt, sagt ein
+            # sichtbares »…«, dass es weitergeht (vorher brach der Satz still ab).
+            react = _ov_wrap(f"{AZRAEL_OVERLAY_PREFIX} {txt}",
+                             AZRAEL_OVERLAY_WRAP_W, AZRAEL_OVERLAY_WRAP_LINES,
+                             ellipsis=True)
+    _ov_atomic_write(f["react"], react)
+    _ov_atomic_write(f["goal"], _ov_oneline(kanal["goal"], 70))
+    _ov_atomic_write(f["follow"], _ov_oneline(
+        _nc_ovtext.follow_zeile(kanal["zahlen"].get(nutzer, 0), kanal["name"]), 60))
+    _ov_atomic_write(f["alert"], _ov_oneline(
+        _nc_ovtext.alert_fuer(kanal["ereignis"], nutzer, kanal["mono"]), 70))
+    if kanal["studio"]:
+        _ov_atomic_write(f["chat"], _chat_block(source_user=info.get("user")))
+        _ov_atomic_write(f["caption"], kanal["caption"])
+        _ov_atomic_write(f["brand"], kanal["brand"])
 
 # ---- AZRAEL-Stimme in den Restream-Ton mischen (ohne OBS) -------------------
 # WHY: Piper erzeugt WAVs, die sonst nur eine OBS-Browser-Source abspielen würde.
@@ -13849,7 +13810,19 @@ def _find_chromium():
     return None
 
 
-def _htmlov_screenshot_cmd(binpath, png_tmp, size=None):
+def _htmlov_url(rid, basis):
+    """BH-2: die Overlay-Seite fuer DIESEN Restream — `rid=<rid>` an die Basis
+    (nc.overlaytext.overlay_url: ? oder &, vorhandene Query bleibt).
+
+    Bis hierher bekam jeder Restream dieselbe Seite ohne Kennung, und
+    /api/overlay/state lieferte jedem Tab AZRAELs juengste Reaktion — egal auf
+    welchen Quellnutzer. JEDE Stelle, die Chromium die Overlay-Adresse gibt,
+    geht hierueber. Hier wird NUR die Kennung angehaengt; die Basis (Schema,
+    Host, Port, geprueft per http_url) bestimmt der Aufrufer."""
+    return _nc_ovtext.overlay_url(basis, rid)
+
+
+def _htmlov_screenshot_cmd(binpath, png_tmp, size=None, rid=None):
     # v4.1-W10 (CodeQL py/command-line-injection): Groesse und URL werden hier
     # geprueft, nicht dort, wo sie herkommen. Das ist der EINE Punkt, an dem
     # beide auf eine Kommandozeile gehen — beide stammen aus der .env bzw. aus
@@ -13867,14 +13840,17 @@ def _htmlov_screenshot_cmd(binpath, png_tmp, size=None):
             "--allow-insecure-localhost",     # v5.11.2: TLS am Deck, s. browser_cmd
             f"--window-size={_sz}",
             f"--screenshot={png_tmp}", "--virtual-time-budget=2500",
-            _url]
+            _htmlov_url(rid, _url)]
 
 
-def _htmlov_dauerbrowser(binpath, size, png):
+def _htmlov_dauerbrowser(binpath, size, png, rid=None):
     """v4.2-W170: dauerhaften Overlay-Browser starten und das erste Bild
-       schreiben (= Preflight). None → Aufrufer nimmt den Einzelschuss."""
+       schreiben (= Preflight). None → Aufrufer nimmt den Einzelschuss.
+       BH-2: je rid ein eigener Tab (nc/overlaybrowser, auch im geteilten
+       Chromium) mit eigener Groesse UND eigener Seite (?rid=)."""
     _url = _nc_rutil.http_url(_htmlov_basis_url(), _deck_intern_url("/overlay"))
-    browser = _nc_ovbrowser.Dauerbrowser(binpath, _url, size, nice=FFMPEG_NICE_BG)
+    browser = _nc_ovbrowser.Dauerbrowser(binpath, _htmlov_url(rid, _url), size,
+                                         nice=FFMPEG_NICE_BG)
     try:
         browser.starten(timeout=20)
         # Die Seite holt ihren Zustand per fetch — vor dem ersten Bild kurz
@@ -13882,6 +13858,13 @@ def _htmlov_dauerbrowser(binpath, size, png):
         _time_mod.sleep(1.5)
         _htmlov_bild_schreiben(browser, png)
         return browser
+    except _nc_ovbrowser.SeiteNichtErreichbar:
+        # v5.11.2: die SEITE ist tot, nicht der Browser. Der Einzelschuss
+        # fotografierte dieselbe Chromium-Fehlerseite, nur teurer — und sie
+        # stuende dann statt des Overlays im Sendebild. Der Aufrufer faellt
+        # auf drawtext zurueck (_restream_html_overlay_start).
+        browser.beenden()
+        raise
     except Exception as e:
         browser.beenden()
         log.error("OVERLAY html: dauerhafter Chromium scheitert (%s) → Einzelschuss "
@@ -13925,11 +13908,23 @@ def _restream_html_overlay_start(rid, source_url=None):
     # v4.2-W170: ein dauerhafter Chromium statt eines Kaltstarts je Bild
     # (0,08 statt 0,86 CPU-s je Bild, nc/overlaybrowser.py). Startet er
     # nicht, bleibt der alte Einzelschuss — teuer, aber das Overlay steht.
-    browser = _htmlov_dauerbrowser(binpath, _size, png)
+    try:
+        browser = _htmlov_dauerbrowser(binpath, _size, png, rid)
+    except _nc_ovbrowser.SeiteNichtErreichbar as e:
+        # Gedrosselt je Kanal (nc/meldetakt): je Reconnect eine Zeile waere
+        # die Log-Flut aus W97 — aber still darf der Rueckfall nicht sein.
+        _laut, _weg = _nc_meldetakt.melden("html-overlay-seite", type(e).__name__,
+                                           _time_mod.monotonic())
+        if _laut:
+            log.error("OVERLAY html: Seite nicht erreichbar (%s) → Fallback drawtext. "
+                      "Abhilfe: laeuft das Deck unter dieser Adresse? Eine fremde Seite "
+                      "in RESTREAM_OVERLAY_HTML_URL pruefen oder den Eintrag leeren "
+                      "(dann das eigene Deck).%s", e, _nc_meldetakt.zusatz(_weg))
+        return None
     # Preflight: EIN synchroner Screenshot — scheitert er, kein html-Modus.
     try:
         if browser is None:
-            _r = subprocess.run(_htmlov_screenshot_cmd(binpath, png, _size),
+            _r = subprocess.run(_htmlov_screenshot_cmd(binpath, png, _size, rid),
                                 capture_output=True, timeout=20)
             if _r.returncode != 0 or not os.path.isfile(png) or os.path.getsize(png) < 100:
                 raise RuntimeError((_r.stderr or b"")[-160:])
@@ -13958,7 +13953,7 @@ def _restream_html_overlay_start(rid, source_url=None):
                     await asyncio.sleep(1.0 / RESTREAM_OVERLAY_HTML_FPS)
                     continue
                 p = await asyncio.create_subprocess_exec(
-                    *_htmlov_screenshot_cmd(binpath, tmp, _size),
+                    *_htmlov_screenshot_cmd(binpath, tmp, _size, rid),
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL)
                 try:
@@ -13984,25 +13979,6 @@ def _restream_html_overlay_start(rid, source_url=None):
             except asyncio.CancelledError:
                 return
 
-    def _writer():
-        # FESTER Takt: schreibt jede Periode das aktuelle PNG in die FIFO.
-        # open() blockt bis ffmpeg liest — deshalb eigener Thread.
-        try:
-            with open(fifo, "wb") as f:
-                period = 1.0 / RESTREAM_OVERLAY_HTML_FPS
-                while not stop.is_set():
-                    try:
-                        with open(png, "rb") as im:
-                            f.write(im.read())
-                        f.flush()
-                    except (BrokenPipeError, OSError):
-                        return                    # ffmpeg weg → Writer endet
-                    except Exception:
-                        pass
-                    stop.wait(period)
-        except Exception:
-            pass
-
     # v4.2-W39: NICHT mehr asyncio.get_event_loop(). Diese Funktion laeuft seit
     # W39 in einem Worker-Thread (der Preflight-Screenshot oben ist ein
     # Chromium-Kaltstart und hielt den Event-Loop sekundenlang an). Dort gibt es
@@ -14020,7 +13996,15 @@ def _restream_html_overlay_start(rid, source_url=None):
         except Exception:
             pass
         return None
-    th = threading.Thread(target=_writer, daemon=True)
+    # FESTER Takt in die FIFO (nc.overlaybrowser.fifo_schreiben). BH-9: war
+    # eine innere Funktion mit zwei `except Exception: pass` — ein dauerhaft
+    # unlesbares oder abgeschnittenes PNG lief ohne Zeile weiter, das
+    # Sendebild fror, das Log blieb leer. Jetzt derselbe Drosselkanal wie die
+    # Screenshot-Schleife daneben, eigener Name; ffmpeg weg bleibt INFO.
+    th = threading.Thread(target=_nc_ovbrowser.fifo_schreiben,
+                          args=(fifo, png, stop, 1.0 / RESTREAM_OVERLAY_HTML_FPS,
+                                _loop_fehler, "html-overlay-fifo"),
+                          daemon=True, name="html-overlay-fifo")
     th.start()
     _HTMLOV[rid] = {"fifo": fifo, "png": png, "stop": stop, "task": task, "thread": th,
                     "browser": browser}
@@ -18818,7 +18802,7 @@ async def _start_chat_listener(username, chat_buf, flags=None):
                     # an uns — sie sind keine Einnahme und werden nicht mehr als
                     # 'donation' gebucht. Als 'gift' bleiben sie fuer Overlay/
                     # Statistik erhalten, ohne je in eine Geldsumme zu laufen.
-                    _overlay_push("gift", who, value, gname, platform="tiktok")
+                    _overlay_push("gift", who, value, gname, platform="tiktok", origin=username)
                 if CLIP_ENABLED and value >= CLIP_GIFT_MIN:
                     _spawn(clip_moment(username, f"Gift {value} von {who}", f"{who} -> {gname}"), name="clip-gift")
             if LIVE_REACT_GIFT_THRESHOLD and value >= LIVE_REACT_GIFT_THRESHOLD:
@@ -18839,7 +18823,7 @@ async def _start_chat_listener(username, chat_buf, flags=None):
             chat_buf.append(f"\u2795 {who} folgt jetzt"); _cap()
             await _restream_chat_push_async("event", who, "folgt jetzt", origin=username)
             if _overlay_src_ok("tiktok"):
-                _overlay_push("follow", who, platform="tiktok")   # nur wenn OVERLAY_GIFT_SOURCE TikTok zulässt (Default kick)
+                _overlay_push("follow", who, platform="tiktok", origin=username)   # nur wenn OVERLAY_GIFT_SOURCE TikTok zulässt (Default kick)
         except Exception:
             pass
 
@@ -21427,11 +21411,14 @@ REVENUE_PLATFORMS = _nc_revenue.PLATFORMS
 is_revenue_platform = _nc_revenue.is_revenue_platform
 
 
-def _overlay_push(kind, name, amount=None, message=None, platform="kick"):
+def _overlay_push(kind, name, amount=None, message=None, platform="kick", origin=None):
     """Follower-/Donation-Event ins Overlay.
        V37-OVMP: platform sagt, WOHER das Event kam (kick|twitch|youtube|tiktok)
        — das Overlay zeigt Badges und rechnet Summen pro Plattform. Default
-       'kick' hält alte Aufrufer kompatibel."""
+       'kick' hält alte Aufrufer kompatibel.
+       BH-1: origin = der TikTok-Quellnutzer, in dessen Raum es geschah. Ohne
+       ihn zeigte jeder parallele Restream das Gift aus fremdem Raum als Alert;
+       leer = eigener Kanal, gilt fuer alle Sendebilder (nc.overlaytext.alert_fuer)."""
     platform = (platform or "kick").strip().lower()
     if platform not in _OV_PLATFORMS:
         platform = "kick"
@@ -21456,7 +21443,7 @@ def _overlay_push(kind, name, amount=None, message=None, platform="kick"):
     globals()["_RESTREAM_LAST_EVENT"] = {
         "ts": _time_mod.monotonic(), "kind": kind, "name": (name or "?"),
         "amount": (str(amount) if amount is not None else ""),
-        "message": (message or ""), "platform": platform}
+        "message": (message or ""), "platform": platform, "origin": (origin or "")}
 
 
 _nc_azrael.PUSH["fn"] = _overlay_push     # v4.1-W20: Haken fuer /api/overlay/event
