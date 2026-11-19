@@ -35,6 +35,8 @@ from nc import revenue as _nc_revenue
 from nc import einstellungen as _nc_einst
 from nc import fehlertext as _nc_fehlertext
 from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Ziel fuer alle Anzeigen
+from nc import overlaytext as _nc_ovtext       # BH-2: was gehoert in welches Sendebild
+from nc import restreamstate as _nc_rsstate    # BH-2: Registry aller aktiven Restreams
 from nc.dbwrap import db_conn
 from nc.textutil import clean_username
 from nc import donations as _nc_donations
@@ -80,15 +82,20 @@ def _ov_clip_text(t, maxlen=None):
     return (cut[:p] if p > n * 0.6 else cut).rstrip(" ,;:") + " …"
 
 
-def _azrael_overlay_state():
+def _azrael_overlay_state(nutzer=None):
     """Zustand des AZRAEL-Avatars fürs Overlay: an/aus, ob gerade eine Reaktion
        live ist (active), und der Reaktionstext. 'active' verfällt nach
-       AZRAEL_REACTION_HOLD_S — der Avatar leuchtet nur kurz beim Reagieren auf."""
+       AZRAEL_REACTION_HOLD_S — der Avatar leuchtet nur kurz beim Reagieren auf.
+
+       BH-2: mit `nutzer` (Seite mit ?rid=) zaehlt nur eine Reaktion auf DIESEN
+       Quellnutzer — sonst sprach AZRAEL im Sendebild von A ueber B.
+       nutzer=None ist die OBS-Seite ohne rid: alles wie bisher."""
     if not _nc_azrael.OVERLAY.get("azrael_show"):
         return {"show": False, "active": False, "text": "", "statement": ""}
-    r = _nc_azrael.REACTION
+    r = dict(_nc_azrael.REACTION)
     halt = _zahl("AZRAEL_REACTION_HOLD_S", 18, 5, 120)
-    active = bool(r.get("text")) and (time.time() - r.get("ts", 0)) < halt
+    active = (bool(r.get("text")) and (time.time() - r.get("ts", 0)) < halt
+              and _nc_ovtext.gehoert_zu(r.get("source"), nutzer))
     return {"show": True, "active": active,
             # V37-B101: gekappt fürs Sendebild (Textwand vermeiden)
             "text": _ov_clip_text(r.get("text", "")) if active else "",
@@ -147,9 +154,32 @@ def overlay_chatbild_daten():
     return jsonify(ok=True, zeilen=_nc_channels.chat_eintraege(source_user=nutzer or None))
 
 
+def _quelle_fuer(rid):
+    """BH-2: Quellnutzer und Label des Restreams `rid` aus der Registry, sonst None.
+
+    Die Registry fuehrt den rid als Zahl, die Anfrage bringt Text. Ein
+    unbekannter rid (Restream gerade beendet, Tippfehler) ist KEIN Grund, das
+    Sendebild eines anderen zu zeigen — der Aufrufer filtert dann auf
+    „kanalweit" (leerer Nutzer)."""
+    alle = _nc_rsstate.ACTIVE_ALL
+    info = alle.get(rid) or (alle.get(int(rid)) if rid.isdigit() else None)
+    return ({"user": info.get("user") or "", "label": info.get("label") or ""}
+            if info else None)
+
+
 @bp.route("/api/overlay/state")
 def api_overlay_state():
-    """Live-Zustand fürs Overlay: Name, Ziel, letzter Follower, Donations, Moderator."""
+    """Live-Zustand fürs Overlay: Name, Ziel, letzter Follower, Donations, Moderator.
+
+    BH-2: ?rid=<rid> ist die Seite EINES Restreams (der Bot oeffnet sie je rid
+    in Chromium, bot._htmlov_url). Dann kommt `quelle` dazu, und AZRAELs
+    Reaktion zaehlt nur, wenn sie diesem Quellnutzer gilt. Kanalweit bleiben,
+    mit Grund in nc/overlaytext.py: Sendername (ein Konfigwert), Spendenziel,
+    Donations und Follower der EIGENEN Kanaele, die Zeile im eigenen Kick-Chat.
+    Ohne rid (OBS) bleibt alles wie bisher."""
+    rid = (request.args.get("rid") or "").strip()
+    quelle = _quelle_fuer(rid) if rid else None
+    nutzer = ((quelle or {}).get("user") or "") if rid else None
     latest_follower = None
     followers = []
     donations = []
@@ -224,7 +254,8 @@ def api_overlay_state():
             "last_line": last_spoken.get("text", "") if spoken_age < 30 else "",
             "stats": getattr(mod, "stats", {}) or {},
         },
-        azrael=_azrael_overlay_state(),
+        azrael=_azrael_overlay_state(nutzer),
+        quelle=quelle,                   # BH-2: nur mit ?rid= gesetzt
         voice={
             "enabled": bool(ov.get("voice_enabled")),
             "engine": ov.get("voice_engine", "browser"),

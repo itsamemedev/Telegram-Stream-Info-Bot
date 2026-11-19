@@ -388,3 +388,79 @@ class Dauerbrowser:
                 v.beenden()
                 raise
             return base64.b64decode(erg.get("data") or "")
+
+
+# ---- BH-9 (Bughunt v5.11): der FIFO-Schreiber des HTML-Overlays -------------
+_PNG_KOPF = b"\x89PNG\r\n\x1a\n"
+_PNG_ENDE = b"IEND\xaeB`\x82"     # Typ + CRC des IEND-Blocks: die letzten 8 Bytes
+
+
+def png_vollstaendig(daten) -> bool:
+    """Kopf UND Schlussblock da? Ein abgeschnittenes PNG — ein Einzelschuss-
+    Chromium, der mitten im Schreiben geerntet wurde, kommt mit „> 100 Bytes"
+    durch — zerlegt ffmpegs image2pipe Bild fuer Bild, und das Sendebild
+    friert ohne jede Zeile im Log."""
+    return bool(daten) and daten.startswith(_PNG_KOPF) and daten.endswith(_PNG_ENDE)
+
+
+def fifo_schreiben(fifo, png, stop, takt, melden, name="html-overlay-fifo"):
+    """Fester Takt: jede Periode das aktuelle PNG in die FIFO, die ffmpeg liest.
+
+    Das Design gegen den gefaehrlichsten Fehlerfall bleibt (ein stallender
+    Overlay-Eingang stallt den GANZEN ffmpeg): es wird IMMER geschrieben,
+    notfalls das letzte gute Bild. open() blockiert, bis ffmpeg liest —
+    deshalb laeuft das in einem eigenen Faden.
+
+    BH-9: bis hierher stand in bot.py `except Exception: pass` um das Lesen
+    und noch einmal um alles. Schlimmer: ein OSError beim LESEN des PNG fiel
+    in denselben Zweig wie „ffmpeg weg" und beendete den Schreiber still —
+    der Overlay-Eingang stand, ffmpeg wiederholte das letzte Bild (eof_action
+    =repeat), und das Log blieb leer. Jetzt getrennt:
+
+      PNG fehlt / unlesbar / abgeschnitten  -> melden(name, e) (_loop_fehler
+                                               des Bots: erste Meldung sofort),
+                                               das letzte gute Bild weiter
+      Schreiben scheitert (BrokenPipe)       -> ffmpeg ist weg: INFO, Ende
+      FIFO nicht zu oeffnen                  -> gestoppt: INFO; sonst melden
+    """
+    try:
+        f = open(fifo, "wb")
+    except OSError as e:
+        if stop.is_set():
+            log.info("%s: %s beim Stopp nicht mehr zu oeffnen (%s) — Schreiber endet.",
+                     name, fifo, e)
+        else:
+            melden(name, e)
+        return
+    letztes = b""
+    try:
+        while not stop.is_set():
+            daten = b""
+            try:
+                with open(png, "rb") as im:
+                    daten = im.read()
+                if not png_vollstaendig(daten):
+                    raise OverlayBrowserFehler(
+                        "%s ist kein vollstaendiges PNG (%d Bytes) — das letzte gute "
+                        "Bild bleibt stehen" % (png, len(daten)))
+                letztes = daten
+            except Exception as e:
+                melden(name, e)
+                # Noch gar kein gutes Bild: dann eben dieses, wie bis BH-9 jedes.
+                # Ohne jedes Bild wartet ffmpegs overlay-Filter auf den ersten
+                # Frame — und haelt damit den ganzen Sender an.
+                letztes = letztes or daten
+            if letztes:
+                try:
+                    f.write(letztes)
+                    f.flush()
+                except OSError as e:          # BrokenPipeError gehoert dazu
+                    log.info("%s: ffmpeg liest %s nicht mehr (%s) — Schreiber endet.",
+                             name, fifo, e)
+                    return
+            stop.wait(takt)
+    finally:
+        try:
+            f.close()
+        except OSError:
+            pass   # Aufraeumen: Pipe schon zu — der Rest im Puffer will niemand mehr
