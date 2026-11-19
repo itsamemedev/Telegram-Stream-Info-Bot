@@ -770,6 +770,19 @@ Vorgabenblock, und `WIDTH="${WIDTH:-54}"` *setzt* WIDTH — eine Prüfung auf
 Vertrag, nicht das Nachdenken. **Wer in einer Shell die Umgebung von den
 Vorgaben unterscheiden will, muss das vor der ersten Zuweisung tun.**
 
+**Eine installierte Kopie ist ein Schnappschuss.** `motd.sh --install` kopiert
+nach `/etc/update-motd.d/99-nightcrawler`; die Update-Funktion schreibt
+`tools/motd.sh` und erreicht diese Kopie nie. Seit v5.11.1-W210 meldet sie eine
+abweichende Fassung im Bestand. Sie führt die neue bewusst **nicht** aus:
+eine Datei, die der Bot-Nutzer schreiben darf, bei jedem Login als root zu
+starten, wäre ein Weg vom Bot zu root. Und „zweimal gezeigt" heißt nicht
+„zweimal gelaufen" — der Betreiber sah das Statusbild doppelt, und dafür gibt
+es fünf Wege außerhalb des Skripts (Verweis `/etc/motd` →
+`/run/motd.dynamic`, statische Kopie, zweites Stück, Shell-Startdatei,
+`pam_motd` zweimal). `doppelt_befunde` erkennt jeden einzeln; PAM und fremde
+Startdateien werden nur genannt, nie geändert — eine falsche PAM-Zeile sperrt
+den SSH-Zugang.
+
 **Ein Update, das nicht neu startet, wirkt nicht — und sagt es nur einmal.**
 Die Update-Funktion schreibt die Dateien, und der laufende Prozess behält
 seinen Bytecode. Der Neustart selbst ist gut gebaut und bleibt: das Deck zeigt

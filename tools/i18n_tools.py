@@ -94,7 +94,8 @@ _FRAGEN = _beide(r'(?:frage_ja|frage_text|frage_geheimnis|frage_wahl)\s+(?:\w+\s
 # ausdruecklich mit t(). Die Senken von installer.sh gibt es dort nicht — und
 # genau deshalb sammelte der Pruefer bisher NICHTS aus motd.sh und meldete
 # trotzdem 100 % Abdeckung. Eine Zahl, die nur zaehlt, was sie ohnehin kennt.
-_MOTD_SENKEN = re.compile(r'(?:^|\s)(?:sect|row|gauge)\s+"([^"\\$`]{2,})"', re.M)
+# v5.11.1-W210: dazu kachel — die Kennzahl-Kacheln des Leitstand-Kopfs.
+_MOTD_SENKEN = re.compile(r'(?:^|\s)(?:sect|row|gauge|kachel)\s+"([^"\\$`]{2,})"', re.M)
 # lage_setz traegt den Text der Gesamtampel. Er wird erst beim Zeichnen
 # uebersetzt ($(t "$LAGE_TEXT")), muss aber hier eingesammelt werden —
 # sonst fehlt genau die Zeile im Katalog, die als erste ins Auge faellt.
@@ -259,7 +260,7 @@ _KEIN_TEXT = ("NIGHTCRAWLER", "CROWDSEC", "DASHBOARD")
 
 # Aufrufe, deren erstes Literal ohnehin durch t()/tf() laeuft.
 _UMSCHLOSSEN = (
-    r'(?:info|gut|warn|fehler|erklaere|merke|merken|kopf|abschnitt|nz|sect|row|gauge|'
+    r'(?:info|gut|warn|fehler|erklaere|merke|merken|kopf|abschnitt|nz|sect|row|gauge|kachel|'
     r'frage_ja|frage_text|frage_geheimnis|frage_wahl|tz|' +
     "|".join(DURCHREICHER) + r')\s+(?:\w+\s+)?')
 

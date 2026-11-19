@@ -9,6 +9,78 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.11.1] — 2026-11-19 · „Türschild" (W210)
+
+Der Betreiber am 14.11.: „Kannst du mir die motd.sh anpassen, dass es
+aussieht wie die Übersicht im Dashboard? Zumal die aktuelle mir 2x
+untereinander angezeigt wird."
+
+### Geändert — das Login-Statusbild ist ein Leitstand
+
+- **Aufbau wie die Übersicht:** Kopf mit Gesamtampel, Fassung und
+  `ON AIR`/`OFF AIR`; fünf Kennzahl-Kacheln (Live jetzt, Getrackt,
+  Aufnahmen, Restream, Wächter) mit farbiger Unterkante; die Lieferkette
+  Erfassen → Live → Aufnahme → Kodieren → Versand → Restream → Archiv; Tafeln
+  mit Titel links und Lage rechts in der Linie (System, Dienst, die neun
+  Tafeln des Decks, Ereignisse, Kanäle, Hinweise). Farben aus dem Deck-Thema
+  „Leitstand" (Leuchtblau, Violett, die Ampel), in Truecolor, 256 und 16
+  Farben.
+- **Dieselbe Quelle wie das Deck:** die MOTD fragt `/api/leitstand` über
+  Loopback — das Deck lässt lokale Anfragen ohne Token durch, die MOTD liest
+  dafür nichts Geheimes. Damit stehen die Zahlen auch unter **MariaDB** da;
+  bisher stand dort nur „Zahlen nur im Dashboard". Antwortet das Deck nicht,
+  stehen die Kacheln auf „—" (grau, nie 0) und die Tafel-Zeile sagt warum.
+- **Fremder Text bleibt Text:** Nutzernamen und Ereignistexte kommen von
+  außen und laufen als root ins Terminal. Steuerzeichen und ESC-Folgen
+  werden vor der Ausgabe entfernt, gekürzt wird nach sichtbarer Breite.
+- **`WIDTH` ist jetzt 62** (fünf Kacheln nebeneinander). Wer per Handy
+  einloggt: `sudo tools/motd.sh --configure --set WIDTH=50` — Kacheln und
+  Lieferkette brechen dann um.
+
+### Behoben
+
+- **Doppelte Anzeige.** Das Skript läuft einmal, gezeigt wird es auf fünf
+  bekannten Wegen zweimal: `/etc/motd` als Verweis auf `/run/motd.dynamic`,
+  eine statische Kopie des Statusbilds (`/etc/motd`, `motd.d`), ein zweites
+  Stück in `/etc/update-motd.d`, eine Shell-Startdatei, die `motd.sh` noch
+  einmal aufruft, und `pam_motd` zweimal mit Aktualisierung. Jede Ursache
+  wird einzeln erkannt. `--install` räumt weg, was der MOTD gehört (Verweis
+  und Kopien beiseite, nicht gelöscht; zweites Stück gedämpft und vermerkt).
+  Fremde Startdateien und PAM bleiben unberührt — eine falsche PAM-Zeile
+  sperrt den SSH-Zugang — und werden mit Zeile und Abhilfe genannt:
+  in `--doctor` und im Hinweisblock des Statusbilds selbst.
+- **Die installierte Kopie veraltete still.** `/etc/update-motd.d/99-nightcrawler`
+  ist ein Schnappschuss; die Update-Funktion schreibt `tools/motd.sh`,
+  erreicht die Kopie aber nie. Sie meldet jetzt, wenn im Bestand eine andere
+  Fassung liegt. Ausgeführt wird die neue bewusst nicht: eine Datei, die der
+  Bot-Nutzer schreiben darf, bei jedem Login als root zu starten, wäre ein
+  Weg vom Bot zu root.
+- **Der Kopf war versionslos.** Er las `BUILD_STAMP` als Literal aus `bot.py`;
+  dort steht seit v5 `_nc_version.build_stamp()`. Die Fassung kommt jetzt aus
+  `nc/version.py`.
+- **Ein zweites `--install` überschrieb die Liste der gedämpften Stücke** —
+  `--uninstall` holte danach die vom ersten Lauf nie zurück. Die Liste wird
+  ergänzt.
+
+### Nach dem Update
+
+Die installierte Kopie erneuert sich nicht selbst:
+
+    sudo tools/motd.sh --install
+    tools/motd.sh --doctor        # Abschnitt „Doppelte Anzeige"
+
+### Geprüft
+
+`_test_v511_w210_motd_leitstand` gegen ein Attrappen-Deck, das
+`nc.leitstand.bauen` ausliefert (Kacheln, Lieferkette, neun Tafeln, Ampel aus
+den Tafeln, ESC-Folge im Ereignistext, kein Token im Abruf, Breite 62 und 50,
+„—" grau ohne Deck, MariaDB-Hinweis, veraltete Kopie) und gegen eine
+nachgebaute Wurzel mit allen fünf Doppel-Ursachen, der Ubuntu-Vorgabe als
+Gegenprobe und `@include`. 21 Mutationsproben, alle gefangen — zwei erst im
+zweiten Anlauf: eine Zeile war doppelt (die Vorgabe deckte den Fall schon
+ab, die Zeile ist weg), und dass „—" grau statt grün steht, sieht nur ein
+Lauf in Farbe.
+
 ## [5.11.0] — 2026-11-14 · „Heimkehr" (W209)
 
 Der Betreiber am 14.11.: „Irgendwie sind die getrackten Nutzer samt Aufnahmen,

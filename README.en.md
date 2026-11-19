@@ -575,6 +575,11 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 
 ## 🆕 New in v5.11
 
+**“Doorplate” (5.11.1)** — the login status screen looks like the overview:
+header with status light and `ON AIR`, metric tiles, the delivery chain and
+the nine panels — from `/api/leitstand`, so with numbers under MariaDB too.
+If it shows twice, it names the cause; `sudo tools/motd.sh --install` cleans up.
+
 **“Homecoming”** — the per-user Discord areas are back:
 
 - Every tracked user has `🎯 name` again with `-aufnahmen`, `-chat` and
@@ -805,7 +810,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **5.11.0** — “Homecoming” (2026.11) |
+| Current version | **5.11.1** — “Doorplate” (2026.11) |
 | Flask routes | 391 (34 in `bot.py` · 357 in `nc/routes/`) |
 | Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |

@@ -50,13 +50,34 @@
 #     die 90er-Schwelle reisst. In 256 und 16 Farben gaebe das Bandenbildung
 #     statt Verlauf; dort bleibt es bei der einen Farbe.
 #
+# NEU IN v3.0 (v5.11.1-W210) — der Betreiber am 14.11.: „Kannst du mir die
+# motd.sh anpassen, dass es aussieht wie die Uebersicht im Dashboard? Zumal die
+# aktuelle mir 2x untereinander angezeigt wird."
+#   * LEITSTAND. Kopf, Kennzahl-Kacheln, Lieferkette und die neun Tafeln wie
+#     in der Uebersicht des Decks — und aus DERSELBEN Quelle: /api/leitstand
+#     ueber Loopback (das Deck laesst lokale Anfragen ohne Token durch, W149).
+#     Bis hierher las die MOTD ihre Zahlen selbst aus SQLite; der Betrieb
+#     laeuft aber auf MariaDB, und dort stand nur „Zahlen nur im Dashboard".
+#     Antwortet das Deck nicht, sagt die Tafel-Zeile das und warum — nichts
+#     geladen ist nicht dasselbe wie nichts da (W99).
+#   * DOPPELT. Das Skript laeuft EINMAL; gezeigt wird es auf fuenf bekannten
+#     Wegen zweimal (Verweis /etc/motd -> /run/motd.dynamic, statische Kopie,
+#     zweites Stueck in update-motd.d, Shell-Startdatei, pam_motd zweimal).
+#     --install raeumt weg, was der MOTD gehoert, --doctor nennt jeden Fund
+#     mit Ort, und das Statusbild selbst sagt es im Hinweisblock.
+#   * VERALTET. Die installierte Kopie ist ein Schnappschuss — die
+#     Update-Funktion erreicht sie nie. Sie meldet jetzt, wenn im Bestand
+#     eine andere Fassung liegt, statt still alt zu bleiben.
+#   * FASSUNG. Der Kopf las BUILD_STAMP als Literal aus bot.py; dort steht
+#     seit v5 ein Funktionsaufruf, und der Kopf war wieder versionslos.
+#
 # Grundregel: eine MOTD darf NIE einen Login blockieren. Deshalb kein set -e,
 # kein Kommando ohne Zeitdeckel und jedes externe Werkzeug nur nach have().
 
 LC_ALL=C
 export LC_ALL
 
-NC_MOTD_VERSION="2.1"
+NC_MOTD_VERSION="3.0"
 
 # v4.2-W100: Momentaufnahme der WIRKLICH von aussen gesetzten Variablen —
 # noch VOR dem Vorgabenblock. Das ist der Kern: `WIDTH="${WIDTH:-54}"` setzt
@@ -90,7 +111,10 @@ BOT_DIR="${BOT_DIR:-}"          # leer = automatisch suchen
 DASH_PORT="${DASH_PORT:-}"      # leer = aus .env (DASHBOARD_PORT), sonst 8050
 DB="${DB:-}"                    # leer = tiktok_bot.db im BOT_DIR, sonst groesste *.db
 DISK_TARGET="${DISK_TARGET:-/}"
-WIDTH="${WIDTH:-54}"
+# v5.11.1-W210: 62 statt 54 — fuenf Kennzahl-Kacheln zu je zwoelf Spalten
+# nebeneinander, wie die Kopfreihe des Decks. Wer per Handy einloggt, setzt
+# WIDTH=50 (--configure); die Kacheln brechen dann in zwei Reihen um.
+WIDTH="${WIDTH:-62}"
 BARW="${BARW:-22}"
 SHOW_REC="${SHOW_REC:-1}"       # Aufnahmen-Block (0 = aus)
 REC_CACHE_TTL="${REC_CACHE_TTL:-900}"   # Sekunden; der Scan ist der teuerste Teil
@@ -167,24 +191,29 @@ case "$COLOR_MODE" in
     esac ;;
   *)         case "${COLORTERM:-}" in *[Tt]ruecolor*|*24bit*) _tc=1 ;; esac ;;
 esac
+# v5.11.1-W210: die Farben des Deck-Themas „Leitstand" (W207) statt Messing —
+# Leuchtblau als Akzent, Violett als Zweitakzent, die Ampel wie im Deck:
+#   --neon #5CD6FF  --neon-dim #4BA3D9  --text #DCE8FF  --text-faint #8296C2
+#   --ok #7DF2C4    --amber #FFC25A     --red #FF7A86   --magenta #C8A2FF
 if [ -z "$e" ]; then
-  BR=""; DIM=""; TXT=""; FNT=""; OK=""; WRN=""; ERR=""; B=""; R=""
+  BR=""; DIM=""; TXT=""; FNT=""; OK=""; WRN=""; ERR=""; MAG=""; B=""; R=""
 elif [ "$_tc" != 1 ] && [ "$_pal" = 16 ]; then
-  # Die 16 Basisfarben. Haesslicher als die Messing-Palette, aber sichtbar —
+  # Die 16 Basisfarben. Haesslicher als das Leuchtblau, aber sichtbar —
   # und sichtbar schlaegt schoen, wenn es die Statusanzeige eines Servers ist.
-  BR="${e}[1;33m"; DIM="${e}[33m"; TXT="${e}[37m"
-  FNT="${e}[90m"; OK="${e}[32m"; WRN="${e}[33m"
-  ERR="${e}[31m"
+  # Warnungen fett: Gelb und Cyan liegen in manchen Handy-Apps nah beieinander.
+  BR="${e}[1;36m"; DIM="${e}[36m"; TXT="${e}[37m"
+  FNT="${e}[90m"; OK="${e}[32m"; WRN="${e}[1;33m"
+  ERR="${e}[31m"; MAG="${e}[35m"
   B="${e}[1m"; R="${e}[0m"
 elif [ "$_tc" = 1 ]; then
-  BR="${e}[38;2;232;200;106m"; DIM="${e}[38;2;201;162;39m"; TXT="${e}[38;2;239;231;214m"
-  FNT="${e}[38;2;138;129;114m"; OK="${e}[38;2;127;168;107m"; WRN="${e}[38;2;224;154;60m"
-  ERR="${e}[38;2;212;85;63m"
+  BR="${e}[38;2;92;214;255m"; DIM="${e}[38;2;75;163;217m"; TXT="${e}[38;2;220;232;255m"
+  FNT="${e}[38;2;130;150;194m"; OK="${e}[38;2;125;242;196m"; WRN="${e}[38;2;255;194;90m"
+  ERR="${e}[38;2;255;122;134m"; MAG="${e}[38;2;200;162;255m"
   B="${e}[1m"; R="${e}[0m"
 else
-  BR="${e}[38;5;179m"; DIM="${e}[38;5;136m"; TXT="${e}[38;5;187m"
-  FNT="${e}[38;5;101m"; OK="${e}[38;5;107m"; WRN="${e}[38;5;173m"
-  ERR="${e}[38;5;167m"
+  BR="${e}[38;5;81m"; DIM="${e}[38;5;74m"; TXT="${e}[38;5;189m"
+  FNT="${e}[38;5;103m"; OK="${e}[38;5;122m"; WRN="${e}[38;5;221m"
+  ERR="${e}[38;5;210m"; MAG="${e}[38;5;183m"
   B="${e}[1m"; R="${e}[0m"
 fi
 
@@ -303,7 +332,11 @@ silence_defaults(){
     chmod -x "$f" 2>/dev/null && s="$s $b"
   done
   if [ -n "$s" ]; then
-    printf '%s\n' $s > "$NC_STATE"
+    # Ergaenzen, nicht ueberschreiben: ein zweites --install fand nur noch
+    # die NEU hinzugekommenen Stuecke, schrieb nur sie in die Liste — und
+    # --uninstall holte danach die vom ersten Lauf nie mehr zurueck.
+    { cat "$NC_STATE" 2>/dev/null; printf '%s\n' $s; } | sort -u > "$NC_STATE.neu" \
+      && mv -f "$NC_STATE.neu" "$NC_STATE"
     printf "  ${FNT}%s${R}%s\n" "$(t "Standard-MOTD gedaempft:")" "$s"
   else
     printf "  ${FNT}%s${R}\n" "$(t "Standard-MOTD war bereits still")"
@@ -342,6 +375,129 @@ restore_defaults(){
     fi
   fi
   [ "$wieder" = 1 ] && printf "  ${FNT}%s${R}\n" "$(t "Standard-MOTD wiederhergestellt")"
+  return 0
+}
+
+# ── Doppelte Anzeige (v5.11.1-W210) ──────────────────────────
+# Der Betreiber am 14.11.: „die aktuelle wird mir 2x untereinander angezeigt".
+# Das Skript laeuft dabei EINMAL — GEZEIGT wird es zweimal, und dafuer gibt es
+# fuenf bekannte Wege. Jeder wird einzeln erkannt, weil jeder eine andere
+# Abhilfe hat; ein „irgendwas ist doppelt" waere dieselbe Art Meldung wie ein
+# blankes „HTTP 403".
+NC_MARKE="NIGHTCRAWLER — Message of the Day"
+NC_KOPIEN="/etc/nightcrawler/motd-kopien"
+# NC_WURZEL setzt nur der Vertrag: er baut die Lage in einem Verzeichnis nach,
+# statt auf der Pruefmaschine /etc anzufassen.
+
+pam_motd_laeufe(){ # $1 = PAM-Datei -> Zahl der pam_motd-Zeilen OHNE noupdate
+  # Nur diese rechnen die MOTD neu UND zeigen sie. Die Vorgabe von Ubuntu und
+  # Debian ist genau EINE (motd=/run/motd.dynamic) und eine mit noupdate fuer
+  # /etc/motd. Eine Ebene @include, weil common-session dort mitlaufen kann.
+  local f="$1" inc w="${NC_WURZEL:-}"
+  [ -r "$f" ] || { echo 0; return 0; }
+  { grep -E '^[[:space:]]*session[[:space:]].*pam_motd\.so' "$f" 2>/dev/null
+    for inc in $(sed -n 's/^[[:space:]]*@include[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' "$f" 2>/dev/null); do
+      case "$inc" in */*|"") continue;; esac
+      grep -E '^[[:space:]]*session[[:space:]].*pam_motd\.so' "$w/etc/pam.d/$inc" 2>/dev/null
+    done; } | grep -vc 'noupdate'
+  return 0
+}
+
+doppelt_befunde(){ # -> je Befund eine Zeile "art|ort"
+  [ "$OS" = "Linux" ] || return 0     # macOS: der Shell-rc-Block IST der Weg
+  local f z n eigen w="${NC_WURZEL:-}"; eigen="$(basename "$DEST")"
+  # (1) /etc/motd verweist auf die dynamische MOTD. pam_motd zeigt erst
+  #     /run/motd.dynamic, danach /etc/motd (die noupdate-Zeile) — zweimal
+  #     dieselbe Datei. Auf hochgezogenen Ubuntus steht der Verweis von Haus
+  #     aus da. Mit -L geprueft und nicht mit -s: ein Verweis, dessen Ziel beim
+  #     --install gerade fehlte, blieb sonst stehen.
+  if [ -L "$w/etc/motd" ]; then
+    z="$(readlink "$w/etc/motd" 2>/dev/null)"
+    case "$z" in *motd.dynamic*|*run/motd*) printf 'verweis|/etc/motd -> %s\n' "$z";; esac
+  fi
+  # (2) eine STATISCHE Kopie des Statusbilds (motd.sh > /etc/motd, oder eine
+  #     Datei in motd.d) — sie steht unter dem echten und veraltet still.
+  for f in "$w"/etc/motd "$w"/run/motd "$w"/etc/motd.d/* "$w"/run/motd.d/*; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    grep -qs "NIGHTCRAWLER" "$f" && printf 'kopie|%s\n' "$f"
+  done
+  # (3) ein zweites Stueck in update-motd.d, das ebenfalls das Statusbild
+  #     zeichnet (eine alte Kopie unter anderem Namen).
+  for f in "$w"/etc/update-motd.d/*; do
+    [ -f "$f" ] && [ -x "$f" ] || continue
+    case "$(basename "$f")" in "$eigen"|.*) continue;; esac
+    grep -qs -e "$NC_MARKE" -e 'motd\.sh' "$f" && printf 'stueck|%s\n' "$f"
+  done
+  # (4) eine Shell-Startdatei ruft das Statusbild bei jedem Login noch einmal.
+  #     Kommentare und alias-Zeilen zaehlen nicht: die laufen beim Login nicht.
+  for f in "$w"/etc/profile "$w"/etc/bash.bashrc "$w"/etc/zsh/zshrc "$w"/etc/zsh/zprofile \
+           "$w"/etc/profile.d/*.sh "$w"/root/.bashrc "$w"/root/.profile "$w"/root/.bash_profile \
+           "$w"/root/.zshrc "$w"/home/*/.bashrc "$w"/home/*/.profile "$w"/home/*/.bash_profile \
+           "$w"/home/*/.zshrc; do
+    [ -f "$f" ] && [ -r "$f" ] || continue
+    n="$(grep -n -e 'motd\.sh' -e 'update-motd\.d' -e 'motd\.dynamic' -e '99-nightcrawler' "$f" 2>/dev/null \
+         | grep -v -e '^[0-9]*:[[:space:]]*#' -e '^[0-9]*:[[:space:]]*alias[[:space:]]' | head -1 | cut -d: -f1)"
+    [ -n "$n" ] && printf 'startdatei|%s:%s\n' "$f" "$n"
+  done
+  # (5) pam_motd rechnet und zeigt das Bild zweimal.
+  n="$(pam_motd_laeufe "$w/etc/pam.d/sshd")"
+  [ "${n:-0}" -ge 2 ] 2>/dev/null && printf 'pam|%s/etc/pam.d/sshd\n' "$w"
+  return 0
+}
+
+doppelt_text(){ # $1 = art -> was es ist (uebersetzt)
+  case "$1" in
+    verweis)    t "/etc/motd verweist auf die dynamische MOTD";;
+    kopie)      t "statische Kopie des Statusbilds";;
+    stueck)     t "zweites Statusbild in /etc/update-motd.d";;
+    startdatei) t "Shell-Startdatei ruft das Statusbild noch einmal";;
+    pam)        t "pam_motd laeuft zweimal mit Aktualisierung";;
+    *)          printf '%s' "$1";;
+  esac
+}
+
+doppelt_abhilfe(){ # $1 = art, $2 = ort -> was zu tun ist (uebersetzt)
+  case "$1" in
+    startdatei) tf "Zeile %s in %s entfernen" "${2##*:}" "${2%:*}";;
+    pam)        t "eine der pam_motd-Zeilen in /etc/pam.d/sshd mit noupdate versehen";;
+    *)          printf 'sudo %s --install' "$(motd_pfad)";;
+  esac
+}
+motd_pfad(){
+  if [ -n "$BOT_DIR" ]; then printf '%s/tools/motd.sh' "$BOT_DIR"; else printf 'tools/motd.sh'; fi
+}
+
+doppelt_beheben(){
+  # Nur was der MOTD gehoert, wird angefasst: Verweise und Kopien des eigenen
+  # Bilds. Fremde Startdateien und PAM bleiben unberuehrt und werden genannt —
+  # eine falsche PAM-Zeile sperrt den SSH-Zugang, und das laesst sich aus der
+  # Ferne nicht mehr beheben.
+  local art ort f ziel w="${NC_WURZEL:-}"
+  doppelt_befunde > "${TMPDIR:-/tmp}/nc-motd-doppelt.$$" 2>/dev/null
+  while IFS='|' read -r art ort; do
+    case "$art" in
+      verweis)
+        mkdir -p "$(dirname "$NC_MOTD_SAVED")" 2>/dev/null
+        ziel="$NC_MOTD_SAVED"; [ -e "$ziel" ] || [ -L "$ziel" ] && ziel="$NC_MOTD_SAVED.verweis"
+        if mv "$w/etc/motd" "$ziel" 2>/dev/null; then
+          : > "$w/etc/motd" 2>/dev/null || true
+          printf "  ${OK}✔${R} ${FNT}%s → %s${R}\n" "$(t "Verweis /etc/motd beiseitegelegt")" "$ziel"
+        fi;;
+      kopie|stueck)
+        f="${ort}"; mkdir -p "$NC_KOPIEN" 2>/dev/null
+        if [ "$art" = stueck ]; then
+          chmod -x "$f" 2>/dev/null && printf '%s\n' "$(basename "$f")" >> "$NC_STATE" \
+            && printf "  ${OK}✔${R} ${FNT}%s %s${R}\n" "$(t "zweites Statusbild gedaempft:")" "$f"
+        elif mv "$f" "$NC_KOPIEN/$(basename "$f").$(date +%Y%m%d%H%M%S)" 2>/dev/null; then
+          [ "$f" = "$w/etc/motd" ] && { : > "$f" 2>/dev/null || true; }
+          printf "  ${OK}✔${R} ${FNT}%s %s → %s${R}\n" "$(t "alte Kopie beiseitegelegt:")" "$f" "$NC_KOPIEN"
+        fi;;
+      *)
+        printf "  ${WRN}▲${R} %s ${FNT}(%s)${R}\n    ${TXT}%s${R}\n" \
+               "$(doppelt_text "$art")" "$ort" "$(doppelt_abhilfe "$art" "$ort")";;
+    esac
+  done < "${TMPDIR:-/tmp}/nc-motd-doppelt.$$"
+  rm -f "${TMPDIR:-/tmp}/nc-motd-doppelt.$$"
   return 0
 }
 
@@ -385,6 +541,7 @@ install_linux(){
   printf "${OK}✔ %s${R} → %s\n" "$(t "installiert")" "$DEST"
   write_conf
   silence_defaults
+  doppelt_beheben
   printf "  ${FNT}%s  sudo run-parts /etc/update-motd.d/${R}\n" "$(t "Vorschau:")"
   printf "  ${FNT}%s${R}\n" "$(t "'Last login' kommt von SSH — optional 'PrintLastLog no' in sshd_config")"
   if ! grep -rqs 'pam_motd' /etc/pam.d/sshd 2>/dev/null; then
@@ -611,6 +768,32 @@ doctor(){
   _ni="$(detect_netif)"
   printf "  %-12s %s\n" "$(t "Netz")"      "${_ni:-— $(t "keine Schnittstelle erkannt")}"
   printf "  %-12s %s\n" "$(t "Werkzeuge")" "$(for t in systemctl ss curl sqlite3 python3 free df find du; do have $t && printf '%s ' "$t"; done)"
+  # v5.11.1-W210: woher die Tafeln kommen — und wenn nicht, warum nicht.
+  if ! have curl || ! have python3; then
+    _lq="— $(t "curl oder python3 fehlt")"
+  elif tmo 4 curl -s -k --max-time 3 "http://127.0.0.1:${DASH_PORT}/api/leitstand" 2>/dev/null | grep -q '"tafeln"' \
+    || tmo 4 curl -s -k --max-time 3 "https://127.0.0.1:${DASH_PORT}/api/leitstand" 2>/dev/null | grep -q '"tafeln"'; then
+    _lq="/api/leitstand :${DASH_PORT}"
+  else
+    _lq="— $(t "Deck antwortet nicht, Zahlen aus der Datenbank")"
+  fi
+  printf "  %-12s %s\n" "$(t "Tafeln")" "$_lq"
+  _fv=""; [ -n "$BOT_DIR" ] && [ -r "$BOT_DIR/tools/motd.sh" ] && \
+    _fv=$(sed -n 's/^NC_MOTD_VERSION="\([^"]*\)".*/\1/p' "$BOT_DIR/tools/motd.sh" | head -1)
+  printf "  %-12s %s\n" "$(t "Fassung")" "$NC_MOTD_VERSION${_fv:+  ($(t "im Bestand") $_fv)}"
+  # Die doppelte Anzeige: jeder Fund mit Ort und Abhilfe — oder ausdruecklich
+  # keiner, mit den PAM-Zeilen, an denen man es selbst nachsehen kann.
+  printf "\n  ${BR}${B}%s${R}\n" "$(t "Doppelte Anzeige")"
+  _dop="$(doppelt_befunde)"
+  if [ -n "$_dop" ]; then
+    printf '%s\n' "$_dop" | while IFS='|' read -r _a _o; do
+      printf "  ${WRN}▲${R} %s ${FNT}(%s)${R}\n    ${TXT}%s${R}\n" \
+             "$(doppelt_text "$_a")" "$_o" "$(doppelt_abhilfe "$_a" "$_o")"
+    done
+  else
+    printf "  ${OK}●${R} %s\n" "$(t "keine bekannte Ursache gefunden")"
+    [ -r /etc/pam.d/sshd ] && grep -n 'pam_motd' /etc/pam.d/sshd 2>/dev/null | sed 's/^/    /'
+  fi
   printf "\n  ${FNT}%s %s %s${R}\n\n" "$(t "Falsch erkannt? Werte in")" "$CONF" \
          "$(t "eintragen (oder als Umgebung setzen).")"
   exit 0
@@ -658,7 +841,113 @@ rule(){ printf "${DIM}"; awk -v n="$WIDTH" 'BEGIN{while(n-->0)printf "━"}'; pr
 # deutschem Literal. Und tools/i18n_tools.py sammelte nur aus den Senken
 # von installer.sh, die es hier gar nicht gibt, und meldete deshalb 100 %
 # Abdeckung fuer eine Datei, die zu 0 % uebersetzt war.
-sect(){ printf "  ${DIM}${B}%s${R}\n" "$(t "$1")"; }
+# v5.11.1-W210: sichtbare Breite — ohne Farbfolgen, und ein UTF-8-Zeichen als
+# EINES. Unter LC_ALL=C zaehlt ${#s} Bytes: „◆" waere drei, und jede
+# rechtsbuendige Angabe stuende um so viele Spalten zu weit links. Reines
+# bash ohne Unterprozess — die Funktion laeuft je Login dutzendfach.
+_ANSI=$'\033''\[[0-9;]*m'
+vb(){ local s="$1"
+  while [[ $s =~ $_ANSI ]]; do s="${s/"${BASH_REMATCH[0]}"/}"; done
+  s="${s//[$'\200'-$'\277']/}"; VB=${#s}; }
+linie(){ # $1 = Zeichen, $2 = Spalten -> LN
+  local n="${2:-0}"; [ "$n" -lt 0 ] 2>/dev/null && n=0
+  printf -v LN '%*s' "$n" ''; LN="${LN// /$1}"; }
+bis(){ # $1 = bisherige Zeile, $2 = Zielspalte -> LN (mindestens ein Leerzeichen)
+  vb "$1"; local n=$(( $2 - VB )); [ "$n" -lt 1 ] && n=1; linie " " "$n"; }
+# Links und rechts in einer Zeile, rechts buendig auf WIDTH. Passt beides
+# nicht, steht das Rechte in einer eigenen Zeile — eine Zeile, die das
+# Terminal umbricht, zerreisst den Kopf mehr als eine zusaetzliche.
+zwei(){ local l="$1" r="$2" nl
+  vb "$l"; nl=$VB; vb "$r"
+  if [ $(( nl + VB + 2 )) -le "$WIDTH" ]; then
+    linie " " $(( WIDTH - nl - VB )); printf '%s%s%s\n' "$l" "$LN" "$r"
+  else
+    printf '%s\n' "$l"; linie " " $(( WIDTH - VB )); printf '%s%s\n' "$LN" "$r"
+  fi; }
+# Der Tafelkopf des Leitstands: Titel links, die Lage rechts IN der Linie, wie
+# im Deck. Der Titel laeuft an der Senke durch t(), das Abzeichen kommt fertig.
+sect(){ local _ti; _ti="$(t "$1")"; local _ab="${2:-}" _n
+  vb "$_ti"; _n=$VB
+  if [ -n "$_ab" ]; then
+    vb "$_ab"; linie "─" $(( WIDTH - 8 - _n - VB ))
+    printf '%s── %s%s%s%s %s%s%s %s %s──%s\n' "$DIM" "$R" "$BR$B" "$_ti" "$R" "$DIM" "$LN" "$R" "$_ab" "$DIM" "$R"
+  else
+    linie "─" $(( WIDTH - 4 - _n ))
+    printf '%s── %s%s%s%s %s%s%s\n' "$DIM" "$R" "$BR$B" "$_ti" "$R" "$DIM" "$LN" "$R"
+  fi; }
+# Die Lagen des Leitstands (nc/leitstand.LAGEN) — Zeichen UND Farbe, weil
+# Farbe allein nichts traegt (16-Farben-Handy, COLOR_MODE=off). Dazu drei fuer
+# die Kacheln: „live" (rot wie die Live-Zahl im Deck), „wert" (Leuchtblau) und
+# „zweit" (Violett, der Zweitakzent des Decks — fuer den Restream).
+lage_an(){ # $1 = Lage -> LF (Farbe), LZ (Zeichen)
+  case "$1" in
+    fehler) LF="$ERR"; LZ="✘";;  warn) LF="$WRN"; LZ="▲";;
+    aktiv)  LF="$BR";  LZ="◉";;  ok)   LF="$OK";  LZ="●";;
+    live)   LF="$ERR"; LZ="●";;  wert) LF="$BR";  LZ="●";;
+    zweit)  LF="$MAG"; LZ="●";;
+    aus)    LF="$FNT"; LZ="○";;  *)    LF="$FNT"; LZ="?";;
+  esac; }
+abzeichen(){ # $1 = Lage, $2 = Text (fertig uebersetzt) -> AZ
+  lage_an "$1"; AZ="${LF}${LZ} ${2}${R}"; }
+# Der Grund einer Tafel als Wort. Die Schluessel stehen in nc/leitstand.py;
+# ein neuer, den es hier nicht gibt, erscheint roh statt gar nicht.
+grundtext(){
+  case "$1" in
+    ruht) t "ruht";;                     sendet) t "sendet";;
+    gestoert) t "gestoert";;             langsam) t "langsam";;
+    live) t "live";;                     niemand_live) t "niemand live";;
+    discord_getrennt) t "getrennt";;     discord_aus) t "aus";;
+    chat_hype) t "Chat-Hype";;           verbunden) t "verbunden";;
+    platte_voll) t "Platte voll";;       platte_knapp) t "Platte knapp";;
+    ueberlast) t "Ueberlast";;           last_hoch) t "Last hoch";;
+    speicher_voll) t "Speicher voll";;   speicher_knapp) t "Speicher knapp";;
+    swap_hoch) t "Swap hoch";;           drosselung) t "Drosselung";;
+    ruhig) t "ruhig";;                   bruecke) t "Bruecke steht";;
+    waechter_fehler) t "Waechter-Fehler";;
+    waechter_ueberfaellig) t "Waechter ueberfaellig";;
+    lokal_aus) t "lokale KI aus";;       denkt) t "denkt";;
+    patrouille) t "patrouilliert";;      wach) t "wach";;
+    quote_niedrig) t "Quote niedrig";;   quote) t "Quote";;
+    neustart_noetig) t "Neustart noetig";;
+    aktuell) t "aktuell";;               keine_server) t "keine Server";;
+    webui_fehlt) t "Oberflaeche fehlt";; bereit) t "bereit";;
+    nicht_geladen) t "nicht geladen";;
+    *:*) printf '%s: %s' "${1%%:*}" "${1#*:}";;   # Betrieb: dienst:grund
+    *) printf '%s' "$1";;
+  esac; }
+kettenname(){
+  case "$1" in
+    erfassen) t "ERFASSEN";;  live) t "LIVE";;          aufnahme) t "AUFNAHME";;
+    kodieren) t "KODIEREN";;  versand) t "VERSAND";;    restream) t "RESTREAM";;
+    archiv) t "ARCHIV";;      *) printf '%s' "$1";;
+  esac; }
+# Die Kennzahl-Kacheln aus dem Kopf des Leitstands. Jede ist KB Spalten breit,
+# je Zeile so viele, wie WIDTH traegt; die Unterkante traegt die Lage.
+KB=12; KZ_B=""; KZ_W=""; KZ_U=""; KZ_N=0
+kachel(){ local _b; _b="$(t "$1")"; local _w="${2:-—}"
+  lage_an "${3:-unbekannt}"
+  _b="${_b:0:$(( KB - 2 ))}"; _w="${_w:0:$(( KB - 2 ))}"
+  vb "$_b"; linie " " $(( KB - VB )); KZ_B="${KZ_B}${FNT}${_b}${R}${LN}"
+  vb "$_w"; linie " " $(( KB - VB )); KZ_W="${KZ_W}${LF}${B}${_w}${R}${LN}"
+  linie "━" $(( KB - 2 )); KZ_U="${KZ_U}${LF}${LN}${R}  "
+  KZ_N=$(( KZ_N + 1 ))
+  [ $(( (KZ_N + 1) * KB + 2 )) -gt "$WIDTH" ] && kacheln_aus
+  return 0; }
+kacheln_aus(){ [ "$KZ_N" -gt 0 ] || return 0
+  printf '  %s\n  %s\n  %s\n' "$KZ_B" "$KZ_W" "$KZ_U"
+  KZ_B=""; KZ_W=""; KZ_U=""; KZ_N=0; }
+# Elemente nebeneinander, mit Trenner, umgebrochen an WIDTH (Lieferkette,
+# Kanaele). Je Zeile auf stdin ein fertig gefaerbtes Element.
+fluss(){ local _s="$1" _z="" _e
+  while IFS= read -r _e; do
+    [ -n "$_e" ] || continue
+    if [ -z "$_z" ]; then _z="  $_e"; continue; fi
+    vb "$_z$_s$_e"
+    if [ "$VB" -gt "$WIDTH" ]; then printf '%s\n' "$_z"; _z="  $_e"
+    else _z="$_z$_s$_e"; fi
+  done
+  [ -n "$_z" ] && printf '%s\n' "$_z"
+  return 0; }
 bar(){  # bar <prozent> [breite]  — Breite als ARGUMENT: eine Zuweisung vor dem
         # Funktionsaufruf (BARW=10 bar 50) bleibt in bash danach stehen und
         # verstellte in der Vorfassung alle folgenden Balken.
@@ -676,11 +965,12 @@ bar(){  # bar <prozent> [breite]  — Breite als ARGUMENT: eine Zuweisung vor de
   if [ "$_tc" = 1 ] && [ -n "$e" ]; then
     awk -v fill="$fill" -v w="$w" -v esc="$e" 'BEGIN{
       for (i = 0; i < w; i++) {
-        if (i >= fill) { printf "%s[38;2;138;129;114m▒", esc; continue }
+        if (i >= fill) { printf "%s[38;2;34;57;107m▒", esc; continue }
         q = (w > 1) ? (i * 100.0 / (w - 1)) : 0
-        # Gruen 127,168,107 → Bernstein 224,154,60 bei 70 % → Rot 212,85,63
-        if (q < 70) { r=127+(224-127)*q/70;      g=168+(154-168)*q/70;      b=107+(60-107)*q/70 }
-        else        { r=224+(212-224)*(q-70)/30; g=154+(85-154)*(q-70)/30;  b=60+(63-60)*(q-70)/30 }
+        # v5.11.1-W210: Leitstand — Gruen 125,242,196 → Bernstein 255,194,90
+        # bei 70 % → Rot 255,122,134; leere Zellen im Rasterblau 34,57,107.
+        if (q < 70) { r=125+(255-125)*q/70;      g=242+(194-242)*q/70;      b=196+(90-196)*q/70 }
+        else        { r=255;                     g=194+(122-194)*(q-70)/30; b=90+(134-90)*(q-70)/30 }
         printf "%s[38;2;%d;%d;%dm█", esc, r+0.5, g+0.5, b+0.5
       }
       printf "%s[0m", esc }'
@@ -875,6 +1165,167 @@ elif have lsof && tmo 2 lsof -nP -iTCP:"${DASH_PORT}" -sTCP:LISTEN >/dev/null 2>
   DASH_STATE=stumm
 fi
 
+# ── Leitstand: dieselbe Quelle wie die Uebersicht (v5.11.1-W210) ──
+# Antwortet das Deck, kommen Kennzahlen, Lieferkette, Tafeln und Ereignisse
+# aus /api/leitstand — EIN Abruf, dieselben Zahlen wie im Browser, und unter
+# MariaDB die einzigen, die die MOTD ueberhaupt bekommt. Loopback ohne
+# Weiterleitungskopf gilt dem Deck als lokal (nc/clientip, W149): kein Token,
+# die MOTD liest dafuer nichts Geheimes aus der .env.
+#
+# python3 liest das JSON, weil sed an verschachteltem JSON raet. Es reinigt
+# jeden Text von Steuerzeichen: Nutzernamen und Ereignistexte kommen von
+# aussen, und eine ESC-Folge darin liefe sonst als root ins Terminal. Und es
+# kuerzt nach SICHTBARER Breite — ein Emoji in einem Ereignistext ist zwei
+# Spalten breit, ein Schnitt nach Bytes zerhackte es.
+LS_PY='
+import json, re, sys, time, unicodedata
+try:
+    W = int(sys.argv[1])
+except Exception:
+    W = 62
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    d = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
+except Exception:
+    sys.exit(0)
+if not isinstance(d, dict) or d.get("ok") is not True:
+    sys.exit(0)
+STEUER = re.compile(r"[\x00-\x1f\x7f-\x9f|]")
+def rein(x):
+    return STEUER.sub(" ", "" if x is None else str(x)).strip()
+def breite(s):
+    b = 0
+    for c in s:
+        if not unicodedata.combining(c):
+            b += 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+    return b
+def kurz(x, n):
+    s = rein(x)
+    if n < 2:
+        return ""
+    if breite(s) <= n:
+        return s
+    aus, b = "", 0
+    for c in s:
+        if b + breite(c) > n - 1:
+            break
+        aus, b = aus + c, b + breite(c)
+    return aus + "…"
+def wert(x):
+    return "" if x is None else rein(x)
+tafeln = [t for t in (d.get("tafeln") or ()) if isinstance(t, dict)]
+tab = {t.get("tab"): t for t in tafeln}
+for g in d.get("kette") or ():
+    if isinstance(g, dict):
+        print("K|%s|%s|%s" % (rein(g.get("name")), wert(g.get("wert")), rein(g.get("lage"))))
+for t in tafeln:
+    da = t.get("daten") or {}
+    w = t.get("wert")
+    if t.get("tab") in ("system", "insights") and isinstance(w, (int, float)):
+        w = "%d%%" % round(w)
+    namen, mehr = [], 0
+    if t.get("tab") in ("restream", "wall"):
+        liste = da.get("spuren") if t.get("tab") == "restream" else da.get("namen")
+        namen = [rein(x.get("name")) for x in (liste or ()) if isinstance(x, dict) and x.get("name")]
+        mehr = int(da.get("weitere") or 0)
+    det = " ".join("@" + n for n in namen[:2])
+    rest = max(0, len(namen) - 2) + mehr
+    if det and rest:
+        det += " +%d" % rest
+    ws = wert(w)
+    print("T|%s|%s|%s|%s|%s|%s" % (rein(t.get("nr")), rein(t.get("kennung")), rein(t.get("lage")),
+                                   rein(t.get("grund")), ws, kurz(det, W - 48 - breite(ws))))
+def bekannt(t, x):
+    return "" if (t or {}).get("lage", "unbekannt") == "unbekannt" else wert(x)
+wall, rs, br = tab.get("wall") or {}, tab.get("restream") or {}, tab.get("brain") or {}
+wd = wall.get("daten") or {}
+print("Z|%s|%s|%s|%s|%s|%s" % (bekannt(wall, wd.get("live")), wert(wd.get("getrackt")),
+      bekannt(wall, wd.get("aufnahme")), bekannt(rs, rs.get("wert")),
+      bekannt(br, br.get("wert")), rein(br.get("lage"))))
+for e in (d.get("ereignisse") or ())[:3]:
+    if not isinstance(e, dict):
+        continue
+    ts, hm = e.get("ts"), ""
+    if isinstance(ts, (int, float)):
+        hm = time.strftime("%H:%M", time.localtime(ts))
+    else:
+        m = re.search(r"(\d{2}:\d{2})", str(ts or ""))
+        hm = m.group(1) if m else ""
+    art = kurz(e.get("kind"), 22)
+    print("E|%s|%s|%s|%s" % (hm, rein(e.get("ton")), art, kurz(e.get("summary"), W - 12 - breite(art))))
+'
+LS=""; LS_GRUND=""
+if [ -z "$DASH_JSON" ]; then LS_GRUND=deck
+elif ! have python3; then LS_GRUND=python
+else
+  LS=$(tmo 4 curl -s -k --max-time 3 "${_sch}://127.0.0.1:${DASH_PORT}/api/leitstand" 2>/dev/null \
+       | tmo 3 python3 -c "$LS_PY" "$WIDTH" 2>/dev/null)
+  [ -z "$LS" ] && LS_GRUND=leer
+fi
+KETTE=""; TAFELN=""; EREIGNISSE=""; ZAHLEN=""
+while IFS= read -r _z; do
+  case "$_z" in
+    K\|*) KETTE="${KETTE}${_z#K|}"$'\n';;
+    T\|*) TAFELN="${TAFELN}${_z#T|}"$'\n';;
+    E\|*) EREIGNISSE="${EREIGNISSE}${_z#E|}"$'\n';;
+    Z\|*) ZAHLEN="${_z#Z|}";;
+  esac
+done <<EOF
+$LS
+EOF
+
+# Ohne Deck die Zahlen aus der Datenbank, streng lesend — wie bis v3.0. Unter
+# MariaDB gibt es diesen Rueckweg nicht: die MOTD liest keine Zugangsdaten.
+dbq(){ # $1 = SQL, liefert eine Zeile mit |-getrennten Spalten
+  if have sqlite3; then tmo 3 sqlite3 -readonly -separator '|' "$DB" "$1" 2>/dev/null
+  elif have python3; then tmo 5 python3 -c '
+import sqlite3, sys
+try:
+    c = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+    print("|".join(str(x) for x in c.execute(sys.argv[2]).fetchone()))
+except Exception:
+    pass' "$DB" "$1" 2>/dev/null
+  fi; }
+K_LIVE=""; K_TRK=""; K_REC=""; K_RS=""; K_WA=""; K_WAL=""
+if [ -n "$ZAHLEN" ]; then
+  IFS='|' read -r K_LIVE K_TRK K_REC K_RS K_WA K_WAL <<EOF
+$ZAHLEN
+EOF
+elif [ -n "$DB" ] && [ -f "$DB" ] && { have sqlite3 || have python3; }; then
+  case "$DB_BACKEND" in
+    mariadb|mysql) ;;
+    *)
+    # EIN Aufruf statt vier: jeder oeffnet die Datei, sperrt kurz und kostet
+    # Zeit — bei jedem Login. restreams gibt es erst ab v37, deshalb der
+    # Rueckfall auf die schmale Abfrage.
+    STATS=$(dbq "SELECT (SELECT COUNT(*) FROM trackings),
+                        (SELECT COUNT(*) FROM trackings WHERE last_live=1),
+                        (SELECT COUNT(*) FROM trackings WHERE recording=1),
+                        (SELECT COUNT(*) FROM restreams WHERE status='live')")
+    [ -z "$STATS" ] && STATS=$(dbq "SELECT (SELECT COUNT(*) FROM trackings),
+                        (SELECT COUNT(*) FROM trackings WHERE last_live=1),
+                        (SELECT COUNT(*) FROM trackings WHERE recording=1), -1")
+    if [ -n "$STATS" ]; then
+      IFS='|' read -r K_TRK K_LIVE K_REC K_RS <<EOF
+$STATS
+EOF
+      [ "${K_RS:--1}" -lt 0 ] 2>/dev/null && K_RS=""
+    fi;;
+  esac
+fi
+# Eine Kennzahl ohne Wert ist „unbekannt", nie 0 — eine 0 laese sich wie
+# „niemand live" (W99: nichts geladen ist nicht dasselbe wie nichts da).
+kz_lage(){ # $1 = Wert -> KL
+  case "$1" in "") KL=unbekannt;; *) if [ "$1" -gt 0 ] 2>/dev/null; then KL=aktiv; else KL=ok; fi;; esac; }
+if [ -z "$KETTE" ]; then
+  for _g in "erfassen:$K_TRK" "live:$K_LIVE" "aufnahme:$K_REC" "kodieren:" "versand:" \
+            "restream:$K_RS" "archiv:"; do
+    _n="${_g%%:*}"; _v="${_g#*:}"; kz_lage "$_v"
+    [ "$_n" = erfassen ] && [ "$KL" = aktiv ] && KL=ok
+    KETTE="${KETTE}${_n}|${_v}|${KL}"$'\n'
+  done
+fi
+
 # ── Gesamtampel ──────────────────────────────────────────────
 # Ein Urteil in einer Zeile. Die MOTD hat acht Bloecke; wer per Handy-SSH
 # einloggt, sieht davon drei, ohne zu scrollen. Genau deshalb steht der
@@ -901,12 +1352,29 @@ else
 fi
 [ "$DPCT" -ge 90 ] 2>/dev/null && lage_setz err "Platte fast voll"
 [ -n "$THROTTLE" ] && lage_setz warn "Drosselung gemeldet"
+# v5.11.1-W210: die Tafeln des Leitstands reden mit — NACH den eigenen
+# Befunden, damit die Ursache (Bot steht) die Folge schlaegt.
+while IFS='|' read -r _nr _ken _lage _grund _rest; do
+  case "$_lage" in
+    fehler) lage_setz err  "$_ken: $(grundtext "$_grund")";;
+    warn)   lage_setz warn "$_ken: $(grundtext "$_grund")";;
+  esac
+done <<EOF
+$TAFELN
+EOF
 
 # ── Kopf ─────────────────────────────────────────────────────
-# BUILD_STAMP steht seit v4.0 als Klartext in bot.py ("2026.08 · v4.0"); die
-# alte Fassung suchte ein "B<nummer>" in bot_v37.py und fand nach W119 nichts
-# mehr — der Kopf war seitdem versionslos.
+# v5.11.1-W210: der Kopf des Leitstands — Name, Gesamtampel, Sendezustand.
+# Die Fassung kam bis hierher aus BUILD_STAMP in bot.py; dort steht seit v5
+# `_nc_version.build_stamp()` statt eines Literals, und der sed fand nichts —
+# der Kopf war versionslos, dieselbe Falle wie nach W119. Die eine Quelle der
+# Fassung ist nc/version.py.
 VER="$(envget BUILD_STAMP)"
+if [ -z "$VER" ] && [ -f "$BOT_DIR/nc/version.py" ]; then
+  VER=$(sed -n 's/^VERSION *= *"\([^"]*\)".*/\1/p' "$BOT_DIR/nc/version.py" | head -1)
+  _cn=$(sed -n 's/^CODENAME *= *"\([^"]*\)".*/\1/p' "$BOT_DIR/nc/version.py" | head -1)
+  [ -n "$VER" ] && VER="v${VER}${_cn:+ · ${_cn}}"
+fi
 if [ -z "$VER" ]; then
   for f in "$BOT_DIR/bot.py" "$BOT_DIR/bot_v37.py"; do
     [ -f "$f" ] || continue
@@ -923,19 +1391,68 @@ if have uptime; then UP=$(uptime -p 2>/dev/null | sed 's/^up //'); fi
   printf (d? "%dd %dh" : (h? "%dh %dm" : "%dm")), (d?d:(h?h:m)), (d?h:m)}' /proc/uptime)"
 [ -z "${UP:-}" ] && UP="—"
 
-printf "\n"; rule
-printf "  ${BR}${B}◤ NIGHTCRAWLER${R}${VER:+ ${DIM}${VER}${R}}${GITREF:+ ${FNT}·${R} ${FNT}${GITREF}${R}}   ${TXT}%s${R}\n" "$(hostname 2>/dev/null)"
 case "$LAGE" in
   ok)   LAGE_BADGE="${OK}●${R} ${OK}$(t "$LAGE_TEXT")${R}";;
   warn) LAGE_BADGE="${WRN}▲${R} ${WRN}$(t "$LAGE_TEXT")${R}";;
   *)    LAGE_BADGE="${ERR}✘${R} ${B}${ERR}$(t "$LAGE_TEXT")${R}";;
 esac
-printf "  %b   ${FNT}%s${R}   ${FNT}%s %s${R}\n" "$LAGE_BADGE" \
-       "$(t "Restream Control Room")" "$(t "up")" "$UP"
+# ON AIR wie die Pille oben links im Deck: sendet gerade ein Restream?
+if [ "${K_RS:-0}" -gt 0 ] 2>/dev/null; then AIR="${ERR}${B}● ON AIR${R}"
+else AIR="${FNT}○ OFF AIR${R}"; fi
+
+printf "\n"; rule
+zwei "  ${BR}${B}◆ NIGHTCRAWLER${R} ${DIM}·${R} ${TXT}${B}$(t "LEITSTAND")${R}" "$AIR"
+zwei "  $LAGE_BADGE" "${DIM}${VER:-—}${R}${GITREF:+ ${FNT}· ${GITREF}${R}}"
+zwei "  ${FNT}$(hostname 2>/dev/null)${R}" "${FNT}$(t "up") ${UP} · $(date +%H:%M)${R}"
 rule
 
+# ── Kennzahlen und Lieferkette ───────────────────────────────
+# Die Kopfreihe des Decks: was laeuft gerade, in fuenf Zahlen. Live in Rot
+# wie im Deck, Restream im Violett des Zweitakzents, der Rest Leuchtblau; ein Waechter mit Befund faerbt seine
+# Kachel. Unbekanntes bleibt „—" in Grau.
+kz_lage "$K_LIVE"; case "$KL" in aktiv) KL=live;; ok) KL=wert;; esac
+kachel "LIVE JETZT" "$K_LIVE" "$KL"
+kz_lage "$K_TRK";  [ "$KL" = unbekannt ] || KL=wert
+kachel "GETRACKT" "$K_TRK" "$KL"
+kz_lage "$K_REC";  [ "$KL" = unbekannt ] || KL=wert
+kachel "AUFNAHMEN" "$K_REC" "$KL"
+kz_lage "$K_RS";   [ "$KL" = unbekannt ] || KL=zweit
+kachel "RESTREAM" "$K_RS" "$KL"
+case "$K_WAL" in fehler|warn) KL="$K_WAL";; *) KL=wert;; esac
+[ -z "$K_WA" ] && KL=unbekannt
+kachel "WAECHTER" "$K_WA" "$KL"
+kacheln_aus
+# Die Lieferkette einer Sendung, links nach rechts wie im Deck. Jedes Glied
+# traegt die Farbe seiner Lage; „—" heisst: diese Stufe kennt nur das Deck.
+_kz=""; _i=0
+while IFS='|' read -r _n _v _l; do
+  [ -n "$_n" ] || continue
+  _i=$(( _i + 1 )); lage_an "$_l"
+  [ "$_l" = ok ] && LF="$TXT"
+  _kz="${_kz}${FNT}0${_i}${R} ${DIM}$(kettenname "$_n")${R} ${LF}${B}${_v:-—}${R}"$'\n'
+done <<EOF
+$KETTE
+EOF
+printf '%s' "$_kz" | fluss " ${DIM}▸${R} "
+
 # ── System ───────────────────────────────────────────────────
-sect "SYSTEM"
+# Die Lage nach denselben Grenzen wie die Tafel kern.last (nc/leitstand.py:
+# Platte 85/95, Speicher 85/95, Swap 80) — hier gemessen und nicht aus dem
+# Deck gelesen, damit die Tafel auch steht, wenn das Deck nicht antwortet.
+MEMP=$(pct "$MEM_U" "$MEM_T"); SWPP=$(pct "$SWP_U" "$SWP_T")
+SYS_LAGE=ok; SYS_GRUND=ruhig
+sys_setz(){ case "$1" in
+              fehler) [ "$SYS_LAGE" = fehler ] || { SYS_LAGE=fehler; SYS_GRUND="$2"; };;
+              warn)   [ "$SYS_LAGE" = ok ] && { SYS_LAGE=warn; SYS_GRUND="$2"; };;
+            esac; return 0; }
+[ "$DPCT" -ge 95 ] 2>/dev/null && sys_setz fehler platte_voll
+[ "$MEMP" -ge 95 ] 2>/dev/null && sys_setz fehler speicher_voll
+[ "$DPCT" -ge 85 ] 2>/dev/null && sys_setz warn platte_knapp
+[ "$MEMP" -ge 85 ] 2>/dev/null && sys_setz warn speicher_knapp
+[ "$SWPP" -ge 80 ] 2>/dev/null && sys_setz warn swap_hoch
+[ -n "$THROTTLE" ] && sys_setz warn drosselung
+abzeichen "$SYS_LAGE" "$(grundtext "$SYS_GRUND")"
+sect "SYSTEM" "$AZ"
 gauge "CPU" "$CPU_ALL" "${CPU_ALL}% · ${NPC} $(t "Kerne")"
 if [ -n "$CPU_LINES" ]; then
   # Ein Zeichen je Kern: sieht sofort, ob EIN ffmpeg einen Kern festhaelt oder
@@ -973,10 +1490,19 @@ if [ -n "$NET_TX" ]; then
     "$(t "Netz")" "$(human "$NET_TX")" "$(human "${NET_RX:-0}")" "$NET_IF"
 fi
 [ -n "$THROTTLE" ] && warn_add "$(t "Pi meldet Drosselung") (get_throttled=${THROTTLE}) — $(t "Netzteil pruefen, sonst bricht ffmpeg weg")"
-rule
 
-# ── NIGHTCRAWLER: Dienst, Dashboard, Abwehr, Fehler ──────────
-sect "NIGHTCRAWLER"
+# ── Dienst: Bot, Deck, Abwehr, Fehler, Aufnahmen ─────────────
+case "$BOT_STATE" in
+  gestoppt|tot) abzeichen fehler "$(t "Bot steht")";;
+  laeuft|prozess)
+    case "$DASH_STATE" in
+      gesund)           abzeichen ok     "$(t "laeuft")";;
+      degradiert|stumm) abzeichen warn   "$(t "Deck stockt")";;
+      *)                abzeichen fehler "$(t "Deck aus")";;
+    esac;;
+  *) abzeichen unbekannt "$(t "nicht gefunden")";;
+esac
+sect "DIENST" "$AZ"
 if [ -z "$BOT_DIR" ]; then
   row "Installation" "$(dot warn)" "${WRN}$(t "nicht gefunden")${R} ${FNT}— $(t "BOT_DIR in der Konfiguration setzen") (${CONF}, ./motd.sh --doctor)${R}"
 fi
@@ -1076,102 +1602,13 @@ if [ -f "$LOGF" ]; then
        warn_add "${ETODAY} $(t "Fehler heute"): ${TXT}tail -n 40 ${LOGF}${R}"
   fi
 fi
-rule
-
-# ── Tracking (Datenbank, streng lesend) ──────────────────────
-dbq(){ # $1 = SQL, liefert eine Zeile mit |-getrennten Spalten
-  if have sqlite3; then tmo 3 sqlite3 -readonly -separator '|' "$DB" "$1" 2>/dev/null
-  elif have python3; then tmo 5 python3 -c '
-import sqlite3, sys
-try:
-    c = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
-    print("|".join(str(x) for x in c.execute(sys.argv[2]).fetchone()))
-except Exception:
-    pass' "$DB" "$1" 2>/dev/null
-  fi; }
-
-case "$DB_BACKEND" in
-  mariadb|mysql)
-    sect "TRACKING"
-    row "Datenbank" "$(dot faint)" "${FNT}MariaDB — $(t "Zahlen nur im Dashboard") (:${DASH_PORT})${R}"
-    rule;;
-  *)
-  if [ -n "$DB" ] && [ -f "$DB" ] && { have sqlite3 || have python3; }; then
-    # EIN Aufruf statt fuenf: jeder oeffnet die Datei, sperrt kurz und kostet
-    # Zeit — bei jedem Login. restreams gibt es erst ab v37, deshalb der
-    # Rueckfall auf die schmale Abfrage.
-    STATS=$(dbq "SELECT (SELECT COUNT(*) FROM trackings),
-                        (SELECT COUNT(*) FROM trackings WHERE last_live=1),
-                        (SELECT COUNT(*) FROM trackings WHERE recording=1),
-                        (SELECT COUNT(*) FROM trackings WHERE paused=1),
-                        (SELECT COUNT(*) FROM restreams WHERE status='live')")
-    [ -z "$STATS" ] && STATS=$(dbq "SELECT (SELECT COUNT(*) FROM trackings),
-                        (SELECT COUNT(*) FROM trackings WHERE last_live=1),
-                        (SELECT COUNT(*) FROM trackings WHERE recording=1),
-                        (SELECT COUNT(*) FROM trackings WHERE paused=1), -1")
-    if [ -n "$STATS" ]; then
-      IFS='|' read -r TT LVN REC PAU RSL <<EOF
-$STATS
-EOF
-      TT=${TT:-0}; LVN=${LVN:-0}; REC=${REC:-0}; PAU=${PAU:-0}; RSL=${RSL:--1}
-      FFN=$(tmo 2 pgrep -c ffmpeg 2>/dev/null | tr -d ' '); FFN=${FFN:-0}
-      sect "TRACKING"
-      row "Getrackt" "$(dot faint)" "${TXT}${TT}${R} ${FNT}$(t "Streamer")${R}${FNT}$([ "$PAU" -gt 0 ] 2>/dev/null && printf ' · %s %s' "$PAU" "$(t "pausiert")")${R}"
-      printf "  ${DIM}%-11s${R}%b ${TXT}%s${R} ${FNT}von %s${R}  %b\n" \
-        "Live jetzt" "$(dot "$(onoff "$LVN")")" "$LVN" "$TT" "$(bar "$(pct "$LVN" "$TT")" 10)"
-      row "Aufnahme" "$(dot "$(onoff "$REC")")" "${TXT}${REC}${R} ${FNT}$(t "aktiv") · ${FFN} ffmpeg${R}"
-      # Genau diese Luecke jagt der recording-Sentinel: DB sagt "nimmt auf",
-      # es laeuft aber kein einziges ffmpeg.
-      if [ "$REC" -gt 0 ] 2>/dev/null && [ "$FFN" -eq 0 ] 2>/dev/null; then
-        warn_add "$(t "DB meldet Aufnahmen, es laeuft aber KEIN ffmpeg — Karteileichen") (${REC}): ${TXT}/recstatus${R}"
-      fi
-      [ "$RSL" -ge 0 ] 2>/dev/null && row "Restream" "$(dot "$(onoff "$RSL")")" "${TXT}${RSL}${R} ${FNT}$(t "Ziel(e) live")${R}"
-      rule
-    fi
-  fi;;
-esac
-
-# ── Plattformen und Kanaele (Chips aus der .env) ─────────────
-if [ -f "$ENVF" ]; then
-  truthy(){ case "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" in
-              1|true|yes|on|y) return 0;; *) return 1;; esac; }
-  chip(){ case "$2" in
-            on)   printf "${OK}▣ %s${R}  " "$1";;
-            halb) printf "${WRN}▨ %s${R}  " "$1";;   # eingeschaltet, aber unvollstaendig
-            *)    printf "${FNT}▢ %s${R}  " "$1";;
-          esac; }
-  # Die Vorfassung nahm JEDEN Schluessel, der das Stichwort enthielt. Ein
-  # gesetztes KICK_INGEST_URL machte Kick gruen, obwohl KICK_ENABLED=0 war.
-  # Reihenfolge jetzt: ausdrueckliches ENABLED schlaegt alles, danach zaehlt
-  # nur ein echter Stream-Key.
-  plat(){ # $1=Praefix  $2=Schluesselvariable  ($3 = Vorgabe wenn ENABLED fehlt)
-    local en key
-    en="$(envget "${1}_ENABLED")"; key="$(envget "$2")"
-    if [ -n "$en" ] && ! truthy "$en"; then echo off; return; fi
-    if [ -n "$key" ]; then echo on; else echo halb; fi
-  }
-  sect "RESTREAM"
-  printf "  %b%b%b${FNT}  %s${R}\n" \
-    "$(t "▣ bereit · ▨ ohne Key · ▢ aus")" \
-    "$(chip Kick    "$(plat KICK    KICK_STREAM_KEY)")" \
-    "$(chip Twitch  "$(plat TWITCH  TWITCH_STREAM_KEY)")" \
-    "$(chip YouTube "$(plat YOUTUBE YOUTUBE_STREAM_KEY)")"
-  sect "KANAELE"
-  _tg=off; [ -n "$(envget BOT_TOKEN)" ] && _tg=on
-  _dc=off; [ -n "$(envget DISCORD_BOT_TOKEN)" ] && _dc=on
-  _ai=halb   # keylos laeuft AZRAEL immer (nc/freeai), mit Key nur besser
-  for k in ANTHROPIC_API_KEY OPENAI_API_KEY POLLINATIONS_API_KEY LLM7_TOKEN; do
-    [ -n "$(envget "$k")" ] && { _ai=on; break; }
-  done
-  printf "  %b%b%b\n" "$(chip Telegram "$_tg")" "$(chip Discord "$_dc")" "$(chip AZRAEL "$_ai")"
-  [ "$_tg" = off ] && warn_add "$(t "BOT_TOKEN fehlt in der .env — ohne ihn startet der Telegram-Teil nicht")"
-  rule
-elif [ -n "$BOT_DIR" ]; then
-  row ".env" "$(dot err)" "${ERR}$(t "fehlt")${R} ${FNT}— cp .env.example .env && chmod 600 .env${R}"
-  rule
+# Aufnahmen: der Bestand auf der Platte (zwischengespeichert) und die
+# laufenden ffmpeg. Genau die Luecke jagt der recording-Sentinel: die Zahlen
+# sagen „nimmt auf", es laeuft aber kein einziges ffmpeg.
+FFN=$(tmo 2 pgrep -c ffmpeg 2>/dev/null | tr -d ' '); FFN=${FFN:-0}
+if [ "${K_REC:-0}" -gt 0 ] 2>/dev/null && [ "$FFN" -eq 0 ] 2>/dev/null; then
+  warn_add "$(t "DB meldet Aufnahmen, es laeuft aber KEIN ffmpeg — Karteileichen") (${K_REC}): ${TXT}/recstatus${R}"
 fi
-
-# ── Aufnahmen (Dateisystem, zwischengespeichert) ─────────────
 # du/find ueber eine 400-GB-Bibliothek dauerte bei JEDEM Login mehrere
 # Sekunden. Das Ergebnis aendert sich langsam — REC_CACHE_TTL reicht voellig.
 if [ "$SHOW_REC" = 1 ] && [ -d "$RECDIR" ]; then
@@ -1192,24 +1629,138 @@ if [ "$SHOW_REC" = 1 ] && [ -d "$RECDIR" ]; then
     fi
     printf '%s|%s|%s\n' "${RC:-0}" "${RKB:-0}" "${RNEW:-}" > "$CACHE" 2>/dev/null
   fi
-  sect "AUFNAHMEN"
-  printf "  ${TXT}%s${R} ${FNT}%s${R}   ${TXT}%s${R} ${FNT}%s${R}%b   ${FNT}%s${R}\n" \
-    "${RC:-0}" "$(t "Dateien")" \
-    "$([ -n "${RKB:-}" ] && human $(( ${RKB:-0} * 1024 )) || echo '—')" "$(t "gesamt")" \
-    "$([ -n "${RNEW:-}" ] && printf "   ${FNT}%s${R}" "$(tf "neuste vor %s" "$(ago "$RNEW")")")" \
-    "$([ -n "${_age:-}" ] && [ "${_age:-0}" -lt "$REC_CACHE_TTL" ] 2>/dev/null && tf "(Stand: vor %ss)" "$_age")"
-  rule
+  _rz="${TXT}${RC:-0}${R} ${FNT}$(t "Dateien")"
+  [ -n "${RKB:-}" ] && _rz="${_rz} · $(human $(( ${RKB:-0} * 1024 ))) $(t "gesamt")"
+  [ -n "${RNEW:-}" ] && _rz="${_rz} · $(tf "neuste vor %s" "$(ago "$RNEW")")"
+  row "Aufnahmen" "$(dot "$(onoff "$FFN")")" "${_rz} · ${FFN} ffmpeg${R}"
+fi
+
+# ── Die neun Tafeln des Leitstands ───────────────────────────
+if [ -n "$TAFELN" ]; then
+  _tf=0; _tw=0
+  while IFS='|' read -r _nr _ken _lage _rest; do
+    case "$_lage" in fehler) _tf=$(( _tf + 1 ));; warn) _tw=$(( _tw + 1 ));; esac
+  done <<EOF
+$TAFELN
+EOF
+  if   [ "$_tf" -gt 0 ]; then abzeichen fehler "$(tf "%s Stoerung(en)" "$_tf")"
+  elif [ "$_tw" -gt 0 ]; then abzeichen warn   "$(tf "%s Warnung(en)" "$_tw")"
+  else abzeichen ok "$(t "ruhig")"; fi
+  sect "TAFELN" "$AZ"
+  # Spalten: Nummer und Kennung wie im Deck (die Kennung ist der Code-Titel
+  # der Tafel und bleibt unuebersetzt), Lage mit Grund, Wert, Namen.
+  while IFS='|' read -r _nr _ken _lage _grund _wert _det; do
+    [ -n "$_ken" ] || continue
+    lage_an "$_lage"
+    _l="  ${FNT}${_nr}${R} ${TXT}${_ken}${R}"
+    bis "$_l" 24; _l="${_l}${LN}${LF}${LZ} $(grundtext "$_grund")${R}"
+    if [ -n "$_wert" ]; then bis "$_l" 46; _l="${_l}${LN}${TXT}${B}${_wert}${R}"; fi
+    [ -n "$_det" ] && _l="${_l}  ${FNT}${_det}${R}"
+    printf '%s\n' "$_l"
+  done <<EOF
+$TAFELN
+EOF
+else
+  # Nichts geladen ist nicht dasselbe wie nichts da (W99) — und WARUM nichts
+  # geladen wurde, entscheidet, was zu tun ist.
+  abzeichen unbekannt "$(t "nicht geladen")"
+  sect "TAFELN" "$AZ"
+  case "$LS_GRUND" in
+    deck)   row "Quelle" "$(dot faint)" "${FNT}$(t "Deck antwortet nicht — die Tafeln kommen von /api/leitstand")${R}";;
+    python) row "Quelle" "$(dot faint)" "${FNT}$(t "python3 fehlt — es liest die Tafeln aus /api/leitstand")${R}";;
+    *)      row "Quelle" "$(dot warn)" "${WRN}$(t "das Deck lieferte keine Tafeln (Fassung vor 5.10?)")${R}";;
+  esac
+  case "$DB_BACKEND" in
+    mariadb|mysql) row "Datenbank" "$(dot faint)" "${FNT}MariaDB — $(t "ohne Deck keine Zahlen")${R}";;
+    *) [ -n "$K_TRK" ] && row "Datenbank" "$(dot faint)" "${FNT}$(t "Zahlen oben aus der Datenbank gelesen")${R}";;
+  esac
+fi
+
+# ── Ereignisstrom ────────────────────────────────────────────
+# Die letzten drei Ereignisse — was zuletzt passiert ist, ohne das Deck
+# aufzumachen. Nur mit Deck: das Ereignisprotokoll liest die MOTD nicht selbst.
+if [ -n "$EREIGNISSE" ]; then
+  sect "EREIGNISSE"
+  while IFS='|' read -r _hm _ton _art _sum; do
+    [ -n "$_art" ] || continue
+    case "$_ton" in
+      fehler) lage_an fehler;;  warn) lage_an warn;;  gut) lage_an ok;;
+      *) LF="$FNT"; LZ="·";;
+    esac
+    printf '%s\n' "  ${FNT}${_hm:-—}${R} ${LF}${LZ}${R} ${DIM}${_art}${R}  ${TXT}${_sum}${R}"
+  done <<EOF
+$EREIGNISSE
+EOF
+fi
+
+# ── Kanaele: Restream-Ziele und Bots (aus der .env) ──────────
+if [ -f "$ENVF" ]; then
+  truthy(){ case "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" in
+              1|true|yes|on|y) return 0;; *) return 1;; esac; }
+  chip(){ case "$2" in
+            on)   printf "${OK}▣ %s${R}" "$1";;
+            halb) printf "${WRN}▨ %s${R}" "$1";;   # eingeschaltet, aber unvollstaendig
+            *)    printf "${FNT}▢ %s${R}" "$1";;
+          esac; }
+  # Die Vorfassung nahm JEDEN Schluessel, der das Stichwort enthielt. Ein
+  # gesetztes KICK_INGEST_URL machte Kick gruen, obwohl KICK_ENABLED=0 war.
+  # Reihenfolge jetzt: ausdrueckliches ENABLED schlaegt alles, danach zaehlt
+  # nur ein echter Stream-Key.
+  plat(){ # $1=Praefix  $2=Schluesselvariable
+    local en key
+    en="$(envget "${1}_ENABLED")"; key="$(envget "$2")"
+    if [ -n "$en" ] && ! truthy "$en"; then echo off; return; fi
+    if [ -n "$key" ]; then echo on; else echo halb; fi
+  }
+  _tg=off; [ -n "$(envget BOT_TOKEN)" ] && _tg=on
+  _dc=off; [ -n "$(envget DISCORD_BOT_TOKEN)" ] && _dc=on
+  _ai=halb   # keylos laeuft AZRAEL immer (nc/freeai), mit Key nur besser
+  for k in ANTHROPIC_API_KEY OPENAI_API_KEY POLLINATIONS_API_KEY LLM7_TOKEN; do
+    [ -n "$(envget "$k")" ] && { _ai=on; break; }
+  done
+  sect "KANAELE" "${FNT}$(t "▣ bereit · ▨ ohne Key · ▢ aus")${R}"
+  printf '%s\n' "$(chip Kick "$(plat KICK KICK_STREAM_KEY)")" \
+                "$(chip Twitch "$(plat TWITCH TWITCH_STREAM_KEY)")" \
+                "$(chip YouTube "$(plat YOUTUBE YOUTUBE_STREAM_KEY)")" \
+                "$(chip Telegram "$_tg")" "$(chip Discord "$_dc")" "$(chip AZRAEL "$_ai")" \
+    | fluss "  "
+  [ "$_tg" = off ] && warn_add "$(t "BOT_TOKEN fehlt in der .env — ohne ihn startet der Telegram-Teil nicht")"
+elif [ -n "$BOT_DIR" ]; then
+  sect "KANAELE"
+  row ".env" "$(dot err)" "${ERR}$(t "fehlt")${R} ${FNT}— cp .env.example .env && chmod 600 .env${R}"
+fi
+
+# ── Doppelte Anzeige und veraltete Kopie (v5.11.1-W210) ──────
+# Beides sieht man nur hier: wer die MOTD zweimal sieht, sieht auch diesen
+# Hinweis — und die Abhilfe dazu.
+if [ -d /etc/update-motd.d ]; then
+  _dop="$(doppelt_befunde | head -1)"
+  if [ -n "$_dop" ]; then
+    warn_add "$(t "Statusbild erscheint doppelt"): $(doppelt_text "${_dop%%|*}") ${FNT}(${_dop#*|})${R} — ${TXT}$(doppelt_abhilfe "${_dop%%|*}" "${_dop#*|}")${R}"
+  fi
+fi
+# Die installierte Kopie unter /etc/update-motd.d ist ein SCHNAPPSCHUSS: die
+# Update-Funktion schreibt tools/motd.sh, erreicht diese Kopie aber nie. Dass
+# sie den Bestand nicht einfach AUSFUEHRT, ist Absicht — eine Datei, die der
+# Bot-Nutzer schreiben darf, bei jedem Login als root zu starten, waere ein
+# Weg vom Bot zu root. Also sagt sie, dass sie alt ist.
+if [ -n "$BOT_DIR" ] && [ -r "$BOT_DIR/tools/motd.sh" ]; then
+  _bv=$(sed -n 's/^NC_MOTD_VERSION="\([^"]*\)".*/\1/p' "$BOT_DIR/tools/motd.sh" | head -1)
+  if [ -n "$_bv" ] && [ "$_bv" != "$NC_MOTD_VERSION" ]; then
+    warn_add "$(tf "Statusbild veraltet (installiert %s, im Bestand %s)" "$NC_MOTD_VERSION" "$_bv"): ${TXT}sudo $BOT_DIR/tools/motd.sh --install${R}"
+  fi
 fi
 
 # ── Hinweise ─────────────────────────────────────────────────
 # Nur was WIRKLICH ansteht. Eine MOTD, die immer denselben Absatz zeigt, wird
 # nach drei Tagen nicht mehr gelesen — dann faellt auch der echte Befund durch.
 if [ -n "$WARN_LINES" ]; then
-  sect "HINWEISE"
+  abzeichen warn "$(printf '%s' "$WARN_LINES" | grep -c .)"
+  sect "HINWEISE" "$AZ"
   printf '%s' "$WARN_LINES" | while IFS= read -r l; do
     [ -n "$l" ] && printf "  ${WRN}▲${R} %b\n" "$l"
   done
-  rule
 fi
+rule
 printf "\n"
 exit 0
