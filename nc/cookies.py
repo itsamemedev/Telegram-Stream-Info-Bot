@@ -236,17 +236,25 @@ def _cookies_input_to_netscape(raw: str):
             count += 1
     return "\n".join(out) + "\n", count
 
-def _dedupe_cookie_text(netscape_text: str):
+def _dedupe_cookie_text(netscape_text: str, jetzt=None):
     """Entfernt doppelte Cookie-NAMEN (z.B. msToken unter .tiktok.com UND
        www.tiktok.com) und behält pro Name nur die beste Variante — exakt nach
-       derselben Regel wie _load_cookies_dict(): spezifischere Domain (ohne
-       führenden Punkt) gewinnt, bei Gleichstand die längere Expiry. So
+       derselben Regel wie _load_cookies_dict(): eine gueltige Variante vor
+       jeder abgelaufenen, dann die spezifischere Domain (ohne führenden
+       Punkt), bei Gleichstand die längere Expiry. So
        verschwindet die 'mehrfach unter verschiedenen Domains'-Warnung und der
        Bot sendet garantiert den Wert, den auch die Health-Anzeige sieht.
        Werte werden NICHT verändert — nur die unterlegene Zeile entfällt.
-       Returns (bereinigter_text, anzahl_entfernt)."""
+       Returns (bereinigter_text, anzahl_entfernt).
+
+       BH-4: ohne den Gueltig-Rang loeschte der Import (uebernehmen, Auto-
+       Bezug) beim Dedupe die GUELTIGE `.tiktok.com sessionid` und behielt
+       die abgelaufene `www.tiktok.com`-Zeile — die Domain stand vor der
+       Expiry. Das war nicht nur der falsche gesendete Wert wie in
+       load_dict(), sondern der gueltige Login physisch aus der Datei."""
+    jetzt = _time.time() if jetzt is None else jetzt
     lines = netscape_text.splitlines()
-    best = {}                  # name -> (spec, expiry, idx)
+    best = {}                  # name -> (lebend, spec, expiry, idx)
     is_data = set()
     for i, l in enumerate(lines):
         ls = l.strip()
@@ -260,10 +268,11 @@ def _dedupe_cookie_text(netscape_text: str):
         try: expiry = int(parts[4])
         except (ValueError, IndexError): expiry = 0
         spec = 0 if domain.startswith(".") else 1
+        lebend = 0 if abgelaufen(expiry, jetzt) else 1
         prev = best.get(name)
-        if prev is None or (spec, expiry) > (prev[0], prev[1]):
-            best[name] = (spec, expiry, i)
-    keep = {v[2] for v in best.values()}
+        if prev is None or (lebend, spec, expiry) > prev[:3]:
+            best[name] = (lebend, spec, expiry, i)
+    keep = {v[3] for v in best.values()}
     out, removed = [], 0
     for i, l in enumerate(lines):
         if i in is_data and i not in keep:
@@ -484,7 +493,7 @@ def _im_hintergrund_neu_lesen():
     threading.Thread(target=_lauf, name="cookies-neu-lesen", daemon=True).start()
 
 
-def auswahl(cookies) -> dict:
+def auswahl(cookies, jetzt) -> dict:
     """Name -> der Cookie, dessen Wert der Bot sendet.
 
     v5.6-W197: aus _lesen() herausgezogen, damit der Bereinigungs-Knopf
@@ -504,15 +513,31 @@ def auswahl(cookies) -> dict:
     die besuchte Seite tatsaechlich sendet), Rang 0 = Wildcard ('.tiktok.com');
     bei gleichem Rang die laengere Expiry; bei vollem Gleichstand der ERSTE
     in der uebergebenen Reihenfolge (striktes `>`). Wer hier etwas aendert,
-    aendert den gesendeten Wert UND die Bereinigung — absichtlich zusammen."""
+    aendert den gesendeten Wert UND die Bereinigung — absichtlich zusammen.
+
+    BH-4: VOR der Domain steht, ob die Variante noch gilt (`abgelaufen()`,
+    dieselbe Lesart wie Deck und Bereinigungs-Knopf; Ablauf 0 ist Sitzung).
+    lade_jar() liest mit ignore_expires, und ohne diesen Rang schlug eine
+    abgelaufene `www.tiktok.com sessionid` (Rang 1, kleiner Zeitstempel) die
+    gueltige `.tiktok.com sessionid` (Rang 0) — der Bot sendete den toten
+    Wert, waehrend das Deck „sessionid vorhanden" zeigte, und TikTok
+    antwortete 403. Ein Browser sendet einen abgelaufenen Cookie nie.
+
+    Sind ALLE Varianten eines Namens abgelaufen, gewinnt trotzdem die beste
+    davon, statt den Namen wegzulassen: das war bisher das Verhalten in
+    diesem Fall, der Ablauf in der Datei ist nur der Hinweis des Browsers
+    (gueltig ist, was TikTok serverseitig annimmt), und ohne Wert ginge die
+    Anfrage sicher als Gast hinaus. Laut ist der Fall trotzdem —
+    gesundheit() meldet eine Anmeldung ohne gueltige Variante als kritisch."""
     best: dict = {}
     for c in cookies:
+        lebend = 0 if abgelaufen(c.expires, jetzt) else 1
         specificity = 0 if (c.domain or "").startswith(".") else 1
-        expiry = c.expires or 0
+        rang = (lebend, specificity, c.expires or 0)
         prev = best.get(c.name)
-        if prev is None or (specificity, expiry) > (prev[0], prev[1]):
-            best[c.name] = (specificity, expiry, c)
-    return {name: c for name, (_, _, c) in best.items()}
+        if prev is None or rang > prev[0]:
+            best[c.name] = (rang, c)
+    return {name: c for name, (_, c) in best.items()}
 
 
 def abgelaufen(expires, jetzt) -> bool:
@@ -538,8 +563,10 @@ def _lesen(mtime, now) -> dict:
                     "automatisch holen lassen, sonst bleibt es Gluecksache.")
         # Die Kollisionsregel steht in auswahl() — dieselbe, nach der der
         # Bereinigungs-Knopf entscheidet, welche Variante stehen bleibt.
+        # Wanduhr, nicht `now` (monotonic): der Ablauf in der Datei ist eine
+        # Unix-Zeit, gegen die Monotonuhr waere JEDER Cookie „gueltig".
         alle = list(cj)
-        gewaehlt = auswahl(alle)
+        gewaehlt = auswahl(alle, _time.time())
         d = {name: c.value for name, c in gewaehlt.items()}
         skipped_collisions = len(alle) - len(gewaehlt)
         if skipped_collisions:
@@ -631,6 +658,7 @@ def gesundheit() -> dict:
             "file_mtime": None, "file_age_days": None,
             "total": 0, "expiring_soon": [], "expired": [],
             "critical_present": [], "critical_missing": list(_KRITISCH),
+            "critical_expired": [],
             "oldest_expiry_days": None,
             "duplicate_domain_cookies": [],
         }
@@ -668,6 +696,7 @@ def gesundheit() -> dict:
             "file_mtime": mtime, "file_age_days": age_days,
             "total": 0, "expiring_soon": [], "expired": [],
             "critical_present": [], "critical_missing": list(_KRITISCH),
+            "critical_expired": [],
             "oldest_expiry_days": None,
             "duplicate_domain_cookies": [],
             "repaired": False,
@@ -705,6 +734,15 @@ def gesundheit() -> dict:
 
     critical_present = [n for n in _KRITISCH if n in present_names]
     critical_missing = [n for n in _KRITISCH if n not in present_names]
+    # BH-4: welcher Wert GESENDET wird, nicht nur, ob der Name vorkommt —
+    # dieselbe auswahl() wie load_dict(). Ist die gesendete Variante
+    # abgelaufen, gibt es keine gueltige mehr (eine gueltige gewinnt immer),
+    # und „Vorhanden: sessionid" im Deck war die falsche Auskunft.
+    gesendet = auswahl(all_cookies, now)
+    critical_expired = [n for n in critical_present
+                        if abgelaufen(gesendet[n].expires, now)]
+    login_tot = [n for n in LOGIN_NAMEN
+                 if n in gesendet and abgelaufen(gesendet[n].expires, now)]
     # BUG-FIX: kritische Cookies mit >1 Domain-Variante in der Datei —
     # potenzielle Quelle für falsch aufgelöste/veraltete Werte beim Senden.
     duplicate_domain_cookies = sorted(
@@ -724,6 +762,15 @@ def gesundheit() -> dict:
         headline = ("Keine Anmeldung in der Cookie-Datei (kein sessionid, nur "
                     + ", ".join(sorted(present_names)[:4])
                     + ") — 18+- und Abo-Lives bleiben zu. Eingeloggt neu exportieren.")
+    elif not hat_login(set(present_names) - set(login_tot)):
+        # BH-4: Anmelde-Cookies stehen da, aber keine Variante gilt mehr. Bis
+        # dahin war das „warning: N Cookie(s) abgelaufen" — dieselbe Zeile wie
+        # ein abgelaufenes Analyse-Token, obwohl die Anmeldung tot ist.
+        status = "critical"
+        headline = ("Anmeldung abgelaufen (" + ", ".join(login_tot)
+                    + ": keine gueltige Variante mehr) — der Bot sendet den "
+                    "abgelaufenen Wert, 18+- und Abo-Lives bleiben damit "
+                    "voraussichtlich zu. Eingeloggt neu exportieren.")
     elif expired:
         status = "warning"
         headline = f"{len(expired)} Cookie(s) abgelaufen"
@@ -766,6 +813,9 @@ def gesundheit() -> dict:
         "expired": expired,
         "critical_present": critical_present,
         "critical_missing": critical_missing,
+        # BH-4: kritische Namen, deren GESENDETER Wert abgelaufen ist — das
+        # Deck faerbt sie unter „Vorhanden" rot statt gruen.
+        "critical_expired": critical_expired,
         "oldest_expiry_days": oldest_expiry_days,
         "duplicate_domain_cookies": duplicate_domain_cookies,
         "repaired": krumm,

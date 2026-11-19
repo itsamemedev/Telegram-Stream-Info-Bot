@@ -13265,22 +13265,30 @@ def _highlight_observe(src, text):
     _cohost_fire_highlight(hit)
 
 
-def _restream_chat_push(src, who, text, origin=None):
+def _restream_chat_push(src, who, text, origin=None, kanal=None):
     """src: 'tiktok' | 'kick' | 'event'. Events (Gifts/Follows) laufen immer mit,
        normale Nachrichten nur wenn die Quelle freigeschaltet ist.
-       origin = TikTok-User, aus dessen Live der Eintrag stammt (Listener-Closure)."""
+       origin = TikTok-User, aus dessen Live der Eintrag stammt (Listener-Closure).
+       kanal = Plattform eines Ereignisses vom EIGENEN Kanal (Twitch-Follow,
+       YouTube-Superchat) — es laeuft wie die Chatzeilen dort in jedem Kasten."""
     if src != "event" and not _chat_src_ok(src):
         return
     # F97: Läuft ein Restream, gehören NUR TikTok-Nachrichten aus dem Live des
     # GERESTREAMTEN Users ins Sendebild. Vorher pushte jeder Live-React-Worker
     # (alle getrackten Live-User!) in denselben Feed → fremde Chats im Stream.
     # Kick-Nachrichten sind davon unberührt (immer der eigene Kanal).
-    if src in ("tiktok", "event"):
+    # BH-7: Ereignisse des eigenen Kanals ebenso. Ohne `kanal` fielen Twitch-
+    # Follow und YouTube-Superchat hier heraus, sobald ein Restream lief —
+    # also genau dann, wenn es einen Kasten gibt, der sie zeigen soll.
+    if src == "tiktok" or (src == "event" and kanal not in _nc_channels.EIGENE_KANAELE):
         # V37-P5b: gegen ALLE aktiven Restream-Quellen prüfen statt nur die
         # primäre — bei parallelen Restreams wurde der TikTok-Chat der
         # zweiten Quelle vorher komplett verworfen.
+        # BH-7: ohne Gross-/Kleinschreibung, dieselbe Vergleichsform wie der
+        # Kasten — „Name" aus der Restream-Zeile gegen „name" aus dem
+        # Listener warf hier jede Zeile weg, bevor ein Filter sie sah.
         _actives = _restream_active_sources()
-        if _actives and clean_username(origin or "") not in _actives:
+        if _actives and not _nc_channels.quelle_aktiv(origin, _actives):
             return
     who = _chat_sanitize(who, 24) or "?"
     text = _chat_sanitize(text, 160)
@@ -13293,8 +13301,15 @@ def _restream_chat_push(src, who, text, origin=None):
     for m in list(_RESTREAM_CHAT)[-8:]:
         if m["who"] == who and m["text"] == text and now - m["ts"] < 3.0:
             return
-    _RESTREAM_CHAT.append({"ts": now, "src": src, "who": who, "text": text,
-                           "origin": clean_username(origin or "") or None})
+    _origin = clean_username(origin or "") or None
+    _nc_channels.chat_anhaengen({"ts": now, "src": src, "who": who, "text": text,
+                                 "origin": _origin, "kanal": kanal})
+    # BH-7: Begruessung und Rangaufstieg reagieren auf DIESE Nachricht und
+    # gehoeren in denselben Kasten wie sie: origin = derselbe TikTok-Nutzer,
+    # kanal = die Plattform (Kick/Twitch/YouTube laufen ueberall mit). Mit
+    # origin=None liess jeder gefilterte Kasten sie weg — und ohne Filter
+    # erschien die Begruessung eines TikTok-Zuschauers in JEDEM Sendebild.
+    _folge = {"src": "event", "who": "", "origin": _origin, "kanal": src}
     # F99: Chat live an alle Dashboards fächern (SSE) — separates Event, damit das
     # Studio-Panel ohne 8s-Polling nachzieht. Eigener kind-Namespace ("chat.msg"),
     # den der Notification-Filter ignoriert (kein Toast pro Chat-Zeile).
@@ -13312,8 +13327,7 @@ def _restream_chat_push(src, who, text, origin=None):
         try:
             _greet = _community.note_chatter(who, src, now=now)
             if _greet:
-                _RESTREAM_CHAT.append({"ts": now, "src": "event", "who": "",
-                                       "text": _greet, "origin": None})
+                _nc_channels.chat_anhaengen(dict(_folge, ts=now, text=_greet))
                 if _bp:
                     _bp("chat.msg", "chat", "event|", _greet[:180])
                 if DISCORD_WEBHOOK_URL:
@@ -13330,8 +13344,7 @@ def _restream_chat_push(src, who, text, origin=None):
             _lr = _loyalty.award_chat(who, src, now=now)
             if _lr and _lr.get("leveled_up"):
                 _up = f"\U0001F3C5 {who} ist aufgestiegen: {_lr['rank']}!"
-                _RESTREAM_CHAT.append({"ts": now, "src": "event", "who": "",
-                                       "text": _up, "origin": None})
+                _nc_channels.chat_anhaengen(dict(_folge, ts=now, text=_up))
                 if _bp:
                     _bp("chat.msg", "chat", "event|", _up[:180])
                 if DISCORD_WEBHOOK_URL:
@@ -13414,12 +13427,13 @@ def _restream_status_schreiben(rid, status, pid, err, zeit):
                       type(e).__name__, e, _nc_meldetakt.zusatz(weg))
 
 
-async def _restream_chat_push_async(src, who, text, origin=None):
+async def _restream_chat_push_async(src, who, text, origin=None, kanal=None):
     """_restream_chat_push neben dem Loop, Reihenfolge erhalten."""
     try:
         await asyncio.get_running_loop().run_in_executor(
             _CHAT_PUSH_EXEC,
-            _functools.partial(_restream_chat_push, src, who, text, origin=origin))
+            _functools.partial(_restream_chat_push, src, who, text, origin=origin,
+                               kanal=kanal))
     except Exception as e:
         # Der Sendebild-Chat ist Anzeige, kein Betriebszustand — ein
         # Fehlschlag darf die Chat-Schleife nicht anhalten.
@@ -14277,7 +14291,9 @@ def _restream_avatar_feeder_start(rid):
                     # und gehoert deshalb NICHT in dieselbe Rechnung — es ist
                     # ohnehin abgedeckt, weil _azrael_spricht() es liest und
                     # Sprechen jeden anderen Zustand schlaegt.
-                    letzte = _RESTREAM_CHAT[-1]["ts"] if _RESTREAM_CHAT else 0.0
+                    # BH-10: ueber eine Kopie — zwischen `if ring` und
+                    # `ring[-1]` kann der Restream-Start den Ring ausduennen.
+                    letzte = _nc_channels.letzte_zeit()
                     soll = _nc_avloop.zustand(
                         _azrael_spricht(),
                         _nc_avloop.ruhe_seit(_time_mod.time(), letzte,
@@ -14296,12 +14312,21 @@ def _restream_avatar_feeder_start(rid):
                         f.flush()
                     except (BrokenPipeError, OSError):
                         return                     # ffmpeg weg → Writer endet
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # BH-9: hier stand `pass` — ein dauerhaft kaputtes
+                        # Bild lief ohne eine Zeile weiter, und ffmpeg wartete
+                        # am Avatar-Eingang (ein stallender Eingang stallt den
+                        # ganzen Sender). Gedrosselt, erste Meldung sofort.
+                        _loop_fehler(f"avatar-fifo#{rid}", e)
                     i += 1
                     stop.wait(takt)
-        except Exception:
-            pass
+        except Exception as e:
+            # BH-9: dasselbe fuer alles ausserhalb des Schreibens (Zustand,
+            # Schleifenwahl, open). Vorher endete der Writer hier wortlos, und
+            # AZRAEL stand still. Nach stop() ist ein Fehler beim Abbau kein
+            # Befund — der Stopp weckt open() absichtlich.
+            if not stop.is_set():
+                _loop_fehler(f"avatar-fifo#{rid}", e)
 
     th = threading.Thread(target=_writer, daemon=True)
     th.start()
@@ -15254,17 +15279,16 @@ class RestreamManager:
                                      "label": _lbl, "rid": rid,
                                      "ovdir": _ovdir}
         # F97: alte TikTok-Einträge ANDERER User aus dem Feed werfen — beim
-        # Quellenwechsel darf kein fremder Chat im Sendebild nachhängen.
-        try:
-            _src_u = clean_username(row["source_username"] or "")
-            _act_srcs = _restream_active_sources() | {_src_u}   # V37-P6
-            _keep = [m for m in _RESTREAM_CHAT
-                     if m.get("src") in ("kick", "twitch", "youtube")
-                     or (m.get("origin") or "") in _act_srcs]
-            _RESTREAM_CHAT.clear()
-            _RESTREAM_CHAT.extend(_keep)
-        except Exception:
-            pass
+        # Quellenwechsel darf kein fremder Chat nachhängen. Das Sendebild
+        # filtert seit V37-P6 selbst je Quelle; gebraucht wird das noch fuer
+        # den Studio-Monitor im Deck, der den Ring ungefiltert zeigt.
+        # BH-10: ueber nc.channels.chat_ausduennen — unter der Sperre, die
+        # auch der Chat-Arbeiter nimmt, und ohne leeren Zwischenstand. Vorher
+        # Listen-Abzug, clear(), extend() ohne Sperre: was der Arbeiter
+        # dazwischen anhing, war weg, und die Gross-/Kleinschreibung des
+        # Namens warf den Chat des LAUFENDEN Restreams gleich mit hinaus.
+        _nc_channels.chat_ausduennen(
+            _restream_active_sources() | {clean_username(row["source_username"] or "")})
         # V37-BH4: Reset nur, wenn dieser Restream der EINZIGE aktive ist.
         # Vorher setzte der Start eines ZWEITEN Streams den Donation-Zähler
         # der laufenden Session auf 0 — Spendenziel-Fortschritt im Overlay
@@ -15460,12 +15484,24 @@ class RestreamManager:
                 await asyncio.to_thread(_br.start)     # Popen — neben dem Loop
             except Exception as e:
                 # Ohne Pausenbild bekommt der Sender nie ein Byte und haengt
-                # am Probe. Schliessen heisst EOF, der Sender endet, und der
-                # Manager behandelt das wie jedes andere Ende — laut.
-                log.error("Restream #%d: Sendebruecke startet nicht (%s: %s) — "
-                          "ffmpeg im PATH? Der Sender wird beendet.",
-                          rid, type(e).__name__, e)
-                await asyncio.to_thread(_br.stop)
+                # am Probe. BH-8: hier stand nur _br.stop() und KEIN return —
+                # es folgten Status „live", Community-Ping, Monitor,
+                # Chat-Guardian und desired=1, und start() meldete ok. Der
+                # Sender las EOF und starb; jeder Fehlstart zaehlte als
+                # gelungener Start. Jetzt derselbe Ausgang wie beim
+                # ffmpeg-Startfehler oben: abraeumen, Status error, ok=False.
+                _grund = f"Sendebruecke startet nicht ({type(e).__name__}: {e})"
+                log.error("Restream #%d: %s — ffmpeg im PATH? Der Sender wird "
+                          "beendet, der Start gilt als gescheitert.", rid, _grund)
+                _info = self._procs.pop(rid, None)
+                # Erst den Sender, dann die Bruecke — dieselbe Reihenfolge wie
+                # in stop() (W179): ein os.write in den nicht lesenden Sender
+                # haelt sonst den Bruecken-Abbau auf.
+                await _reap_proc(proc)
+                await self._bruecke_abraeumen(rid, _info)
+                await self._nebenlaeufer_abraeumen(rid)
+                self._set_status(rid, "error", err=_grund)
+                return {"ok": False, "error": _grund}
         self._set_status(rid, "live", pid=proc.pid)
         # B141: Kollisions-Warnung. Teilen sich zwei aktive Restreams denselben
         # Kick-Key, kann nur EINER senden (ein RTMP-Key = ein Slot) — die anderen
@@ -15510,7 +15546,10 @@ class RestreamManager:
                                            COMMUNITY_LIVE_PING_MIN_GAP_S)):
             _COMMUNITY_PINGED[rid] = _jetzt_ping
             try:
-                _plats = [n.capitalize() for n, _ in _nc_rst.active_targets()] or ["Kick"]   # v4.0-W77
+                # BH-11: die Ziele DIESES Restreams (mit seinen Overrides),
+                # nicht die globale Liste — sonst nannte der Ping Plattformen,
+                # auf die dieser Restream gar nicht sendet.
+                _plats = [n.capitalize() for n, _ in _targets] or ["Kick"]   # v4.0-W77
                 _msg = _community.live_ping(
                     _community.anzeigename(os.getenv("STREAMER_NAME"), "Der Stream"),
                     platforms=_plats)
@@ -23716,7 +23755,7 @@ async def _twitch_eventsub_loop():
                             ev = (pl.get("event") or {})
                             who = (ev.get("user_name") or ev.get("user_login") or "?")
                             _overlay_push("follow", who, platform="twitch")
-                            await _restream_chat_push_async("event", who, "TWITCH FOLLOW \U0001f5a4")
+                            await _restream_chat_push_async("event", who, "TWITCH FOLLOW \U0001f5a4", kanal="twitch")
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -23936,7 +23975,7 @@ async def _twitch_chat_loop():
                     mid = tags.get("msg-id", "")
                     if mid in ("sub", "resub", "subgift", "submysterygift", "giftpaidupgrade"):
                         _overlay_push("donation", user, message="Twitch Sub", platform="twitch")
-                        await _restream_chat_push_async("event", user, "TWITCH SUB \U0001f5a4")
+                        await _restream_chat_push_async("event", user, "TWITCH SUB \U0001f5a4", kanal="twitch")
                         if token and os.getenv("AZRAEL_THANK_OWN_GIFTS", "1") in ("1", "true") \
                                 and _wchat_thank_ok("tw:" + user):
                             await _w(f"PRIVMSG #{chan} :🖤 Danke für den Sub, {user}!")
@@ -24196,7 +24235,7 @@ async def _youtube_chat_loop():
                             amt = ((st.get("purchaseAmountText") or {}).get("simpleText") or "")
                             _overlay_push("donation", who, amount=amt,
                                           message="Super-Sticker", platform="youtube")
-                            await _restream_chat_push_async("event", who, f"SUPER-STICKER {amt} \U0001f9e8")
+                            await _restream_chat_push_async("event", who, f"SUPER-STICKER {amt} \U0001f9e8", kanal="youtube")
                         elif mb:
                             who = ((mb.get("authorName") or {}).get("simpleText") or "?")
                             _mtxt = ((mb.get("headerSubtext") or {}).get("simpleText")
@@ -24205,13 +24244,13 @@ async def _youtube_chat_loop():
                                      or "Mitgliedschaft")
                             _overlay_push("donation", who, message=str(_mtxt)[:60],
                                           platform="youtube")
-                            await _restream_chat_push_async("event", who, "YT-MITGLIED \U0001f5a4")
+                            await _restream_chat_push_async("event", who, "YT-MITGLIED \U0001f5a4", kanal="youtube")
                         elif p:
                             who = ((p.get("authorName") or {}).get("simpleText") or "?")
                             amt = ((p.get("purchaseAmountText") or {}).get("simpleText") or "")
                             _overlay_push("donation", who, amount=amt, message="Superchat",
                                           platform="youtube")
-                            await _restream_chat_push_async("event", who, f"SUPERCHAT {amt} \U0001f4b8")
+                            await _restream_chat_push_async("event", who, f"SUPERCHAT {amt} \U0001f4b8", kanal="youtube")
                             # V37-YT-SEND: Superchat-Dank im eigenen Chat
                             if _YT_SEND.get("fn") and os.getenv("AZRAEL_THANK_OWN_GIFTS", "1") in ("1", "true") \
                                     and _wchat_thank_ok("yt:" + who):
