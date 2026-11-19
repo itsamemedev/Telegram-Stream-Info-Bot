@@ -41590,6 +41590,8 @@ def _test_v511_w211_chat_kasten_tls():
     srv = _ss.ThreadingTCPServer(("127.0.0.1", 0), _H)
     srv.daemon_threads = True
     ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+    # Auch im Testserver kein TLS 1.0/1.1 (CodeQL py/insecure-protocol).
+    ctx.minimum_version = _ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(cert, key)
     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     _th.Thread(target=srv.serve_forever, daemon=True).start()
