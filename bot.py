@@ -22983,13 +22983,10 @@ async def _clip_schneiden(username, reason, caption, recfile):
     _chat_ass = await asyncio.to_thread(_clip_chat_ass, recfile, start, start + real, out)
     if _chat_ass:
         vf.append("subtitles='%s'" % _nc_aufnahmechat._filterpfad(_chat_ass))
-    cmd = ["ffmpeg", "-y", "-ss", f"{start:.2f}", "-i", recfile, "-t", f"{real:.2f}"]
-    if vf:
-        cmd += ["-vf", ",".join(vf)]
-    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out]
+    # BH-3: der Bauer steht in nc/aufnahmechat (Ton ausdruecklich gemappt).
     # V37-CPU: Clip-Erstellung ist Hintergrundarbeit — Deckel + nice.
-    cmd = _ff_cmd(cmd, threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
+    cmd = _nc_aufnahmechat.clip_cmd(recfile, start, real, out, vf=vf,
+                                    threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
     try:
         # v4.2-W120: mit Zeitlimit (nc.kindprozess) — Clips sind Sekunden
         # lang, zehnfache Laenge plus zwei Minuten ist grosszuegig.
@@ -23003,7 +23000,16 @@ async def _clip_schneiden(username, reason, caption, recfile):
             await asyncio.to_thread(_datei_weg, _chat_ass)
         if _rc == 0 and os.path.exists(out) and os.path.getsize(out) > 1024:
             log.info("✂ Clip erstellt @%s (%s): %s", username, reason, os.path.basename(out))
-            _nc_aufnahmechat.clip_merken(recfile, out, reason)   # v4.2-W159: fuer den Zusammenschnitt
+            # BH-3: die Aufnahme laeuft noch — ihre Stille ruestet sichern() erst
+            # nach dem Ende nach. Ohne diese Zeile ging ein Clip einer tonlosen
+            # Quelle ohne Tonspur hinaus, und als erster Clip nahm er dem ganzen
+            # Zusammenschnitt den Ton (gemessen, nc/aufnahmechat.clip_cmd).
+            _ton = await _nc_tonspur.sichern(out, wer=f"Clip @{username}", timeout=120)
+            if _ton.get("lage") != "fehlgeschlagen":
+                _nc_aufnahmechat.clip_merken(recfile, out, reason)   # v4.2-W159: fuer den Zusammenschnitt
+            else:
+                log.warning("Clip @%s bleibt ohne Ton (Grund oben) — er geht einzeln hinaus, "
+                            "aber nicht in den Zusammenschnitt.", username)
             try:
                 if DISCORD_WEBHOOK_URL:
                     _spawn(_discord_notify(f"✂ Neuer Highlight-Clip @{username} — {reason}", "clipper"),

@@ -420,6 +420,11 @@ def zubringer(source_url, tonlos=False, neukodieren=False):
     else:
         cmd += ["-re"] + quell_eingang(source_url)
     if tonlos:
+        # -shortest bleibt: das Ende kommt mit dem Quell-EOF, wie im Zweig mit
+        # Ton (dort endet der einzige Eingang). Ein Abriss mit gelungenem
+        # -reconnect ist kein EOF. Ohne -shortest gemessen: nach dem Quell-EOF
+        # lief die endlose Stille ungebremst weiter (anullsrc steht nicht
+        # unter -re) — 90 s bis zum Abschuss, 189 MB TS an die Bruecke (BH-5).
         cmd += _nc_tonspur.stille_eingabe()
         cmd += ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
     else:

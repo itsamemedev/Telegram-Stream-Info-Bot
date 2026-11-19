@@ -24415,12 +24415,14 @@ def _test_v42_w130_sendebruecke():
     W._urteil[B.QUELLE] = "neukodieren"
     W._wuensche(B.QUELLE, "Test")
     assert not W.daten(B.QUELLE, _w130_pes(0x100, 15000, 12000, rai=True))
-    # Ohne Quelle laenger als start_warten_s: dann darf das Pausenbild zuerst.
+    # Ohne Quelle laenger als start_warten_max_s: dann darf das Pausenbild
+    # zuerst (BH-6: vorher schon nach start_warten_s, Vertrag in
+    # _test_v511_bh6_pausenbild_vortritt).
     W2 = B.Bruecke(schreib, [], None, None, name="#w", uhr=lambda: uhr[0],
-                   start_warten_s=20.0)
+                   start_warten_s=20.0, start_warten_max_s=45.0)
     W2.daten(B.FUELLER, _w130_pat()); W2.daten(B.FUELLER, _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)]))
     assert not W2.daten(B.FUELLER, _w130_pes(0x100, 3000, 0, rai=True))
-    uhr[0] += 21
+    uhr[0] += 46
     assert W2.daten(B.FUELLER, _w130_pes(0x100, 6000, 3000, rai=True)), \
         "ohne Quelle bliebe der Sender ewig ohne Bild"
     gelesen()
@@ -24452,7 +24454,15 @@ def _test_v42_w130_sendebruecke():
     for cmd in (z, zt, zn, f):
         assert T.hat_tonspur(cmd), cmd
         assert " ".join(T.AAC_ARGS) in " ".join(cmd), ("anderes Tonformat", cmd)
-    assert T.STILLE_QUELLE in zt and "1:a:0" in zt and "-shortest" in zt
+    assert T.STILLE_QUELLE in zt and "1:a:0" in zt
+    # BH-5 (widerlegt, gemessen ffmpeg 6.1): -shortest beendet den tonlosen
+    # Zubringer genau am Quell-EOF — wie den mit Ton, dessen einziger Eingang
+    # die Quelle ist. Eine Pause der Quelle (12 s) ueberstand er. OHNE
+    # -shortest lief er nach dem Quell-EOF weiter: 90 s bis zum Abschuss und
+    # 189 MB Stille-TS, weil anullsrc nicht unter -re steht.
+    assert "-shortest" in zt, "tonloser Zubringer ohne -shortest endet nie"
+    assert zt.index(T.STILLE_QUELLE) > zt.index(url) and zt.count("-i") == 2, \
+        "Stille nicht als zweiter Eingang hinter der Quelle"
     assert zn[zn.index("-c:v") + 1] == "libx264"
     fps = 30
     assert f[f.index("-g") + 1] == str(int(fps * R.BRUECKE_GOP_S)), \
@@ -41571,6 +41581,195 @@ def _test_v511_w211_chat_kasten_tls():
        "Fehler (Tab zu, Ruhe, lauter Rueckfall auf Text), echt gegen TLS gemessen")
 
 
+def _test_v511_bh3_clip_tonspur():
+    """BH-3: jeder Highlight-Clip traegt eine Tonspur, auch aus einer
+    tonlosen laufenden Aufnahme.
+
+    Gemessen vor der Korrektur (ffmpeg 6.1): der Clip-Befehl ohne `-map`
+    lief an einer tonlosen Aufnahme mit rc=0 und lieferte reines Bild; der
+    Zusammenschnitt mit einem solchen Clip vorn war ganz stumm, mit einem
+    solchen Clip hinten trug er 6 s Ton auf 12 s Bild. Geprueft: der Bauer
+    mappt Ton (optional, weil die wachsende Datei keinen haben muss), der
+    Aufrufer prueft den fertigen Clip mit tonspur.sichern() VOR dem Merken,
+    und echt: tonloser Clip wird nachgeruestet, der Zusammenschnitt traegt
+    Ton ueber die volle Laenge."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import pruefhilfen as P
+    from nc import aufnahmechat as A
+    from nc import tonspur as T
+
+    # (1) Der Bauer: Ton gemappt, Format wie die nachgeruestete Stille.
+    c = A.clip_cmd("/rec/a.mp4", 12.345, 30, "/clips/c.mp4",
+                   vf=["scale=1080:1920", "pad=1080:1920"], threads=1, nice=0)
+    assert c[0] == "ffmpeg" and c[-1] == "/clips/c.mp4", c
+    assert T.hat_tonspur(c, optional_ok=True), ("Clip ohne Ton-Map", c)
+    maps = [c[i + 1] for i, a in enumerate(c[:-1]) if a == "-map"]
+    assert maps == ["0:v:0", "0:a:0?"], \
+        ("ein harter Ton-Map liesse jeden Clip einer tonlosen Aufnahme scheitern", maps)
+    assert " ".join(T.AAC_ARGS) in " ".join(c), "anderes Tonformat als die Stille-Spur"
+    assert c.index("-ss") < c.index("-i") < c.index("-t"), "-ss/-t vertauscht"
+    assert c[c.index("-ss") + 1] == "12.35" and c[c.index("-t") + 1] == "30.00"
+    assert c[c.index("-vf") + 1] == "scale=1080:1920,pad=1080:1920"
+    assert "-vf" not in A.clip_cmd("/rec/a.mp4", 0, 5, "/c.mp4")
+
+    # (2) Der Aufrufer: Bauer statt eigener Liste, sichern() vor clip_merken().
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_clip_schneiden")
+    aufrufe = {}
+    for n in _ast.walk(fn):
+        if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute):
+            aufrufe.setdefault(n.func.attr, []).append(n.lineno)
+    assert "clip_cmd" in aufrufe, "_clip_schneiden baut den Befehl wieder selbst"
+    assert not [n for n in _ast.walk(fn) if isinstance(n, _ast.List) and n.elts
+                and isinstance(n.elts[0], _ast.Constant) and n.elts[0].value == "ffmpeg"], \
+        "zweiter ffmpeg-Bauer in _clip_schneiden"
+    assert "sichern" in aufrufe and "clip_merken" in aufrufe, sorted(aufrufe)
+    assert min(aufrufe["sichern"]) < min(aufrufe["clip_merken"]), \
+        "der Clip kommt in den Zusammenschnitt, bevor seine Tonspur gesichert ist"
+    # Bleibt er stumm (Platz, ffmpeg), kommt er NICHT in den Zusammenschnitt:
+    # als erster Clip naehme er allen anderen den Ton.
+    huelle = [n for n in _ast.walk(fn) if isinstance(n, _ast.If)
+              and any(isinstance(st, _ast.Expr) and isinstance(st.value, _ast.Call)
+                      and getattr(st.value.func, "attr", "") == "clip_merken"
+                      for st in n.body)]       # das If, das clip_merken UNMITTELBAR traegt
+    assert huelle and any(isinstance(k, _ast.Constant) and k.value == "fehlgeschlagen"
+                          for k in _ast.walk(huelle[0].test)), \
+        "ein stumm gebliebener Clip geht in den Zusammenschnitt"
+
+    if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
+        ok("BH-3: Clip-Tonspur (rein); ffmpeg fehlt — echter Lauf uebersprungen")
+        return
+    # (3) Echt: zwei laufende Aufnahmen wie der Recorder sie schreibt (fMP4,
+    # Ton optional gemappt) — eine ohne Ton, eine mit 48-kHz-Mono.
+    heim = P.verzeichnis()
+
+    def aufnahme(name, ton):
+        p = _os.path.join(heim, name)
+        cmd = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x288:r=25"]
+        if ton:
+            cmd += ["-f", "lavfi", "-i", "sine=r=48000:f=440"]
+        cmd += ["-t", "8", "-c:v", "libx264", "-preset", "ultrafast", "-g", "25",
+                "-map", "0:v:0?", "-map", "1:a:0?" if ton else "0:a:0?", "-ac", "1",
+                "-movflags", "+empty_moov+frag_keyframe+default_base_moof",
+                "-frag_duration", "2000000", p]
+        _sp.run(cmd, check=True, timeout=60)
+        return p
+
+    def spuren(p):
+        r = _sp.run(["ffprobe", "-v", "error", "-show_entries",
+                     "stream=codec_type,duration,sample_rate,channels", "-of", "json", p],
+                    capture_output=True, text=True, timeout=30)
+        return {s["codec_type"]: s for s in __import__("json").loads(r.stdout)["streams"]}
+    clips = []
+    for name, ton in (("stumm.mp4", False), ("ton.mp4", True)):
+        rec = aufnahme(name, ton)
+        clip = _os.path.join(heim, "clip_" + name)
+        r = _sp.run(A.clip_cmd(rec, 2, 4, clip, vf=["scale=144:256"]),
+                    capture_output=True, timeout=120)
+        assert r.returncode == 0, r.stderr[-300:]
+        lage = _aio.run(T.sichern(clip, wer="Vertrag BH-3", timeout=60))["lage"]
+        assert lage == ("ton" if ton else "nachgeruestet"), (name, lage)
+        s = spuren(clip)
+        assert "audio" in s, ("Clip ohne Tonspur", name)
+        assert (s["audio"]["sample_rate"], s["audio"]["channels"]) == ("44100", 2), \
+            ("Tonformat weicht von der Stille ab — der Zusammenschnitt mischte zwei", s)
+        clips.append(clip)
+    # Der stumme Clip VORN: genau die Lage, in der der Zusammenschnitt ganz
+    # ohne Ton herauskam.
+    liste = _os.path.join(heim, "liste.txt")
+    with open(liste, "w", encoding="utf-8") as f:
+        f.write(A.concat_liste(clips))
+    ziel = _os.path.join(heim, "memes.mp4")
+    r = _sp.run(A.zusammenschnitt_cmd(liste, ziel), capture_output=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-300:]
+    s = spuren(ziel)
+    assert "audio" in s, "Zusammenschnitt ohne Ton"
+    assert float(s["audio"]["duration"]) >= 0.9 * float(s["video"]["duration"]), \
+        ("Ton endet vor dem Bild", s)
+    ok("BH-3: Highlight-Clip traegt Ton — Bauer mappt ihn, sichern() vor dem Merken, "
+       "echt: tonloser Clip nachgeruestet, Zusammenschnitt mit Ton ueber die volle Laenge")
+
+
+def _test_v511_bh6_pausenbild_vortritt():
+    """BH-6: das Pausenbild legt die Bildgroesse des Senders nicht mehr nach
+    starren 20 s fest.
+
+    Wer zuerst beim Sender ankommt, bestimmt seine Groesse fuer die ganze
+    Sitzung (W130 gemessen: 1080x1920 lief als 720x1280 hinaus). Die harte
+    Freigabe nach 20 s war kuerzer als ein gescheiterter Zubringer-Anlauf
+    plus der zweite. Geprueft mit Attrappen-Uhr: 21 s und 44 s ohne Quelle —
+    Pausenbild weiter zurueck, eine Quelle nach 30 s kommt zuerst; nach der
+    Obergrenze laut freigegeben; nachweislich offline schon nach 20 s; die
+    Obergrenze liegt unter der Anlaufkarenz des Stillstands-Waechters."""
+    import logging as _lg
+    import os as _os
+    from nc import restream_stability as RS
+    from nc import sendebruecke as B
+
+    pmt = _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)])
+    uhr = [500.0]
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append(r.getMessage())
+    lgb = _lg.getLogger("nc.sendebruecke")
+    h = _H()
+    lgb.addHandler(h)
+    lese, schreib = _os.pipe()
+    _os.set_blocking(lese, False)
+    try:
+        def bruecke(name):
+            uhr[0] = t0          # jede Bruecke beginnt bei t0
+            W = B.Bruecke(schreib, [], None, None, name=name, uhr=lambda: uhr[0])
+            for wer in (B.FUELLER, B.QUELLE):
+                W.daten(wer, _w130_pat())
+                W.daten(wer, pmt)
+            return W
+        kf = _w130_pes(0x100, 3000, 0, rai=True)
+        t0 = uhr[0]
+        W = bruecke("#bh6")
+        assert W.start_warten_s == 20.0 and 40.0 <= W.start_warten_max_s
+        assert W.start_warten_max_s < RS.ReconnectPolicy().stall_grace_s, \
+            "Obergrenze ueber der Anlaufkarenz — der Sender meldete 'keine Fortschrittsdaten'"
+        for dt in (0, 21, 44):
+            uhr[0] = t0 + dt
+            assert not W.daten(B.FUELLER, kf), \
+                ("Pausenbild richtet den Sender nach %d s ein, die Quelle laeuft noch an" % dt)
+        assert not [z for z in zeilen if "#bh6" in z], zeilen
+        # Die Quelle nach 30 s — vorher hatte das Pausenbild hier schon gewonnen.
+        W2 = bruecke("#bh6b")
+        uhr[0] = t0 + 25
+        assert not W2.daten(B.FUELLER, kf)
+        uhr[0] = t0 + 30
+        W2._wuensche(B.QUELLE, "Test")
+        assert W2.daten(B.QUELLE, _w130_pes(0x100, 9000, 6000, rai=True)) \
+            and W2.aktiv == B.QUELLE, "die spaete Quelle kam nicht zuerst"
+        # Nach der Obergrenze: freigegeben, und es steht im Log.
+        uhr[0] = t0 + 46
+        assert W.daten(B.FUELLER, kf), "ohne Quelle bliebe der Sender ewig ohne Bild"
+        assert [z for z in zeilen if "#bh6" in z and "Pausenbild richtet den Sender ein" in z], \
+            ("Freigabe ohne Quellbild still", zeilen)
+        # Nachweislich offline: Warten bringt keine Groesse — nach 20 s frei.
+        W3 = bruecke("#bh6c")
+        W3._offline_seit = t0 + 5
+        uhr[0] = t0 + 19
+        assert not W3.daten(B.FUELLER, kf), "Mindestvortritt verloren"
+        uhr[0] = t0 + 21
+        assert W3.daten(B.FUELLER, kf), "offline: Pausenbild weiter zurueckgehalten"
+    finally:
+        lgb.removeHandler(h)
+        _os.close(lese)
+        _os.close(schreib)
+    ok("BH-6: Pausenbild wartet auf die Quelle bis zur Obergrenze (unter der "
+       "Stillstands-Karenz), offline nach 20 s, Freigabe ohne Quellbild laut")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -42036,6 +42235,8 @@ def main():
     _test_v511_w209_bereiche_je_nutzer()
     _test_v511_w210_motd_leitstand()
     _test_v511_w211_chat_kasten_tls()
+    _test_v511_bh3_clip_tonspur()
+    _test_v511_bh6_pausenbild_vortritt()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
