@@ -12340,11 +12340,12 @@ def _htmlov_basis_url():
     Deck; ein Eintrag, der auf das eigene Deck zeigt (die Zeile aus
     .env.example einkommentiert), bekommt Schema und Host von dort — sonst
     stuende bei TLS am Deck dieselbe Fehlerseite im Sendebild wie beim
-    Chat-Kasten. Nur http(s) geht auf die Kommandozeile (v4.1-W10)."""
+    Chat-Kasten. UNGEPRUEFT: „nur http(s)" prueft die Uebergabestelle selbst
+    (_nc_rutil.http_url, v4.1-W10) — dort sieht CodeQL die Barriere."""
     eigen = _deck_intern_url("/overlay")
-    return _nc_rutil.http_url(
-        _nc_webserver.eigene_url(RESTREAM_OVERLAY_HTML_URL, eigen) if RESTREAM_OVERLAY_HTML_URL
-        else eigen, eigen)
+    if not RESTREAM_OVERLAY_HTML_URL:
+        return eigen
+    return _nc_webserver.eigene_url(RESTREAM_OVERLAY_HTML_URL, eigen)
 
 
 def run_flask():
@@ -13860,7 +13861,7 @@ def _htmlov_screenshot_cmd(binpath, png_tmp, size=None):
     _sz = _nc_rutil.fenstergroesse(
         size or RESTREAM_OVERLAY_HTML_FALLBACK_SIZE,
         _nc_rutil.fenstergroesse(RESTREAM_OVERLAY_HTML_FALLBACK_SIZE))
-    _url = _htmlov_basis_url()
+    _url = _nc_rutil.http_url(_htmlov_basis_url(), _deck_intern_url("/overlay"))
     return [binpath, "--headless=new", "--disable-gpu", "--no-sandbox",
             "--hide-scrollbars", "--default-background-color=00000000",
             "--allow-insecure-localhost",     # v5.11.2: TLS am Deck, s. browser_cmd
@@ -13872,7 +13873,7 @@ def _htmlov_screenshot_cmd(binpath, png_tmp, size=None):
 def _htmlov_dauerbrowser(binpath, size, png):
     """v4.2-W170: dauerhaften Overlay-Browser starten und das erste Bild
        schreiben (= Preflight). None → Aufrufer nimmt den Einzelschuss."""
-    _url = _htmlov_basis_url()
+    _url = _nc_rutil.http_url(_htmlov_basis_url(), _deck_intern_url("/overlay"))
     browser = _nc_ovbrowser.Dauerbrowser(binpath, _url, size, nice=FFMPEG_NICE_BG)
     try:
         browser.starten(timeout=20)
