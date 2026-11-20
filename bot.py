@@ -22387,7 +22387,7 @@ def _system_backup():
        und/oder S3 system/. Retention lokal: SYS_BACKUP_KEEP Archive."""
     if not _backup_active():
         return {"ok": False, "error": "Kein Backup-Ziel konfiguriert (LOCAL_BACKUP/S3_BACKUP)"}
-    import tarfile, tempfile, shutil as _sh, subprocess as _sp
+    import tarfile, tempfile, shutil as _sh
     base_dir = os.path.dirname(os.path.abspath(__file__)) or "."
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
     name = f"nightcrawler_sys_{stamp}.tar.gz"
@@ -22406,9 +22406,12 @@ def _system_backup():
         if DB_BACKEND == "mariadb":
             md = _sh.which("mysqldump")
             if md:
+                # v5.11.4 (OPS-2): Passwort per MYSQL_PWD statt `-p…` in der
+                # argv, `-P` dazu, und eine Fehlermeldung ohne Kommandozeile —
+                # sie geht ins Deck, ins error.log und nach Discord.
                 with open(dump_path, "w", encoding="utf-8") as fh:
-                    _sp.run([md, MARIADB_DB, "-h", MARIADB_HOST, "-u", MARIADB_USER,
-                             f"-p{MARIADB_PASSWORD}"], stdout=fh, check=True, timeout=600)
+                    _nc_sicherung.mysqldump(md, fh, MARIADB_DB, MARIADB_HOST, MARIADB_PORT,
+                                            MARIADB_USER, MARIADB_PASSWORD)
             else:
                 with open(dump_path, "w", encoding="utf-8") as fh:
                     fh.write("-- mysqldump nicht installiert — kein Dump möglich\n")
@@ -22525,8 +22528,11 @@ def _system_backup():
                 "geprueft": pruefung["ok"], "error": _fehler,
                 "nicht_gesichert": len(nicht_gesichert)}
     except Exception as e:
-        _SYS_BACKUP_STATE["error"] = str(e)
-        return {"ok": False, "error": str(e)}
+        # Geschwaerzt auch hier: was immer die Ausnahme traegt, geht als
+        # Klartext an /api/backup/status und weiter in Log und Discord.
+        _fehler_e = _nc_sicherung.schwaerzen(str(e), MARIADB_PASSWORD)
+        _SYS_BACKUP_STATE["error"] = _fehler_e
+        return {"ok": False, "error": _fehler_e}
     finally:
         _SYS_BACKUP_STATE["running"] = False
         import shutil as _sh2
@@ -24752,13 +24758,20 @@ async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if mode in ("zurueck", "zurück", "rollback"):
-        bl = _nc_updater.list_backups()
+        # v5.11.4: im Thread. rollback() schreibt Datei fuer Datei auf die
+        # Platte und list_backups() oeffnet jedes ZIP — im Event-Loop hielt
+        # das Telegram, Discord und den Restream-Takt fuer die Dauer an (W97).
+        bl = await asyncio.to_thread(_nc_updater.list_backups)
         if not bl:
             await update.message.reply_text(_nc_i18n.t("Kein Backup vorhanden — nichts zurueckzuspielen."))
             return
-        res = _nc_updater.rollback(bl[0]["name"])
+        res = await asyncio.to_thread(_nc_updater.rollback, bl[0]["name"])
         if not res.get("ok"):
-            await update.message.reply_text(_nc_i18n.t(f"❌ {res.get('error')}"))
+            # Ein halber Rollback hat kein `error`, sondern `failed` — sonst
+            # stand hier „❌ None".
+            _grund = res.get("error") or "%s — nicht zurueckgespielt: %s" % (
+                res.get("summary") or "?", ", ".join(res.get("failed") or []) or "?")
+            await update.message.reply_text(_nc_i18n.t(f"❌ {_grund}"))
             return
         log_event("update_rollback", "warning", f"Backup {bl[0]['name']} zurueckgespielt")
         await update.message.reply_text(

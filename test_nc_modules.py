@@ -44436,6 +44436,275 @@ def _test_web5_aktive_agenten_sind_eingeschaltete():
     ok("WEB-5: aktive Agenten = eingeschaltete, 0 bleibt 0")
 
 
+def _test_ops1_motd_laedt_nichts_aus_bot_dir():
+    """OPS-1: die installierte MOTD-Kopie laeuft bei jedem Login als root und
+    lud bis 3.0 ${BOT_DIR}/tools/lib/i18n.sh — schreibbar fuer den Bot-Nutzer,
+    ueberschrieben von nc/updater.py. Gemessen: „AUSGEFUEHRT als uid=0".
+    Jetzt laedt sie nur aus der root-eigenen Ablage neben CONF, die --install
+    anlegt; der Lauf aus dem Bestand nimmt weiter tools/lib/ neben sich.
+    """
+    import re as _re
+    import shutil as _sh
+    import subprocess as _sp
+
+    motd = os.path.abspath("tools/motd.sh")
+    quelle = open(motd, encoding="utf-8").read()
+    w = _ph.verzeichnis("nc_ops1_")
+    try:
+        bot = os.path.join(w, "bot")
+        os.makedirs(os.path.join(bot, "tools", "lib"))
+        open(os.path.join(bot, "bot.py"), "w").close()
+        marke = os.path.join(w, "marke")
+        with open(os.path.join(bot, "tools", "lib", "i18n.sh"), "w", encoding="utf-8") as f:
+            f.write('echo "AUSGEFUEHRT als uid=$(id -u)" > "%s"\n'
+                    "t(){ printf '%%s' \"$*\"; }\ntf(){ printf '%%s' \"${1:-}\"; }\n" % marke)
+        inst = os.path.join(w, "update-motd.d")
+        os.makedirs(inst)
+        kopie = os.path.join(inst, "99-nightcrawler")
+        _sh.copy(motd, kopie)
+        etc = os.path.join(w, "etc")
+        os.makedirs(etc)
+        conf = os.path.join(etc, "motd.conf")
+        with open(conf, "w", encoding="utf-8") as f:
+            f.write("BOT_DIR='%s'\nSHOW_REC='0'\nCPU_SAMPLE='0'\nSERVICE=''\nDASH_PORT='1'\n" % bot)
+
+        def lauf(pfad):
+            env = {"PATH": "/usr/bin:/bin", "HOME": w, "TMPDIR": w, "CONF": conf, "NC_LANG": "en"}
+            r = _sp.run(["bash", pfad], cwd=w, env=env, capture_output=True, text=True, timeout=60)
+            return r.stdout
+
+        # (1) Installierte Kopie ohne Ablage: deutsch, und die Datei im
+        # BOT_DIR wird NICHT ausgefuehrt.
+        a = lauf(kopie)
+        assert not os.path.exists(marke), open(marke).read()
+        assert "Bot laeuft nicht" in a, a[:400]
+
+        # (2) --install legt die Ablage an (dieselbe Funktion, gegen den
+        # Attrappen-Ordner statt /etc): jetzt englisch, weiter ohne Marke.
+        m = _re.search(r"^i18n_ablegen\(\)\{.*?^\}", quelle, _re.S | _re.M)
+        assert m, "i18n_ablegen fehlt in motd.sh"
+        prog = "t(){ printf '%s' \"$*\"; }\nOK= WRN= R=\n" + m.group(0) + "\ni18n_ablegen \"$1\" \"$2\"\n"
+        _sp.run(["bash", "-c", prog, "x", os.path.dirname(motd), os.path.join(etc, "motd")],
+                check=True, capture_output=True, timeout=30)
+        ablage = os.path.join(etc, "motd", "tools", "lib", "i18n.sh")
+        assert os.path.isfile(ablage) and oct(os.stat(ablage).st_mode & 0o777) == "0o644"
+        assert os.path.isfile(os.path.join(etc, "motd", "locales", "tools.en.tsv"))
+        a = lauf(kopie)
+        assert not os.path.exists(marke)
+        assert "Bot is not running" in a, a[:400]
+
+        # (3) Eine fuer andere schreibbare Ablage ist derselbe Weg zu root,
+        # nur einen Ordner weiter: als root wird sie nicht geladen.
+        if os.geteuid() == 0:
+            os.chmod(os.path.dirname(ablage), 0o777)
+            assert "Bot laeuft nicht" in lauf(kopie)
+            os.chmod(os.path.dirname(ablage), 0o755)
+
+        # (4) Gegenprobe: der Lauf aus dem Bestand nimmt tools/lib/ neben sich.
+        assert "Bot is not running" in lauf(motd)
+        assert not os.path.exists(marke)
+
+        # (5) Kein Laden aus BOT_DIR, in keiner Form, und python3 nur isoliert
+        # (als root kein json.py aus dem Arbeitsverzeichnis).
+        code = "\n".join(z for z in quelle.splitlines() if not z.lstrip().startswith("#"))
+        assert not _re.search(r'(?:^|[;&|]\s*)(?:\.|source)\s+"?\$\{?BOT_DIR', code, _re.M)
+        assert "python3 -c" not in code, "python3 ohne -I in motd.sh"
+    finally:
+        _sh.rmtree(w, ignore_errors=True)
+    ok("OPS-1: installierte MOTD laedt i18n nur aus der root-eigenen Ablage, nie aus BOT_DIR")
+
+
+def _test_ops2_mysqldump_ohne_passwort_in_argv():
+    """OPS-2: `mysqldump -p<Passwort>` stand in `ps`, und ein Fehlschlag trug
+    die argv per str(CalledProcessError) ins Deck, ins error.log und nach
+    Discord. Dazu fehlte -P (MariaDB auf anderem Port: jede Sicherung tot).
+    Gefahren wird ein ECHTES Programm (Attrappe im Temp-Ordner), damit argv
+    und Umgebung so gemessen werden, wie der Kindprozess sie sieht.
+    """
+    import ast as _ast
+    import shutil as _sh
+    from nc import sicherungspruefung as S
+
+    pw = "PW_GEHEIM_ops2\"\\#x"
+    w = _ph.verzeichnis("nc_ops2_")
+    try:
+        spur = os.path.join(w, "spur")
+        prog = os.path.join(w, "mysqldump")
+        with open(prog, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nprintf '%%s\\n' \"$@\" > '%s.argv'\n"
+                    "printf '%%s' \"$MYSQL_PWD\" > '%s.pwd'\n"
+                    "[ \"$NC_SCHLAF\" = 1 ] && sleep 5\n"
+                    "echo \"Got error: 1045 Access denied (pw=$MYSQL_PWD)\" >&2\nexit 2\n" % (spur, spur))
+        os.chmod(prog, 0o755)
+        ziel = open(os.path.join(w, "dump.sql"), "w", encoding="utf-8")
+        try:
+            S.mysqldump(prog, ziel, "ncdb", "db.intern", 3307, "nc", pw)
+            raise AssertionError("Exitcode 2 galt als Erfolg")
+        except S.DumpFehler as e:
+            meldung = str(e)
+        argv = open(spur + ".argv", encoding="utf-8").read().split("\n")
+        assert pw not in "\n".join(argv) and not any(a.startswith("-p") for a in argv), argv
+        assert argv[argv.index("-P") + 1] == "3307" and "ncdb" in argv, argv
+        assert open(spur + ".pwd", encoding="utf-8").read() == pw, "MYSQL_PWD kam nicht an"
+        assert pw not in meldung and "Exitcode 2" in meldung and "1045" in meldung, meldung
+        assert "***" in meldung, meldung              # stderr mit Passwort: geschwaerzt
+        # Zeitlimit: str(TimeoutExpired) nennt die argv — die Meldung nicht.
+        os.environ["NC_SCHLAF"] = "1"
+        try:
+            S.mysqldump(prog, ziel, "ncdb", "h", 3306, "nc", pw, timeout=1)
+            raise AssertionError("Zeitlimit galt als Erfolg")
+        except S.DumpFehler as e:
+            assert "Zeitlimit" in str(e) and pw not in str(e) and e.__cause__ is None, str(e)
+        finally:
+            os.environ.pop("NC_SCHLAF", None)
+            ziel.close()
+        assert S.schwaerzen("a%sb" % pw, pw) == "a***b" and S.schwaerzen("abc", "") == "abc"
+    finally:
+        _sh.rmtree(w, ignore_errors=True)
+
+    # bot.py: _system_backup ruft den Helfer mit Port und schwaerzt den
+    # Rueckweg jeder anderen Ausnahme. Im Syntaxbaum, nicht im Text (W102).
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == "_system_backup")
+    aufrufe = {(_ast.unparse(c.func), tuple(_ast.unparse(a) for a in c.args))
+               for c in _ast.walk(fn) if isinstance(c, _ast.Call)}
+    assert any(f == "_nc_sicherung.mysqldump" and "MARIADB_PORT" in a and "MARIADB_PASSWORD" in a
+               for f, a in aufrufe), "mysqldump nicht ueber den Helfer"
+    assert not any(isinstance(k, _ast.JoinedStr) and "MARIADB_PASSWORD" in _ast.unparse(k)
+                   for k in _ast.walk(fn)), "Passwort in einem f-String (argv?)"
+    hdl = [h for h in _ast.walk(fn) if isinstance(h, _ast.ExceptHandler)
+           and _ast.unparse(h.type) == "Exception" and h.name == "e"][-1]
+    assert "_nc_sicherung.schwaerzen(str(e), MARIADB_PASSWORD)" in _ast.unparse(hdl), _ast.unparse(hdl)
+    assert "str(e)" not in _ast.unparse(hdl).replace("schwaerzen(str(e)", ""), "ungeschwaerztes str(e)"
+    ok("OPS-2: mysqldump mit MYSQL_PWD und -P; Fehler ohne argv, Passwort geschwaerzt")
+
+
+def _test_upd1_upd2_teilweise_und_rollback():
+    """UPD-1: ein Update mit ENOSPC mitten im Lauf schrieb den NEUEN SHA nach
+    .nc_update.json — check() „Alles aktuell.", /healthz der neue Commit,
+    Laufstand „aktuell", bei gemischtem Bestand. UPD-2: der Rollback liess
+    .nc_update.json auf dem neuen Stand und neu angelegte Dateien liegen.
+    """
+    import errno as _errno
+    import io as _io
+    import shutil as _sh
+    import zipfile as _zf
+    from unittest import mock as _mock
+    from nc import auslieferung as A
+    from nc import laufstand as L
+    from nc import updater as U
+
+    w = _ph.verzeichnis("nc_upd12_")
+    alt_cfg = (U._CFG.root, U._CFG.enabled)
+
+    def lies(n):
+        p = os.path.join(w, n)
+        return open(p, encoding="utf-8").read() if os.path.exists(p) else None
+
+    def zipbytes(dateien):
+        b = _io.BytesIO()
+        with _zf.ZipFile(b, "w") as z:
+            for n, d in dateien.items():
+                z.writestr("repo-sha/" + n, d)
+        return b.getvalue()
+
+    try:
+        for n in ("a.py", "b.py"):
+            with open(os.path.join(w, n), "w", encoding="utf-8") as f:
+                f.write("ALT = 1\n")
+        with open(os.path.join(w, ".nc_update.json"), "w", encoding="utf-8") as f:
+            f.write('{"sha": "ALTSHA", "date": "2026-11-01"}')
+        U.configure(root=w, enabled=True)
+        archiv = zipbytes({"a.py": "NEU = 2\n", "b.py": "NEU = 2\nimport c\n", "c.py": "X = 1\n"})
+        rem = {"sha": "NEUSHA", "date": "2026-11-20", "message": "m", "author": "", "url": ""}
+        echt = U._write_file
+
+        def kaputt(rel, data, ausf=None):
+            if rel == "b.py":
+                raise OSError(_errno.ENOSPC, "No space left on device")
+            return echt(rel, data, ausf)
+
+        # ── UPD-1: Teilfehler
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv), \
+                _mock.patch.object(U, "_write_file", side_effect=kaputt):
+            r = U.run_update()
+        assert not r["ok"] and r["failed"][0]["file"] == "b.py", r
+        st = U.local_state()
+        assert st["sha"] == "ALTSHA" and st["teilweise"] and st["fehlgeschlagen"] == ["b.py"], st
+        assert st["ziel_sha"] == "NEUSHA", st
+        with _mock.patch.object(U, "remote_head", return_value=rem):
+            c = U.check()
+        assert c["update_available"] and c["teilweise"], c
+        assert "Unvollstaendig" in c["summary"] and "b.py" in c["summary"], c["summary"]
+        assert "aktuell" not in c["summary"].lower(), c["summary"]
+        # Laufstand: auch ein NACH dem Fehlschlag gestarteter Prozess (Start ==
+        # Platte) ist nicht „aktuell".
+        kopf = U.local_head()[0]
+        v = L.vergleich(kopf, kopf)
+        assert v["lage"] == L.UNVOLLSTAENDIG and "erneut" in v["abhilfe"], v
+        assert L.vergleich("ALTSHA", kopf)["lage"] == L.UNVOLLSTAENDIG
+        d = A.stand(w, frisch=True)
+        assert d["teilweise"] and d["sauber"] is False and d["ziel"] == "NEUSHA", d
+        assert "UNVOLLSTAENDIG" in A.text(w), A.text(w)
+        # Gegenprobe: derselbe Lauf ohne Fehler hebt die Marke auf.
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv):
+            r2 = U.run_update()
+        assert r2["ok"] and U.local_state().get("sha") == "NEUSHA", r2
+        assert not U.local_state().get("teilweise")
+        assert L.vergleich("ALTSHA", U.local_head()[0])["lage"] == L.VERALTET
+
+        # ── UPD-2: Rollback des ersten Updates (das c.py anlegte und a.py
+        # schrieb). Danach: c.py weg, a.py alt, Stand wieder ALTSHA.
+        with open(os.path.join(w, "a.py"), "w", encoding="utf-8") as f:
+            f.write("ALT = 1\n")
+        with open(os.path.join(w, "b.py"), "w", encoding="utf-8") as f:
+            f.write("ALT = 1\n")
+        os.remove(os.path.join(w, "c.py"))
+        with open(os.path.join(w, ".nc_update.json"), "w", encoding="utf-8") as f:
+            f.write('{"sha": "ALTSHA", "date": "2026-11-01"}')
+        with open(os.path.join(w, "eigen.py"), "w", encoding="utf-8") as f:
+            f.write("# vom Betreiber, steht in keinem Archiv\n")
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv):
+            r3 = U.run_update()
+        assert r3["ok"] and lies("c.py") == "X = 1\n", r3
+        rb = U.rollback(r3["backup"])
+        assert rb["ok"] and rb["removed"] == ["c.py"], rb
+        assert lies("c.py") is None and lies("a.py") == "ALT = 1\n" and lies("b.py") == "ALT = 1\n"
+        assert lies("eigen.py") is not None, "Rollback entfernte eine fremde Datei"
+        assert U.local_state().get("sha") == "ALTSHA", U.local_state()
+        with _mock.patch.object(U, "remote_head", return_value=rem):
+            assert U.check()["update_available"], "nach Rollback hiess es weiter aktuell"
+        # Ohne Vorstand (keine .nc_update.json vor dem Update): nach dem
+        # Rollback gibt es auch keine — sonst meldete sie den neuen Commit.
+        os.remove(os.path.join(w, ".nc_update.json"))
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv):
+            r4 = U.run_update()
+        assert lies(".nc_update.json") is not None
+        U.rollback(r4["backup"])
+        assert lies(".nc_update.json") is None and lies("c.py") is None
+
+        # Das ERSTE Update ueber die Funktion scheitert teilweise: kein
+        # Vorstand, kein git — der alte SHA ist leer. Auch dann nicht
+        # „aktuell": die Mutationsprobe „check ohne teilweise" entwischte, weil
+        # der Vertrag nur den Fall mit bekanntem Vorstand sah (ALTSHA != NEUSHA).
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv), \
+                _mock.patch.object(U, "_write_file", side_effect=kaputt):
+            U.run_update()
+        with _mock.patch.object(U, "remote_head", return_value=rem):
+            c = U.check()
+        assert c["update_available"] and "Unvollstaendig" in c["summary"], c
+    finally:
+        U._CFG.root, U._CFG.enabled = alt_cfg
+        A._ZWISCHENSPEICHER.pop(w, None)
+        _sh.rmtree(w, ignore_errors=True)
+    ok("UPD-1/2: Teilfehler behaelt den alten Stand und heisst nie aktuell; Rollback setzt Stand und neue Dateien zurueck")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -44931,6 +45200,9 @@ def main():
     _test_web3_sw_cacht_nur_die_shell()
     _test_web4_moderation_zaehlt_nur_durchgreifen()
     _test_web5_aktive_agenten_sind_eingeschaltete()
+    _test_ops1_motd_laedt_nichts_aus_bot_dir()
+    _test_ops2_mysqldump_ohne_passwort_in_argv()
+    _test_upd1_upd2_teilweise_und_rollback()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

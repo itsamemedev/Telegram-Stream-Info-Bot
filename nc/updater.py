@@ -46,6 +46,7 @@ import zipfile
 from dataclasses import dataclass, field
 
 from nc import sicherpfad as _nc_sicherpfad   # v4.2-W2: ein Riegel fuer alle
+from nc import laufstand as _nc_laufstand     # v5.11.4: Marke fuer „teilweise"
 
 # ───────────────────────────────────────────────────────────────────────
 # Vorgaben
@@ -267,6 +268,11 @@ def describe(check: dict) -> str:
     """Einzeiler fuer Telegram/Log. Sagt den Zustand, nicht das Verfahren."""
     if not check.get("ok"):
         return f"Update-Pruefung fehlgeschlagen: {check.get('error') or 'unbekannt'}"
+    if check.get("teilweise"):
+        fehl = check.get("fehlgeschlagen") or []
+        return ("Unvollstaendig eingespielt: %d Datei(en) nicht geschrieben (%s) — "
+                "der Bestand ist gemischt. Erneut aktualisieren."
+                % (len(fehl), (", ".join(fehl[:3]) + (" …" if len(fehl) > 3 else "")) or "?"))
     if check.get("update_available"):
         r = check.get("remote") or {}
         return (f"Neuer Stand verfuegbar: {short_sha(r.get('sha'))} "
@@ -356,8 +362,16 @@ def _git_head() -> str:
 
 
 def local_head() -> tuple:
-    """(sha, quelle). quelle ∈ {"update", "git", ""}."""
+    """(sha, quelle). quelle ∈ {"update", "teilweise", "git", ""}.
+
+    v5.11.4 (UPD-1): nach einem Update mit Fehlschlaegen traegt der Stand die
+    Marke `+teilweise` — der alte Stand plus der Hinweis, dass die Platte
+    gemischt ist. Ohne sie meldeten check(), /healthz, /api/version und der
+    Laufstand „aktuell" fuer einen Bestand, der weder alt noch neu ist."""
     st = local_state()
+    if st.get("teilweise"):
+        basis = st.get("sha") or _git_head()
+        return basis + _nc_laufstand.TEILWEISE_MARKE, "teilweise"
     if st.get("sha"):
         return st["sha"], "update"
     g = _git_head()
@@ -438,11 +452,17 @@ def download_zip(progress=None, sha: str = "") -> bytes:
 def check() -> dict:
     """Billige Pruefung: ein GitHub-API-Aufruf, kein Download."""
     sha, src = local_head()
+    st = local_state()
+    teilweise = src == "teilweise"
+    if teilweise:
+        sha = sha[:-len(_nc_laufstand.TEILWEISE_MARKE)]
     out = {"ok": True, "repo": _CFG.repo, "branch": _CFG.branch,
            "repo_url": repo_url(), "zip_url": zip_url(),
            "enabled": bool(_CFG.enabled),
            "local": {"sha": sha, "short": short_sha(sha), "source": src},
-           "local_known": bool(sha), "last_update": local_state() or None}
+           "local_known": bool(sha) or teilweise, "last_update": st or None,
+           "teilweise": teilweise,
+           "fehlgeschlagen": list(st.get("fehlgeschlagen") or []) if teilweise else []}
     try:
         rem = remote_head()
     except urllib.error.HTTPError as e:
@@ -458,7 +478,9 @@ def check() -> dict:
     out["remote"] = rem
     # Ehrlich bleiben: ohne bekannten lokalen Stand ist "es gibt ein Update"
     # eine Behauptung, kein Befund. Dann sagt der Trockenlauf die Wahrheit.
-    out["update_available"] = bool(sha and rem.get("sha") and sha != rem["sha"])
+    # Teilweise eingespielt heisst: es gibt etwas einzuspielen, auch wenn der
+    # Ziel-SHA schon der aktuelle ist — die fehlenden Dateien.
+    out["update_available"] = bool(teilweise or (sha and rem.get("sha") and sha != rem["sha"]))
     out["summary"] = describe(out)
     return out
 
@@ -509,7 +531,7 @@ def _local_hash_fn():
     return fn
 
 
-def _backup(paths, tag: str) -> str:
+def _backup(paths, tag: str, neu=(), vorstand=None) -> str:
     """Alle zu ersetzenden Dateien in ein ZIP legen. Liefert den Dateinamen.
 
     Laeuft VOR dem ersten Schreibvorgang. Ohne diesen Schritt ist ein Update
@@ -528,8 +550,14 @@ def _backup(paths, tag: str) -> str:
             if os.path.isfile(p):
                 z.write(p, rel)
                 saved.append(rel)
+        # v5.11.4 (UPD-2): der Rollback braucht zwei Dinge, die nicht als
+        # Datei im ZIP liegen koennen — welche Dateien das Update NEU anlegt
+        # (sie gibt es vorher nicht, also auch kein Backup davon) und welchen
+        # Stand .nc_update.json vorher trug. `vorstand` None heisst: es gab
+        # keine Datei.
         z.writestr("_manifest.json", json.dumps(
-            {"created": time.time(), "files": saved, "root": _root()},
+            {"created": time.time(), "files": saved, "root": _root(),
+             "neu": list(neu), "vorstand": vorstand},
             ensure_ascii=False, indent=2))
     _prune_backups()
     return name
@@ -705,7 +733,8 @@ def run_update(dry_run: bool = False, progress=None) -> dict:
     note("backup", 68, "Backup anlegen …")
     tag = time.strftime("%Y%m%d-%H%M%S")
     try:
-        result["backup"] = _backup(plan.changed, tag)
+        result["backup"] = _backup(plan.changed, tag, neu=plan.new,
+                                   vorstand=local_state() if os.path.isfile(_state_path()) else None)
     except Exception as e:
         # Ohne Backup wird NICHT geschrieben — sonst gibt es keinen Weg zurueck.
         return {"ok": False, "error": f"Backup fehlgeschlagen, Update abgebrochen: {e}"}
@@ -743,20 +772,33 @@ def run_update(dry_run: bool = False, progress=None) -> dict:
         f"{len(written)} Datei(en) eingespielt"
         + (f", {len(failed)} fehlgeschlagen" if failed else "")
         + f" — Backup {result['backup']}. Neustart noetig.")
-    _remember(rem, written, result["backup"])
+    _remember(rem, written, result["backup"], failed=[f for f, _e in failed])
     result["duration_s"] = round(time.time() - started, 1)
     note("done", 100, result["summary"])
     _log("info", "Update eingespielt: %s (%d Dateien)", short_sha(rem.get("sha")), len(written))
     return result
 
 
-def _remember(rem: dict, written, backup):
+def _remember(rem: dict, written, backup, failed=()):
+    """Den eingespielten Stand merken.
+
+    v5.11.4 (UPD-1): bei Fehlschlaegen NICHT den neuen SHA. Bis dahin stand
+    er auch nach ENOSPC mitten im Lauf in .nc_update.json — check() sagte
+    „Alles aktuell.", das Deck „entspricht dem Repo", /healthz den neuen
+    Commit, und ein zweiter Versuch fand nichts mehr zu tun, obwohl die
+    Haelfte fehlte. Jetzt: alter Stand, `teilweise` und die Liste."""
+    d = {"sha": rem.get("sha") or "", "date": rem.get("date") or "",
+         "message": rem.get("message") or "",
+         "applied_at": time.time(), "files": list(written)[:500],
+         "file_count": len(written), "backup": backup,
+         "repo": _CFG.repo, "branch": _CFG.branch}
+    if failed:
+        alt = local_state()
+        d.update(sha=alt.get("sha") or "", date=alt.get("date") or "",
+                 message=alt.get("message") or "", teilweise=True,
+                 ziel_sha=rem.get("sha") or "", fehlgeschlagen=list(failed)[:200])
     try:
-        _write_state({"sha": rem.get("sha") or "", "date": rem.get("date") or "",
-                      "message": rem.get("message") or "",
-                      "applied_at": time.time(), "files": list(written)[:500],
-                      "file_count": len(written), "backup": backup,
-                      "repo": _CFG.repo, "branch": _CFG.branch})
+        _write_state(d)
     except Exception as e:
         _log("warning", "Update-Stand nicht gespeichert: %s", e)
 
@@ -801,9 +843,15 @@ def _zurueckspielen(name: str) -> dict:
         return {"ok": False, "error": "Unbekanntes Backup."}
     if not os.path.isfile(path):
         return {"ok": False, "error": f"Backup {safe} nicht gefunden."}
-    restored, failed = [], []
+    restored, failed, entfernt = [], [], []
+    manifest = {}
     try:
         with zipfile.ZipFile(path) as z:
+            try:
+                manifest = json.loads(z.read("_manifest.json"))
+            except (KeyError, ValueError) as e:
+                _log("warning", "Rollback %s: kein lesbares Manifest (%s) — neu "
+                     "angelegte Dateien und der Vorstand bleiben unberuehrt.", safe, e)
             for info in z.infolist():
                 if info.is_dir() or info.filename == "_manifest.json":
                     continue
@@ -818,10 +866,58 @@ def _zurueckspielen(name: str) -> dict:
                     failed.append(rel)
     except Exception as e:
         return {"ok": False, "error": f"Backup unlesbar: {e}"}
+    # v5.11.4 (UPD-2): was das Update NEU angelegt hat, gab es vorher nicht —
+    # also gehoert es nach dem Rollback auch nicht mehr da. Nur genau diese
+    # Liste aus dem Manifest, nie „alles, was nicht im Backup steht".
+    for rel in (manifest.get("neu") or []) if isinstance(manifest, dict) else []:
+        rel = normalize(rel)
+        if not rel or is_protected(rel):
+            continue
+        try:
+            p = _abs(rel)
+            if os.path.isfile(p):
+                os.remove(p)
+                entfernt.append(rel)
+        except (OSError, ValueError) as e:
+            _log("error", "Rollback: %s nicht entfernt: %s", rel, e)
+            failed.append(rel)
+    _vorstand_zuruecklegen(manifest, safe, failed)
     return {"ok": not failed, "restored": len(restored), "failed": failed,
-            "backup": safe, "restart_needed": bool(restored),
+            "removed": entfernt, "backup": safe,
+            "restart_needed": bool(restored or entfernt),
             "restart_cmd": _CFG.restart_cmd,
-            "summary": f"{len(restored)} Datei(en) zurueckgespielt — Neustart noetig."}
+            "summary": f"{len(restored)} Datei(en) zurueckgespielt"
+                       + (f", {len(entfernt)} neu angelegte entfernt" if entfernt else "")
+                       + " — Neustart noetig."}
+
+
+def _vorstand_zuruecklegen(manifest, backup, failed):
+    """.nc_update.json auf den Stand VOR dem Update (v5.11.4, UPD-2).
+
+    Ohne das meldete der Bestand nach dem Rollback weiter den neuen Commit:
+    check() „Alles aktuell.", und der naechste Update-Lauf haette nichts
+    zurueckgeholt. Ein Backup von vor dieser Fassung kennt den Vorstand
+    nicht — dann ist der Stand ehrlich unbekannt, nicht der neue."""
+    try:
+        if isinstance(manifest, dict) and "vorstand" in manifest:
+            vor = manifest.get("vorstand")
+            d = dict(vor) if isinstance(vor, dict) else {}
+        else:
+            d = {"sha": ""}
+        if failed:
+            # Rollback halb: wieder gemischt, und das soll man sehen (UPD-1).
+            d.update(teilweise=True, fehlgeschlagen=list(failed)[:200])
+        if not d:
+            # Vorher gab es keinen Update-Stand: Datei weg, dann gilt wieder
+            # git bzw. AUSLIEFERUNG.json — wie vor dem Update.
+            if os.path.isfile(_state_path()):
+                os.remove(_state_path())
+            return
+        d["zurueckgespielt"] = backup
+        _write_state(d)
+    except (OSError, TypeError, ValueError) as e:
+        _log("error", "Rollback %s: Update-Stand nicht zurueckgesetzt (%s) — "
+             ".nc_update.json nennt weiter den Stand von NACH dem Update.", backup, e)
 
 
 # ───────────────────────────────────────────────────────────────────────
