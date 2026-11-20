@@ -74,19 +74,19 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   1282  GET              /api/ai/retry-advice/<username>                  api_ai_retry_advice   [nc/routes/ai.py]
   1138  GET              /api/ai/segments                                 api_ai_segments   [nc/routes/ai.py]
    978  GET              /api/ai/skills                                   api_ai_skills   [nc/routes/ai.py]
-   504  GET              /api/archive                                     api_archive   [nc/routes/archive.py]
-   768  DELETE           /api/archive/<int:eid>                           api_archive_delete   [nc/routes/archive.py]
-   650  POST             /api/archive/<int:eid>/rename                    api_archive_rename   [nc/routes/archive.py]
-   633  POST             /api/archive/bulk-delete                         api_archive_bulk_delete   [nc/routes/archive.py]
-   625  GET              /api/archive/check                               api_archive_check   [nc/routes/archive.py]
+   522  GET              /api/archive                                     api_archive   [nc/routes/archive.py]
+   786  DELETE           /api/archive/<int:eid>                           api_archive_delete   [nc/routes/archive.py]
+   668  POST             /api/archive/<int:eid>/rename                    api_archive_rename   [nc/routes/archive.py]
+   651  POST             /api/archive/bulk-delete                         api_archive_bulk_delete   [nc/routes/archive.py]
+   643  GET              /api/archive/check                               api_archive_check   [nc/routes/archive.py]
    456  GET              /api/archive/duplicates                          api_archive_duplicates   [nc/routes/archive.py]
    472  POST             /api/archive/duplicates/delete                   api_archive_duplicates_delete   [nc/routes/archive.py]
-   812  POST             /api/archive/index/<int:rid>                     api_archive_index_one   [nc/routes/archive.py]
+   830  POST             /api/archive/index/<int:rid>                     api_archive_index_one   [nc/routes/archive.py]
    374  GET              /api/archive/scan                                api_archive_scan   [nc/routes/archive.py]
    405  POST             /api/archive/scan/adopt                          api_archive_scan_adopt   [nc/routes/archive.py]
-   777  GET              /api/archive/search                              api_archive_search   [nc/routes/archive.py]
-   797  GET              /api/archive/status                              api_archive_status   [nc/routes/archive.py]
-   684  POST             /api/archive/upload                              api_archive_upload   [nc/routes/archive.py]
+   795  GET              /api/archive/search                              api_archive_search   [nc/routes/archive.py]
+   815  GET              /api/archive/status                              api_archive_status   [nc/routes/archive.py]
+   702  POST             /api/archive/upload                              api_archive_upload   [nc/routes/archive.py]
     49  GET/POST         /api/audio/config                                api_audio_config   [nc/routes/audio.py]
     86  POST             /api/audio/testtone                              api_audio_testtone   [nc/routes/audio.py]
    238  GET/POST         /api/auto-archive-rules                          api_archive_rules   [nc/routes/wartung.py]
@@ -134,20 +134,20 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
     87  POST/DELETE      /api/collections/<int:cid>                       api_collection_modify   [nc/routes/collections.py]
    122  GET              /api/collections/<int:cid>/trackings             api_collection_trackings   [nc/routes/collections.py]
    443  GET              /api/community/stats                             api_community_stats   [nc/routes/auskunft.py]
-   446  POST             /api/config/restore                              api_config_restore   [nc/routes/settings.py]
-   431  GET              /api/config/snapshot                             api_config_snapshot   [nc/routes/settings.py]
-   251  GET              /api/cookies/age                                 api_cookies_age   [nc/routes/settings.py]
-   186  POST             /api/cookies/bereinigen                          api_cookies_bereinigen   [nc/routes/settings.py]
-   131  POST             /api/cookies/fetch                               api_cookies_fetch   [nc/routes/settings.py]
-    72  GET              /api/cookies/health                              api_cookies_health   [nc/routes/settings.py]
-    79  POST             /api/cookies/update                              api_cookies_update   [nc/routes/settings.py]
+   550  POST             /api/config/restore                              api_config_restore   [nc/routes/settings.py]
+   522  GET              /api/config/snapshot                             api_config_snapshot   [nc/routes/settings.py]
+   253  GET              /api/cookies/age                                 api_cookies_age   [nc/routes/settings.py]
+   188  POST             /api/cookies/bereinigen                          api_cookies_bereinigen   [nc/routes/settings.py]
+   133  POST             /api/cookies/fetch                               api_cookies_fetch   [nc/routes/settings.py]
+    74  GET              /api/cookies/health                              api_cookies_health   [nc/routes/settings.py]
+    81  POST             /api/cookies/update                              api_cookies_update   [nc/routes/settings.py]
    496  GET              /api/data/export                                 api_data_export   [nc/routes/auskunft.py]
-   272  GET              /api/db/export                                   api_db_export   [nc/routes/settings.py]
-   299  POST             /api/db/import                                   api_db_import   [nc/routes/settings.py]
-   392  POST             /api/db/restore/apply                            api_db_restore_apply   [nc/routes/settings.py]
-   336  GET              /api/db/restore/list                             api_db_restore_list   [nc/routes/settings.py]
-   354  POST             /api/db/restore/prepare                          api_db_restore_prepare   [nc/routes/settings.py]
-   259  GET              /api/db/summary                                  api_db_summary   [nc/routes/settings.py]
+   274  GET              /api/db/export                                   api_db_export   [nc/routes/settings.py]
+   301  POST             /api/db/import                                   api_db_import   [nc/routes/settings.py]
+   399  POST             /api/db/restore/apply                            api_db_restore_apply   [nc/routes/settings.py]
+   338  GET              /api/db/restore/list                             api_db_restore_list   [nc/routes/settings.py]
+   356  POST             /api/db/restore/prepare                          api_db_restore_prepare   [nc/routes/settings.py]
+   261  GET              /api/db/summary                                  api_db_summary   [nc/routes/settings.py]
    164  GET              /api/defense/attacks                             api_defense_attacks   [nc/routes/abwehr.py]
    125  GET              /api/defense/crowdsec                            api_defense_crowdsec   [nc/routes/abwehr.py]
    146  GET              /api/defense/fail2ban                            api_defense_fail2ban   [nc/routes/abwehr.py]
@@ -314,9 +314,9 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
    397  GET              /api/restream/verify                             api_restream_verify   [nc/routes/restream.py]
    148  GET              /api/retention/preview                           api_retention_preview   [nc/routes/wartung.py]
    160  POST             /api/retention/run                               api_retention_run   [nc/routes/wartung.py]
-   487  POST             /api/schedule/add                                api_schedule_add   [nc/routes/settings.py]
-   477  GET              /api/schedule/list                               api_schedule_list   [nc/routes/settings.py]
-   517  POST             /api/schedule/remove                             api_schedule_remove   [nc/routes/settings.py]
+   608  POST             /api/schedule/add                                api_schedule_add   [nc/routes/settings.py]
+   598  GET              /api/schedule/list                               api_schedule_list   [nc/routes/settings.py]
+   638  POST             /api/schedule/remove                             api_schedule_remove   [nc/routes/settings.py]
     65  POST             /api/scheduler/add                               api_scheduler_add   [nc/routes/scheduler.py]
     86  POST             /api/scheduler/delete                            api_scheduler_delete   [nc/routes/scheduler.py]
     52  GET              /api/scheduler/list                              api_scheduler_list   [nc/routes/scheduler.py]
@@ -489,8 +489,8 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Top-Level-Symbole in telegramversand.py (2 Funktionen)
 
 ```
-    60-75     konfiguriere
-    78-533    split_and_send_video
+    59-74     konfiguriere
+    77-543    split_and_send_video
 ```
 
 ## Top-Level-Symbole in discordbot.py (55 Funktionen)
@@ -1159,7 +1159,7 @@ abo.py                 room_is_abo
 abwehrlage.py          auswerten, configure, crowdsec_status, crowdsec_via_lapi, cscli_bin, cscli_path, darf_journal_lesen, ssh_angriffe, sudo_hinweis
 admod.py               build_allowlist
 aidb.py                add_log_entry, conv_messages
-archive.py             add_archive_entry, class BestandUnbekannt, compute_recording_fingerprint, configure, delete_archive_entry, evaluate_archive_rule, finde_ohne_eintrag, get_archive_entries_paged, get_archive_entry, run_archive_file_check, uebernehmen
+archive.py             add_archive_entry, andere_kopien, class BestandUnbekannt, compute_recording_fingerprint, configure, delete_archive_entry, dublette_loeschen, evaluate_archive_rule, finde_ohne_eintrag, get_archive_entries_paged, get_archive_entry, run_archive_file_check, uebernehmen
 archivename.py         open_unique
 archiverules.py        add_archive_rule, delete_archive_rule, list_archive_rules, run_archive_rules
 audio_cue.py           cue_pcm, duck_ratio, mix_chain, silence_pcm, tone_pcm
@@ -1205,7 +1205,7 @@ ctx.py                 class Ctx, configure, get, is_configured
 dashauth.py            erlaubt_offen, geschuetzt, host, lage, nur_lokal, offen_im_netz, zurueckgefallen
 dbexport.py            db_export_sql, db_import_sql, export_summary, parse_header
 dbgesundheit.py        messen
-dbrestore.py           archive, dump_aus_archiv, einsetzen, einspielen, vorbereiten
+dbrestore.py           archive, dump_aus_archiv, einsetzen, einspielen, pruefen, vorbereiten
 dbwartung.py           faellig_in, letzter_lauf, merken, stand_datei
 dbwrap.py              class DatenbankUnlesbar, configure_db, datei_diagnose, db_async, db_conn, get_pool, mariadb_lage, set_pool, treiber_fehler, treiber_wunsch, vorrat_groesse, vorrat_lage, vorrat_leeren
 dcspar.py              anzeige, client_optionen, puffer
@@ -1362,7 +1362,7 @@ uploadschlange.py      angekommen, faellig, gleicher, nach_versuch, pause_s
 usage.py               configure, estimate_tokens, flush, record, snapshot
 util.py                datei_in
 version.py             build_stamp, changelog, current, latest, summary_line
-videoteil.py           configure, dauer, ist_kaputter_container, kopier_teilen, neu_kodieren, platz_reicht, reparieren, wegwerfen, zeitstempel_richten, zu_gross
+videoteil.py           configure, dauer, ist_kaputter_container, kopier_teilen, neu_kodieren, platz_reicht, reparieren, teile, teile_entfernen, wegwerfen, zeitstempel_richten, zu_gross
 webserver.py           bindung, eigene_url, intern_basis, ist_loopback, schema, threads, tls_lage, waehle
 werkzeugpfad.py        alter_tage, befund, lage, nachahmen_aus, pruefen, voranstellen
 whispercfg.py          bedarf_mb, benutzt, entladen_wenn_leer, frei_mb, gebrauch, geladen, leerlauf_s, name, rss_hinweis, verfuegbar, waehle, wechsel_pruefen
