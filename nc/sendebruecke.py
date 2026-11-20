@@ -57,6 +57,7 @@ Uhr — und ist damit ohne Netz und ohne Bot prüfbar.
 
 import logging
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -423,7 +424,7 @@ class Bruecke:
         self._offline_seit = None
         self._gestartet = None
         self._threads = []
-        self._stderr_leser = {}
+        self._leser = {}             # id(Prozess) -> (stdout-Leser, stderr-Leser)
         self.wechsel = 0
         self.fueller_s = 0.0
         self._fueller_seit = uhr()
@@ -633,31 +634,110 @@ class Bruecke:
                     log.info("Sendebrücke %s: gestoppt, während die Quelle "
                              "aufgelöst wurde — kein Zubringer mehr.", self.name)
                     return None
-                p = self._popen(cmd, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                p = self._oeffne(cmd)
                 self._zub = p
         else:
-            p = self._popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE)
+            p = self._oeffne(cmd)
+        leser = []
         for ziel in (self._lies, self._stderr):
             t = threading.Thread(target=ziel, args=(wer, p), daemon=True,
                                  name="bruecke-%s-%s" % (self.name, wer))
             t.start()
             self._threads.append(t)
-        self._stderr_leser[id(p)] = t
+            leser.append(t)
+        self._leser[id(p)] = tuple(leser)
+        return p
+
+    def _oeffne(self, cmd):
+        """RST-2: jeder Prozess der Bruecke fuehrt eine eigene Prozessgruppe.
+
+        Der Durchreicher (nc/durchreicher.py) ist EIN Prozess mit zwei
+        Kindern, Zieher (yt-dlp) und Wandler (ffmpeg). Beendet wurde bis hier
+        nur er: SIGTERM, 3 s, SIGKILL — und sein eigener Signal-Handler wartet
+        selbst 3 s auf den Wandler, verliert das Rennen also immer. Der
+        Wandler haengt dann in write() (die Bruecke liest nach dem Halt nicht
+        mehr, SIGTERM wirkt dort nicht, W179), beide Kinder landen bei PID 1
+        und halten die geerbte stderr-Leitung — der stderr-Leser bekommt nie
+        EOF, haelt den Popen und damit p.stdout offen, und der Wandler bleibt
+        fuer immer in write(). Je Stopp, Neuaufbau und Quellwechsel im
+        Durchreicher-Modus blieben so yt-dlp, ffmpeg, ein Thread und eine
+        TikTok-Verbindung liegen. Mit eigener Gruppe erreicht das Signal ALLE
+        (auch den ffmpeg, den yt-dlp fuer HLS selbst startet).
+
+        Markiert wird nur, was nachweislich eine eigene Gruppe fuehrt: killpg
+        an die Gruppe eines fremd gestarteten Prozesses traefe womoeglich den
+        Bot selbst."""
+        p = self._popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, start_new_session=True)
+        if isinstance(p, subprocess.Popen) and hasattr(os, "killpg"):
+            try:
+                if os.getpgid(p.pid) == p.pid:
+                    p._nc_gruppe = p.pid
+            except OSError as e:
+                # Schon beendet, bevor wir fragen konnten: dann gibt es auch
+                # keine Gruppe mehr zu beenden — aber sagen, warum sie fehlt.
+                log.info("Sendebrücke %s: Prozessgruppe von pid %s nicht "
+                         "feststellbar (%s) — er wird einzeln beendet.",
+                         self.name, p.pid, e)
         return p
 
     @staticmethod
+    def _gruppe(p):
+        """Die Prozessgruppe, die _oeffne fuer p angelegt hat, sonst None."""
+        g = getattr(p, "_nc_gruppe", None)
+        return g if isinstance(g, int) and g > 1 else None
+
+    @staticmethod
+    def _killpg(g, sig) -> bool:
+        """False: niemand mehr in der Gruppe — das war das Ziel."""
+        try:
+            os.killpg(g, sig)
+            return True
+        except OSError as e:
+            # ESRCH (ProcessLookupError) ist das Ziel und bleibt still. EPERM:
+            # ein Mitglied hat die Kennung gewechselt — laut, denn was dann
+            # stehen bleibt, ist genau die Waise, gegen die das gebaut ist.
+            if not isinstance(e, ProcessLookupError):
+                log.warning("Sendebrücke: Prozessgruppe %s nicht zu beenden (%s) — "
+                            "Reste bleiben womoeglich stehen.", g, e)
+            return False
+
+    @staticmethod
+    def _reste_beenden(p):
+        """RST-2: der Kopf ist weg, seine Kinder vielleicht nicht (ein
+        Durchreicher, der abstuerzt, laesst Zieher und Wandler stehen). Was
+        von der Gruppe uebrig ist, hat niemanden mehr, der es abraeumt."""
+        g = Bruecke._gruppe(p)
+        if g is not None:
+            Bruecke._killpg(g, signal.SIGKILL)
+
+    # RST-2: so lange hat eine Gruppe nach SIGTERM Zeit, dann SIGKILL an alle.
+    BEENDEN_FRIST_S = 3.0
+
+    @staticmethod
     def _beende(p):
-        if p is None or p.poll() is not None:
+        if p is None:
+            return
+        g = Bruecke._gruppe(p)
+        if p.poll() is not None:
+            Bruecke._reste_beenden(p)
             return
         try:
-            p.terminate()
-            p.wait(timeout=3)
+            if g is not None:
+                Bruecke._killpg(g, signal.SIGTERM)
+            else:
+                p.terminate()
+            p.wait(timeout=Bruecke.BEENDEN_FRIST_S)
         except subprocess.TimeoutExpired:
-            p.kill()
+            if g is None:
+                p.kill()
         except OSError:
             return     # schon weg — das war das Ziel
+        if g is not None:
+            # RST-2: nach der Frist oder nach dem Ende des Kopfes SIGKILL an
+            # alles, was von der Gruppe noch steht (den Kopf eingeschlossen) —
+            # ein Mitglied, das SIGTERM ueberhoert, bliebe sonst bei PID 1.
+            Bruecke._killpg(g, signal.SIGKILL)
         # v4.2-W179: kill() OHNE wait() liess den Prozess als <defunct>
         # stehen — gemessen mit ffmpeg 6.1 je Stopp eines Zubringers, der
         # SIGTERM ueberhoert (er haengt in write() auf die volle Pipe, und
@@ -690,6 +770,37 @@ class Bruecke:
         self._beende(zub)
         self._beende(self._fue)
         self._schliessen()
+        self._leitungen_zu(zub)
+        self._leitungen_zu(self._fue)
+
+    # RST-2: so lange wartet stop() hoechstens auf die Leser eines Prozesses.
+    LESER_FRIST_S = 2.0
+
+    def _leitungen_zu(self, p):
+        """RST-2: die Leser eines beendeten Prozesses abwarten, dann seine
+        Leitungen schliessen.
+
+        Bis hier blieb p.stdout offen, solange der Popen lebte — und den hielt
+        der stderr-Leser, der erst bei EOF endet. Geschlossen wird nur, wenn
+        beide Leser fertig sind: close() nimmt denselben Puffer-Riegel wie ein
+        read1(), das noch blockiert, und hinge dann selbst."""
+        if p is None:
+            return
+        leser = self._leser.pop(id(p), ())
+        ende = time.monotonic() + self.LESER_FRIST_S
+        for t in leser:
+            t.join(timeout=max(0.0, ende - time.monotonic()))
+        if any(t.is_alive() for t in leser):
+            log.warning("Sendebrücke %s: die Leser von pid %s enden nach %.0f s nicht "
+                        "— ein Prozess ausserhalb seiner Gruppe haelt die Leitung, "
+                        "oder ein Schreibvorgang zum Sender haengt. Die Leitungen "
+                        "bleiben offen, bis das endet.", self.name,
+                        getattr(p, "pid", "?"), self.LESER_FRIST_S)
+            return
+        for f in (getattr(p, "stdout", None), getattr(p, "stderr", None)):
+            zu = getattr(f, "close", None)
+            if zu is not None:
+                zu()
 
     # v4.2-W179: so lange wartet _schliessen hoechstens auf die Datensperre.
     SCHLIESSEN_WARTEN_S = 2.0
@@ -796,9 +907,13 @@ class Bruecke:
         # sein, bevor sein letzter stderr-Satz hier angekommen ist.
         # Der Vertrag hat genau diesen Wettlauf gefangen — die
         # tonlose Quelle wurde dann als tote Edge behandelt.
-        _t = self._stderr_leser.pop(id(zub), None)
-        if _t is not None:
-            _t.join(timeout=2.0)
+        # RST-2: zuerst, was von seiner Prozessgruppe uebrig ist — ein Kind,
+        # das die stderr-Leitung erbte, haelt sie sonst offen, und der Leser
+        # unten wartete vergeblich auf EOF.
+        self._reste_beenden(zub)
+        _l = self._leser.pop(id(zub), ())
+        if _l:
+            _l[-1].join(timeout=2.0)
         urteil = self._urteil.get(QUELLE)
         if urteil is None and _tonspur.ist_tonlos_fehler(
                 "\n".join(self.stderr[QUELLE])):

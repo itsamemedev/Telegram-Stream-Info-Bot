@@ -274,6 +274,24 @@ def zieldatei(verzeichnis: str, sid: str) -> str:
                        "sitzung_unbenannt.mp4")
 
 
+# Genau die Form, die zieldatei() baut: Praefix, nur Zeichen aus _dateisicher.
+_ZIEL = re.compile(r"^sitzung_[A-Za-z0-9_.@-]+\.mp4$")
+
+
+def ist_zieldatei(name) -> bool:
+    """AUF-3: Ist `name` eine von zieldatei() gebaute Sitzungsdatei?
+
+    Die zusammengefuegte Datei bekommt bewusst KEINE Zeile in `recordings`:
+    `_sitzung_bestimmen` (bot.py) haengt ein neues Segment an die Sitzung der
+    JUENGSTEN Zeile desselben Nutzers — eine Join-Zeile ohne session_id risse
+    eine laufende Sitzung mitten durch, eine mit session_id kaeme beim
+    naechsten Zusammenfuegen als eigenes Segment noch einmal hinein. Ohne
+    Zeile galt sie aber nach FRISCH_S als „kein-db-eintrag", und „Reste
+    aufraeumen" loeschte den gerade gebauten Join. Die Waisen-Suche fragt
+    deshalb hier, statt das Praefix nachzubauen."""
+    return bool(_ZIEL.match(os.path.basename(name or "")))
+
+
 def sekunden(iso):
     """ISO-Zeitstempel → Sekunden seit Epoche, oder None.
 

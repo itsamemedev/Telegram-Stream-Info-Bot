@@ -123,9 +123,24 @@ def _markierte_pfade() -> set:
     return {os.path.abspath(r["filepath"]) for r in rows if r["filepath"]}
 
 
+# AUF-1: was cleanup() ueberhaupt loeschen darf. Eine ERLAUBNISliste, keine
+# Verbotsliste: im Aufnahmeordner liegen auch Zustandsdateien, die der Bot
+# dort ablegt — twitch_oauth.json, youtube_oauth.json (Refresh-Token),
+# tg_topics.json, tg_migriert.json, pending_uploads.json. Bis hier loeschte
+# der taegliche Lauf JEDE regulaere Datei aelter als RECORDINGS_RETAIN_DAYS:
+# eine YouTube-Kopplung, die zwei Wochen lang nicht neu geschrieben wurde,
+# war danach weg und der Restream still getrennt, und Telegram legte jedes
+# Forum-Thema neu an. Eine Verbotsliste haette beim naechsten neuen
+# Zustandsfile wieder geloescht; eine Erlaubnisliste kann nur zu wenig
+# loeschen. Dieselbe Menge wie `_VIDEO_EXTS` in bot.py (Disk-Guard).
+AUFNAHME_ENDUNGEN = frozenset({".mp4", ".flv", ".ts", ".mkv", ".webm", ".m4v",
+                               ".mov", ".avi", ".m2ts", ".part"})
+
+
 def cleanup(recordings_dir: str, days: int = 0,
             dry_run: bool = False) -> dict:
-    """Löscht Recordings-Files älter als `days` Tage von Disk. DB-Einträge
+    """Löscht Recordings-Files (nur AUFNAHME_ENDUNGEN, s. dort) älter als
+       `days` Tage von Disk. DB-Einträge
        werden NICHT gelöscht (User kann immer noch sehen dass es Aufnahmen
        gab — sie sind nur nicht mehr abrufbar).
 
@@ -172,6 +187,8 @@ def cleanup(recordings_dir: str, days: int = 0,
         for entry in os.scandir(recordings_dir):
             if not entry.is_file(follow_symlinks=False):
                 continue
+            if os.path.splitext(entry.path)[1].lower() not in AUFNAHME_ENDUNGEN:
+                continue        # AUF-1: Zustandsdateien sind keine Aufnahmen
             try:
                 st = entry.stat(follow_symlinks=False)
             except OSError:

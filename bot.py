@@ -5013,6 +5013,11 @@ def _sitzung_bestimmen(conn, username: str, start_iso: str):
     return _nc_sitzung.sitzung_id(username, start_iso)
 
 
+# AUF-4: Anlaeufe fuer add_recording, Pause waechst je Anlauf (1 s, 2 s).
+_ADD_RECORDING_VERSUCHE = 3
+_ADD_RECORDING_PAUSE_S = 1.0
+
+
 def add_recording(username: str, filepath: str, *,
                   file_size: Optional[int] = None,
                   duration_secs: Optional[int] = None,
@@ -5042,49 +5047,68 @@ def add_recording(username: str, filepath: str, *,
         start_iso = _iso(datetime.now(timezone.utc)
                          - timedelta(seconds=int(duration_secs)))
     start_iso = start_iso or end_iso
-    try:
-        with db_conn() as conn:
-            sid = _sitzung_bestimmen(conn, username, start_iso)
-            cur = conn.execute(
-                "INSERT INTO recordings (username, filepath, created_at, "
-                "  file_size, duration_secs, tracking_id, "
-                "  session_id, started_at, ended_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (username, filepath, jetzt_iso,
-                 file_size, duration_secs, tracking_id,
-                 sid, start_iso, end_iso))
-            conn.commit()
-            new_id = cur.lastrowid
-        # X-Event: Aufnahme abgeschlossen → Event-Log
+    fehler = None
+    # AUF-4: bis hier nach zwei gescheiterten INSERTs nur log.warning und
+    # `return None` — der Upload lief weiter, und die Datei lag danach ohne
+    # Zeile im Aufnahmeordner: nach FRISCH_S bietet „Reste aufraeumen" sie als
+    # „kein-db-eintrag" zum Loeschen an. Der Stopp-Pfad (W121) hatte dafuer
+    # schon eine laute Meldung — die nie kam, weil diese Funktion nicht wirft.
+    # Haeufigste Ursache ist ein gesperrtes SQLite unter laufendem Recorder,
+    # also ein kurzer zweiter Anlauf; die Aufrufer rufen ueber to_thread, das
+    # Warten haelt den Event-Loop nicht an.
+    for versuch in range(1, _ADD_RECORDING_VERSUCHE + 1):
         try:
-            log_event("recording.saved", "info",
-                      f"Aufnahme @{username} gespeichert ({(file_size or 0)/1024/1024:.1f} MB)",
-                      {"recording_id": new_id, "username": username,
-                       "file_size": file_size, "duration_secs": duration_secs,
-                       "session_id": sid})
-        except Exception: pass
-        return new_id
-    except Exception as e:
-        log.warning(f"add_recording @{username} → {filepath}: {e} "
-                    f"(zweiter Versuch ohne Sitzungs-Spalten)")
-    # v4.2-W44: Rueckfall auf den Spaltensatz vor dieser Welle. Wenn
-    # _migrate_columns auf einem Bestand nicht durchkam, waere der INSERT oben
-    # dauerhaft kaputt — und dann fehlte nicht die Klammer, sondern JEDE
-    # Aufnahme im Dashboard. Die Klammer ist Komfort, der Eintrag ist Pflicht.
-    try:
-        with db_conn() as conn:
-            cur = conn.execute(
-                "INSERT INTO recordings (username, filepath, created_at, "
-                "  file_size, duration_secs, tracking_id) "
-                "VALUES (?,?,?,?,?,?)",
-                (username, filepath, jetzt_iso,
-                 file_size, duration_secs, tracking_id))
-            conn.commit()
-            return cur.lastrowid
-    except Exception as e:
-        log.warning(f"add_recording @{username} → {filepath}: {e} "
-                    f"(Upload läuft weiter, aber Dashboard zeigt diese Aufnahme nicht)")
-        return None
+            with db_conn() as conn:
+                sid = _sitzung_bestimmen(conn, username, start_iso)
+                cur = conn.execute(
+                    "INSERT INTO recordings (username, filepath, created_at, "
+                    "  file_size, duration_secs, tracking_id, "
+                    "  session_id, started_at, ended_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (username, filepath, jetzt_iso,
+                     file_size, duration_secs, tracking_id,
+                     sid, start_iso, end_iso))
+                conn.commit()
+                new_id = cur.lastrowid
+            # X-Event: Aufnahme abgeschlossen → Event-Log
+            try:
+                log_event("recording.saved", "info",
+                          f"Aufnahme @{username} gespeichert ({(file_size or 0)/1024/1024:.1f} MB)",
+                          {"recording_id": new_id, "username": username,
+                           "file_size": file_size, "duration_secs": duration_secs,
+                           "session_id": sid})
+            except Exception: pass
+            return new_id
+        except Exception as e:
+            fehler = e
+            log.warning(f"add_recording @{username} → {filepath}: {e} "
+                        f"(Versuch {versuch}, zweiter Anlauf ohne Sitzungs-Spalten)")
+        # v4.2-W44: Rueckfall auf den Spaltensatz vor dieser Welle. Wenn
+        # _migrate_columns auf einem Bestand nicht durchkam, waere der INSERT oben
+        # dauerhaft kaputt — und dann fehlte nicht die Klammer, sondern JEDE
+        # Aufnahme im Dashboard. Die Klammer ist Komfort, der Eintrag ist Pflicht.
+        try:
+            with db_conn() as conn:
+                cur = conn.execute(
+                    "INSERT INTO recordings (username, filepath, created_at, "
+                    "  file_size, duration_secs, tracking_id) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (username, filepath, jetzt_iso,
+                     file_size, duration_secs, tracking_id))
+                conn.commit()
+                return cur.lastrowid
+        except Exception as e:
+            fehler = e
+            log.warning(f"add_recording @{username} → {filepath}: {e} "
+                        f"(Versuch {versuch}, auch ohne Sitzungs-Spalten)")
+        if versuch < _ADD_RECORDING_VERSUCHE:
+            _time_mod.sleep(_ADD_RECORDING_PAUSE_S * versuch)
+    log.error("Aufnahme @%s NICHT eingetragen (%d Versuche, zuletzt: %s): %s liegt "
+              "ohne Datenbankzeile und erscheint deshalb unter den Waisen "
+              "(/api/rec/orphans) — dort NICHT loeschen, die Datei ist eine echte "
+              "Aufnahme. Der Upload laeuft weiter.",
+              username, _ADD_RECORDING_VERSUCHE, fehler, filepath)
+    return None
 
 def get_all_recordings(limit = 50, include_deleted = False):
     # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
@@ -6583,19 +6607,17 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except OSError: pass
     except Exception: pass
 
-    # F69: Orphan _part_*.mp4 Dateien aus split_and_send_video. Wenn der
-    # Upload-Flow während des Splits crashed (Bot-Restart, OOM, etc.), bleiben
-    # die _part_NNN.mp4-Files zurück. Sind nutzlos ohne ihren Eltern-Recording-
-    # Kontext, fressen aber Disk. Hier weg räumen — Pattern matched genau
-    # was split_and_send_video generiert (prefix = f"{filepath}_part",
-    # output = f"{prefix}_%03d.mp4").
+    # F69: Orphan-Teile aus split_and_send_video (Bot-Restart, OOM mitten im
+    # Split) — nutzlos ohne ihren Upload, fressen aber Disk. AUF-2: das Glob
+    # "*_part_*.mp4" traf auch die AUFNAHME eines Nutzers „dj_part_x". Jetzt
+    # nur die exakte Erzeugerform (nc.videoteil.ist_rest), nichts, was ein
+    # laufender Versand noch braucht (in_arbeit: er loescht jeden Teil erst
+    # nach dessen Upload, und das dauert oft ueber eine Stunde), und nur > 1 h.
     cleaned_orphan_parts = 0
     try:
-        for f in (g for m in ("*_part_*.mp4", "*_dcpart_*.mp4")  # W175: + Discord-Teile
-                  for g in glob.glob(os.path.join(RECORDINGS_DIR, m))):
+        for f in (g for g in glob.glob(os.path.join(RECORDINGS_DIR, "*.mp4"))
+                  if _nc_videoteil.ist_rest(g) and not _nc_videoteil.in_arbeit(g)):
             try:
-                # Defensiv: nur löschen wenn > 1h alt damit wir keine
-                # gerade-laufende Split-Operation killen.
                 if os.path.getmtime(f) < datetime.now(timezone.utc).timestamp() - 3600:
                     os.remove(f); cleaned_orphan_parts += 1
                     log.info(f"cleanup: orphan part-file entfernt: {os.path.basename(f)}")
@@ -10328,12 +10350,14 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # Dashboard sieht's nicht, kein Cleanup möglich.
             # X-Series: file_size + duration + tracking_id mitgeben für
             # Quality-Score, Forecast, Analytics.
-            add_recording(username, output_file,
-                          file_size=file_size,
-                          duration_secs=int(duration),
-                          tracking_id=tid,
-                          started_at=started_at, ended_at=ended_at)
+            # AUF-4: im Thread (add_recording wartet und wiederholt). VOR dem await: ein
+            # Abbruch laesst den Thread zu Ende schreiben — keine zweite Zeile (W175).
             nachlauf.update(eingetragen=True, ende=ended_at)
+            await asyncio.to_thread(add_recording, username, output_file,
+                                    file_size=file_size,
+                                    duration_secs=int(duration),
+                                    tracking_id=tid,
+                                    started_at=started_at, ended_at=ended_at)
 
             # F37: Multi-Chat-Fan-Out. Wenn mehrere Chats denselben User tracken,
             # sollen ALLE die OFFLINE-Notif + Upload bekommen, nicht nur der Chat
@@ -15166,9 +15190,15 @@ class RestreamManager:
             return {"ok": False, "error": f"Restream deaktiviert ({why})"}
         if rid in self._procs:
             return {"ok": True, "already": True}
-        # v4.2-W118: nur die fd-Sperre — den Deckel fuer Restreams haelt
-        # RESTREAM_MAX_CONCURRENT im Scheduler.
-        _gd = _start_gesperrt("restream", "#%s" % rid, len(self._procs), 0)
+        # RST-1: die Sitzung beim Anlauf merken. stop() zaehlt sie hoch, und
+        # zwischen hier und dem Sendestart liegen bis ~40 s Wartepunkte
+        # (Resolve, Preflight, YouTube, Chromium) — siehe _anlauf_verwerfen.
+        _gen = self._sitzung.get(rid, 0)
+        # v4.2-W118: die fd-Sperre. RST-5: und der Deckel RESTREAM_MAX_CONCURRENT
+        # — der stand nur im Scheduler, und manueller Start, Guard und
+        # Reconnect liefen an ihm vorbei (drei Transcodes bei Grenze 2).
+        _gd = (_start_gesperrt("restream", "#%s" % rid, len(self._procs), 0)
+               or self._deckel_grund(rid))
         if _gd:
             self._set_status(rid, "idle", err=_gd)
             return {"ok": False, "error": _gd}
@@ -15338,6 +15368,8 @@ class RestreamManager:
         except asyncio.TimeoutError:
             log.warning("YouTube-Restream NICHT aktiv: Key-Abfrage ueber 10 s "
                         "— Sendestart geht ohne YouTube weiter.")
+        if self._sitzung.get(rid, 0) != _gen:      # RST-1: vor dem ersten Feeder
+            return await self._anlauf_verwerfen(rid, feeder=False)
         # v4.0-W77: gleichberechtigte Zielliste dieses Restreams (inkl. Overrides).
         _targets = _nc_rst.active_targets(overrides=_row_overrides)
         if not _targets:
@@ -15467,6 +15499,9 @@ class RestreamManager:
             await self._nebenlaeufer_abraeumen(rid)
             self._set_status(rid, "error", err=f"ffmpeg-Start: {e}")
             return {"ok": False, "error": str(e)}
+        if self._sitzung.get(rid, 0) != _gen:      # RST-1: stop() waehrend Feeder/Spawn
+            return await self._anlauf_verwerfen(rid, {"proc": proc},
+                                                fd=(_br_fds or (None, None))[1])
         # B141: echte Kick-URL + tee-Ziel-Reihenfolge dieses Prozesses festhalten.
         # _read_stderr labelt tee-Fehler damit korrekt (statt _multistream_targets()
         # frisch neu zu raten), und die Kollisions-Pruefung unten braucht die Kick-URL.
@@ -15475,13 +15510,13 @@ class RestreamManager:
         _base_url = _targets[0][1]
         _kick_url = _base_url          # Rückwärtskompat: Kollisions-Check/Consumer
         _tee_targets = list(_targets)
-        self._procs[rid] = {"proc": proc, "started": _time_mod.monotonic(),
-                            "attempts": _attempts, "transcode": transcode,
-                            "kick_url": _kick_url, "base_url": _base_url,
-                            "tee_targets": _tee_targets,
-                            "src_watch": _src_watch,     # v4.2-W179: ueber Reconnects
-                            "health": {"bitrate": None, "fps": None, "frame": 0, "drop": 0,
-                                       "speed": None, "out_time": "00:00:00", "size_mb": 0}}
+        _mein = self._procs[rid] = {"proc": proc, "started": _time_mod.monotonic(),
+                                    "attempts": _attempts, "transcode": transcode,
+                                    "kick_url": _kick_url, "base_url": _base_url,
+                                    "tee_targets": _tee_targets,
+                                    "src_watch": _src_watch,     # v4.2-W179: ueber Reconnects
+                                    "health": {"bitrate": None, "fps": None, "frame": 0, "drop": 0,
+                                               "speed": None, "out_time": "00:00:00", "size_mb": 0}}
         _nc_rutil.freigeben(self, rid)   # ab hier greift `rid in self._procs`
         if _bruecke_an:
             _br = _nc_bruecke.Bruecke(
@@ -15504,7 +15539,13 @@ class RestreamManager:
                 _grund = f"Sendebruecke startet nicht ({type(e).__name__}: {e})"
                 log.error("Restream #%d: %s — ffmpeg im PATH? Der Sender wird "
                           "beendet, der Start gilt als gescheitert.", rid, _grund)
-                _info = self._procs.pop(rid, None)
+                # Nur den EIGENEN Eintrag entfernen (RST-1): kam waehrend
+                # _br.start ein stop() und danach ein neuer Start derselben
+                # rid, gehoert _procs[rid] schon jenem. Die Bruecke steckt in
+                # _mein, nicht im Register.
+                _info = _mein
+                if self._procs.get(rid) is _mein:
+                    del self._procs[rid]
                 # Erst den Sender, dann die Bruecke — dieselbe Reihenfolge wie
                 # in stop() (W179): ein os.write in den nicht lesenden Sender
                 # haelt sonst den Bruecken-Abbau auf.
@@ -15513,6 +15554,11 @@ class RestreamManager:
                 await self._nebenlaeufer_abraeumen(rid)
                 self._set_status(rid, "error", err=_grund)
                 return {"ok": False, "error": _grund}
+        # RST-1: der letzte Wartepunkt vor dem Sendestart. Von hier bis
+        # _set_desired(rid, True) wartet nichts mehr (Vertrag RST-1) — ein
+        # stop() kann danach erst kommen, wenn der Eintrag vollstaendig steht.
+        if self._sitzung.get(rid, 0) != _gen:
+            return await self._anlauf_verwerfen(rid, _mein, feeder=False)
         self._set_status(rid, "live", pid=proc.pid)
         # B141: Kollisions-Warnung. Teilen sich zwei aktive Restreams denselben
         # Kick-Key, kann nur EINER senden (ein RTMP-Key = ein Slot) — die anderen
@@ -16292,13 +16338,23 @@ class RestreamManager:
         wartet bis 5 s, deshalb im Thread), Avatar-Feeder und, mit `info`,
         die unabhaengigen Relays. Aufgerufen vom Prozessende (_monitor), vom
         Fehlstart (start) und vom Stop — vorher raeumte jeder Pfad nur einen
-        Teil ab."""
+        Teil ab.
+
+        RST-4: die Relays ZUERST. _monitor ruft das hier, NACHDEM er den
+        _procs-Eintrag entfernt hat; ein stop() in diesem Fenster findet
+        nichts (raeumt also ohne `info` ab) und cancelt den Monitor. Standen
+        die Relays hinter dem Overlay-Ende (bis 5 s im Thread), kamen sie nie
+        dran: sie sendeten bis zum Ablauf der Quell-URL (~6 min) weiter, und
+        ein neuer Lauf stand als zweiter Publisher auf demselben Key. Das
+        Cancel der Relay-Tasks laeuft vor dem ersten Wartepunkt — wird der
+        Aufrufer danach abgebrochen, erntet jeder Relay seinen Prozess selbst
+        (Ausgang von _relay_loop)."""
+        if info is not None:
+            await self._relays_abraeumen(info)
         _restream_tts_stop(rid)
         await asyncio.to_thread(_restream_html_overlay_stop, rid)
         await asyncio.to_thread(_nc_chatbild.beenden, rid)       # v5.9-W205
         _restream_avatar_feeder_stop(rid)
-        if info is not None:
-            await self._relays_abraeumen(info)
 
     async def _relays_abraeumen(self, info):
         """V37-INDEP: Relay-Tasks canceln und ihre ffmpeg-Prozesse ernten.
@@ -16313,6 +16369,45 @@ class RestreamManager:
             _p = _e.get("proc")
             if _p:
                 await _reap_proc(_p)   # v4.0-W75: terminate+wait → kein Zombie
+
+    async def _anlauf_verwerfen(self, rid, info=None, feeder=True, fd=None):
+        """RST-1: ein stop() kam, waehrend start() noch lief — nicht live gehen.
+
+        Bis hierher verglich nur _wiederanlauf die Sitzung, start() selbst
+        nicht. stop() fand im Anlauf keinen _procs-Eintrag, setzte desired=0
+        und meldete ok; danach startete ffmpeg trotzdem, der Status sprang auf
+        live, und `_set_desired(rid, True)` schrieb den Soll-Zustand zurueck.
+        Nach /api/restream/<id>/delete sendete das Ziel damit ohne Knopf im
+        Deck weiter (der Fall aus W178), und Starts kommen auch aus Guard,
+        Scheduler und Quellenwechsel. Hier wird alles abgeraeumt, was dieser
+        Anlauf schon gestartet hat: `info` traegt den Sender (und ggf. die
+        Bruecke), `fd` das noch nicht uebergebene Schreibende der Bruecke.
+        `feeder=False`, wenn stop() die Nebenlaeufer schon geerntet hat und
+        dieser Anlauf seither keine neuen gestartet hat."""
+        log.warning("Restream #%s: waehrend des Starts gestoppt — der Anlauf wird "
+                    "verworfen, es geht nichts auf Sendung.", rid)
+        await self._anlauf_abraeumen(rid, info, feeder=feeder, fd=fd)
+        if rid not in self._procs:      # ein neuer Start derselben rid behaelt seinen Status
+            self._set_status(rid, "stopped", pid=None)
+        return {"ok": False, "error": "waehrend des Starts gestoppt"}
+
+    async def _anlauf_abraeumen(self, rid, info=None, feeder=True, fd=None):
+        """RST-1: alles abraeumen, was ein abgebrochener Anlauf schon gestartet
+        hat — in der Reihenfolge von stop(): Nebenlaeufer (Relays zuerst,
+        RST-4), DANN der Sender, DANN die Bruecke (W179: umgekehrt hing der
+        Bruecken-Abbau an einem os.write in den nicht lesenden Sender).
+
+        Nur den EIGENEN _procs-Eintrag entfernen: nach stop() kann unter
+        derselben rid schon ein neuer Start stehen."""
+        if fd is not None:
+            os.close(fd)
+        if info is not None and self._procs.get(rid) is info:
+            del self._procs[rid]
+        if feeder:
+            await self._nebenlaeufer_abraeumen(rid, info)
+        if info is not None:
+            await _reap_proc(info.get("proc"))
+            await self._bruecke_abraeumen(rid, info)
 
     async def stop(self, rid, _keep_desired=False):
         """_keep_desired=True: interner Neustart durch den Guard — der
@@ -16384,10 +16479,62 @@ class RestreamManager:
         harten Absturz funktioniert, wo stop_all() nie laeuft.
 
         Ein Shutdown ist KEINE Betreiber-Entscheidung gegen den Restream,
-        also bleibt der Soll-Zustand bestehen."""
-        for rid in list(self._procs.keys()):
+        also bleibt der Soll-Zustand bestehen.
+
+        RST-3: nicht nur _procs. Ziele im Reconnect-Backoff (der Monitor hat
+        den Eintrag vor dem Schlaf entfernt), Starts im Anlauf und — beim Stop
+        des Betreibers — Zeilen mit desired=1, die gerade nichts senden,
+        bekamen weder desired=0 noch eine neue Sitzung; _wiederanlauf und die
+        Wiederaufnahme nach dem Neustart bauten sie danach wieder auf."""
+        ziele = (set(self._procs) | set(self._monitors)
+                 | set(_nc_rutil.startend(self)))
+        if not _keep_desired:
+            ziele |= await self._soll_an()
+        for rid in list(ziele):
             await self.stop(rid, _keep_desired=_keep_desired)
         return {"ok": True}
+
+    async def _soll_an(self):
+        """RST-3: die ids mit desired=1 — auch die, die gerade nichts senden."""
+        try:
+            rows = await db_async(lambda c: c.execute(
+                "SELECT id FROM restreams WHERE desired=1").fetchall())
+        except Exception as e:
+            log.warning("Restream: Soll-Zustand fuer „alle stoppen“ nicht lesbar "
+                        "(%s: %s) — gestoppt wird, was im Speicher laeuft.",
+                        type(e).__name__, e)
+            return set()
+        return {r["id"] for r in rows}
+
+    def _belegt(self, ausser=None):
+        """RST-5: welche Ziele gerade einen Sende-Platz halten — je rid einmal.
+
+        `len(self._procs)` allein zaehlte weder Ziele im Reconnect-Backoff
+        (der Monitor hat den Eintrag entfernt und schlaeft) noch Starts im
+        Anlauf. Der Scheduler vergab deren Platz neu, der Reconnect kam
+        danach trotzdem — drei Transcodes bei Grenze 2. `ausser`: die rid, die
+        gerade selbst startet; ein Reconnect zaehlt sich nicht doppelt."""
+        belegt = {r for r, t in self._monitors.items() if not t.done()}
+        belegt |= set(self._procs) | set(_nc_rutil.startend(self))
+        belegt.discard(ausser)
+        return belegt
+
+    def _deckel_grund(self, rid):
+        """RST-5: der Grund, warum `rid` den Deckel RESTREAM_MAX_CONCURRENT
+        sprengen wuerde — ohne Rueckgabe ist ein Platz frei. Im Einzel-Modus
+        entscheidet slot_belegt in start()."""
+        andere = self._belegt(ausser=rid)
+        if not RESTREAM_SINGLE and len(andere) >= RESTREAM_MAX_CONCURRENT:
+            grund = ("Deckel erreicht: %d/%d Restreams laufen oder laufen an (#%s) — "
+                     "RESTREAM_MAX_CONCURRENT schuetzt die CPU vor einem Transcode "
+                     "je Ziel." % (len(andere), RESTREAM_MAX_CONCURRENT,
+                                   ", #".join(sorted(map(str, andere)))))
+            laut, weg = _nc_meldetakt.melden("restream-deckel", "voll",
+                                             _time_mod.monotonic())
+            if laut:
+                log.warning("Restream #%s nicht gestartet — %s%s", rid, grund,
+                            _nc_meldetakt.zusatz(weg))
+            return grund
 
     async def auto_start_due(self):
         """Auto-Restream-Scheduler.
@@ -16430,11 +16577,14 @@ class RestreamManager:
         # V37-MAXLIVE: gedeckelt auf RESTREAM_MAX_CONCURRENT gleichzeitige Restreams
         # (Default 2). Schützt den GPU-losen Server — bei vielen Live-Usern würde
         # sonst pro User ein ffmpeg-Encode starten und die CPU überrennen.
+        # RST-5: gezaehlt wird jeder belegte Platz (_belegt), nicht nur _procs —
+        # ein Ziel im Reconnect-Backoff kommt gleich zurueck und behaelt ihn.
         for r in rows:
-            if len(self._procs) >= RESTREAM_MAX_CONCURRENT:
-                break                          # Deckel erreicht → keine weiteren starten
-            if r["id"] in self._procs:
+            _belegt = self._belegt()
+            if r["id"] in _belegt:
                 continue
+            if len(_belegt) >= RESTREAM_MAX_CONCURRENT:
+                break                          # Deckel erreicht → keine weiteren starten
             src, err = await self._resolve_source(r["source_username"])
             if err:
                 await asyncio.to_thread(self._reflect_source_status, r["id"], err)
@@ -16443,7 +16593,7 @@ class RestreamManager:
                 self._quelle_melden(r["source_username"], err)
                 continue
             log.info(f"Auto-Restream: @{r['source_username']} live → starte #{r['id']} "
-                     f"({len(self._procs) + 1}/{RESTREAM_MAX_CONCURRENT})")
+                     f"({len(_belegt) + 1}/{RESTREAM_MAX_CONCURRENT})")
             await self.start(r["id"], _src_watch=True)   # V37-SRCFAIL
 
     def tee_fehler(self, ttl_s=None):
@@ -21450,14 +21600,20 @@ REVENUE_PLATFORMS = _nc_revenue.PLATFORMS
 is_revenue_platform = _nc_revenue.is_revenue_platform
 
 
-def _overlay_push(kind, name, amount=None, message=None, platform="kick", origin=None):
+def _overlay_push(kind, name, amount=None, message=None, platform="kick", origin=None,
+                  test=False):
     """Follower-/Donation-Event ins Overlay.
        V37-OVMP: platform sagt, WOHER das Event kam (kick|twitch|youtube|tiktok)
        — das Overlay zeigt Badges und rechnet Summen pro Plattform. Default
        'kick' hält alte Aufrufer kompatibel.
        BH-1: origin = der TikTok-Quellnutzer, in dessen Raum es geschah. Ohne
        ihn zeigte jeder parallele Restream das Gift aus fremdem Raum als Alert;
-       leer = eigener Kanal, gilt fuer alle Sendebilder (nc.overlaytext.alert_fuer)."""
+       leer = eigener Kanal, gilt fuer alle Sendebilder (nc.overlaytext.alert_fuer).
+       GELD-1: test=True zeigt das Ereignis nur (Alarm im Sendebild) und
+       speichert es NIE. Der Deck-Knopf „Test-Donation" schrieb bis hier eine
+       echte Kick-Spende über 5 € nach overlay_events — erfundene Einnahme in
+       Spendenziel, /spenden, Website, Overlay-Bilanz und ledger.crosscheck,
+       dieselbe Klasse wie B120."""
     platform = (platform or "kick").strip().lower()
     if platform not in _OV_PLATFORMS:
         platform = "kick"
@@ -21470,15 +21626,35 @@ def _overlay_push(kind, name, amount=None, message=None, platform="kick", origin
                   platform, name)
         return
     try:
-        with db_conn() as conn:
-            conn.execute("INSERT INTO overlay_events (ts, kind, name, amount, message, platform) "
-                         "VALUES (?,?,?,?,?,?)",
-                         (datetime.now(timezone.utc).isoformat(), kind, (name or "?")[:120],
-                          (str(amount)[:40] if amount is not None else None),
-                          (message or "")[:500], platform))
-            conn.commit()
-    except Exception:
-        pass
+        if not test:
+            with db_conn() as conn:
+                conn.execute("INSERT INTO overlay_events (ts, kind, name, amount, message, platform) "
+                             "VALUES (?,?,?,?,?,?)",
+                             (datetime.now(timezone.utc).isoformat(), kind, (name or "?")[:120],
+                              (str(amount)[:40] if amount is not None else None),
+                              (message or "")[:500], platform))
+                conn.commit()
+            _nc_meldetakt.zuruecksetzen("overlay-push")
+    except Exception as e:
+        # GELD-3: hier stand `pass`. Bei gesperrter Datenbank (Alltag bei
+        # laufendem Recorder) war eine echte Spende damit dauerhaft weg — das
+        # Overlay zeigte sie einmal, in keiner Summe stand sie je.
+        if kind == "donation":
+            # Jede einzeln, ungedrosselt: eine gedrosselte Zeile verschwiege
+            # genau die Angaben, mit denen sie sich nachtragen laesst. Eine
+            # Flut ist das nicht — echte Spenden kommen nicht im Sekundentakt.
+            log.error("Spende NICHT gespeichert (%s: %s) — Plattform %s, Name %r, "
+                      "Betrag %r, Nachricht %r. Sie fehlt in Spendenziel und "
+                      "Spenden-Panel und ist von Hand nachzutragen.",
+                      type(e).__name__, e, platform, (name or "?")[:120], amount,
+                      (message or "")[:80])
+        else:
+            laut, unterdr = _nc_meldetakt.melden("overlay-push", type(e).__name__,
+                                                 _time_mod.monotonic())
+            if laut:
+                log.error("Overlay-Ereignis (%s, %s) nicht gespeichert: %s: %s — es "
+                          "fehlt im Verlauf des Overlays.%s", kind, platform,
+                          type(e).__name__, e, _nc_meldetakt.zusatz(unterdr))
     globals()["_RESTREAM_LAST_EVENT"] = {
         "ts": _time_mod.monotonic(), "kind": kind, "name": (name or "?"),
         "amount": (str(amount) if amount is not None else ""),

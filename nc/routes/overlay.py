@@ -247,6 +247,7 @@ def api_overlay_state():
         donations=donations,
         by_platform=by_platform,         # V37-OVMP: Bilanz je Plattform
         session_start=_sess,             # V37-OVMP-FIX: Zähler-Nullpunkt (Sende-Start)
+        test=_test_ereignis(),           # GELD-1: nur anzeigen, in keiner Summe
         mod={
             "running": bool(getattr(mod, "running", False)),
             "connected": (getattr(mod, "stats", {}) or {}).get("connected"),
@@ -269,21 +270,56 @@ def api_overlay_state():
         })
 
 
+# GELD-1: Plattformen, von denen eine Spende ueber diese Route kommen darf —
+# Einnahme (nc/revenue.PLATFORMS) UND im Overlay darstellbar. "manual" faellt
+# heraus: manuelle Spenden erfasst /api/donations/add, hier wuerde
+# _overlay_push sie zu Kick machen.
+_SPENDE_VON = tuple(p for p in _nc_revenue.PLATFORMS if p in _nc_revenue.OV_PLATFORMS)
+
+# GELD-1: das letzte Test-Ereignis aus dem Deck. Es wird nur angezeigt und
+# NIE in overlay_events gespeichert — dort waere eine Test-Spende Einnahme.
+_TEST = {"id": 0, "ts": 0.0, "ereignis": None}
+_TEST_SICHTBAR_S = 30.0
+
+
+def _test_ereignis():
+    """Das Test-Ereignis fuer /api/overlay/state, solange es frisch ist —
+    sonst None: kein Test gedrueckt, das ist der Normalfall, kein Fehler."""
+    frisch = bool(_TEST["ereignis"]) and time.monotonic() - _TEST["ts"] <= _TEST_SICHTBAR_S
+    return dict(_TEST["ereignis"], id=_TEST["id"]) if frisch else None
+
+
 @bp.route("/api/overlay/event", methods=["POST"])
 def api_overlay_event():
     """Event pushen (Follower/Donation) — für StreamElements-Webhook o.ä. oder manuell.
-       Body: {kind: 'follow'|'donation', name, amount?, message?}"""
+       Body: {kind: 'follow'|'donation', name, amount?, message?, platform?, test?}
+
+       GELD-1: eine echte Spende braucht eine ausdrueckliche Erloesplattform.
+       Bis hier wurde jede ohne Angabe eine Kick-Spende, und der Test-Knopf des
+       Decks buchte so 5 € erfundene Einnahme. test=true zeigt nur an."""
     d = request.get_json(silent=True) or {}
     kind = (d.get("kind") or "").strip()
     if kind not in ("follow", "donation"):
         return jsonify(ok=False, error=_t("kind muss 'follow' oder 'donation' sein")), 400
+    test = d.get("test") in (True, 1, "1", "true")
+    platform = str(d.get("platform") or "").strip().lower()
+    if kind == "donation" and not test and platform not in _SPENDE_VON:
+        return jsonify(ok=False, error=_t(
+            "Spende ohne gültige Plattform — platform muss kick, twitch oder youtube "
+            "sein. Manuelle Spenden erfasst das Deck unter Spenden.")), 400
     push = _nc_azrael.haken("push")
     if push is None:
         return jsonify(ok=False, error=_t("Bot startet noch — gleich erneut"),
                        transient=True), 503
-    push(kind, d.get("name") or "?", d.get("amount"), d.get("message"),
-         platform=(d.get("platform") or "kick"))
-    return jsonify(ok=True)
+    name, amount, message = d.get("name") or "?", d.get("amount"), d.get("message")
+    platform = platform or "kick"      # Follows: nur das Badge, kein Geld
+    if test:
+        _TEST.update(id=_TEST["id"] + 1, ts=time.monotonic(), ereignis={
+            "kind": kind, "name": str(name)[:120], "platform": platform,
+            "amount": (str(amount)[:40] if amount is not None else None),
+            "message": str(message or "")[:200]})
+    push(kind, name, amount, message, platform=platform, test=test)
+    return jsonify(ok=True, test=test, gespeichert=not test)
 
 
 @bp.route("/api/overlay/config", methods=["POST"])

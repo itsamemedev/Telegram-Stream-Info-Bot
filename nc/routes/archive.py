@@ -32,7 +32,7 @@ from nc.archive import (get_archive_entries_paged, run_archive_file_check,
                         _scan_for_duplicates, add_archive_entry,
                         get_archive_entry, delete_archive_entry,
                         _kind_from_filename, finde_ohne_eintrag, uebernehmen,
-                        BestandUnbekannt, VIDEO_ENDUNGEN)
+                        dublette_loeschen, BestandUnbekannt, VIDEO_ENDUNGEN)
 from nc.textmore import _safe_archive_filename
 from nc.intel import library as _intel_lib
 from nc import archivename as _nc_archivename
@@ -491,13 +491,31 @@ def api_archive_duplicates_delete():
                        error=_t("Pfad liegt nicht in scan_root (Sicherheitsprüfung fehlgeschlagen)")), 403
     if not os.path.isfile(abs_target):
         return jsonify(ok=False, error=_t("Datei nicht gefunden")), 404
+    # SEC-1: ob geloescht werden darf, entscheidet der Server — nicht der
+    # Scan-Stand im Browser —, und Datei und Archivzeile gehen gemeinsam.
+    # Begruendung bei nc.archive.dublette_loeschen.
     try:
-        size = os.path.getsize(abs_target)
-        os.remove(abs_target)
-        log.info(f"manual-archive duplicate deleted: {abs_target} ({size}B)")
-        return jsonify(ok=True, deleted=abs_target, freed_bytes=size)
+        bericht = dublette_loeschen(abs_root, abs_target)
+    except BestandUnbekannt as e:
+        log.error("Dublette nicht geloescht: %s", e)
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_duplicates_delete")), 503
     except OSError as e:
+        log.error("Dubletten-Pruefung fehlgeschlagen: %s", e)
         return jsonify(ok=False, error=_fehler_text(e, "api_archive_duplicates_delete")), 500
+    if bericht["ok"]:
+        return jsonify(ok=True, deleted=abs_target, freed_bytes=bericht["groesse"],
+                       archive_rows=bericht["zeilen"])
+    grund = bericht["grund"]
+    if grund == "keine_zweite_kopie":
+        return jsonify(ok=False, error=_t(
+            "Keine zweite Kopie mit gleichem Inhalt mehr vorhanden — die Datei "
+            "bleibt. Bitte neu scannen.")), 409
+    if grund == "datei":
+        return jsonify(ok=False, error=_t(
+            "Datei nicht löschbar — Datei und Archiveintrag bleiben.")), 500
+    return jsonify(ok=False, error=_t(
+        "Datei gelöscht, der Archiveintrag aber nicht — die Archivprüfung "
+        "räumt ihn auf.")), 500
 
 
 @bp.route("/api/archive")

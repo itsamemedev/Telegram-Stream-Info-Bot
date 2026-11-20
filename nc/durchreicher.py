@@ -179,7 +179,11 @@ def main(argv=None, popen=subprocess.Popen, which=shutil.which) -> int:
 
 def _ein_paar(name, exe, nutzer, cookies, ff, popen, laufend):
     """Zieher und ffmpeg, direkt verkettet. -> (rc ffmpeg, rc Zieher);
-    (None, None), wenn ffmpeg nicht startet."""
+    (None, None), wenn ffmpeg nicht startet.
+
+    RST-2: beide bleiben in der Prozessgruppe dieses Programms (kein
+    start_new_session hier). Die Sendebruecke beendet die GANZE Gruppe — ein
+    Kind mit eigener Gruppe entkaeme ihr und bliebe als Waise stehen."""
     zieher = popen(zieher_cmd(name, exe, nutzer, None if cookies == "-" else cookies),
                    stdout=subprocess.PIPE, stderr=sys.stderr, stdin=subprocess.DEVNULL,
                    env=zieher_umgebung())
