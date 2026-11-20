@@ -44468,8 +44468,21 @@ def _test_ops1_motd_laedt_nichts_aus_bot_dir():
         with open(conf, "w", encoding="utf-8") as f:
             f.write("BOT_DIR='%s'\nSHOW_REC='0'\nCPU_SAMPLE='0'\nSERVICE=''\nDASH_PORT='1'\n" % bot)
 
+        # Attrappen fuer pgrep/systemctl VORN im PATH: die MOTD erkennt einen
+        # laufenden Bot an `pgrep -f "python…bot.py"` — liefen auf derselben
+        # Maschine gerade andere Suiten (test_smoke startet bot.py), galt der
+        # Bot als laufend, und der Vertrag hing vom Systemzustand ab (CLAUDE.md
+        # W210). Mit Attrappen ist „Bot laeuft nicht" der feste Ausgangspunkt.
+        stubs = os.path.join(w, "stubs")
+        os.makedirs(stubs)
+        for name in ("pgrep", "systemctl"):
+            with open(os.path.join(stubs, name), "w") as f:
+                f.write("#!/bin/sh\nexit 1\n")
+            os.chmod(os.path.join(stubs, name), 0o755)
+
         def lauf(pfad):
-            env = {"PATH": "/usr/bin:/bin", "HOME": w, "TMPDIR": w, "CONF": conf, "NC_LANG": "en"}
+            env = {"PATH": stubs + ":/usr/bin:/bin", "HOME": w, "TMPDIR": w, "CONF": conf,
+                   "NC_LANG": "en"}
             r = _sp.run(["bash", pfad], cwd=w, env=env, capture_output=True, text=True, timeout=60)
             return r.stdout
 

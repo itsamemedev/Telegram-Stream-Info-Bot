@@ -25454,6 +25454,10 @@ def _zustand_kennzahlen():
         "tunnel": _nc_kz.einwertig(_tunnel_lage(), (
             _nc_tunnelwacht.LAGE_OK, _nc_tunnelwacht.LAGE_DIREKT,
             _nc_tunnelwacht.LAGE_AUS, _nc_tunnelwacht.LAGE_FEHLER, "unbekannt")),
+        # UPD-1: „unvollstaendig" erscheint hier bewusst als `sonstig` (das
+        # Dashboard zeigt den Zustand schon); laut wird er im Fehlerlog ueber
+        # _laufstand_loop. Eine eigene Reihe braeuchte Panel, Zuordnung und
+        # Regeltest (W144: jede Reihe hat ein Panel).
         "laufstand": _nc_kz.einwertig(_LAUFSTAND_LETZT["lage"], (
             _nc_laufstand.AKTUELL, _nc_laufstand.VERALTET, _nc_laufstand.UNBEKANNT)),
         "schema_stand": _SCHEMA_STAND,
@@ -26052,11 +26056,16 @@ async def _laufstand_loop():
             # v4.2-W144: fuer /metrics gemerkt — der 10-s-Schnappschuss darf
             # keine Datei lesen, die Antwort von hier ist hoechstens 5 min alt.
             _LAUFSTAND_LETZT["lage"] = lage["lage"]
-            if lage["lage"] == _nc_laufstand.VERALTET:
+            # UPD-1: ein halb eingespielter Stand ist genauso laut wie ein
+            # veralteter — beim Neustart fehlt sonst womoeglich ein Modul, das
+            # bot.py schon importiert, und niemand hat es vorher gesehen.
+            if lage["lage"] in (_nc_laufstand.VERALTET, _nc_laufstand.UNVOLLSTAENDIG):
                 laut, unterdrueckt = _nc_meldetakt.melden(
                     "laufstand", lage["lage"], _time_mod.monotonic())
                 if laut:
-                    log.error("VERALTETER CODE LAEUFT: %s Abhilfe: %s%s",
+                    log.error("%s: %s Abhilfe: %s%s",
+                              "VERALTETER CODE LAEUFT" if lage["lage"] == _nc_laufstand.VERALTET
+                              else "UPDATE UNVOLLSTAENDIG EINGESPIELT",
                               lage["text"], lage["abhilfe"],
                               _nc_meldetakt.zusatz(unterdrueckt))
             else:
