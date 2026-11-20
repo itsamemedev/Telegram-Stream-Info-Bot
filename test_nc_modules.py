@@ -43287,7 +43287,10 @@ def _rst_start_manager(baum, ueber=None):
           "RESTREAM_SINGLE": False, "RESTREAM_MAX_CONCURRENT": 2, "db_async": _zeile,
           "KICK_INGEST_URL": "", "KICK_STREAM_KEY": "", "KICK_INGEST_URL_BACKUP": "",
           "KICK_STREAM_KEY_BACKUP": "", "_normalize_ingest": lambda s: s,
-          "_preflight_url": _preflight, "_nc_channels": _ty.SimpleNamespace(RESTREAM_ACTIVE={}),
+          "_preflight_url": _preflight,
+          # v5.11.2-BH-10: start() duennt den Chat-Ring ueber chat_ausduennen aus.
+          "_nc_channels": _ty.SimpleNamespace(RESTREAM_ACTIVE={},
+                                              chat_ausduennen=lambda *a, **k: None),
           "_RESTREAM_ACTIVE_ALL": {}, "_RESTREAM_OV_DIR": "/nirgends/ov",
           "clean_username": lambda u: u, "_restream_active_sources": lambda: set(),
           "_RESTREAM_CHAT": [], "_overlay_session_reset": lambda: None,
