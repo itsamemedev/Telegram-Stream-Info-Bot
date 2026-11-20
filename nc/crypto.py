@@ -7,12 +7,17 @@ insgesamt empfangene Betrag best-effort über einen öffentlichen Explorer
 Browser keinen Fremd-Request macht (DSGVO). Gecacht, wirft nie nach außen.
 """
 import json
+import logging
 import os
+import threading
 import time
 import urllib.parse
 import urllib.request
 
+from nc import meldetakt as _meldetakt
 from nc import qrsvg as _qrsvg   # v4.0-W95: QR-Codes (Inline-SVG, vendored segno)
+
+_log = logging.getLogger(__name__)
 
 # (coin-code, Anzeige, env-Variable) — nur gesetzte erscheinen.
 _COINS = [
@@ -24,8 +29,20 @@ _COINS = [
     ("sol", "Solana", "DONATION_SOL_ADDRESS"),
 ]
 
-_CACHE = {"btc_sats": None, "ts": 0.0}
+_CACHE = {"btc_sats": None, "ts": 0.0, "fehl_ts": 0.0}
 _TTL = 600.0                       # 10 min — Explorer schonen
+# v5.11.3-WEB-2: auch ein FEHLSCHLAG wird gemerkt. snapshot() laeuft ueber
+# /api/public/stats ohne Anmeldung im waitress-Thread; ohne diese Frist rief
+# bei gestoertem blockstream.info JEDE Anfrage urlopen(timeout=8) — acht
+# gleichzeitige Aufrufe genuegten, um den ganzen Thread-Pool des Decks zu
+# belegen. Kuerzer als _TTL: ein kurzer Ausfall soll die Zahl nicht zehn
+# Minuten lang verstecken.
+_FEHL_TTL = 300.0
+# Nur EIN Thread fragt gleichzeitig. Die Fehlerfrist greift erst, wenn der
+# erste Versuch nach bis zu 8 s gescheitert ist — bis dahin waeren alle
+# parallelen Anfragen ebenfalls ins Netz gegangen.
+_ABRUF = threading.Lock()
+_KANAL = "crypto-btc-explorer"
 
 
 def gesetzte():
@@ -114,13 +131,45 @@ def snapshot(fetch_live=False):
            "fehlend": fehlend}
     btc = next((a for a in addrs if a["coin"] == "btc"), None)
     if btc and fetch_live:
-        now = time.time()
-        if _CACHE["btc_sats"] is None or (now - _CACHE["ts"]) > _TTL:
-            try:
-                _CACHE["btc_sats"] = _fetch_btc_sats(btc["address"])
-                _CACHE["ts"] = now
-            except Exception:
-                pass                # Netzfehler → letzter Cache/aus, nie werfen
+        _btc_auffrischen(btc["address"])
         if _CACHE["btc_sats"] is not None:
             out["btc_received_btc"] = round(_CACHE["btc_sats"] / 1e8, 8)
     return out
+
+
+def _btc_auffrischen(address):
+    """Den BTC-Empfang neu holen, wenn er faellig ist — hoechstens ein Netzaufruf
+    je Frist, auch im Fehlerfall (WEB-2). Wirft nie: die oeffentliche Seite
+    zeigt dann den letzten Stand oder keinen.
+
+    Der Fehler bleibt nicht still (bis v5.11.3 `except Exception: pass`): er
+    geht gedrosselt durch nc/meldetakt, Kanal statt Adresse als Schluessel."""
+    now = time.time()
+    if _CACHE["btc_sats"] is not None and (now - _CACHE["ts"]) <= _TTL:
+        return
+    if (now - _CACHE["fehl_ts"]) < _FEHL_TTL:
+        return
+    if not _ABRUF.acquire(blocking=False):
+        return                      # ein anderer Thread fragt gerade
+    try:
+        try:
+            sats = _fetch_btc_sats(address)
+        except Exception as e:
+            # Uhr beim Schreiben, nicht beim Beginn: ein Timeout von 8 s
+            # verkuerzte die Frist sonst um genau diese 8 s.
+            _CACHE["fehl_ts"] = time.time()
+            laut, weg = _meldetakt.melden(_KANAL, type(e).__name__, time.monotonic())
+            if laut:
+                _log.warning("BTC-Empfang: Explorer blockstream.info nicht erreichbar "
+                             "(%s: %s) — naechster Versuch in %d min, bis dahin %s%s. "
+                             "Abhilfe: ausgehendes HTTPS zu blockstream.info pruefen "
+                             "(Firewall/Proxy).", type(e).__name__, e, int(_FEHL_TTL // 60),
+                             "der letzte Stand" if _CACHE["btc_sats"] is not None
+                             else "keine Anzeige", _meldetakt.zusatz(weg))
+            return
+        _CACHE["btc_sats"] = sats
+        _CACHE["ts"] = time.time()
+        _CACHE["fehl_ts"] = 0.0
+        _meldetakt.zuruecksetzen(_KANAL)
+    finally:
+        _ABRUF.release()

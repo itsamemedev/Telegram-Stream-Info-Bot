@@ -40818,8 +40818,12 @@ def _test_v56_w197_oeffentliche_stats():
         st = O.public_stats()
         assert st["version"] == "9.9.9", "die Fassung kommt nicht per configure()"
         assert len(st["live_7d"]) == 7 and st["live_7d"][-1]["live"] == 2, st["live_7d"]
-        assert st["moderation_7d"] == 2 and st["mod_7d"][-1]["n"] == 1, \
-            ("Moderations-Serie zaehlt falsch (nur timeout/ban/flag/delete/warn)", st["mod_7d"])
+        # v5.11.3-WEB-4: hier stand `moderation_7d == 2` — der Vertrag hielt
+        # den Fehler fest: die Zeile "chat" ist keine Moderation, und die
+        # Kachel zaehlte sie, waehrend das Diagramm daneben 1 zeigte.
+        assert st["moderation_7d"] == 1 and st["mod_7d"][-1]["n"] == 1, \
+            ("Moderations-Serie zaehlt falsch (nur timeout/ban/flag/delete/warn)",
+             st["moderation_7d"], st["mod_7d"])
         for k in st:
             assert "recording" not in k and "aufnahm" not in k.lower(), \
                 "Aufnahme-Zahl in den oeffentlichen Stats: " + k
@@ -44001,6 +44005,437 @@ def _test_geld3_verlorene_spende_laut():
     ok("GELD-3: eine nicht gespeicherte Spende steht mit Plattform, Name und Betrag im ERROR-Log")
 
 
+def _web_bot_funktionen(namen, zuweisungen=()):
+    """Funktionen und Modul-Zuweisungen aus bot.py als Syntaxbaum — fuer die
+    WEB-Vertraege, die die ECHTEN Funktionen in eine Flask-App haengen."""
+    import ast as _ast
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    teile = []
+    for n in baum.body:
+        if isinstance(n, _ast.FunctionDef) and n.name in namen:
+            n.decorator_list = []
+            teile.append(n)
+        elif isinstance(n, _ast.Assign) and any(getattr(z, "id", "") in zuweisungen
+                                                for z in n.targets):
+            teile.append(n)
+    gefunden = {getattr(n, "name", None) or n.targets[0].id for n in teile}
+    assert gefunden == set(namen) | set(zuweisungen), ("in bot.py nicht gefunden",
+                                                       set(namen) | set(zuweisungen), gefunden)
+    return _ast.Module(body=teile, type_ignores=[])
+
+
+def _test_web1_login_ziel_ohne_steuerzeichen():
+    """WEB-1 (hoch): `next=/%09/evil.example` bestand den Praefix-Riegel von
+    _sicheres_ziel und ging als `302 Location: //evil.example` hinaus —
+    Werkzeug (und jeder Browser) entfernt den Tab beim Normalisieren. Ein
+    %0a endete in HTTP 500. Gemessen an der ECHTEN Antwort der beiden
+    Login-Routen aus bot.py, nicht an der Hilfsfunktion allein."""
+    from urllib.parse import urlsplit as _us
+    from flask import Flask, Response, redirect, request
+    mod = _web_bot_funktionen(("_sicheres_ziel", "dashboard_login_page", "dashboard_login_submit"))
+    ns = {"request": request, "redirect": redirect, "Response": Response, "urlsplit": _us,
+          "DASHBOARD_PIN": "", "_pin_ok": lambda: False, "_token_ok": lambda: False,
+          "_login_page": lambda fehler, nxt: "login", "_pin_locked": lambda: False,
+          "_pin_clear_fail": lambda: None, "_pin_note_fail": lambda: None,
+          "_pin_auth_value": lambda: "wert", "_cookie_sicher": lambda: False}
+    exec(compile(mod, "bot.py", "exec"), ns)
+    app = Flask(__name__)
+    app.add_url_rule("/login", "login", ns["dashboard_login_page"])
+    app.add_url_rule("/api/login", "login_post", ns["dashboard_login_submit"], methods=["POST"])
+    k = app.test_client()
+
+    def ort(roh):
+        r = k.get("/login?next=" + roh)
+        assert r.status_code == 302, (roh, r.status_code)
+        return r.headers["Location"]
+
+    for roh in ("/%09/evil.example", "/%0a/evil.example", "/%0d/evil.example",
+                "/%09%09/evil.example", "/%7f/evil.example", "%09//evil.example",
+                "//evil.example", "/%5C/evil.example", "/%5C%5Cevil.example",
+                "http://evil.example", "https:evil.example", "javascript:alert(1)",
+                # doppelt kodiert: dekodiert wieder Tab bzw. "//"
+                "/%2509/evil.example", "/%252F/evil.example"):
+        assert ort(roh) == "/", ("offene Weiterleitung", roh, ort(roh))
+    # Rohe Steuerzeichen, wie ein Formular sie schickt.
+    for roh in ("/\t/evil.example", "/\n/evil.example", "/\\/evil.example"):
+        r = k.get("/login", query_string={"next": roh})
+        assert r.status_code == 302 and r.headers["Location"] == "/", (roh, r.headers.get("Location"))
+    # Seiteneigene Ziele bleiben, was sie sind.
+    assert ort("/deck") == "/deck"
+    assert ort("%2Fdeck%3Fseite%3D2") == "/deck?seite=2"
+    assert ort("") == "/"
+    # Der POST-Weg nach erfolgreicher PIN geht ueber dieselbe Pruefung.
+    ns["DASHBOARD_PIN"] = "4711"
+    r = k.post("/api/login", data={"pin": "4711", "next": "/\t/evil.example"})
+    assert r.status_code == 302 and r.headers["Location"] == "/", r.headers.get("Location")
+    r = k.post("/api/login", data={"pin": "4711", "next": "/deck"})
+    assert r.status_code == 302 and r.headers["Location"] == "/deck", r.headers.get("Location")
+    ok("WEB-1: Login-Weiterleitung lehnt Tab, Zeilenumbruch, // und Schema ab (echte Location)")
+
+
+def _test_web6_obs_stimme_und_uebersetzer_ohne_token():
+    """WEB-6: das OBS-Overlay ist seit W15 ohne Token frei, laedt aber die
+    AZRAEL-Stimme von /api/tts/<datei>.wav und den Uebersetzer samt Katalog
+    von /api/i18n/ — mit Token oder PIN je ein 401: Stimme stumm, Overlay
+    deutsch. Gemessen mit dem ECHTEN _auth_guard und der ECHTEN tts-Route aus
+    bot.py, Anfrage von aussen: frei ist genau das, was die Quelle braucht."""
+    import os as _os
+    import re as _re
+    from urllib.parse import quote as _quote
+    from flask import (Flask, abort, jsonify, redirect, request,
+                       send_from_directory)
+    from werkzeug.utils import safe_join
+    from nc import dashauth as _da
+    from nc import util as _util
+    from nc.routes import i18n as _ri
+
+    mod = _web_bot_funktionen(("_auth_guard", "api_tts_file"),
+                              ("_AUTH_EXEMPT_PREFIXES", "_AUTH_EXEMPT_READ",
+                               "_AUTH_EXEMPT_EXACT", "_AUTH_EXEMPT_TTS"))
+    tts = _os.path.join(_ph.verzeichnis(), "tts")
+    _os.makedirs(tts)
+    with open(_os.path.join(tts, "az_1732100000000_123.wav"), "wb") as f:
+        f.write(b"RIFF\x00\x00\x00\x00WAVE")
+    with open(_os.path.join(tts, "notiz.txt"), "w") as f:
+        f.write("nicht fuer OBS")
+    ns = {"request": request, "jsonify": jsonify, "redirect": redirect, "quote": _quote,
+          "re": _re, "os": _os, "abort": abort, "safe_join": safe_join,
+          "send_from_directory": send_from_directory, "_nc_util": _util, "_TTS_DIR": tts,
+          "_ist_lokal": lambda: False, "DASHBOARD_TOKEN": "geheim", "DASHBOARD_PIN": "",
+          "_token_ok": lambda: request.headers.get("X-Dashboard-Token") == "geheim",
+          "_pin_ok": lambda: False, "_rebinding_melden": lambda: None,
+          "_wants_html": lambda: False, "_nc_dashauth": _da}
+    exec(compile(mod, "bot.py", "exec"), ns)
+    app = Flask(__name__)
+    app.before_request(ns["_auth_guard"])
+    app.add_url_rule("/api/tts/<fn>", "tts", ns["api_tts_file"])
+    app.register_blueprint(_ri.bp)
+
+    @app.route("/api/status")
+    def _status():
+        return jsonify(ok=True)
+
+    k = app.test_client()
+    aussen = {"REMOTE_ADDR": "203.0.113.9"}
+
+    def get(pfad, **kw):
+        return k.get(pfad, environ_base=aussen, **kw).status_code
+
+    # (1) Was die OBS-Quelle braucht: kein 401.
+    assert get("/api/tts/az_1732100000000_123.wav") == 200, "AZRAEL-Stimme in OBS stumm"
+    assert get("/api/tts/az_1732100000001_456.wav") == 404, "fehlende Datei: 404, nicht 401"
+    assert get("/api/i18n/uebersetzer.js") == 200, "Uebersetzer fuer das Overlay gesperrt"
+    r = k.get("/api/i18n/katalog?lang=en", environ_base=aussen)
+    assert r.status_code == 200 and r.get_json()["ok"] is True, \
+        "Katalog gesperrt — der Uebersetzer hoert bei !d.ok still auf, Overlay bleibt deutsch"
+    # (2) Nichts sonst: andere Namen, andere Methoden, andere /api/*.
+    for pfad in ("/api/tts/notiz.txt", "/api/tts/.versteckt.wav", "/api/tts/az_1.wav/x",
+                 "/api/tts/..%2F..%2Fbot.wav", "/api/tts/", "/api/tts/az_1.wavx",
+                 "/api/i18n/sprachen", "/api/i18n/uebersetzer.jsx", "/api/status"):
+        assert get(pfad) == 401, ("ohne Token erreichbar", pfad, get(pfad))
+    assert k.post("/api/tts/az_1732100000000_123.wav", environ_base=aussen).status_code == 401
+    assert k.post("/api/i18n/waehlen", json={"sprache": "en"},
+                  environ_base=aussen).status_code == 401, "Sprachwahl ohne Token schreibbar"
+    assert k.get("/api/status", environ_base=aussen,
+                 headers={"X-Dashboard-Token": "geheim"}).status_code == 200
+    # (3) Die Ausnahme passt zu dem, was _piper_say erzeugt und das Overlay laedt.
+    src = open("bot.py", encoding="utf-8").read()
+    assert 'fn = f"az_{int(_time_mod.time()*1000)}_{_rnd.randint(100,999)}.wav"' in src, \
+        "TTS-Dateiname geaendert — passt _AUTH_EXEMPT_TTS noch?"
+    ov = open("templates/overlay.html", encoding="utf-8").read()
+    assert '/api/i18n/uebersetzer.js' in ov and "playAudio(az.audio" in ov
+    ok("WEB-6: OBS-Overlay laedt Stimme + Uebersetzer trotz Token, sonst bleibt alles geschuetzt")
+
+
+def _test_web2_btc_explorer_fehler_gecacht():
+    """WEB-2: snapshot() laeuft ueber /api/public/stats ohne Anmeldung. Bei
+    gestoertem blockstream.info rief JEDE Anfrage urlopen(timeout=8) im
+    waitress-Thread — acht gleichzeitige belegten den Pool. Jetzt: hoechstens
+    ein Netzaufruf je Frist, auch parallel, und der Fehler steht gedrosselt im
+    Log statt in `except: pass`."""
+    import logging as _lg
+    import os as _os
+    import threading as _th
+    import time as _time
+    from nc import crypto as C
+    from nc import meldetakt as M
+
+    alt_env = _os.environ.get("DONATION_BTC_ADDRESS")
+    alt_fetch, alt_cache = C._fetch_btc_sats, dict(C._CACHE)
+    aufrufe = []
+
+    def _langsam_kaputt(adresse, timeout=8):
+        aufrufe.append(adresse)
+        _time.sleep(0.2)                      # wie ein Explorer im Timeout
+        raise OSError("Netz weg")
+
+    class _Fang(_lg.Handler):
+        def __init__(self):
+            super().__init__()
+            self.zeilen = []
+
+        def emit(self, r):
+            if r.levelno >= _lg.WARNING:
+                self.zeilen.append(r.getMessage())
+    fang = _Fang()
+    _lg.getLogger("nc.crypto").addHandler(fang)
+    _os.environ["DONATION_BTC_ADDRESS"] = "bc1qnightcrawlertest"
+    C._fetch_btc_sats = _langsam_kaputt
+    C._CACHE.update(btc_sats=None, ts=0.0, fehl_ts=0.0)
+    M.zuruecksetzen(C._KANAL)
+    try:
+        # (1) Acht gleichzeitige Anfragen: EIN Netzaufruf, keiner wartet mit.
+        start = _th.Barrier(8)
+        dauer = []
+
+        def _anfrage():
+            start.wait()
+            t0 = _time.monotonic()
+            C.snapshot(fetch_live=True)
+            dauer.append(_time.monotonic() - t0)
+        faeden = [_th.Thread(target=_anfrage) for _ in range(8)]
+        for f in faeden:
+            f.start()
+        for f in faeden:
+            f.join(10)
+        assert len(aufrufe) == 1, ("parallele Anfragen gehen alle ins Netz", len(aufrufe))
+        assert sorted(dauer)[-2] < 0.15, ("mehr als ein Thread wartete auf den Explorer", dauer)
+        # (2) Danach innerhalb der Frist: kein Netzaufruf mehr.
+        for _ in range(20):
+            aus = C.snapshot(fetch_live=True)
+        assert len(aufrufe) == 1, ("Fehlschlag nicht gecacht", len(aufrufe))
+        assert "btc_received_btc" not in aus
+        assert len(fang.zeilen) == 1 and "blockstream.info" in fang.zeilen[0], fang.zeilen
+        # (3) Frist um: genau ein neuer Versuch; die Meldung bleibt gedrosselt.
+        C._CACHE["fehl_ts"] -= C._FEHL_TTL + 1
+        C.snapshot(fetch_live=True)
+        C.snapshot(fetch_live=True)
+        assert len(aufrufe) == 2 and len(fang.zeilen) == 1, (len(aufrufe), fang.zeilen)
+        # (4) Erfolg: Wert da, Drossel zurueckgesetzt, 10 min Ruhe.
+        C._fetch_btc_sats = lambda a, timeout=8: aufrufe.append(a) or 150000000
+        C._CACHE["fehl_ts"] -= C._FEHL_TTL + 1
+        aus = C.snapshot(fetch_live=True)
+        C.snapshot(fetch_live=True)
+        assert aus["btc_received_btc"] == 1.5 and len(aufrufe) == 3, (aus, len(aufrufe))
+        assert C._KANAL not in M.ZUSTAND, "Erfolg setzt die Drossel nicht zurueck"
+        # (5) Positiv-Cache abgelaufen, Explorer wieder weg: letzter Stand
+        # bleibt sichtbar, und der neue Ausfall meldet sich sofort.
+        C._fetch_btc_sats = _langsam_kaputt
+        C._CACHE["ts"] -= C._TTL + 1
+        for _ in range(5):
+            aus = C.snapshot(fetch_live=True)
+        assert len(aufrufe) == 4 and aus["btc_received_btc"] == 1.5, (len(aufrufe), aus)
+        assert len(fang.zeilen) == 2, fang.zeilen
+    finally:
+        _lg.getLogger("nc.crypto").removeHandler(fang)
+        C._fetch_btc_sats = alt_fetch
+        C._CACHE.clear()
+        C._CACHE.update(alt_cache)
+        M.zuruecksetzen(C._KANAL)
+        if alt_env is None:
+            _os.environ.pop("DONATION_BTC_ADDRESS", None)
+        else:
+            _os.environ["DONATION_BTC_ADDRESS"] = alt_env
+    ok("WEB-2: BTC-Explorer-Ausfall gecacht — ein Netzaufruf je Frist, auch bei 8 parallelen")
+
+
+def _test_web3_sw_cacht_nur_die_shell():
+    """WEB-3: der Service Worker spiegelte jede GET-200 ausserhalb /api/ in den
+    CacheStorage — Aufnahmen im GB-Bereich (/download/<id>,
+    /archive/<eid>/download), /healthz, /metrics —, und es blieb nach dem
+    Logout liegen. Geprueft am echten sw.js, mit node ausgefuehrt."""
+    import json as _json
+    import shutil as _sh
+    import subprocess as _sp
+    sw = open("templates/sw.js", encoding="utf-8").read()
+    m = re.search(r"const SHELL = (\[[^\]]*\]);", sw)
+    assert m, "SHELL-Liste nicht gefunden"
+    shell = _json.loads(m.group(1))
+    for verboten in ("/download", "/archive", "/healthz", "/metrics", "/api/", "/overlay"):
+        assert not any(p.startswith(verboten) for p in shell), (verboten, shell)
+    ver = re.search(r'const CACHE = "nightcrawler-shell-v(\d+)";', sw)
+    assert ver and int(ver.group(1)) >= 4, "Cache-Name nicht hochgezaehlt — v3 behaelt die Downloads"
+    assert "keys.filter((k) => k !== CACHE)" in sw, "activate raeumt fremde Caches nicht mehr"
+    # Der Riegel steht VOR respondWith (Syntax-Reihenfolge im fetch-Handler,
+    # Kommentare entfernt — ein Kommentar ueber den Riegel ist kein Riegel).
+    code = re.sub(r"//[^\n]*|/\*.*?\*/", "", sw, flags=re.S)
+    h = code[code.index('addEventListener("fetch"'):]
+    assert "SHELL.includes(url.pathname)" in h and "self.location.origin" in h
+    assert h.index("SHELL.includes(url.pathname)") < h.index("e.respondWith("), \
+        "Shell-Riegel nach respondWith — er wirkt nicht"
+
+    if not _sh.which("node"):
+        print("  (kein node — Verhaltensprobe des Service Workers uebersprungen)")
+        ok("WEB-3: Service Worker cacht nur die Shell (ohne Verhaltensprobe)")
+        return
+    prog = r"""
+const src = require('fs').readFileSync('templates/sw.js', 'utf8');
+const h = {}; const puts = [];
+const self = {addEventListener: (t, f) => { h[t] = f; }, location: {origin: 'https://deck.example'},
+              skipWaiting: () => {}, clients: {claim: () => {}}};
+const caches = {open: async () => ({put: (q) => puts.push(q.url), add: async () => {}}),
+                keys: async () => [], match: async () => undefined, delete: async () => true};
+const fetch = async () => ({status: 200, type: 'basic', clone() { return this; }});
+new Function('self', 'caches', 'fetch', 'Response', src)(self, caches, fetch, class {});
+async function probe(url, method) {
+  const ev = {request: {url, method: method || 'GET'}, respondWith(p) { ev.p = p; }};
+  h.fetch(ev); if (ev.p) await ev.p; await new Promise((r) => setTimeout(r, 0));
+  return !!ev.p;
+}
+(async () => {
+  const B = 'https://deck.example';
+  const aus = {};
+  for (const p of ['/', '/login', '/pwa-icon-192.png', '/download/7', '/archive/3/download',
+                   '/healthz', '/metrics', '/overlay', '/api/status', '/?token=geheim']) {
+    aus[p] = await probe(B + p);
+  }
+  aus.fremd = await probe('https://fremd.example/');
+  aus.post = await probe(B + '/', 'POST');
+  aus.puts = puts;
+  console.log(JSON.stringify(aus));
+})();
+"""
+    out = _sp.run(["node", "-e", prog], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr[-800:]
+    aus = _json.loads(out.stdout.strip().splitlines()[-1])
+    for p in ("/", "/login", "/pwa-icon-192.png", "/?token=geheim"):
+        assert aus[p] is True, ("Shell nicht mehr offline-faehig", p)
+    for p in ("/download/7", "/archive/3/download", "/healthz", "/metrics", "/overlay",
+              "/api/status", "fremd", "post"):
+        assert aus[p] is False, ("Service Worker greift ein — landet im Cache", p)
+    assert aus["puts"] == ["https://deck.example/", "https://deck.example/login",
+                           "https://deck.example/pwa-icon-192.png"], \
+        ("Cache-Eintraege", aus["puts"])
+    ok("WEB-3: Service Worker cacht nur die Shell — keine Aufnahmen, kein ?token im Cache")
+
+
+def _web_stats_datenbank(arten):
+    """Temp-SQLite mit genau den Tabellen, die collect_facts/public_stats lesen."""
+    import contextlib as _ctl
+    import os as _os
+    import sqlite3 as _sq
+    from datetime import datetime as _dt, timezone as _tz
+    pfad = _os.path.join(_ph.verzeichnis(), "web.db")
+    c = _sq.connect(pfad)
+    c.execute("CREATE TABLE trackings (id INTEGER)")
+    c.execute("CREATE TABLE recording_attempts (username TEXT, started_at TEXT)")
+    c.execute("CREATE TABLE kick_mod_log (ts TEXT, kind TEXT)")
+    jetzt = _dt.now(_tz.utc).isoformat()
+    c.executemany("INSERT INTO kick_mod_log VALUES (?,?)", [(jetzt, a) for a in arten])
+    c.commit()
+    c.close()
+
+    @_ctl.contextmanager
+    def _db():
+        k = _sq.connect(pfad)
+        k.row_factory = _sq.Row
+        try:
+            yield k
+        finally:
+            k.close()
+    return _db
+
+
+def _web_stats_messen(arten, flotte, fakten_fuer_stats=None):
+    """public_stats() und collect_facts() gegen eine eigene Datenbank und ein
+    Attrappen-Brain — die echten Funktionen, nur die Quellen getauscht.
+    `fakten_fuer_stats` ersetzt die News-Fakten NUR fuer public_stats (der
+    Rueckfall dort muss auch dann halten, wenn die News etwas anderes sagen)."""
+    import logging as _lg
+    import brain as _brain
+    from nc import news as N
+    from nc import oeffentlichestats as O
+    db = _web_stats_datenbank(arten)
+
+    class _Agenten:
+        def status(self):
+            if isinstance(flotte, Exception):
+                raise flotte
+            return flotte
+
+    class _Wissen:
+        def stats(self):
+            return {"triples": 0}
+
+    class _Brain:
+        agents = _Agenten()
+        knowledge = _Wissen()
+    alt = (N.db_conn, O.db_conn, dict(N._conf), dict(O._KONF), _brain.get_brain,
+           N.collect_facts)
+    N.db_conn = O.db_conn = db
+    N._conf.update(bot_version="9.9.9", kick_channel_url="", kick_stream_key="",
+                   twitch_stream_key="", youtube_stream_key="", yt_ingest_cache={},
+                   log=_lg.getLogger("web-stats"))
+    O.configure(version="9.9.9", loop_fehler=lambda n, e: None)
+    _brain.get_brain = lambda: _Brain()
+    try:
+        fakten = N.collect_facts()
+        if fakten_fuer_stats is not None:
+            N.collect_facts = lambda: dict(fakten_fuer_stats)
+        return fakten, O.public_stats()
+    finally:
+        N.collect_facts = alt[5]
+        N.db_conn, O.db_conn = alt[0], alt[1]
+        N._conf.clear()
+        N._conf.update(alt[2])
+        O._KONF.clear()
+        O._KONF.update(alt[3])
+        _brain.get_brain = alt[4]
+
+
+def _test_web4_moderation_zaehlt_nur_durchgreifen():
+    """WEB-4: `moderation_7d` (Kachel) und `mod_actions_7d` (News) zaehlten
+    jede kick_mod_log-Zeile — reply, reaction, send, learn, highlight —,
+    waehrend das Diagramm `mod_7d` richtig filterte. 1 Timeout und 5
+    Bot-Antworten hiessen auf der Seite "6 Moderations-Aktionen" ueber einem
+    Diagramm mit 1. Jetzt eine Quelle: nc.modstats.MOD_ARTEN."""
+    from nc import modstats as MS
+    fakten, st = _web_stats_messen(["timeout"] + ["reply"] * 5 + ["reaction", "send", "learn",
+                                                                 "highlight"], [])
+    assert st["moderation_7d"] == 1, ("Kachel zaehlt Bot-Aktivitaet", st["moderation_7d"])
+    assert fakten["mod_actions_7d"] == 1, ("News zaehlen Bot-Aktivitaet", fakten["mod_actions_7d"])
+    assert sum(t["n"] for t in st["mod_7d"]) == 1, st["mod_7d"]
+    # Die fuenf Arten stehen hier WOERTLICH: eine Liste, die gegen sich selbst
+    # geprueft wird, faengt nicht, wenn jemand "warn" aus MOD_ARTEN streicht
+    # (Mutationsprobe M11b entwischte zuerst genau so).
+    fuenf = ["timeout", "warn", "ban", "delete", "flag"]
+    assert set(MS.MOD_ARTEN) == set(fuenf), MS.MOD_ARTEN
+    fakten, st = _web_stats_messen(fuenf + ["reply"], [])
+    n = len(fuenf)
+    assert st["moderation_7d"] == fakten["mod_actions_7d"] == sum(t["n"] for t in st["mod_7d"]) == n, \
+        (st["moderation_7d"], fakten["mod_actions_7d"], st["mod_7d"])
+    # Keine Stelle fuehrt eine eigene Liste mehr.
+    for datei in ("nc/oeffentlichestats.py", "nc/news.py"):
+        q = open(datei, encoding="utf-8").read()
+        assert "'timeout'" not in q and '"timeout"' not in q, ("eigene Artenliste", datei)
+        assert "_nc_modstats.sql_bedingung()" in q, datei
+    ok("WEB-4: Kachel, News und Diagramm zaehlen dieselben Moderations-Arten")
+
+
+def _test_web5_aktive_agenten_sind_eingeschaltete():
+    """WEB-5: news setzte agents_active = len(status()) — ALLE Agenten —, und
+    public_stats fiel per `or` darauf zurueck, sobald null aktiv waren. Die
+    Seite zeigte "12 von 12 aktiv" bei null eingeschalteten."""
+    flotte = [{"name": "a", "enabled": False}, {"name": "b", "enabled": False},
+              {"name": "c", "enabled": True}]
+    fakten, st = _web_stats_messen([], flotte)
+    assert fakten["agents_active"] == 1, ("News zaehlen alle Agenten", fakten["agents_active"])
+    assert st["agents_total"] == 3 and st["agents_active"] == 1, st
+    aus = [dict(a, enabled=False) for a in flotte]
+    fakten, st = _web_stats_messen([], aus)
+    assert fakten["agents_active"] == 0, fakten["agents_active"]
+    assert st["agents_known"] is True and st["agents_total"] == 3 and st["agents_active"] == 0, \
+        ("0 aktive ist eine Zahl, kein Rueckfall", st["agents_active"], st["agents_total"])
+    # Der Rueckfall selbst: sagen die News (alter Fehler) 12, bleibt es bei 0.
+    _f, st = _web_stats_messen([], aus, fakten_fuer_stats={"agents_active": 12})
+    assert st["agents_active"] == 0, ("`or`-Rueckfall auf die News-Zahl", st["agents_active"])
+    # Brain nicht erreichbar: unbekannt ist etwas anderes als 0 — die Seite
+    # sagt dann "nicht verfuegbar" (agents_known), und es wird nichts erfunden.
+    fakten, st = _web_stats_messen([], RuntimeError("brain weg"))
+    assert st["agents_known"] is False and st["agents_active"] == 0, st
+    ok("WEB-5: aktive Agenten = eingeschaltete, 0 bleibt 0")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -44490,6 +44925,12 @@ def main():
     _test_geld1_testereignis_nie_gebucht()
     _test_geld2_reset_laesst_manuelle_spenden()
     _test_geld3_verlorene_spende_laut()
+    _test_web1_login_ziel_ohne_steuerzeichen()
+    _test_web6_obs_stimme_und_uebersetzer_ohne_token()
+    _test_web2_btc_explorer_fehler_gecacht()
+    _test_web3_sw_cacht_nur_die_shell()
+    _test_web4_moderation_zaehlt_nur_durchgreifen()
+    _test_web5_aktive_agenten_sind_eingeschaltete()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

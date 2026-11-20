@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from nc import crypto as _nc_crypto
 from nc import meldetakt as _nc_meldetakt
+from nc import modstats as _nc_modstats
 from nc import news as _nc_news
 from nc import qrsvg as _nc_qrsvg
 from nc import spendeninfo as _nc_spendeninfo
@@ -102,9 +103,11 @@ def public_stats() -> dict:
     try:
         with db_conn() as c:
             _cut7 = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            # WEB-4: nur Durchgreifen zaehlt (nc.modstats), wie im Diagramm.
+            _bed, _arten = _nc_modstats.sql_bedingung()
             stats["moderation_7d"] = int(c.execute(
-                "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ?",
-                (_cut7,)).fetchone()["n"] or 0)
+                "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ? AND " + _bed,
+                (_cut7,) + _arten).fetchone()["n"] or 0)
     except Exception as e:
         _teil_melden("moderation_7d", e)
     # v4.0-W4: LIVE-Agentenliste (Name + aktiv) für die Website-Flotte.
@@ -127,7 +130,12 @@ def public_stats() -> dict:
         # verfuegbar" statt „0 aktiv" (W74) — und das Log sagt, warum.
         _teil_melden("agents", e)
     stats["agents_total"] = len(stats["agents"])
-    stats["agents_active"] = sum(1 for _a in stats["agents"] if _a.get("active")) or stats.get("agents_active", 0)
+    # v5.11.3-WEB-5: kein `or`-Rueckfall mehr. 0 aktive ist eine gueltige
+    # Zahl; der Rueckfall nahm dann news.agents_active, und das war len(alle)
+    # — die Seite zeigte "12 von 12 aktiv" bei null aktiven. Unbekannt ist
+    # etwas anderes (agents_known=False), nur dann bleibt der Wert aus den News.
+    if stats["agents_known"]:
+        stats["agents_active"] = sum(1 for _a in stats["agents"] if _a.get("active"))
     # v4.0-W4: Moderations-Aktivität je Tag (7 Tage) für einen zweiten Chart.
     stats["mod_7d"] = []
     try:
@@ -138,9 +146,10 @@ def public_stats() -> dict:
                 lo = datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc).isoformat()
                 hi = (datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc)
                       + timedelta(days=1)).isoformat()
+                _bed, _arten = _nc_modstats.sql_bedingung()
                 n = c.execute(
                     "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ? AND ts < ? "
-                    "AND kind IN ('timeout','ban','flag','delete','warn')", (lo, hi)).fetchone()["n"]
+                    "AND " + _bed, (lo, hi) + _arten).fetchone()["n"]
                 _md.append({"day": d0.isoformat(), "n": int(n or 0)})
             stats["mod_7d"] = _md
     except Exception as e:

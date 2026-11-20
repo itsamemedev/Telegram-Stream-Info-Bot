@@ -10700,7 +10700,20 @@ _LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # ihre Schriften von hier und hat keinen Token. Es sind sechs OFL-Dateien und
 # ein CSS, nichts davon verraet etwas.
 _AUTH_EXEMPT_PREFIXES = ("/api/public/", "/fonts/")
-_AUTH_EXEMPT_READ = ("/overlay", "/api/overlay/state")
+# v5.11.3-WEB-6: dieselbe OBS-Quelle laedt den Uebersetzer und dessen Katalog
+# (templates/overlay.html) — mit Token oder PIN bekam sie 401, und das
+# Overlay blieb im englischen Stream deutsch. Der Uebersetzer allein haette
+# nicht gereicht: er holt /api/i18n/katalog und hoert bei `!d.ok` still auf.
+# Beides ist der ausgelieferte Inhalt von locales/*.json, nichts Geheimes.
+# /api/i18n/waehlen (POST) und /api/i18n/sprachen bleiben geschuetzt.
+_AUTH_EXEMPT_READ = ("/overlay", "/api/overlay/state", "/api/i18n/uebersetzer.js", "/api/i18n/katalog")
+# v5.11.3-WEB-6: die AZRAEL-Stimme. Das Overlay spielt `az.audio` ab, also
+# /api/tts/az_<ms>_<nnn>.wav (_piper_say) — mit Token oder PIN ein 401, und
+# die Stimme war in OBS stumm. Frei ist NUR ein flacher .wav-Name: kein "/"
+# (Werkzeug dekodiert %2F vorher), kein fuehrender Punkt; die Route prueft
+# danach selbst mit safe_join + datei_in. Kein Praefix — /api/tts/ als
+# Praefix haette jede kuenftige Route darunter ohne Anmeldung geoeffnet.
+_AUTH_EXEMPT_TTS = re.compile(r"/api/tts/[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.wav")
 _AUTH_EXEMPT_EXACT = ("/healthz",
                       "/api/kick/oauth/callback", "/api/twitch/oauth/callback",
                       "/api/youtube/oauth/callback")   # v5.6-W197: /api/yt/... gab es nie
@@ -10920,7 +10933,9 @@ def _auth_guard():                                                    # C9 → F
     p = request.path or "/"
     if p in _AUTH_EXEMPT_EXACT or p.startswith(_AUTH_EXEMPT_PREFIXES):
         return None
-    if request.method == "GET" and p in _AUTH_EXEMPT_READ:   # OBS-Browserquelle
+    # OBS-Browserquelle und ihre Stimme (WEB-6) — beides nur lesend.
+    if request.method == "GET" and p in _AUTH_EXEMPT_READ or (
+            request.method == "GET" and _AUTH_EXEMPT_TTS.fullmatch(p)):
         return None
     if not DASHBOARD_TOKEN and not DASHBOARD_PIN:
         # v4.2-W149: ohne Geheimnis ist das Deck NUR lokal gedacht — dafuer
@@ -11098,10 +11113,31 @@ def _sicheres_ziel(roh):
     https://example.com aufloest — ein offener Redirect mitten im
     Login-Flow, ideal fuers Phishing ("das Dashboard hat dich ausgeloggt").
     Der Backslash-Fall deckt die Browser-Eigenheit /\\host mit ab.
+
+    v5.11.3-WEB-1: `next=/%09/evil.example` kam als "/\\t/evil.example" an,
+    bestand den Praefix-Riegel und ging als `302 Location: //evil.example`
+    hinaus — Werkzeug (und jeder Browser nach WHATWG) entfernt Tab und
+    Zeilenumbruch beim Normalisieren. Ein Zeilenumbruch endete dagegen in
+    einem HTTP 500 (Header-Riegel von Werkzeug). Deshalb: Steuerzeichen
+    ablehnen, auch nach einer Prozent-Dekodierung (`%2509`), und das Ergebnis
+    mit urlsplit gegenpruefen statt der Normalisierung zu vertrauen — kein
+    Schema, kein Host, Pfad beginnt mit genau einem "/".
     """
+    from urllib.parse import unquote as _unquote
     z = (roh or "/").strip()
     if (not z.startswith("/")) or z[:2] in ("//", "/\\"):
         return "/"
+    for probe in (z, _unquote(z)):
+        if any(ord(c) < 0x20 or ord(c) == 0x7F for c in probe):
+            return "/"
+        # Auch dekodiert kein "//" oder "/\\" vorn: urlsplit("///host") meldet
+        # weder Host noch "//"-Pfad, ein Browser nach WHATWG sieht dort einen.
+        if probe[:2] in ("//", "/\\"):
+            return "/"
+        teile = urlsplit(probe)
+        if teile.scheme or teile.netloc or not teile.path.startswith("/") \
+                or teile.path[:2] in ("//", "/\\"):
+            return "/"
     return z
 
 

@@ -66,6 +66,19 @@ _AKTOR_PLATTFORM = {
 }
 
 
+def sql_bedingung(spalte="kind"):
+    """-> (SQL-Teil, Parameter): "kind IN (?, ?, ?, ?, ?)" und MOD_ARTEN.
+
+    v5.11.3-WEB-4: die oeffentliche Kachel `moderation_7d` und die News-Zahl
+    `mod_actions_7d` zaehlten JEDE kick_mod_log-Zeile — reply, reaction,
+    send, learn, highlight —, waehrend das Diagramm `mod_7d` daneben richtig
+    filterte. Gemessen: 1 Timeout und 5 Bot-Antworten ergaben auf der Seite
+    "6 Moderations-Aktionen" ueber einem Diagramm mit 1. Drei Stellen, drei
+    Abfragen — jetzt eine Quelle, dieselbe wie fuer den ToxicityAgent.
+    `spalte` ist ein fester Bezeichner aus dem Code, nie Fremdeingabe."""
+    return "%s IN (%s)" % (spalte, ", ".join("?" * len(MOD_ARTEN))), tuple(MOD_ARTEN)
+
+
 def ist_moderation(kind) -> bool:
     """Ist diese kick_mod_log-Art ein Durchgreifen gegen einen Nutzer?"""
     return str(kind or "").strip().lower() in MOD_ARTEN

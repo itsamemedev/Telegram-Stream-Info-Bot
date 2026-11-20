@@ -9,9 +9,19 @@
  *
  * Strategie:
  *   /api/*        → immer Netzwerk, nie Cache (network-only)
- *   Shell (/, /brain, Icons) → network-first mit Cache-Fallback
+ *   Shell (/, /login, Icons) → network-first mit Cache-Fallback
+ *   alles andere  → network-only (v5.11.3-WEB-3)
+ *
+ * v5.11.3-WEB-3: bis v4 spiegelte der fetch-Handler JEDE GET-200 ausserhalb
+ * von /api/ in den Cache — auch /download/<id> und /archive/<eid>/download
+ * (Aufnahmen im GB-Bereich), /healthz und /metrics. Das lag danach im
+ * CacheStorage des Browsers, auch nach dem Logout, und fuellte die Platte des
+ * Geraets. Gecacht wird jetzt nur, was in SHELL steht, von der eigenen
+ * Herkunft und ohne Query (ein ?token=... gehoert nicht in einen Cache-Schluessel).
+ * Der Name ist hochgezaehlt: activate loescht jeden fremden Namen und raeumt
+ * damit die alten Kopien aus v3 weg.
  */
-const CACHE = "nightcrawler-shell-v3";
+const CACHE = "nightcrawler-shell-v4";
 // v4.0-W53: /brain aus der Shell entfernt — es ist KEINE Route (404), sondern ein
 // client-seitiger Tab (/#brain). Die Shell ist '/' (SPA mit allen Views) + Login + Icons.
 const SHELL = ["/", "/login", "/pwa-icon-192.png", "/pwa-icon-512.png", "/pwa-icon-maskable-512.png"];
@@ -43,12 +53,18 @@ self.addEventListener("fetch", (e) => {
     return; // Standard-Browserverhalten (Netzwerk)
   }
 
-  // 2. Shell: network-first (frisch bevorzugt), Cache nur als Offline-Fallback.
+  // 2. Nur die Shell der eigenen Herkunft. Downloads, Aufnahmen, /healthz,
+  //    /metrics, /overlay: network-only, der Service Worker haelt sich raus.
+  if (url.origin !== self.location.origin || !SHELL.includes(url.pathname)) {
+    return; // Standard-Browserverhalten (Netzwerk)
+  }
+
+  // 3. Shell: network-first (frisch bevorzugt), Cache nur als Offline-Fallback.
   e.respondWith(
     fetch(e.request)
       .then((resp) => {
         // Erfolgreiche Shell-Antwort in den Cache spiegeln (für offline).
-        if (resp && resp.status === 200 && resp.type === "basic") {
+        if (resp && resp.status === 200 && resp.type === "basic" && !url.search) {
           const copy = resp.clone();
           caches.open(CACHE).then((c) => c.put(e.request, copy));
         }
@@ -56,7 +72,8 @@ self.addEventListener("fetch", (e) => {
       })
       .catch(() =>
         // Offline → aus Cache liefern, sonst eine schlichte Offline-Seite.
-        caches.match(e.request).then((cached) =>
+        // Nach dem Pfad gesucht: gespeichert wird nur die Fassung ohne Query.
+        caches.match(url.pathname).then((cached) =>
           cached || new Response(
             "<!doctype html><meta charset=utf-8>" +
             "<meta name=viewport content='width=device-width,initial-scale=1'>" +

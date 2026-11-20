@@ -4022,7 +4022,10 @@ def test_v40_w19_warn_first():
     assert '_modlog("warn", "auto-mod-twitch"' in src
     # Verwarnungen tauchen im Moderations-Feed auf.
     # ANKER GEWANDERT (v5.6-W197): die Feed-Serie rechnet nc/oeffentlichestats.py.
-    assert "'timeout','ban','flag','delete','warn'" in open(
+    # ANKER GEWANDERT (v5.11.3-WEB-4): die Arten stehen jetzt EINMAL in
+    # nc/modstats.MOD_ARTEN, die Serie fragt ueber sql_bedingung().
+    from nc import modstats as _ms
+    assert "warn" in _ms.MOD_ARTEN and "_nc_modstats.sql_bedingung()" in open(
         "nc/oeffentlichestats.py", encoding="utf-8").read(), "Feed zeigt Verwarnungen nicht"
     dash = open("templates/dashboard.html").read()
     assert "'Verwarnung'" in dash, "Feed beschriftet Verwarnungen nicht"
@@ -6169,7 +6172,10 @@ def test_v40_w53_pwa_audit():
     assert h.count("_viewFromHash()") >= 2, "Hash wird beim Start nicht bevorzugt"
 
     sw = open("templates/sw.js").read()
-    assert "nightcrawler-shell-v3" in sw and "shell-v2" not in sw, "SW-Cache nicht gebumpt (PWA-Update)"
+    # ANKER GEWANDERT (v5.11.3-WEB-3): v4 raeumt die Downloads aus dem Cache.
+    # Die Aussage bleibt: mindestens v3, die v2 ist weg.
+    _swv = re.search(r'"nightcrawler-shell-v(\d+)"', sw)
+    assert _swv and int(_swv.group(1)) >= 3 and "shell-v2" not in sw, "SW-Cache nicht gebumpt (PWA-Update)"
     assert '"/brain"' not in sw, "/brain (404) noch in der SW-Shell"
     assert "pwa-icon-maskable-512.png" in sw, "maskable-Icon nicht in der Shell"
 
