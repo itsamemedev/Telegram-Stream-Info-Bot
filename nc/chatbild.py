@@ -32,7 +32,36 @@ import os
 import threading
 import time
 
+from nc import meldetakt as _meldetakt
+
 log = logging.getLogger(__name__)
+
+# Drosselkanal fuer „der Chat bleibt Text". Je Restream-Start und je
+# Reconnect einmal — bei einer Reconnect-Schleife ungedrosselt eine Zeile alle
+# paar Sekunden.
+KANAL = "chatbild-start"
+
+
+def _rueckfall_melden(schluessel, e, url):
+    """v5.11.2: war log.warning — und das erscheint in einem ERROR-Log nie.
+    Beim Betreiber stand die Chromium-Fehlerseite im Sendebild, und das Log
+    sagte nichts, wonach man haette suchen koennen. Jetzt ERROR, gedrosselt
+    ueber nc/meldetakt (Kanal, nicht Restream), mit Grund und Abhilfe."""
+    _meldetakt.gestoert(KANAL, str(schluessel))
+    laut, weg = _meldetakt.melden(KANAL, type(e).__name__, time.monotonic())
+    if not laut:
+        return
+    seite = type(e).__name__ == "SeiteNichtErreichbar"
+    log.error("Chat-Kasten: %s (%s) — der Chat bleibt Text (Emoji ohne Bild).%s%s",
+              "Seite nicht erreichbar" if seite else "Chromium-Bild nicht moeglich",
+              e,
+              (" Abhilfe: laeuft das Deck unter %s? TLS am Deck verlangt https "
+               "(macht der Bot selbst, nc.webserver.intern_basis); bindet das Deck "
+               "auf eine feste Adresse statt 0.0.0.0/127.0.0.1, verlangt die Seite "
+               "Anmeldung — WEB_HOST=0.0.0.0 mit DASHBOARD_PIN/TOKEN setzen. "
+               "Abschalten: RESTREAM_CHAT_BILD=0." % url) if seite else "",
+              _meldetakt.zusatz(weg))
+
 
 _LAUF = {}          # schluessel -> {"fifo","png","stop","browser","faeden"}
 
@@ -110,8 +139,7 @@ def starten(schluessel, browser_klasse, binpath, url, groesse, ordner, fps=1.0,
         os.mkfifo(fifo)
     except Exception as e:
         browser.beenden()
-        log.warning("Chat-Kasten: Chromium-Bild nicht moeglich (%s: %s) — der Chat "
-                    "bleibt Text (Emoji dann ohne Bild).", type(e).__name__, e)
+        _rueckfall_melden(schluessel, e, url)
         return None
     stop = threading.Event()
     takt = 1.0 / max(0.2, float(fps))
@@ -124,8 +152,11 @@ def starten(schluessel, browser_klasse, binpath, url, groesse, ordner, fps=1.0,
     with _SPERRE:
         _LAUF[schluessel] = {"fifo": fifo, "png": png, "stop": stop,
                              "browser": browser, "faeden": faeden}
-    log.info("Chat-Kasten aktiv fuer %s: %s px, %.1f Bild/s (Emoji farbig).",
-             schluessel, groesse, 1.0 / takt)
+    # Erfolg leert die Drossel erst, wenn KEIN Restream mehr gestoert ist
+    # (W157) — sonst meldet der kranke zweite nach jedem gesunden ersten laut.
+    _meldetakt.erfolg(KANAL, str(schluessel))
+    log.info("Chat-Kasten aktiv fuer %s: %s px, %.1f Bild/s (Emoji farbig, %s).",
+             schluessel, groesse, 1.0 / takt, url.split("/overlay", 1)[0])
     return fifo
 
 

@@ -62,9 +62,102 @@ YT_SEND = {"fn": None, "token": "", "token_exp": 0.0,
 
 # ---- Studio-Chat-Puffer (V37 Welle 3): shared Container + Renderer ----------
 import collections as _collections
+import threading as _threading
 from nc.textutil import clean_username
 
 RESTREAM_CHAT = _collections.deque(maxlen=160)   # shared: Bot schreibt, Renderer liest
+# BH-10: wer den Ring VERAENDERT, nimmt diese Sperre — chat_anhaengen() im
+# Chat-Arbeiter (Thread "chatpush") und chat_ausduennen() im Restream-Start
+# (Event-Loop). Vorher iterierte der Start per Listen-Abstraktion ueber den
+# Ring, waehrend der Arbeiter anhaengte: entweder „deque mutated during
+# iteration" (still gefangen, Filter lief nicht) oder die Nachrichten
+# zwischen Abzug und clear()/extend() waren weg. Lesen per list(RING) ist
+# ohne Sperre sicher — die Kopie entsteht in C, ohne Thread-Wechsel.
+CHAT_SPERRE = _threading.Lock()
+
+# Die eigenen Kanaele: ihre Zeilen laufen in JEDEM Kasten mit (V37-P6), auch
+# ihre Ereignisse (src="event", kanal=...). TikTok gehoert nicht dazu — das
+# ist die Quelle des jeweiligen Restreams.
+EIGENE_KANAELE = ("kick", "twitch", "youtube")
+
+
+def _schluessel(name) -> str:
+    """Vergleichsform eines TikTok-Namens. Ohne Gross-/Kleinschreibung:
+    TikTok unterscheidet sie nicht, und der Name kommt je nach Weg aus der
+    Datenbank („Name"), aus dem Listener („name") oder aus der Adresse des
+    Kastens."""
+    return clean_username(name or "").lower()
+
+
+def gehoert_in_kasten(m, source_user) -> bool:
+    """Gehoert dieser Ring-Eintrag in den Chat-Kasten des Restreams von
+    `source_user`? EINE Regel fuer beide Renderer — chat_eintraege()
+    (Chromium-Kasten) und _chat_block() (drawtext) — und fuer das
+    Ausduennen beim Restream-Start.
+
+    BH-7: die beiden Renderer hatten zwei Lesarten. chat_eintraege()
+    verglich ohne, _chat_block() MIT Gross-/Kleinschreibung; stand der Name
+    in der Datenbank als „Name" und kam aus dem Listener als „name", war der
+    gebrannte Studio-Kasten leer, waehrend der Chromium-Kasten lief.
+
+    Ohne source_user: alles (es gibt nichts, wonach zu filtern waere)."""
+    if not source_user:
+        return True
+    if m.get("src") in EIGENE_KANAELE or m.get("kanal") in EIGENE_KANAELE:
+        return True
+    su = _schluessel(source_user)
+    return bool(su) and _schluessel(m.get("origin")) == su
+
+
+def quelle_aktiv(origin, quellen) -> bool:
+    """Stammt `origin` aus einer der laufenden Restream-Quellen? Dieselbe
+    Vergleichsform wie gehoert_in_kasten() — der Einlass in den Ring darf
+    nicht strenger sein als der Kasten, sonst kommt eine Zeile, die der
+    Kasten zeigen wuerde, gar nicht erst an."""
+    o = _schluessel(origin)
+    return bool(o) and o in {_schluessel(q) for q in quellen}
+
+
+def chat_anhaengen(eintrag):
+    """Einen Eintrag an den Ring haengen — unter CHAT_SPERRE (BH-10)."""
+    with CHAT_SPERRE:
+        RESTREAM_CHAT.append(eintrag)
+
+
+def letzte_zeit() -> float:
+    """Zeitstempel der juengsten Ring-Zeile, 0.0 ohne. Ueber eine Kopie statt
+    `ring[-1]["ts"] if ring else 0.0`: zwischen Pruefung und Zugriff kann
+    chat_ausduennen() die letzte Zeile entfernen — ein IndexError im
+    Avatar-Takt, und der stand bis BH-9 in einem stillen except."""
+    kopie = list(RESTREAM_CHAT)
+    return kopie[-1]["ts"] if kopie else 0.0
+
+
+def chat_ausduennen(quellen) -> int:
+    """TikTok-Eintraege, die in KEINEN Kasten der laufenden Quellen gehoeren,
+    aus dem Ring werfen. -> Zahl der entfernten.
+
+    Fuer das Sendebild waere das nicht mehr noetig — beide Renderer filtern
+    seit V37-P6 je Quelle. Gebraucht wird es fuer den Studio-Monitor im Deck
+    (/api/restream/chatfeed), der den Ring ungefiltert zeigt: ohne das
+    stuenden dort nach einem Quellenwechsel die Chats des vorigen Nutzers.
+
+    BH-10: atomar gegen chat_anhaengen(), und OHNE leeren Zwischenstand.
+    Ein clear() mit anschliessendem extend() liess den Ring fuer einen
+    Augenblick leer — wer genau dann las (Overlay-Schreiber, Avatar-Takt),
+    sah keinen Chat. `del ring[i]` von hinten nimmt nur die fremden heraus;
+    jeder Zwischenstand ist eine Teilmenge in der richtigen Reihenfolge."""
+    # Ein Name, der sich leer bereinigt („@"), ist keine Quelle: auf ihn passte
+    # keine TikTok-Zeile, und der Ring verloere den Chat der laufenden.
+    quellen = [q for q in quellen if _schluessel(q)]
+    weg = []
+    if quellen:
+        with CHAT_SPERRE:
+            weg = [i for i, m in enumerate(RESTREAM_CHAT)
+                   if not any(gehoert_in_kasten(m, q) for q in quellen)]
+            for i in reversed(weg):
+                del RESTREAM_CHAT[i]
+    return len(weg)
 # v4.1-W23: Zuschauer-Stichproben (ts, count) der letzten ~12 h bei 60-s-Takt.
 # /metrics und der Verlaufs-Graph lesen sie, der Status-Loop schreibt sie.
 # maxlen ist die Bremse: ohne sie waere das ein Leck, das erst nach Tagen
@@ -87,14 +180,7 @@ def chat_eintraege(anzahl=None, source_user=None):
     Derselbe Filter wie _chat_block: Kick, Twitch und YouTube sind der eigene
     Kanal und laufen ueberall mit, TikTok nur aus der Quelle dieses Restreams
     (V37-P6) — sonst stuenden fremde Chats im Sendebild."""
-    items = list(RESTREAM_CHAT)
-    if source_user:
-        # Ohne Gross-/Kleinschreibung: der Name kommt hier aus der Adresse des
-        # Kastens, im Ring aus dem Listener — TikTok unterscheidet sie nicht.
-        su = clean_username(source_user).lower()
-        items = [m for m in items
-                 if m.get("src") in ("kick", "twitch", "youtube")
-                 or (m.get("origin") or "").lower() == su]
+    items = [m for m in list(RESTREAM_CHAT) if gehoert_in_kasten(m, source_user)]
     n = int(anzahl or _CHAT_LINES)
     return [{"src": m.get("src") or "", "who": m.get("who") or "", "text": m.get("text") or ""}
             for m in items[-n:]]
@@ -113,12 +199,10 @@ def _chat_block(maxlines=None, width=None, source_user=None):
     indent_marke = "    "     # v4.2-W54: kennzeichnet eine Fortsetzungszeile
     dot = "\u00b7"
     out = []
-    _items = list(RESTREAM_CHAT)
-    if source_user:
-        _su = clean_username(source_user)
-        _items = [m for m in _items
-                  if m.get("src") in ("kick", "twitch", "youtube")
-                  or (m.get("origin") or "") == _su]
+    # BH-7: dieselbe Regel wie chat_eintraege() — vorher hier MIT Gross-/
+    # Kleinschreibung, dort ohne; „Name" aus der Datenbank gegen „name" aus
+    # dem Listener liess nur diesen Kasten leer.
+    _items = [m for m in list(RESTREAM_CHAT) if gehoert_in_kasten(m, source_user)]
     for m in _items[-maxlines:]:
         head = f"{icon.get(m['src'], dot)} {m['who']}  "
         body = m["text"]

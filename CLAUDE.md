@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **27.587 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
+`bot.py` hat **27.646 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 391 Routen (34 in `bot.py`, 357 in
-`nc/routes/`), 67 Slash-Commands, 641 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 67 Slash-Commands, 646 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -561,6 +561,29 @@ Dabei fiel die Sperre aus W74 zu Recht: `main()` stand genau auf der
 300er-Stufe, und fünf zusätzliche Zeilen hätten sie darüber gehoben. Die Zeile
 herauszulösen war deshalb nicht Kosmetik, sondern die Arbeit.
 
+**Und zum dritten Mal: die Adresse, die sich der Bot SELBST gibt.** Der
+Betreiber am 19.11., Screenshot: im Studio-Sendebild stand statt des Chats
+Chromiums Fehlerseite „This site can't be reached — The connection was
+reset.“ Der Chat-Kasten (W205) und das HTML-Overlay riefen fest
+`http://127.0.0.1:<port>` auf; beim Betreiber hängt TLS direkt am Deck. Dass
+HTTP gegen den TLS-Socket genau diese Seite ergibt, ist gemessen, nicht
+vermutet. Seit v5.11.2-W211 beantwortet `nc/webserver.intern_basis()` die
+Frage neben `schema()` und `bindung()`, und Chromium nimmt das
+Domain-Zertifikat mit `--allow-insecure-localhost` an, das **nur** auf Loopback
+wirkt. `--ignore-certificate-errors` hätte die Prüfung auch für eine fremde
+Overlay-Seite abgeschaltet.
+
+Die schlimmere Hälfte war eine Schicht tiefer: `Page.navigate` meldet einen
+Netzfehler im Feld `errorText`, und der Dauerbrowser warf das Ergebnis weg.
+**Eine Fehlerseite ist für einen Browser eine Seite** — `readyState` wird
+`complete`, der Screenshot hat 6 KB, und jede Prüfung auf „Bild leer?“ ist
+grün. Der Rückfall auf den Text-Chat griff deshalb nie. Seither ist
+`SeiteNichtErreichbar` (errorText oder HTTP ≥ 400) ein Fehler, der Tab geht zu,
+der nächste Versuch wartet `NEUSTART_RUHE_S`, und der Rückfall steht auf
+ERROR. Für das HTML-Overlay heißt das: kein Einzelschuss bei toter Seite, der
+fotografierte dieselbe Fehlerseite nur teurer. **Wer ein Bild aus einem
+Browser holt, prüft, ob die Seite kam — nicht, ob das Bild Bytes hat.**
+
 **Ein Release-Build machte die Suite rot.** `tools/build_release.py` schreibt
 `AUSLIEFERUNG.json` in den Arbeitsbaum, damit der Stempel ins Archiv wandert —
 und räumte ihn dort nie weg. Die Datei steht in `.gitignore`, fällt bei `git
@@ -996,8 +1019,8 @@ Die größte Funktion steht ohnehin nicht in `bot.py`:
 `discordbot.py` wurde in v4.2-W15 aus `bot.py` herausgelöst, genau gegen dieses
 Problem. Die Masse zog um, statt zu schrumpfen. `tools/monolith.py` misst deshalb den **ganzen**
 Produktionscode und zählt, wie viele Funktionen über einer Stufe liegen —
-seit v5.6-W197 sind das 61 über 100, 15 über 200, 8 über 300 und 1 über 500
-Zeilen, dazu 20 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
+seit v5.11.2 sind das 60 über 100, 15 über 200, 8 über 300 und 1 über 500
+Zeilen, dazu 19 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
 wird die Anzahl, nicht die Länge: eine Sperre, die jede zusätzliche
 Zeile meldet, fällt bei jeder Fehlerbehebung und ist in einer Woche
 abgeschaltet.

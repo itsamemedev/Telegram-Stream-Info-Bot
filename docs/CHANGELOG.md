@@ -9,6 +9,109 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.11.2] — 2026-11-19 · „Gegenprobe" (W211, Bughunt BH-1 bis BH-13)
+
+Der Betreiber am 19.11., mit Screenshot: im Studio-Sendebild steht statt des
+Live-Chats „This site can't be reached — The connection was reset." Dazu ein
+zweiter statischer Bughunt-Durchgang (15 Befunde, BH-1 bis BH-15), von dem
+jeder Punkt im Quelltext nachgeprüft wurde — zwei davon waren falsch.
+
+### Behoben — der Chat im Studio-Sendebild (W211)
+
+- **Ursache, gemessen:** der Chat-Kasten (W205) und das HTML-Overlay riefen
+  fest `http://127.0.0.1:<port>` auf. Beim Betreiber hängt TLS direkt am
+  Deck; HTTP gegen den TLS-Socket ergibt `net::ERR_CONNECTION_RESET` —
+  wortgleich die Seite aus dem Screenshot. Die Adresse kommt jetzt aus
+  `nc/webserver.intern_basis()`, neben `schema()` und `bindung()`; Chromium
+  nimmt das Domain-Zertifikat mit `--allow-insecure-localhost` an (wirkt nur
+  auf Loopback).
+- **Die Fehlerseite wurde gesendet:** `Page.navigate` meldet den Netzfehler in
+  `errorText`, und der Dauerbrowser warf das weg. Eine Fehlerseite lädt
+  „vollständig“ und ergibt ein 6-KB-Bild — der Rückfall auf den Text-Chat
+  griff nie. Jetzt ist `SeiteNichtErreichbar` (errorText oder HTTP ≥ 400) ein
+  Fehler: Tab zu, 30 s Ruhe vor dem nächsten Versuch, Rückfall auf den
+  Text-Chat bzw. drawtext, gemeldet auf ERROR (gedrosselt, mit Abhilfe). Das
+  HTML-Overlay geht bei toter Seite nicht mehr in den Einzelschuss, der
+  dieselbe Fehlerseite nur teurer fotografierte.
+- `RESTREAM_OVERLAY_HTML_URL` ist per Vorgabe leer (= das eigene Deck). Ein
+  einkommentiertes `http://127.0.0.1:8050/overlay` aus der alten Vorlage wird
+  auf Schema und Host des Decks gezogen.
+
+### Behoben — Bughunt
+
+- **BH-1 — mehrere Restreams teilten Titel, Reaktion, Alert.** Der
+  Overlay-Schreiber nahm alles vom zuletzt gestarteten Restream und kopierte
+  es in jeden anderen Ordner. Jetzt je Sendebild: Quelle, AZRAEL-Reaktion
+  (nach `source`), Follower-Zahl, TikTok-Alert (`origin` am Gift/Follow).
+  Kanalweit bleiben, was wirklich kanalweit ist: Sendername, Spendenziel,
+  Caption, Brand, Ereignisse der eigenen Kanäle.
+- **BH-2 — das HTML-Overlay war eine Seite für alle.** `/overlay?rid=` und
+  `/api/overlay/state?rid=` liefern den Zustand je Restream; ohne `rid` (OBS)
+  bleibt alles wie bisher. Widerlegt war der Teil „verzogenes Bild“: jeder
+  rid hat schon eigenen Tab und eigene Größe, skaliert wird ohne Verzerrung.
+- **BH-3 — Highlight-Clips ohne Ton.** Gemessen (ffmpeg 6.1): aus einer
+  tonlosen Aufnahme entstand ein stummer Clip, und ein stummer ERSTER Clip
+  machte den ganzen Zusammenschnitt stumm. Der Clip-Bauer
+  (`nc/aufnahmechat.clip_cmd`) mappt ausdrücklich, jeder Clip läuft durch
+  `tonspur.sichern()`, ein trotzdem stummer bleibt aus dem Zusammenschnitt.
+- **BH-4 — ein abgelaufener Cookie schlug den gültigen.** Rang ist jetzt
+  (gültig, Domain, Ablauf). Derselbe Fehler steckte im Import: dort wurde der
+  gültige Wert sogar aus der Datei gelöscht. Sind alle Varianten abgelaufen,
+  geht die beste weiter hinaus; das Deck meldet die Anmeldung dann rot
+  (`critical`).
+- **BH-6 — das Pausenbild legte die Auflösung fest.** Kam es nach 20 s vor der
+  ersten Quelle, lief eine 1080x1920-Quelle die ganze Sitzung als 720x1280.
+  Die Quelle hat jetzt bis 45 s Vortritt (unter der Stillstands-Karenz von
+  60 s), offline wird nach 20 s freigegeben, eine Freigabe ohne Quellbild
+  steht im Log.
+- **BH-7 — Studio-Chat und Großschreibung.** Eine Regel
+  (`gehoert_in_kasten`) für beide Renderer und den Einlass, ohne Groß-/
+  Kleinschreibung. Begrüßung und Rangaufstieg tragen die Herkunft und stehen
+  im richtigen Kasten; Twitch-/YouTube-Ereignisse fielen bei laufendem
+  Restream ganz heraus.
+- **BH-8 — ein Fehlstart der Sendebrücke galt als Start.** Status `live`,
+  Community-Ping, Wiederanlauf-Budget — obwohl der Sender ohne Zubringer
+  sofort starb. Jetzt `error`, Sender geerntet, Nebenläufer abgeräumt.
+- **BH-9 — Overlay- und Avatar-Schreiber schluckten Fehler.** Ein kaputtes
+  oder abgeschnittenes PNG fror das Sendebild ohne Logzeile ein. Jetzt
+  `_loop_fehler`, das letzte gute Bild läuft weiter; `BrokenPipe` bleibt ein
+  normales Ende.
+- **BH-10 — der zweite Start leerte den Chat-Ring.** Änderungen am Ring nur
+  noch unter einer Sperre, ausgedünnt ohne leeren Zwischenstand.
+- **BH-11 — der Discord-Ping nannte die globalen Ziele.** Jetzt die dieses
+  Restreams.
+- **BH-12 — ein Server-Hinweis ging ungeescaped ins Deck**, die
+  Ops-Zusammenfassung wurde per `innerHTML` geparst. Jetzt `esc()` bzw.
+  `DOMParser`.
+
+### Nachgeprüft, nicht geändert
+
+- **BH-5 (widerlegt, gemessen):** `-shortest` im tonlosen Zubringer endet
+  genau am Quellende wie der Zweig mit Ton; ein Abriss mit gelungenem
+  Reconnect ist kein Ende. Ohne `-shortest` hing der Zubringer nach dem
+  Quellende mit endloser Stille (90 s, 189 MB). Nur die Begründung steht
+  jetzt im Code.
+- **BH-13:** das Upload-Fenster rechnet in der Ortszeit des Servers. Eine
+  optionale Zeitzone ist der nächste Schritt; bis dahin `timedatectl` gegen
+  die Absicht hinter `UPLOAD_WINDOW_*` prüfen.
+- **BH-14/BH-15:** keine Defekte (Auto-Cookies sind Gast-Cookies; das
+  Speicherwachstum ist ohne Urteil).
+
+### Nach dem Update
+
+Neustart nötig (`systemctl restart`). Danach im Log: `Chat-Kasten aktiv fuer
+<rid>: … (https://127.0.0.1:…)`. Steht stattdessen „Chat-Kasten: Seite nicht
+erreichbar“, nennt die Zeile Grund und Abhilfe.
+
+### Geprüft
+
+Sieben neue Verträge (W211 mit echtem Chromium gegen einen TLS-Server, BH-1/2/9,
+BH-3 mit echtem ffmpeg, BH-4, BH-6, BH-7/10, BH-8/9/11, BH-12) und rund 70
+Mutationsproben, alle gefangen. Beim Zusammenführen fing der BH-2-Vertrag einen
+Fehler im W211-Code (`…/overlay/overlay`), den der eigene nicht sah.
+
+---
+
 ## [5.11.1] — 2026-11-19 · „Türschild" (W210)
 
 Der Betreiber am 14.11.: „Kannst du mir die motd.sh anpassen, dass es

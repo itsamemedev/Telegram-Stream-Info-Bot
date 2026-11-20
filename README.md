@@ -120,7 +120,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 27.587 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 27.646 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
     BOT -->|configure| NC["nc/ — 217 Fachmodule<br/>41 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
@@ -557,8 +557,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 27.587 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 391 Routen und 641 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 27.646 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 391 Routen und 646 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -576,6 +576,12 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 ---
 
 ## 🆕 Neu in v5.11
+
+**„Gegenprobe“ (5.11.2)** — der Chat steht wieder im Studio-Sendebild, auch
+mit TLS am Deck; eine Chromium-Fehlerseite wird nie mehr gesendet. Dazu der
+zweite Bughunt: mehrere Restreams teilen sich kein Overlay mehr, gültige
+Cookies schlagen abgelaufene, Highlight-Clips haben immer Ton, und ein
+Fehlstart der Sendebrücke heißt nicht mehr „live“.
 
 **„Türschild“ (5.11.1)** — das Login-Statusbild sieht aus wie die Übersicht:
 Kopf mit Ampel und `ON AIR`, Kennzahl-Kacheln, Lieferkette und die neun
@@ -851,7 +857,7 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.11.1** — „Türschild“ (2026.11) |
+| Aktuelle Version | **5.11.2** — „Gegenprobe“ (2026.11) |
 | Flask-Routen | 391 (34 in `bot.py` · 357 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
 | Fachmodule | 217 in `nc/` (+41 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |

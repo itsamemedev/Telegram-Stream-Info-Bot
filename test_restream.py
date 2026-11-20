@@ -460,7 +460,9 @@ def test_overlay_size_contract():
     i = src.find("def _restream_html_overlay_start")
     body = src[i:i + 3000]
     assert "_size = _overlay_render_size(source_url)" in body
-    assert "_htmlov_screenshot_cmd(binpath, png, _size)" in body
+    # ANKER GEWANDERT (BH-2, nicht der Vertrag): der Screenshot bekommt
+    # zusaetzlich den rid, damit die Seite den Zustand DIESES Restreams zeigt.
+    assert "_htmlov_screenshot_cmd(binpath, png, _size, rid)" in body
     # Aufrufer reicht die Quelle durch.
     # ANKER GEWANDERT (v4.2-W39, nicht der Vertrag): der Starter laeuft seit
     # W39 ueber asyncio.to_thread, der Aufruf steht deshalb als Argumentliste
@@ -607,15 +609,26 @@ def test_azrael_overlay_source():
     # find("def _write_restream_overlay") zuerst `..._async` — und das
     # 3000-Zeichen-Fenster lag dann auf deren Docstring statt auf dem
     # Funktionsrumpf. Der Parameter im Anker macht die Fundstelle eindeutig.
-    i = src.find("def _write_restream_overlay(reaction_fresh_secs")
-    assert i > 0, "Overlay-Schreiber nicht gefunden"
-    body = src[i:i + 3000]
-    j = body.find("AZRAEL-Reaktion unten")
-    zone = body[j:]
-    assert "r = _AZRAEL_REACTION" in zone, "drawtext liest die Reaktion nicht"
-    assert 'if r.get("text"):' in zone
+    # ANKER GEWANDERT (BH-1, nicht der Vertrag): die Auswahl steht seit dem
+    # Sendebild je Restream in nc/overlaytext.reaktion_fuer, gelesen wird
+    # in _overlay_kanalweit. Geprueft wird jetzt das VERHALTEN, im Syntaxbaum
+    # nur die Verdrahtung.
+    import ast as _ast
+    from nc import overlaytext as _OT
+    _baum = _ast.parse(src)
+    _kw = _ast.unparse(next(n for n in _baum.body
+                            if getattr(n, "name", "") == "_overlay_kanalweit"))
+    assert "dict(_AZRAEL_REACTION)" in _kw, "drawtext liest die Reaktion nicht"
+    assert "last_spoken" in _kw, "der Rueckfall auf den Kick-Chat fehlt"
+    _sb = _ast.unparse(next(n for n in _baum.body
+                            if getattr(n, "name", "") == "_overlay_sendebild_schreiben"))
+    assert "_nc_ovtext.reaktion_fuer(kanal['reaktion'], kanal['gesprochen']" in _sb
+    _r = {"text": "Reaktion", "ts": 100.0, "source": ""}
+    _ls = {"text": "Chatzeile", "ts": 50.0}
+    assert _OT.reaktion_fuer(_r, _ls, "anna", 20, 105.0, 55.0) == "Reaktion", \
+        "die Reaktion ist nicht mehr die Primaerquelle"
     # last_spoken bleibt Fallback, ist aber NICHT mehr die einzige Quelle
-    assert 'last_spoken' in zone and "if not txt:" in zone
+    assert _OT.reaktion_fuer({}, _ls, "anna", 20, 105.0, 55.0) == "Chatzeile"
     # react() füllt die Quelle
     k = src.find("_AZRAEL_REACTION.update(")
     assert k > 0 and "text=text, active=True" in src[k:k + 300]
@@ -1339,8 +1352,11 @@ def test_azrael_overlay_toggle():
     src = open("bot.py").read()
     assert "AZRAEL_OVERLAY_REACT" in src, "Schalter fehlt"
     # Der react-Block hängt am Schalter
-    i = src.find("if AZRAEL_OVERLAY_REACT and _OVERLAY.get")
+    # ANKER GEWANDERT (BH-1, nicht der Vertrag): der Schalter wird einmal je
+    # Takt in _overlay_kanalweit gelesen; die Sendebilder fragen kanal["azrael"].
+    i = src.find('"azrael": bool(AZRAEL_OVERLAY_REACT and _OVERLAY.get("azrael_show"))')
     assert i > 0, "react-Overlay-Block nicht am Schalter"
+    assert 'if kanal["azrael"]:' in src, "die Sendebilder fragen den Schalter nicht"
     ok("AZRAEL: Overlay-Reaktion per AZRAEL_OVERLAY_REACT abschaltbar")
 
     # Chat-Antwort (_KICK_MOD._handle / send_message) darf NICHT am Schalter hängen
@@ -3068,70 +3084,71 @@ def test_v40_version():
        BUILD_STAMP und nc.version NICHT auseinanderlaufen (schon dreimal
        passiert: Modul auf neu, Footer blieb auf alt)."""
     from nc import version as v
-    # ANKER GEWANDERT (v5.11.1, nicht der Vertrag): 5.11.0 -> 5.11.1. Dieser Test
+    # ANKER GEWANDERT (v5.11.2, nicht der Vertrag): 5.11.1 -> 5.11.2. Dieser Test
     # wandert absichtlich mit jeder Fassung mit — er ist die Stelle, an der
     # ein halber Versionssprung auffliegt (Modul hochgezaehlt, Footer nicht).
-    assert v.VERSION == "5.11.1" and v.current()["version"] == "5.11.1"
-    assert v.summary_line().startswith("NIGHTCRAWLER v5.11.1")
+    assert v.VERSION == "5.11.2" and v.current()["version"] == "5.11.2"
+    assert v.summary_line().startswith("NIGHTCRAWLER v5.11.2")
     top = v.latest()
-    assert top["version"] == "5.11.1" and len(top["highlights"]) >= 3
-    assert [c["version"] for c in v.changelog()][:5] == ["5.11.1", "5.11.0", "5.10.0", "5.9.0", "5.8.0"]
+    assert top["version"] == "5.11.2" and len(top["highlights"]) >= 3
+    assert [c["version"] for c in v.changelog()][:5] == ["5.11.2", "5.11.1", "5.11.0", "5.10.0", "5.9.0"]
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
     # Der Sprung darf die Vorgaengerfassung nicht ausraeumen. Beim
     # Umhaengen der Highlights ist genau das die Gefahr — man verschiebt
     # versehentlich ALLE statt der neuen, und 4.4 steht danach leer im
     # "Was ist neu"-Panel.
     vor = v.changelog()[1]
-    assert vor["version"] == "5.11.0" and len(vor["highlights"]) >= 5, \
-        f"5.11.0 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
-        f"auf 5.11.1 ist die Vorgaengerfassung ausgeraeumt worden"
-    assert len(v.changelog()[2]["highlights"]) >= 5, "5.10.0 ausgeraeumt"
-    assert len(v.changelog()[3]["highlights"]) >= 5, "5.9.0 ausgeraeumt"
-    assert len(v.changelog()[4]["highlights"]) >= 5, "5.8.0 ausgeraeumt"
-    assert len(v.changelog()[5]["highlights"]) >= 5, "5.7.0 ausgeraeumt"
-    assert len(v.changelog()[6]["highlights"]) >= 5, "5.6.0 ausgeraeumt"
-    assert len(v.changelog()[7]["highlights"]) >= 5, "5.5.0 ausgeraeumt"
-    assert len(v.changelog()[8]["highlights"]) >= 5, "5.4.0 ausgeraeumt"
-    assert len(v.changelog()[9]["highlights"]) >= 5, "5.3.1 ausgeraeumt"
-    assert len(v.changelog()[10]["highlights"]) >= 5, "5.3.0 ausgeraeumt"
-    assert len(v.changelog()[11]["highlights"]) >= 5, "5.2.1 ausgeraeumt"
-    assert len(v.changelog()[12]["highlights"]) >= 5, "5.2.0 ausgeraeumt"
-    assert len(v.changelog()[13]["highlights"]) >= 5, "5.1.1 ausgeraeumt"
-    assert len(v.changelog()[14]["highlights"]) >= 5, "5.1.0 ausgeraeumt"
-    assert len(v.changelog()[15]["highlights"]) >= 5, "5.0.0 ausgeraeumt"
-    assert len(v.changelog()[16]["highlights"]) >= 5, "4.6.23 ausgeraeumt"
-    assert len(v.changelog()[17]["highlights"]) >= 5, "4.6.22 ausgeraeumt"
-    assert len(v.changelog()[18]["highlights"]) >= 5, "4.6.21 ausgeraeumt"
-    assert len(v.changelog()[19]["highlights"]) >= 4, "4.6.20 ausgeraeumt"
-    assert len(v.changelog()[20]["highlights"]) >= 5, "4.6.19 ausgeraeumt"
-    assert len(v.changelog()[21]["highlights"]) >= 5, "4.6.18 ausgeraeumt"
-    assert len(v.changelog()[22]["highlights"]) >= 5, "4.6.17 ausgeraeumt"
-    assert len(v.changelog()[23]["highlights"]) >= 5, "4.6.16 ausgeraeumt"
-    assert len(v.changelog()[24]["highlights"]) >= 5, "4.6.15 ausgeraeumt"
-    assert len(v.changelog()[25]["highlights"]) >= 5, "4.6.14 ausgeraeumt"
-    assert len(v.changelog()[26]["highlights"]) >= 5, "4.6.13 ausgeraeumt"
-    assert len(v.changelog()[27]["highlights"]) >= 5, "4.6.12 ausgeraeumt"
-    assert len(v.changelog()[28]["highlights"]) >= 5, "4.6.11 ausgeraeumt"
-    assert len(v.changelog()[29]["highlights"]) >= 5, "4.6.10 ausgeraeumt"
-    assert len(v.changelog()[30]["highlights"]) >= 5, "4.6.9 ausgeraeumt"
-    assert len(v.changelog()[31]["highlights"]) >= 5, "4.6.8 ausgeraeumt"
-    assert len(v.changelog()[32]["highlights"]) >= 5, "4.6.7 ausgeraeumt"
-    assert len(v.changelog()[33]["highlights"]) >= 5, "4.6.6 ausgeraeumt"
-    assert len(v.changelog()[34]["highlights"]) >= 5, "4.6.5 ausgeraeumt"
-    assert len(v.changelog()[35]["highlights"]) >= 5, "4.6.4 ausgeraeumt"
-    assert len(v.changelog()[36]["highlights"]) >= 5, "4.6.3 ausgeraeumt"
-    assert len(v.changelog()[37]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
-    assert len(v.changelog()[38]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
-    assert len(v.changelog()[39]["highlights"]) >= 5, "4.6 ausgeraeumt"
-    assert len(v.changelog()[40]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
-    assert len(v.changelog()[41]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
-    assert len(v.changelog()[42]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
-    assert len(v.changelog()[43]["highlights"]) >= 5, "4.5 ausgeraeumt"
-    assert len(v.changelog()[45]["highlights"]) >= 10, "4.4 ausgeraeumt"
+    assert vor["version"] == "5.11.1" and len(vor["highlights"]) >= 5, \
+        f"5.11.1 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
+        f"auf 5.11.2 ist die Vorgaengerfassung ausgeraeumt worden"
+    assert len(v.changelog()[2]["highlights"]) >= 5, "5.11.0 ausgeraeumt"
+    assert len(v.changelog()[3]["highlights"]) >= 5, "5.10.0 ausgeraeumt"
+    assert len(v.changelog()[4]["highlights"]) >= 5, "5.9.0 ausgeraeumt"
+    assert len(v.changelog()[5]["highlights"]) >= 5, "5.8.0 ausgeraeumt"
+    assert len(v.changelog()[6]["highlights"]) >= 5, "5.7.0 ausgeraeumt"
+    assert len(v.changelog()[7]["highlights"]) >= 5, "5.6.0 ausgeraeumt"
+    assert len(v.changelog()[8]["highlights"]) >= 5, "5.5.0 ausgeraeumt"
+    assert len(v.changelog()[9]["highlights"]) >= 5, "5.4.0 ausgeraeumt"
+    assert len(v.changelog()[10]["highlights"]) >= 5, "5.3.1 ausgeraeumt"
+    assert len(v.changelog()[11]["highlights"]) >= 5, "5.3.0 ausgeraeumt"
+    assert len(v.changelog()[12]["highlights"]) >= 5, "5.2.1 ausgeraeumt"
+    assert len(v.changelog()[13]["highlights"]) >= 5, "5.2.0 ausgeraeumt"
+    assert len(v.changelog()[14]["highlights"]) >= 5, "5.1.1 ausgeraeumt"
+    assert len(v.changelog()[15]["highlights"]) >= 5, "5.1.0 ausgeraeumt"
+    assert len(v.changelog()[16]["highlights"]) >= 5, "5.0.0 ausgeraeumt"
+    assert len(v.changelog()[17]["highlights"]) >= 5, "4.6.23 ausgeraeumt"
+    assert len(v.changelog()[18]["highlights"]) >= 5, "4.6.22 ausgeraeumt"
+    assert len(v.changelog()[19]["highlights"]) >= 5, "4.6.21 ausgeraeumt"
+    assert len(v.changelog()[20]["highlights"]) >= 4, "4.6.20 ausgeraeumt"
+    assert len(v.changelog()[21]["highlights"]) >= 5, "4.6.19 ausgeraeumt"
+    assert len(v.changelog()[22]["highlights"]) >= 5, "4.6.18 ausgeraeumt"
+    assert len(v.changelog()[23]["highlights"]) >= 5, "4.6.17 ausgeraeumt"
+    assert len(v.changelog()[24]["highlights"]) >= 5, "4.6.16 ausgeraeumt"
+    assert len(v.changelog()[25]["highlights"]) >= 5, "4.6.15 ausgeraeumt"
+    assert len(v.changelog()[26]["highlights"]) >= 5, "4.6.14 ausgeraeumt"
+    assert len(v.changelog()[27]["highlights"]) >= 5, "4.6.13 ausgeraeumt"
+    assert len(v.changelog()[28]["highlights"]) >= 5, "4.6.12 ausgeraeumt"
+    assert len(v.changelog()[29]["highlights"]) >= 5, "4.6.11 ausgeraeumt"
+    assert len(v.changelog()[30]["highlights"]) >= 5, "4.6.10 ausgeraeumt"
+    assert len(v.changelog()[31]["highlights"]) >= 5, "4.6.9 ausgeraeumt"
+    assert len(v.changelog()[32]["highlights"]) >= 5, "4.6.8 ausgeraeumt"
+    assert len(v.changelog()[33]["highlights"]) >= 5, "4.6.7 ausgeraeumt"
+    assert len(v.changelog()[34]["highlights"]) >= 5, "4.6.6 ausgeraeumt"
+    assert len(v.changelog()[35]["highlights"]) >= 5, "4.6.5 ausgeraeumt"
+    assert len(v.changelog()[36]["highlights"]) >= 5, "4.6.4 ausgeraeumt"
+    assert len(v.changelog()[37]["highlights"]) >= 5, "4.6.3 ausgeraeumt"
+    assert len(v.changelog()[38]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
+    assert len(v.changelog()[39]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
+    assert len(v.changelog()[40]["highlights"]) >= 5, "4.6 ausgeraeumt"
+    assert len(v.changelog()[41]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
+    assert len(v.changelog()[42]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
+    assert len(v.changelog()[43]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
+    assert len(v.changelog()[44]["highlights"]) >= 5, "4.5 ausgeraeumt"
+    assert len(v.changelog()[46]["highlights"]) >= 10, "4.4 ausgeraeumt"
     # Und keine Zeile darf in ZWEI Fassungen stehen.
     doppelt = set(top["highlights"]) & set(vor["highlights"])
-    assert not doppelt, f"in 5.11.1 und 5.11.0 gleichzeitig: {list(doppelt)[:1]}"
-    ok("v5.11.1: nc.version — 5.11.1 + Changelog mit Historie, 5.11.0 bis 4.5 und 4.4 unversehrt")
+    assert not doppelt, f"in 5.11.2 und 5.11.1 gleichzeitig: {list(doppelt)[:1]}"
+    ok("v5.11.2: nc.version — 5.11.2 + Changelog mit Historie, 5.11.1 bis 4.5 und 4.4 unversehrt")
 
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
@@ -3143,7 +3160,7 @@ def test_v40_version():
         "BUILD_STAMP haengt nicht an nc.version"
     # ANKER GEWANDERT (v4.3, nicht der Vertrag): der Stempel folgt RELEASE
     # und VERSION, beide aus nc/version.py.
-    assert v.build_stamp() == "2026.11 · v5.11.1", v.build_stamp()
+    assert v.build_stamp() == "2026.11 · v5.11.2", v.build_stamp()
     # v4.1-W26: Anker mitgewandert. Die Route liegt jetzt in
     # nc/routes/auskunft.py — der VERTRAG ist unveraendert (es gibt sie, und
     # sie meldet die Version), nur ihre Fundstelle nicht.
@@ -8489,7 +8506,11 @@ def test_v40_w117_ankerhygiene():
             eng.append("Zeile %d: Fenster %d, letzte Nadel bei %d -> nur %d Zeichen "
                        "Luft (%r)" % (i + 1, n, weit, n - weit, wovon[:40]))
 
-    assert geprueft >= 10, ("Anker-Messung greift nicht mehr (%d Fenster erkannt) — "
+    # BH-1: 9 statt 10 — der B99-Vertrag (test_azrael_overlay_source) misst
+    # seit dem Sendebild je Restream im Syntaxbaum und am Verhalten, sein
+    # 3000er-Fenster ist weg. Die Untergrenze prueft, dass die Messung greift,
+    # nicht dass es Fenster geben MUSS.
+    assert geprueft >= 9, ("Anker-Messung greift nicht mehr (%d Fenster erkannt) — "
                             "Muster geaendert?" % geprueft)
     assert not eng, (
         "Zu enge Fenster — der naechste kleine Umbau macht daraus einen "

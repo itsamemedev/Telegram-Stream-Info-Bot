@@ -3138,7 +3138,13 @@ def _test_w32_sondenschicht_und_systemlage():
         f.write("# Netscape HTTP Cookie File\n")
         f.write("\t".join([".tiktok.com", "TRUE", "/", "FALSE", "9999999999",
                            "sessionid", "ALT"]) + "\n")
-        f.write("\t".join(["www.tiktok.com", "FALSE", "/", "FALSE", "1111111111",
+        # BH-4: hier stand 1111111111 (2005) — eine ABGELAUFENE exakte Domain.
+        # Die Aussage ist der Domain-Rang unter gueltigen Varianten; eine
+        # abgelaufene schlaegt seit BH-4 keine gueltige mehr. Also gueltig,
+        # aber mit kuerzerer Expiry als die Wildcard: der Rang muss trotzdem gewinnen.
+        import time as _time_w32
+        f.write("\t".join(["www.tiktok.com", "FALSE", "/", "FALSE",
+                           str(int(_time_w32.time()) + 10 * 86400),
                            "sessionid", "GENAU"]) + "\n")
 
     class _Still:
@@ -24415,12 +24421,14 @@ def _test_v42_w130_sendebruecke():
     W._urteil[B.QUELLE] = "neukodieren"
     W._wuensche(B.QUELLE, "Test")
     assert not W.daten(B.QUELLE, _w130_pes(0x100, 15000, 12000, rai=True))
-    # Ohne Quelle laenger als start_warten_s: dann darf das Pausenbild zuerst.
+    # Ohne Quelle laenger als start_warten_max_s: dann darf das Pausenbild
+    # zuerst (BH-6: vorher schon nach start_warten_s, Vertrag in
+    # _test_v511_bh6_pausenbild_vortritt).
     W2 = B.Bruecke(schreib, [], None, None, name="#w", uhr=lambda: uhr[0],
-                   start_warten_s=20.0)
+                   start_warten_s=20.0, start_warten_max_s=45.0)
     W2.daten(B.FUELLER, _w130_pat()); W2.daten(B.FUELLER, _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)]))
     assert not W2.daten(B.FUELLER, _w130_pes(0x100, 3000, 0, rai=True))
-    uhr[0] += 21
+    uhr[0] += 46
     assert W2.daten(B.FUELLER, _w130_pes(0x100, 6000, 3000, rai=True)), \
         "ohne Quelle bliebe der Sender ewig ohne Bild"
     gelesen()
@@ -24452,7 +24460,15 @@ def _test_v42_w130_sendebruecke():
     for cmd in (z, zt, zn, f):
         assert T.hat_tonspur(cmd), cmd
         assert " ".join(T.AAC_ARGS) in " ".join(cmd), ("anderes Tonformat", cmd)
-    assert T.STILLE_QUELLE in zt and "1:a:0" in zt and "-shortest" in zt
+    assert T.STILLE_QUELLE in zt and "1:a:0" in zt
+    # BH-5 (widerlegt, gemessen ffmpeg 6.1): -shortest beendet den tonlosen
+    # Zubringer genau am Quell-EOF — wie den mit Ton, dessen einziger Eingang
+    # die Quelle ist. Eine Pause der Quelle (12 s) ueberstand er. OHNE
+    # -shortest lief er nach dem Quell-EOF weiter: 90 s bis zum Abschuss und
+    # 189 MB Stille-TS, weil anullsrc nicht unter -re steht.
+    assert "-shortest" in zt, "tonloser Zubringer ohne -shortest endet nie"
+    assert zt.index(T.STILLE_QUELLE) > zt.index(url) and zt.count("-i") == 2, \
+        "Stille nicht als zweiter Eingang hinter der Quelle"
     assert zn[zn.index("-c:v") + 1] == "libx264"
     fps = 30
     assert f[f.index("-g") + 1] == str(int(fps * R.BRUECKE_GOP_S)), \
@@ -35580,7 +35596,10 @@ def _test_v56_w197_cookie_bereinigen():
         # (Laeuft nur ein Cookie ab, das ohnehin als Duplikat ginge, bleibt es
         # derselbe Plan und derselbe Stand: entfernt werden dieselben Zeilen.)
         assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 50)["stand"] == v["stand"]
-        assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 3)["wert_wechselt"] == ["sessionid"]
+        # Seit BH-4 sendet der Bot schon VOR der Bereinigung die gueltige
+        # Variante (auswahl() stellt gueltig vor abgelaufen) — der gesendete
+        # Wert wechselt durch das Bereinigen also nicht mehr.
+        assert CH.bereinigen(f, vorschau=True, jetzt=zuk - 3)["wert_wechselt"] == []
         spaeter = CH.bereinigen(f, erwartet=v["stand"], jetzt=zuk - 3)
         assert not spaeter["ok"] and spaeter["art"] == "veraltet", \
             ("der Stand haengt nur am Dateiinhalt, nicht am Plan", spaeter)
@@ -35610,7 +35629,9 @@ def _test_v56_w197_cookie_bereinigen():
         assert nichts["ok"] and not nichts["noetig"] and _bytes(f + ".bak") == stand_bak, \
             "ohne Aenderung geschrieben — das setzt die mtime und das Deck meldet 'frisch'"
 
-        # (3) Der gesendete Wert war tot: er wechselt — und die Vorschau sagt es.
+        # (3) Die gesendete Variante haette nach Domain-Rang die tote sein
+        # muessen. Seit BH-4 sendet der Bot schon vorher die gueltige, und die
+        # Bereinigung behaelt genau sie — kein Wechsel des gesendeten Werts.
         # Drei Varianten, weil erst dann die Reihenfolge der beiden Schritte
         # zaehlt: wer die Duplikate ueber ALLE aufloest (der tote Sieger
         # bliebe), wirft beide gueltigen als Duplikat und danach den toten
@@ -35621,9 +35642,10 @@ def _test_v56_w197_cookie_bereinigen():
             ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "GENAU_TOT"),
             (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid", "ALT_GUELTIG"),
             (".m.tiktok.com", "TRUE", "/", "TRUE", zuk - 10, "sessionid", "ALT_KURZ")])
-        assert _lade(f2)["sessionid"] == "GENAU_TOT"
+        assert _lade(f2)["sessionid"] == "ALT_GUELTIG", \
+            "BH-4: der Bot sendet die abgelaufene Variante, weil ihre Domain spezifischer ist"
         v2 = CH.bereinigen(f2, vorschau=True)
-        assert v2["ok"] and v2["wert_wechselt"] == ["sessionid"], v2
+        assert v2["ok"] and v2["wert_wechselt"] == [], v2
         assert v2["doppelt"] == [{"name": "sessionid", "behalten": ".tiktok.com",
                                   "entfernt": [".m.tiktok.com"]}], v2["doppelt"]
         e2 = CH.bereinigen(f2, erwartet=v2["stand"])
@@ -41330,6 +41352,1035 @@ def _test_v56_w197_keine_ausnahme_auf_vorrat():
     ok("v5.6-w197: jede Anmelde-/Herkunfts-Ausnahme hat eine Route (keine Luecke auf Vorrat)")
 
 
+def _test_v511_w211_chat_kasten_tls():
+    """v5.11.2: im Studio-Sendebild stand statt des Chats Chromiums Fehlerseite
+    „This site can't be reached — The connection was reset." (Screenshot des
+    Betreibers vom 19.11.). Der Chat-Kasten rief fest http://127.0.0.1 auf,
+    beim Betreiber haengt TLS direkt am Deck — HTTP gegen einen TLS-Socket ist
+    net::ERR_CONNECTION_RESET. Und der Dauerbrowser verwarf das Ergebnis von
+    Page.navigate, fotografierte die Fehlerseite also, statt den Rueckfall auf
+    den Text-Chat auszuloesen. Geprueft: die Adresse (Schema, Host), der
+    Zertifikats-Schalter nur fuer Loopback, die Navigation als Fehler, Tab zu
+    und Ruhe nach dem Fehler, der laute Rueckfall — und mit echtem Chromium
+    gegen einen TLS-Server genau das Fehlerbild des Screenshots."""
+    import ast as _ast
+    import http.server as _hs
+    import json as _json
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import socketserver as _ss
+    import ssl as _ssl
+    import subprocess as _sp
+    import threading as _th
+    import time as _t
+    from nc import chatbild as CB
+    from nc import meldetakt as MT
+    from nc import overlaybrowser as OB
+    from nc import webserver as W
+
+    # (1) Die Adresse: Schema aus der TLS-Lage, Host aus der WIRKLICHEN Bindung.
+    d = _ph.verzeichnis()
+    cert, key = _os.path.join(d, "c.pem"), _os.path.join(d, "k.pem")
+    for p in (cert, key):
+        open(p, "w").close()
+    assert W.intern_basis("0.0.0.0", True, 8050, cert, key) == "https://127.0.0.1:8050", \
+        "TLS am Deck, der Bot spricht HTTP — das ist der Screenshot"
+    assert W.intern_basis("0.0.0.0", True, 8050, "", "") == "http://127.0.0.1:8050"
+    assert W.intern_basis("127.0.0.1", False, 9000, "", "") == "http://127.0.0.1:9000"
+    assert W.intern_basis("::", True, 8050, "", "") == "http://[::1]:8050"
+    assert W.intern_basis("10.0.0.5", True, 8050, "", "") == "http://10.0.0.5:8050", \
+        "feste Adresse: 127.0.0.1 waere dort connection refused"
+    # ohne Schutz faellt die Bindung auf Loopback zurueck (W84) — dorthin rufen
+    assert W.intern_basis("10.0.0.5", False, 8050, "", "") == "http://127.0.0.1:8050"
+    assert W.intern_basis("0.0.0.0", True, 8050, cert, "") == "http://127.0.0.1:8050", \
+        "unvollstaendiges TLS startet das Deck als HTTP"
+    b = "https://127.0.0.1:8050"
+    assert W.eigene_url("http://127.0.0.1:8050/overlay", b) == "https://127.0.0.1:8050/overlay"
+    assert W.eigene_url("http://localhost:8050/overlay?x=1", b) == "https://127.0.0.1:8050/overlay?x=1"
+    assert W.eigene_url("http://127.0.0.1:9000/overlay", b) == "http://127.0.0.1:9000/overlay", \
+        "fremder Port ist nicht das Deck"
+    assert W.eigene_url("https://ov.example/x", b) == "https://ov.example/x"
+    # Die Basis kommt mit Pfad herein (_deck_intern_url("/overlay")) — gilt nur
+    # schema://host:port, sonst …/overlay/overlay.
+    assert W.eigene_url("http://127.0.0.1:8050/overlay?theme=x", b + "/overlay") == \
+        "https://127.0.0.1:8050/overlay?theme=x"
+
+    # (2) Der Bot baut die Adresse nirgends mehr selbst zusammen.
+    # Deck-Adresse heisst: ein festes http-Literal mit DASHBOARD_PORT daneben
+    # (f-String) oder mit dem Vorgabeport 8050. Twitch-Rueckruf und
+    # llama-server sind andere Dienste und duerfen ihre Vorgabe behalten.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    _pre = ("http://127.0.0.1:", "http://localhost:")
+
+    def _deck_literal(n):
+        if isinstance(n, _ast.JoinedStr):
+            teile = [t.value for t in n.values if isinstance(t, _ast.Constant)]
+            namen = {x.id for x in _ast.walk(n) if isinstance(x, _ast.Name)}
+            return bool(teile) and str(teile[0]).startswith(_pre) and "DASHBOARD_PORT" in namen
+        return (isinstance(n, _ast.Constant) and isinstance(n.value, str)
+                and n.value.startswith(tuple(p + "8050" for p in _pre)))
+    fest = sorted({n.lineno for n in _ast.walk(baum) if _deck_literal(n)})
+    assert not fest, "bot.py baut die Deck-Adresse wieder fest als http (Zeilen %s)" % fest
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_restream_chatbild_start")
+    assert any(isinstance(n, _ast.Call) and getattr(n.func, "id", "") == "_deck_intern_url"
+               for n in _ast.walk(fn)), "Chat-Kasten ohne _deck_intern_url"
+
+    # (2b) HTML-Overlay: eine tote SEITE geht nicht in den Einzelschuss (der
+    # fotografierte dieselbe Fehlerseite), sondern auf drawtext zurueck.
+    def _fang(funk, ausnahme):
+        f = next(n for n in baum.body if getattr(n, "name", "") == funk)
+        for t in _ast.walk(f):
+            if not isinstance(t, _ast.Try):
+                continue
+            for i, h in enumerate(t.handlers):
+                if h.type is not None and ausnahme in _ast.unparse(h.type):
+                    return t, i, h
+        return None, None, None
+    t, i, h = _fang("_htmlov_dauerbrowser", "SeiteNichtErreichbar")
+    assert h and any(isinstance(n, _ast.Raise) for n in h.body), \
+        "_htmlov_dauerbrowser schluckt die tote Seite (Einzelschuss fotografiert die Fehlerseite)"
+    assert i < next(j for j, x in enumerate(t.handlers)
+                    if x.type is not None and _ast.unparse(x.type) == "Exception"), \
+        "der allgemeine Fang steht vor SeiteNichtErreichbar und gewinnt"
+    t, i, h = _fang("_restream_html_overlay_start", "SeiteNichtErreichbar")
+    assert h and any(isinstance(n, _ast.Return) for n in _ast.walk(h)) \
+        and "_htmlov_dauerbrowser(" in _ast.unparse(t.body), \
+        "Overlay-Start faengt die tote Seite nicht ab"
+    assert "log.error" in _ast.unparse(h) and "_nc_meldetakt.melden" in _ast.unparse(h), \
+        "Rueckfall auf drawtext still oder ungedrosselt"
+
+    # (3) Zertifikat: nur Loopback darf ungeprueft sein, nie alles.
+    cmd = OB.browser_cmd("/x/chrome")
+    assert "--allow-insecure-localhost" in cmd, "https://127.0.0.1 scheitert am Domain-Zertifikat"
+    assert not any(a.startswith("--ignore-certificate-errors") for a in cmd), \
+        "das schaltet die Pruefung auch fuer fremde Overlay-Seiten ab"
+
+    # (4) Navigation mit Attrappe: Fehlerseite ist ein Fehler, der Tab geht zu,
+    # und der naechste Takt laedt NICHT sofort neu.
+    class _V:
+        def __init__(self, nav, status=200):
+            self.sperre, self.tabs, self.generation = _th.RLock(), set(), 1
+            self.letzter_start, self._proc, self.nav, self.status = 0.0, None, nav, status
+            self.aufrufe = []
+
+        def lebt(self):
+            return True
+
+        def starten(self):
+            pass
+
+        def beenden(self):
+            pass
+
+        def aufruf(self, methode, params, frist, sitzung=None):
+            self.aufrufe.append(methode)
+            if methode == "Target.createTarget":
+                return {"targetId": "T%d" % self.aufrufe.count(methode)}
+            if methode == "Target.attachToTarget":
+                return {"sessionId": "S"}
+            if methode == "Page.navigate":
+                return dict(self.nav)
+            if methode == "Runtime.evaluate":
+                if "readyState" in params["expression"]:
+                    return {"result": {"value": "complete"}}
+                return {"result": {"value": self.status}}
+            if methode == "Page.captureScreenshot":
+                return {"data": ""}
+            return {}
+
+    alt_vf = OB._verbindung_fuer
+    try:
+        v = _V({"frameId": "F", "errorText": "net::ERR_CONNECTION_RESET"})
+        OB._verbindung_fuer = lambda _b, _n: v
+        br = OB.Dauerbrowser("/x", "http://127.0.0.1:1/overlay/chat", "40,20")
+        try:
+            br.starten(timeout=5)
+            raise AssertionError("Fehlerseite als geladen behandelt")
+        except OB.SeiteNichtErreichbar as e:
+            assert "ERR_CONNECTION_RESET" in str(e), e
+        assert v.aufrufe.count("Target.closeTarget") == 1, \
+            "Tab nach Ladefehler offen — schuss() legte je Takt einen neuen an"
+        assert not br.lebt()
+        try:
+            br.schuss(timeout=5)
+            raise AssertionError("tote Seite sofort neu geladen")
+        except OB.SeiteNichtErreichbar as e:
+            assert "neuer Versuch" in str(e), e
+        assert v.aufrufe.count("Target.createTarget") == 1, "Ruhe nach Ladefehler fehlt"
+        # Ein 401/404 laedt ohne errorText — und zeigt Anmeldeseite oder Fehlertext.
+        v = _V({"frameId": "F"}, status=401)
+        br = OB.Dauerbrowser("/x", "http://10.0.0.5:8050/overlay/chat", "40,20")
+        try:
+            br.starten(timeout=5)
+            raise AssertionError("HTTP 401 als geladen behandelt")
+        except OB.SeiteNichtErreichbar as e:
+            assert "HTTP 401" in str(e), e
+        # Gesunde Seite (und ein Chromium ohne responseStatus) bleibt gesund.
+        for st in (200, 0, None):
+            v = _V({"frameId": "F"}, status=st)
+            br = OB.Dauerbrowser("/x", "https://127.0.0.1:8050/overlay/chat", "40,20")
+            br.starten(timeout=5)
+            assert br.lebt() and "Target.closeTarget" not in v.aufrufe, st
+    finally:
+        OB._verbindung_fuer = alt_vf
+
+    # (5) Der Rueckfall auf den Text-Chat ist laut (ERROR, nicht warning) und gedrosselt.
+    class _Tot:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def starten(self, timeout=20):
+            raise OB.SeiteNichtErreichbar("net::ERR_CONNECTION_RESET bei http://127.0.0.1:8050/x")
+
+        def beenden(self):
+            pass
+    zeilen = []
+
+    class _Fang(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+    h = _Fang()
+    CB.log.addHandler(h)
+    MT.zuruecksetzen(CB.KANAL)
+    try:
+        for _ in range(3):
+            assert CB.starten("w211", _Tot, "/x", "http://127.0.0.1:8050/x", "1,1", d,
+                              anlauf_s=0) is None
+    finally:
+        CB.log.removeHandler(h)
+        MT.zuruecksetzen(CB.KANAL)
+        MT.STOERER.pop(CB.KANAL, None)
+    laut = [z for z in zeilen if z[0] >= _lg.ERROR]
+    assert len(laut) == 1, ("ungedrosselt oder still", zeilen)
+    assert "bleibt Text" in laut[0][1] and "https" in laut[0][1], laut
+
+    # (6) Echt: Chromium gegen einen TLS-Server — der Screenshot, nachgestellt.
+    binpath = next((p for p in (_sh.which("google-chrome"), _sh.which("chromium"),
+                                _sh.which("chromium-browser")) if p), None)
+    if not binpath or not _sh.which("openssl"):
+        print("  w211: kein Chromium/openssl — echter TLS-Lauf uebersprungen")
+        ok("v5.11.2-W211: Chat-Kasten erreicht das Deck auch mit TLS (ohne echten Lauf)")
+        return
+    r = _sp.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key,
+                 "-out", cert, "-days", "1", "-subj", "/CN=deck.example"],
+                capture_output=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    seite = open("templates/chatbild.html", "rb").read()
+
+    class _H(_hs.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/overlay/chat.json"):
+                rumpf = _json.dumps({"ok": True, "zeilen": [
+                    {"src": "tiktok", "who": "anna", "text": "hallo"}]}).encode()
+            elif self.path.startswith("/overlay/chat"):
+                rumpf = seite
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(rumpf)
+
+        def log_message(self, *_a):
+            return None
+
+    srv = _ss.ThreadingTCPServer(("127.0.0.1", 0), _H)
+    srv.daemon_threads = True
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+    # Auch im Testserver kein TLS 1.0/1.1 (CodeQL py/insecure-protocol).
+    ctx.minimum_version = _ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(cert, key)
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        basis = W.intern_basis("0.0.0.0", True, port, cert, key)
+        fifo = CB.starten("w211a", OB.Dauerbrowser, binpath, basis + "/overlay/chat?user=anna",
+                          "320,120", d, anlauf_s=1.0)
+        assert fifo, "Chat-Kasten erreicht das TLS-Deck nicht (Zertifikat auf Loopback?)"
+        png = open(_os.path.join(d, "chatbild_w211a.png"), "rb").read()
+        assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 300, len(png)
+        CB.beenden("w211a")
+        MT.zuruecksetzen(CB.KANAL)
+        t0 = _t.monotonic()
+        alt = CB.starten("w211b", OB.Dauerbrowser, binpath,
+                         "http://127.0.0.1:%d/overlay/chat?user=anna" % port,
+                         "320,120", d, anlauf_s=0)
+        assert alt is None, "Chromiums Fehlerseite ging als Chat-Bild ins Sendebild"
+        assert _t.monotonic() - t0 < 25
+    finally:
+        CB.beenden("w211a")
+        CB.beenden("w211b")
+        MT.zuruecksetzen(CB.KANAL)
+        MT.STOERER.pop(CB.KANAL, None)
+        srv.shutdown()
+        srv.server_close()
+    ok("v5.11.2-W211: Chat-Kasten erreicht das Deck auch mit TLS — Schema aus der "
+       "TLS-Lage, Zertifikat nur auf Loopback nachsichtig, eine Fehlerseite ist ein "
+       "Fehler (Tab zu, Ruhe, lauter Rueckfall auf Text), echt gegen TLS gemessen")
+
+
+def _test_v511_bh_sendebild_je_restream():
+    """BH-1/BH-2/BH-9 (Bughunt v5.11): jedes Sendebild zeigt SEINEN Restream.
+
+    BH-1: der Text-Schreiber fuellte den Wurzelordner aus dem zuletzt
+    gestarteten Restream und kopierte Reaktion, Alert, Follower in jeden
+    weiteren — A zeigte AZRAELs Reaktion auf B, Bs Zahl, Bs Gifts.
+    BH-2: die HTML-Seite kannte keinen Restream; jeder Tab bekam dieselbe
+    Reaktion. BH-9: der FIFO-Schreiber schluckte jeden Lesefehler und endete
+    bei einem fehlenden PNG still. Geprueft am Verhalten, mit Attrappen."""
+    import ast as _ast
+    import logging as _lg
+    import os as _os
+    import threading as _th
+    import time as _t
+    from contextlib import contextmanager as _cm
+    from nc import overlaytext as OT
+    from nc import overlaybrowser as OB
+    from nc import textmore as TM
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name):
+        return next(n for n in baum.body if getattr(n, "name", "") == name)
+
+    def _lade(namen, ns):
+        exec(compile(_ast.Module(body=[_fn(n) for n in namen], type_ignores=[]),
+                     "bot.py", "exec"), ns)
+        return ns
+
+    # ── (1) nc.overlaytext: die Zuordnungsregeln ────────────────────────────
+    assert OT.gehoert_zu("berta", None), "ohne rid (OBS) muss alles durch"
+    assert OT.gehoert_zu("", "anna") and OT.gehoert_zu(None, "anna"), "kanalweit gilt allen"
+    assert OT.gehoert_zu("@Anna", "anna") and not OT.gehoert_zu("berta", "anna")
+    assert not OT.gehoert_zu("berta", ""), "unbekannter Restream zeigt fremde Reaktion"
+    assert OT.alert_fuer({"name": "x", "ts": 0.0}, "anna", 9.0) == "", "Alert verfaellt nicht"
+    assert OT.overlay_url("http://127.0.0.1:8050/overlay", 7) == \
+        "http://127.0.0.1:8050/overlay?rid=7"
+    assert OT.overlay_url("https://h:9/overlay?a=b%20c&rid=3#f", 5) == \
+        "https://h:9/overlay?a=b%20c&rid=5#f", "Query umkodiert, rid doppelt oder Fragment weg"
+    assert OT.overlay_url("http://h/overlay?x=1", None) == "http://h/overlay?x=1"
+
+    # ── (2) BH-1: der Text-Schreiber mit zwei Restreams ─────────────────────
+    wurzel = "/ov"
+    alle = {1: {"user": "anna", "label": "Hauptbuehne", "rid": 1, "ovdir": wurzel},
+            2: {"user": "berta", "label": "", "rid": 2, "ovdir": wurzel + "/rid_2"}}
+    geschrieben, fehler = {}, []
+
+    class _Conn:
+        def execute(self, *a):
+            return type("R", (), {"fetchone": lambda s: {"name": "fan"}})()
+
+    @_cm
+    def _db():
+        yield _Conn()
+
+    def _dateien(rid=None):
+        d = (alle.get(rid) or {}).get("ovdir") or wurzel
+        return {k: d + "/" + k for k in ("title", "react", "source", "goal", "follow",
+                                         "alert", "chat", "caption", "brand")}
+    ns = {"_nc_ovtext": OT, "_RESTREAM_ACTIVE_ALL": alle, "_RESTREAM_OV_DIR": wurzel,
+          "_restream_active": lambda: {"user": "berta", "label": "", "rid": 2},
+          "_restream_overlay_files": _dateien,
+          "_ov_atomic_write": lambda p, t: geschrieben.__setitem__(p, t),
+          "_loop_fehler": lambda n, e: fehler.append((n, e)),
+          "_RESTREAM_OV_DBCACHE": {"ts": 0.0, "goal": "", "follow": ""},
+          "_time_mod": _t, "db_conn": _db,
+          "_nc_spendenziel": type("S", (), {"stand": staticmethod(
+              lambda c: {"ziel_eur": 100, "aktuell_eur": 40})}),
+          "_ov_bar": OT.ov_bar, "_ov_oneline": OT.ov_oneline, "_ov_wrap": TM._ov_wrap,
+          "_overlay_src_ok": lambda s: True,
+          "_latest_popularity": lambda c, u: {"anna": 1000, "berta": 2000}[u],
+          "_OVERLAY": {"title": "Sender", "azrael_show": True}, "AZRAEL_OVERLAY_REACT": True,
+          "_AZRAEL_REACTION": {"text": "Berta tanzt", "ts": _t.time(), "source": "berta"},
+          "_KICK_MOD": type("K", (), {"last_spoken": {}})(),
+          "_RESTREAM_LAST_EVENT": {"ts": _t.monotonic(), "kind": "gift", "name": "geber",
+                                   "amount": "5", "origin": "anna"},
+          "_restream_layout_mode": lambda: "studio", "_chat_src_ok": lambda s: True,
+          "KICK_CHANNEL_URL": "https://kick.com/x", "DISCORD_INVITE_URL": "",
+          "_RESTREAM_MGR": type("M", (), {"_procs": {1: 1, 2: 2}})(),
+          "AZRAEL_OVERLAY_PREFIX": "AZ", "AZRAEL_OVERLAY_WRAP_W": 38,
+          "AZRAEL_OVERLAY_WRAP_LINES": 3,
+          "_chat_block": lambda source_user=None: "chat:%s" % source_user,
+          "RESTREAM_REACT_HOLD": 20}
+    _lade(("_write_restream_overlay", "_overlay_kanalweit", "_overlay_sendebild_schreiben"), ns)
+    ns["_write_restream_overlay"]()
+    a, b = _dateien(1), _dateien(2)
+    assert not fehler, fehler
+    assert {p.rsplit("/", 1)[0] for p in geschrieben} == {wurzel, wurzel + "/rid_2"}, \
+        "ein drittes Sendebild beschrieben: %r" % sorted(geschrieben)
+    assert geschrieben[a["react"]] == "" and "Berta tanzt" in geschrieben[b["react"]], \
+        "AZRAELs Reaktion auf B steht im Sendebild von A"
+    assert "geber" in geschrieben[a["alert"]] and geschrieben[b["alert"]] == "", \
+        "das Gift aus As Raum steht im Sendebild von B"
+    assert "1.000" in geschrieben[a["follow"]] and "2.000" in geschrieben[b["follow"]], \
+        "Follower-Zahl nicht je Quellnutzer: %r / %r" % (geschrieben[a["follow"]],
+                                                         geschrieben[b["follow"]])
+    assert "+fan" in geschrieben[a["follow"]] and "+fan" in geschrieben[b["follow"]]
+    assert geschrieben[a["source"]].startswith("└ @anna") and \
+        geschrieben[b["source"]] == "└ @berta"
+    assert (geschrieben[a["chat"]], geschrieben[b["chat"]]) == ("chat:anna", "chat:berta")
+    for k in ("title", "goal", "caption", "brand"):       # kanalweit, mit Grund
+        assert geschrieben[a[k]] == geschrieben[b[k]] and geschrieben[a[k]], k
+    # Eine Reaktion ohne Quelle gilt allen; kein Restream: der Altweg (rid=None).
+    ns["_AZRAEL_REACTION"] = {"text": "Hallo alle", "ts": _t.time(), "source": ""}
+    ns["_write_restream_overlay"]()
+    assert "Hallo alle" in geschrieben[a["react"]] and "Hallo alle" in geschrieben[b["react"]]
+    alle.clear()
+    geschrieben.clear()
+    ns["_write_restream_overlay"]()
+    assert {p.rsplit("/", 1)[0] for p in geschrieben} == {wurzel}
+    assert geschrieben[wurzel + "/source"] == "└ @berta", "Altweg ohne Registry kaputt"
+
+    # Das Gift traegt seinen Raum: _overlay_push speichert origin, und beide
+    # TikTok-Aufrufer im Chat-Listener geben ihn mit.
+    ns_p = {"_OV_PLATFORMS": ("kick", "tiktok"), "is_revenue_platform": lambda p: p == "kick",
+            "db_conn": _db, "log": _lg.getLogger("t"), "_time_mod": _t,
+            "datetime": __import__("datetime").datetime,
+            "timezone": __import__("datetime").timezone}
+    _lade(("_overlay_push",), ns_p)
+    ns_p["_overlay_push"]("gift", "geber", 5, "Rose", platform="tiktok", origin="anna")
+    assert ns_p["_RESTREAM_LAST_EVENT"]["origin"] == "anna", "Herkunft des Gifts verloren"
+    ns_p["_overlay_push"]("follow", "f", platform="kick")
+    assert ns_p["_RESTREAM_LAST_EVENT"]["origin"] == "", "eigener Kanal muss kanalweit sein"
+    tiktok = [c for c in _ast.walk(_fn("_start_chat_listener")) if isinstance(c, _ast.Call)
+              and getattr(c.func, "id", "") == "_overlay_push"
+              and any(k.arg == "platform" and getattr(k.value, "value", "") == "tiktok"
+                      for k in c.keywords)]
+    assert len(tiktok) == 2 and all(any(k.arg == "origin" for k in c.keywords)
+                                    for c in tiktok), "TikTok-Event ohne origin="
+
+    # ── (3) BH-2: die Seite je Restream ─────────────────────────────────────
+    ns_u = {"_nc_ovtext": OT, "_nc_rutil": __import__("nc.restream_util", fromlist=["x"]),
+            "RESTREAM_OVERLAY_HTML_URL": "http://127.0.0.1:8050/overlay?theme=x",
+            "DASHBOARD_PORT": 8050, "RESTREAM_OVERLAY_HTML_FALLBACK_SIZE": "1080,1920",
+            # W211: die Basis kommt aus _htmlov_basis_url (Schema/Host des Decks)
+            "_nc_webserver": __import__("nc.webserver", fromlist=["x"]),
+            "_deck_intern_url": lambda pfad: "http://127.0.0.1:8050" + pfad}
+    _lade(("_htmlov_basis_url", "_htmlov_url", "_htmlov_screenshot_cmd",
+           "_htmlov_dauerbrowser"), ns_u)
+    assert ns_u["_htmlov_screenshot_cmd"]("/c", "/p.png", "720,1280", 5)[-1] == \
+        "http://127.0.0.1:8050/overlay?theme=x&rid=5", "Einzelschuss ohne rid"
+    gesehen = []
+
+    class _DB:
+        def __init__(self, binpath, url, groesse, nice=None):
+            gesehen.append((url, groesse))
+
+        def starten(self, timeout=20):
+            raise OB.OverlayBrowserFehler("Attrappe")
+
+        def beenden(self):
+            pass
+    ns_u.update(_nc_ovbrowser=type("O", (), {"Dauerbrowser": _DB,
+                                             "SeiteNichtErreichbar": OB.SeiteNichtErreichbar}),
+                FFMPEG_NICE_BG=12,
+                log=_lg.getLogger("t-bh2"), _time_mod=_t)
+    assert ns_u["_htmlov_dauerbrowser"]("/c", "720,1280", "/p.png", 5) is None
+    assert gesehen == [("http://127.0.0.1:8050/overlay?theme=x&rid=5", "720,1280")], \
+        "der Tab im (geteilten) Chromium oeffnet die Seite ohne rid: %r" % gesehen
+    st = _ast.unparse(_fn("_restream_html_overlay_start"))
+    for aufruf in ("_htmlov_dauerbrowser(binpath, _size, png, rid)",
+                   "_htmlov_screenshot_cmd(binpath, png, _size, rid)",
+                   "_htmlov_screenshot_cmd(binpath, tmp, _size, rid)"):
+        assert aufruf in st, aufruf
+    # Die Route: mit rid nur die Reaktion auf DIESEN Quellnutzer, und die Quelle.
+    from flask import Flask
+    import nc.routes.overlay as RO
+    from nc import azraelstate as A
+    from nc import restreamstate as RS
+    app = Flask(__name__)
+    app.register_blueprint(RO.bp)
+    alt = (dict(A.OVERLAY), dict(A.REACTION), dict(RS.ACTIVE_ALL))
+    try:
+        A.OVERLAY.update(title="Sender", azrael_show=True)
+        RS.ACTIVE_ALL.clear()
+        RS.ACTIVE_ALL[7] = {"user": "anna", "label": "Hauptbuehne", "rid": 7}
+        A.REACTION.clear()
+        A.REACTION.update(text="Berta tanzt", ts=_t.time(), source="berta")
+        with app.test_client() as cl:
+            def _z(q=""):
+                return cl.get("/api/overlay/state" + q).get_json()
+            j = _z("?rid=7")
+            assert j["quelle"] == {"user": "anna", "label": "Hauptbuehne"}, j.get("quelle")
+            assert j["azrael"]["active"] is False, "AZRAEL spricht im Sendebild von A ueber B"
+            o = _z()
+            assert o["azrael"]["active"] is True and o["quelle"] is None, "OBS-Seite veraendert"
+            assert _z("?rid=99")["azrael"]["active"] is False, "unbekannter rid zeigt Fremdes"
+            A.REACTION.update(source="anna")
+            assert _z("?rid=7")["azrael"]["active"] is True, "eigene Reaktion fehlt"
+            A.REACTION.update(source="")
+            assert _z("?rid=99")["azrael"]["active"] is True, "kanalweite Reaktion fehlt"
+            assert j["title"] == "Sender", "der Sendername ist kanalweit"
+    finally:
+        A.OVERLAY.clear()
+        A.OVERLAY.update(alt[0])
+        A.REACTION.clear()
+        A.REACTION.update(alt[1])
+        RS.ACTIVE_ALL.clear()
+        RS.ACTIVE_ALL.update(alt[2])
+    # Die Seite reicht ihren rid weiter (JS ohne Kommentare gelesen).
+    import re as _re
+    html = open("templates/overlay.html", encoding="utf-8").read()
+    js = _re.sub(r"/\*.*?\*/", "", html, flags=_re.S)
+    assert "get('rid')" in js and "fetch(_STATE_URL" in js, "die Seite ignoriert ?rid="
+    assert "fetch('/api/overlay/state'" not in js, "ein Abruf ohne rid ist geblieben"
+
+    # ── (4) BH-9: der FIFO-Schreiber meldet, statt zu schweigen ─────────────
+    th_start = [c for c in _ast.walk(_fn("_restream_html_overlay_start"))
+                if isinstance(c, _ast.Call) and _ast.unparse(c.func) == "threading.Thread"]
+    assert th_start and "_nc_ovbrowser.fifo_schreiben" in _ast.unparse(th_start[0]) \
+        and "_loop_fehler" in _ast.unparse(th_start[0]), "Writer wieder ohne Drosselkanal"
+    gut = b"\x89PNG\r\n\x1a\n" + b"x" * 40 + b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    assert OB.png_vollstaendig(gut) and not OB.png_vollstaendig(gut[:-3])
+    d = _ph.verzeichnis()
+    png, fifo = _os.path.join(d, "o.png"), _os.path.join(d, "o.fifo")
+    with open(png, "wb") as f:
+        f.write(gut)
+    _os.mkfifo(fifo)
+    gemeldet, stop = [], _th.Event()
+    infos = []
+    h = _lg.Handler()
+    h.emit = lambda r: infos.append(r.getMessage())
+    OB.log.addHandler(h)
+    alt_stufe = OB.log.level
+    OB.log.setLevel(_lg.INFO)
+    try:
+        w = _th.Thread(target=OB.fifo_schreiben,
+                       args=(fifo, png, stop, 0.02, lambda n, e: gemeldet.append((n, e))),
+                       daemon=True)
+        w.start()
+        lese = open(fifo, "rb")
+        assert lese.read(len(gut)) == gut
+        with open(png, "wb") as f:                  # abgeschnitten
+            f.write(gut[:30])
+        _t.sleep(0.15)
+        _os.remove(png)                             # verschwunden
+        _t.sleep(0.15)
+        assert lese.read(len(gut) * 3).count(b"IEND") >= 2, \
+            "nach dem kaputten PNG kommt nicht mehr das letzte gute Bild"
+        namen = {n for n, _e in gemeldet}
+        arten = {type(e).__name__ for _n, e in gemeldet}
+        assert namen == {"html-overlay-fifo"}, gemeldet
+        assert "OverlayBrowserFehler" in arten and "FileNotFoundError" in arten, \
+            "abgeschnittenes oder fehlendes PNG ohne Meldung: %r" % arten
+        assert w.is_alive(), "ein fehlendes PNG beendet den Schreiber (Overlay steht still)"
+        n_vorher = len(gemeldet)
+        with open(png, "wb") as f:
+            f.write(gut)
+        lese.close()                                # ffmpeg weg
+        w.join(3)
+        assert not w.is_alive(), "Schreiber endet nicht, wenn ffmpeg weg ist"
+        assert not any(isinstance(e, BrokenPipeError) for _n, e in gemeldet[n_vorher:]), \
+            "ffmpeg weg ist ein normales Ende, kein Fehler"
+        assert any("Schreiber endet" in z for z in infos), "das Ende steht nicht im Log"
+    finally:
+        OB.log.removeHandler(h)
+        OB.log.setLevel(alt_stufe)
+        stop.set()
+    ok("BH-1/BH-2/BH-9: jedes Sendebild zeigt seinen Restream, der Overlay-Writer meldet")
+
+
+def _test_v511_bh3_clip_tonspur():
+    """BH-3: jeder Highlight-Clip traegt eine Tonspur, auch aus einer
+    tonlosen laufenden Aufnahme.
+
+    Gemessen vor der Korrektur (ffmpeg 6.1): der Clip-Befehl ohne `-map`
+    lief an einer tonlosen Aufnahme mit rc=0 und lieferte reines Bild; der
+    Zusammenschnitt mit einem solchen Clip vorn war ganz stumm, mit einem
+    solchen Clip hinten trug er 6 s Ton auf 12 s Bild. Geprueft: der Bauer
+    mappt Ton (optional, weil die wachsende Datei keinen haben muss), der
+    Aufrufer prueft den fertigen Clip mit tonspur.sichern() VOR dem Merken,
+    und echt: tonloser Clip wird nachgeruestet, der Zusammenschnitt traegt
+    Ton ueber die volle Laenge."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import pruefhilfen as P
+    from nc import aufnahmechat as A
+    from nc import tonspur as T
+
+    # (1) Der Bauer: Ton gemappt, Format wie die nachgeruestete Stille.
+    c = A.clip_cmd("/rec/a.mp4", 12.345, 30, "/clips/c.mp4",
+                   vf=["scale=1080:1920", "pad=1080:1920"], threads=1, nice=0)
+    assert c[0] == "ffmpeg" and c[-1] == "/clips/c.mp4", c
+    assert T.hat_tonspur(c, optional_ok=True), ("Clip ohne Ton-Map", c)
+    maps = [c[i + 1] for i, a in enumerate(c[:-1]) if a == "-map"]
+    assert maps == ["0:v:0", "0:a:0?"], \
+        ("ein harter Ton-Map liesse jeden Clip einer tonlosen Aufnahme scheitern", maps)
+    assert " ".join(T.AAC_ARGS) in " ".join(c), "anderes Tonformat als die Stille-Spur"
+    assert c.index("-ss") < c.index("-i") < c.index("-t"), "-ss/-t vertauscht"
+    assert c[c.index("-ss") + 1] == "12.35" and c[c.index("-t") + 1] == "30.00"
+    assert c[c.index("-vf") + 1] == "scale=1080:1920,pad=1080:1920"
+    assert "-vf" not in A.clip_cmd("/rec/a.mp4", 0, 5, "/c.mp4")
+
+    # (2) Der Aufrufer: Bauer statt eigener Liste, sichern() vor clip_merken().
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_clip_schneiden")
+    aufrufe = {}
+    for n in _ast.walk(fn):
+        if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute):
+            aufrufe.setdefault(n.func.attr, []).append(n.lineno)
+    assert "clip_cmd" in aufrufe, "_clip_schneiden baut den Befehl wieder selbst"
+    assert not [n for n in _ast.walk(fn) if isinstance(n, _ast.List) and n.elts
+                and isinstance(n.elts[0], _ast.Constant) and n.elts[0].value == "ffmpeg"], \
+        "zweiter ffmpeg-Bauer in _clip_schneiden"
+    assert "sichern" in aufrufe and "clip_merken" in aufrufe, sorted(aufrufe)
+    assert min(aufrufe["sichern"]) < min(aufrufe["clip_merken"]), \
+        "der Clip kommt in den Zusammenschnitt, bevor seine Tonspur gesichert ist"
+    # Bleibt er stumm (Platz, ffmpeg), kommt er NICHT in den Zusammenschnitt:
+    # als erster Clip naehme er allen anderen den Ton.
+    huelle = [n for n in _ast.walk(fn) if isinstance(n, _ast.If)
+              and any(isinstance(st, _ast.Expr) and isinstance(st.value, _ast.Call)
+                      and getattr(st.value.func, "attr", "") == "clip_merken"
+                      for st in n.body)]       # das If, das clip_merken UNMITTELBAR traegt
+    assert huelle and any(isinstance(k, _ast.Constant) and k.value == "fehlgeschlagen"
+                          for k in _ast.walk(huelle[0].test)), \
+        "ein stumm gebliebener Clip geht in den Zusammenschnitt"
+
+    if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
+        ok("BH-3: Clip-Tonspur (rein); ffmpeg fehlt — echter Lauf uebersprungen")
+        return
+    # (3) Echt: zwei laufende Aufnahmen wie der Recorder sie schreibt (fMP4,
+    # Ton optional gemappt) — eine ohne Ton, eine mit 48-kHz-Mono.
+    heim = P.verzeichnis()
+
+    def aufnahme(name, ton):
+        p = _os.path.join(heim, name)
+        cmd = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x288:r=25"]
+        if ton:
+            cmd += ["-f", "lavfi", "-i", "sine=r=48000:f=440"]
+        cmd += ["-t", "8", "-c:v", "libx264", "-preset", "ultrafast", "-g", "25",
+                "-map", "0:v:0?", "-map", "1:a:0?" if ton else "0:a:0?", "-ac", "1",
+                "-movflags", "+empty_moov+frag_keyframe+default_base_moof",
+                "-frag_duration", "2000000", p]
+        _sp.run(cmd, check=True, timeout=60)
+        return p
+
+    def spuren(p):
+        r = _sp.run(["ffprobe", "-v", "error", "-show_entries",
+                     "stream=codec_type,duration,sample_rate,channels", "-of", "json", p],
+                    capture_output=True, text=True, timeout=30)
+        return {s["codec_type"]: s for s in __import__("json").loads(r.stdout)["streams"]}
+    clips = []
+    for name, ton in (("stumm.mp4", False), ("ton.mp4", True)):
+        rec = aufnahme(name, ton)
+        clip = _os.path.join(heim, "clip_" + name)
+        r = _sp.run(A.clip_cmd(rec, 2, 4, clip, vf=["scale=144:256"]),
+                    capture_output=True, timeout=120)
+        assert r.returncode == 0, r.stderr[-300:]
+        lage = _aio.run(T.sichern(clip, wer="Vertrag BH-3", timeout=60))["lage"]
+        assert lage == ("ton" if ton else "nachgeruestet"), (name, lage)
+        s = spuren(clip)
+        assert "audio" in s, ("Clip ohne Tonspur", name)
+        assert (s["audio"]["sample_rate"], s["audio"]["channels"]) == ("44100", 2), \
+            ("Tonformat weicht von der Stille ab — der Zusammenschnitt mischte zwei", s)
+        clips.append(clip)
+    # Der stumme Clip VORN: genau die Lage, in der der Zusammenschnitt ganz
+    # ohne Ton herauskam.
+    liste = _os.path.join(heim, "liste.txt")
+    with open(liste, "w", encoding="utf-8") as f:
+        f.write(A.concat_liste(clips))
+    ziel = _os.path.join(heim, "memes.mp4")
+    r = _sp.run(A.zusammenschnitt_cmd(liste, ziel), capture_output=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-300:]
+    s = spuren(ziel)
+    assert "audio" in s, "Zusammenschnitt ohne Ton"
+    assert float(s["audio"]["duration"]) >= 0.9 * float(s["video"]["duration"]), \
+        ("Ton endet vor dem Bild", s)
+    ok("BH-3: Highlight-Clip traegt Ton — Bauer mappt ihn, sichern() vor dem Merken, "
+       "echt: tonloser Clip nachgeruestet, Zusammenschnitt mit Ton ueber die volle Laenge")
+
+
+def _test_v511_bh6_pausenbild_vortritt():
+    """BH-6: das Pausenbild legt die Bildgroesse des Senders nicht mehr nach
+    starren 20 s fest.
+
+    Wer zuerst beim Sender ankommt, bestimmt seine Groesse fuer die ganze
+    Sitzung (W130 gemessen: 1080x1920 lief als 720x1280 hinaus). Die harte
+    Freigabe nach 20 s war kuerzer als ein gescheiterter Zubringer-Anlauf
+    plus der zweite. Geprueft mit Attrappen-Uhr: 21 s und 44 s ohne Quelle —
+    Pausenbild weiter zurueck, eine Quelle nach 30 s kommt zuerst; nach der
+    Obergrenze laut freigegeben; nachweislich offline schon nach 20 s; die
+    Obergrenze liegt unter der Anlaufkarenz des Stillstands-Waechters."""
+    import logging as _lg
+    import os as _os
+    from nc import restream_stability as RS
+    from nc import sendebruecke as B
+
+    pmt = _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)])
+    uhr = [500.0]
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append(r.getMessage())
+    lgb = _lg.getLogger("nc.sendebruecke")
+    h = _H()
+    lgb.addHandler(h)
+    lese, schreib = _os.pipe()
+    _os.set_blocking(lese, False)
+    try:
+        def bruecke(name):
+            uhr[0] = t0          # jede Bruecke beginnt bei t0
+            W = B.Bruecke(schreib, [], None, None, name=name, uhr=lambda: uhr[0])
+            for wer in (B.FUELLER, B.QUELLE):
+                W.daten(wer, _w130_pat())
+                W.daten(wer, pmt)
+            return W
+        kf = _w130_pes(0x100, 3000, 0, rai=True)
+        t0 = uhr[0]
+        W = bruecke("#bh6")
+        assert W.start_warten_s == 20.0 and 40.0 <= W.start_warten_max_s
+        assert W.start_warten_max_s < RS.ReconnectPolicy().stall_grace_s, \
+            "Obergrenze ueber der Anlaufkarenz — der Sender meldete 'keine Fortschrittsdaten'"
+        for dt in (0, 21, 44):
+            uhr[0] = t0 + dt
+            assert not W.daten(B.FUELLER, kf), \
+                ("Pausenbild richtet den Sender nach %d s ein, die Quelle laeuft noch an" % dt)
+        assert not [z for z in zeilen if "#bh6" in z], zeilen
+        # Die Quelle nach 30 s — vorher hatte das Pausenbild hier schon gewonnen.
+        W2 = bruecke("#bh6b")
+        uhr[0] = t0 + 25
+        assert not W2.daten(B.FUELLER, kf)
+        uhr[0] = t0 + 30
+        W2._wuensche(B.QUELLE, "Test")
+        assert W2.daten(B.QUELLE, _w130_pes(0x100, 9000, 6000, rai=True)) \
+            and W2.aktiv == B.QUELLE, "die spaete Quelle kam nicht zuerst"
+        # Nach der Obergrenze: freigegeben, und es steht im Log.
+        uhr[0] = t0 + 46
+        assert W.daten(B.FUELLER, kf), "ohne Quelle bliebe der Sender ewig ohne Bild"
+        assert [z for z in zeilen if "#bh6" in z and "Pausenbild richtet den Sender ein" in z], \
+            ("Freigabe ohne Quellbild still", zeilen)
+        # Nachweislich offline: Warten bringt keine Groesse — nach 20 s frei.
+        W3 = bruecke("#bh6c")
+        W3._offline_seit = t0 + 5
+        uhr[0] = t0 + 19
+        assert not W3.daten(B.FUELLER, kf), "Mindestvortritt verloren"
+        uhr[0] = t0 + 21
+        assert W3.daten(B.FUELLER, kf), "offline: Pausenbild weiter zurueckgehalten"
+    finally:
+        lgb.removeHandler(h)
+        _os.close(lese)
+        _os.close(schreib)
+    ok("BH-6: Pausenbild wartet auf die Quelle bis zur Obergrenze (unter der "
+       "Stillstands-Karenz), offline nach 20 s, Freigabe ohne Quellbild laut")
+
+
+def _test_bh4_gueltiger_cookie_schlaegt_abgelaufenen():
+    """BH-4: ein abgelaufener Cookie schlug den gueltigen.
+
+    lade_jar() liest mit ignore_expires, und auswahl() rangierte nach
+    (Domain-Spezifitaet, Expiry) — die Domain VOR dem Ablauf. Eine
+    abgelaufene `www.tiktok.com sessionid` schlug damit die gueltige
+    `.tiktok.com sessionid`; load_dict() lieferte den toten Wert, der Bot
+    sendete ihn, TikTok antwortete 403 — und das Deck zeigte „sessionid
+    vorhanden", weil es den NAMEN zaehlte. Der Import (_dedupe_cookie_text)
+    nahm dieselbe Regel und loeschte den gueltigen Login aus der Datei.
+
+    Gesichert: gueltig vor abgelaufen beim Senden UND beim Import; ein
+    Sitzungs-Cookie (Ablauf 0) gilt nicht als abgelaufen; sind alle
+    Varianten abgelaufen, geht die beste trotzdem hinaus (bisheriges
+    Verhalten, kein stiller Gast-Abruf) — aber das Deck meldet die tote
+    Anmeldung als kritisch und faerbt den Namen rot."""
+    import os as _os
+    import time as _time
+    from nc import cookieholen as CH
+    from nc import cookies as CK
+
+    jetzt = int(_time.time())
+    zuk, verg = jetzt + 30 * 86400, jetzt - 30 * 86400
+    krit = ("sessionid_ss", "sessionid", "msToken", "ttwid")
+    d = _ph.verzeichnis()
+
+    def _datei(name, zeilen):
+        pfad = _os.path.join(d, name)
+        with open(pfad, "w", encoding="utf-8") as fh:
+            fh.write("# Netscape HTTP Cookie File\n"
+                     + "".join("\t".join(map(str, z)) + "\n" for z in zeilen))
+        return pfad
+
+    class _Still:
+        def __getattr__(self, n):
+            return lambda *a, **k: None
+
+    def _lade(pfad):
+        CK.configure(datei=pfad)
+        CK.CACHE.clear()
+        return CK.load_dict()
+
+    alt_konf, alt_krit = dict(CK._KONF), CK._KRITISCH
+    try:
+        CK.configure(log=_Still(), kritisch=krit, autorefresh_info=dict,
+                     autofetch_info=dict, reparieren=lambda: False)
+
+        # (1) Der gemeldete Fall, plus die beiden Raender der Regel.
+        f = _datei("bh4.txt", [
+            # Abgelaufen und spezifischer gegen gueltig und Wildcard.
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "TOT_GENAU"),
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid", "LEBT_WILD"),
+            # Sitzung (Ablauf 0) gegen abgelaufen und spezifischer: Sitzung ist
+            # NICHT abgelaufen — wer `expires < jetzt` ohne Null-Pruefung
+            # rechnet, wirft hier jeden Header-Import weg.
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid_ss", "SS_TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", 0, "sessionid_ss", "SS_SITZUNG"),
+            # Alle Varianten abgelaufen: die beste geht trotzdem hinaus.
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg - 10, "msToken", "MS_GENAU_TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", verg, "msToken", "MS_WILD_TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", 0, "ttwid", "TT")])
+        gesendet = _lade(f)
+        assert gesendet["sessionid"] == "LEBT_WILD", \
+            ("der abgelaufene Wert schlaegt den gueltigen", gesendet)
+        assert gesendet["sessionid_ss"] == "SS_SITZUNG", \
+            ("ein Sitzungs-Cookie (Ablauf 0) zaehlt als abgelaufen", gesendet)
+        assert gesendet.get("msToken") == "MS_GENAU_TOT", \
+            ("alle Varianten abgelaufen: der Name fehlt oder die Regel darunter "
+             "hat sich geaendert", gesendet)
+        h = CK.gesundheit()
+        assert h["critical_expired"] == ["msToken"], h["critical_expired"]
+        assert h["status"] == "warning" and "Anmeldung abgelaufen" not in h["headline"], h
+
+        # (2) Die Anmeldung hat KEINE gueltige Variante mehr: das Deck sagt es
+        # laut (kritisch), statt „1 Cookie(s) abgelaufen" wie bei einem
+        # Analyse-Token — und der Name steht in critical_expired.
+        f2 = _datei("bh4_tot.txt", [
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", verg - 5, "sessionid", "TOTER"),
+            (".tiktok.com", "TRUE", "/", "TRUE", 0, "ttwid", "TT")])
+        assert _lade(f2)["sessionid"] == "TOT"
+        h2 = CK.gesundheit()
+        assert h2["status"] == "critical" and "Anmeldung abgelaufen" in h2["headline"] \
+            and "sessionid" in h2["headline"], h2
+        assert h2["critical_expired"] == ["sessionid"], h2["critical_expired"]
+        assert CK._cookie_alarm_level(h2)[0] == "crit"
+        # Eine gueltige zweite Anmeldung (sessionid_ss) haelt den Login am
+        # Leben — dann kein Alarm, nur die Warnung ueber den toten Eintrag.
+        _datei("bh4_tot.txt", [
+            ("www.tiktok.com", "FALSE", "/", "TRUE", verg, "sessionid", "TOT"),
+            (".tiktok.com", "TRUE", "/", "TRUE", zuk, "sessionid_ss", "SS")])
+        CK.CACHE.clear()
+        h3 = CK.gesundheit()
+        assert h3["status"] == "warning" and h3["critical_expired"] == ["sessionid"], h3
+
+        # (3) Der Import: _dedupe_cookie_text() loeschte den gueltigen Login
+        # physisch aus der Datei. Ueber uebernehmen(), den Weg von Deck und
+        # Telegram-Dokument, und danach load_dict().
+        roh = ("# Netscape HTTP Cookie File\n"
+               "www.tiktok.com\tFALSE\t/\tTRUE\t%d\tsessionid\tTOT_GENAU\n"
+               ".tiktok.com\tTRUE\t/\tTRUE\t%d\tsessionid\tLEBT_WILD\n"
+               ".tiktok.com\tTRUE\t/\tTRUE\t0\tttwid\tTT\n") % (verg, zuk)
+        text, weg = CK._dedupe_cookie_text(roh)
+        assert weg == 1 and "\tLEBT_WILD" in text and "TOT_GENAU" not in text, text
+        ziel = _os.path.join(d, "bh4_import.txt")
+        r = CH.uebernehmen(roh, ziel)
+        assert r["ok"], r
+        assert _lade(ziel)["sessionid"] == "LEBT_WILD", \
+            "der Import hat den gueltigen Login aus der Datei geloescht"
+        # Ohne gueltige Variante bleibt beim Import die beste abgelaufene —
+        # dieselbe Regel wie beim Senden, keine zweite Lesart.
+        text2, _ = CK._dedupe_cookie_text(roh.replace(str(zuk), str(verg - 5)))
+        assert "\tTOT_GENAU" in text2 and "LEBT_WILD" not in text2, text2
+    finally:
+        CK._KONF.clear()
+        CK._KONF.update(alt_konf)
+        CK._KRITISCH = alt_krit
+        CK.CACHE.clear()
+
+    # (4) Das Deck: ein kritischer Name ohne gueltige Variante steht unter
+    # „Vorhanden" nicht mehr gruen.
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    zeile = next(z for z in dash.splitlines()
+                 if z.lstrip().startswith("if(cp.length)") and "Vorhanden" in z)
+    assert "cx.includes(n)" in zeile and "pill off" in zeile \
+        and "T('abgelaufen')" in zeile, zeile
+    assert "cookHealth.critical_expired" in dash
+    ok("BH-4: ein gueltiger Cookie schlaegt beim Senden und beim Import jeden "
+       "abgelaufenen; eine tote Anmeldung meldet das Deck als kritisch")
+
+
+def _test_bh7_bh10_chat_eine_regel_eine_sperre():
+    """BH-7 und BH-10: der Sendebild-Chat.
+
+    BH-7: chat_eintraege() (Chromium-Kasten) verglich den Quell-Nutzer ohne,
+    _chat_block() (drawtext) MIT Gross-/Kleinschreibung — „Name" aus der
+    Datenbank gegen „name" aus dem Listener liess nur den gebrannten Kasten
+    leer. Begruessung und Rangaufstieg hingen mit origin=None im Ring: jeder
+    gefilterte Kasten liess sie weg, ein ungefilterter zeigte sie ueberall.
+    Twitch-/YouTube-Ereignisse fielen schon beim Einlass heraus, sobald ein
+    Restream lief.
+
+    BH-10: der Restream-Start duennte den Ring per Listen-Abzug, clear() und
+    extend() aus — ohne Sperre gegen den Chat-Arbeiter (eigener Thread):
+    was dazwischen ankam, war weg, und der Ring stand kurz leer."""
+    import ast as _ast
+    import threading as _thr
+    from nc import channels as C
+
+    alt = list(C.RESTREAM_CHAT)
+    C.RESTREAM_CHAT.clear()
+    try:
+        for src, who, origin, kanal in (("tiktok", "coco", "name", None),
+                                        ("tiktok", "fremd", "berta", None),
+                                        ("kick", "luna", None, None),
+                                        ("event", "", "name", "tiktok"),     # Begruessung
+                                        ("event", "", "berta", "tiktok"),
+                                        ("event", "", None, "twitch"),       # Twitch-Follow
+                                        ("event", "", None, None)):          # ohne Herkunft
+            C.RESTREAM_CHAT.append({"ts": 1.0, "src": src, "who": who or "x",
+                                    "text": "t_%s_%s_%s" % (src, origin, kanal),
+                                    "origin": origin, "kanal": kanal})
+        erwartet = ["t_tiktok_name_None", "t_kick_None_None", "t_event_name_tiktok",
+                    "t_event_None_twitch"]
+        # (1) Beide Renderer, dieselbe Auswahl — auch bei anderer Schreibweise.
+        for su in ("Name", "@NAME", "name"):
+            assert [e["text"] for e in C.chat_eintraege(anzahl=50, source_user=su)] == erwartet, su
+            block = C._chat_block(maxlines=50, width=200, source_user=su)
+            gebrannt = [z.split()[-1] for z in block.splitlines()]
+            assert gebrannt == erwartet, ("drawtext-Kasten weicht ab", su, gebrannt)
+        assert len(C.chat_eintraege(anzahl=50)) == 7, "ohne Quelle wird nichts gefiltert"
+        assert C.quelle_aktiv("name", {"Name"}) and C.quelle_aktiv("@Name", ["name"])
+        assert not C.quelle_aktiv(None, {"name"}) and not C.quelle_aktiv("", {""})
+
+        # (2) Ausduennen: nur die fremde Quelle und das herkunftslose Ereignis
+        # gehen, die Reihenfolge bleibt — und „Name" ist die laufende Quelle.
+        assert C.chat_ausduennen(["Name"]) == 3
+        assert [m["text"] for m in C.RESTREAM_CHAT] == erwartet
+        # „@" ist wahr, bereinigt aber leer: ohne den Riegel in
+        # chat_ausduennen() passte darauf KEINE TikTok-Zeile mehr, und der
+        # Ring verloere den Chat der laufenden Quelle. ("" allein faengt
+        # schon gehoert_in_kasten ab — die Probe ist daran entwischt.)
+        for leer in ("", "@", None):
+            assert C.chat_ausduennen([leer]) == 0 and len(C.RESTREAM_CHAT) == 4, \
+                ("eine leere Quelle hat den Ring ausgeduennt", leer)
+        assert C.letzte_zeit() == 1.0
+
+        # (3) Beide Veraenderer nehmen CHAT_SPERRE.
+        for name, fn in (("chat_ausduennen", lambda: C.chat_ausduennen(["name"])),
+                         ("chat_anhaengen", lambda: C.chat_anhaengen(
+                             {"ts": 2.0, "src": "kick", "who": "k", "text": "neu", "origin": None}))):
+            fertig = []
+            with C.CHAT_SPERRE:
+                t = _thr.Thread(target=lambda f=fertig, g=fn: f.append(g()))
+                t.start()
+                t.join(0.3)
+                assert not fertig, "%s veraendert den Ring an CHAT_SPERRE vorbei" % name
+            t.join(5)
+            assert fertig, name
+        assert C.letzte_zeit() == 2.0
+        C.RESTREAM_CHAT.clear()
+        assert C.letzte_zeit() == 0.0
+    finally:
+        C.RESTREAM_CHAT.clear()
+        C.RESTREAM_CHAT.extend(alt)
+
+    # (4) bot.py: keine Veraenderung am Ring vorbei, kein Ereignis ohne Herkunft.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    for n in _ast.walk(baum):
+        if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute) \
+                and isinstance(n.func.value, _ast.Name) and n.func.value.id == "_RESTREAM_CHAT":
+            assert n.func.attr not in ("append", "clear", "extend", "remove", "popleft"), \
+                ("Zeile %d: _RESTREAM_CHAT.%s an CHAT_SPERRE vorbei" % (n.lineno, n.func.attr))
+    push = next(n for n in baum.body
+                if isinstance(n, _ast.FunctionDef) and n.name == "_restream_chat_push")
+    for d in (x for x in _ast.walk(push) if isinstance(x, _ast.Dict)):
+        for k, v in zip(d.keys, d.values):
+            if isinstance(k, _ast.Constant) and k.value == "origin":
+                assert not (isinstance(v, _ast.Constant) and v.value is None), \
+                    "Zeile %d: Ereignis mit origin=None — es landet in keinem/jedem Kasten" % d.lineno
+    gerufen = {_ast.unparse(c.func) for c in _ast.walk(push) if isinstance(c, _ast.Call)}
+    assert "_nc_channels.quelle_aktiv" in gerufen, "der Einlass vergleicht mit eigener Regel"
+    assert "_nc_channels.chat_anhaengen" in gerufen
+    # Jedes Ereignis traegt seine Herkunft: TikTok-Nutzer (origin) oder eigener Kanal (kanal).
+    for c in _ast.walk(baum):
+        if isinstance(c, _ast.Call) and _ast.unparse(c.func) == "_restream_chat_push_async" \
+                and c.args and isinstance(c.args[0], _ast.Constant) and c.args[0].value == "event":
+            kws = {k.arg for k in c.keywords}
+            assert kws & {"origin", "kanal"}, \
+                "Zeile %d: Ereignis ohne origin/kanal — faellt bei laufendem Restream heraus" % c.lineno
+    start = next(f for k in baum.body if isinstance(k, _ast.ClassDef)
+                 and any(getattr(m, "name", "") == "_nebenlaeufer_abraeumen" for m in k.body)
+                 for f in k.body if isinstance(f, _ast.AsyncFunctionDef) and f.name == "start")
+    assert "_nc_channels.chat_ausduennen" in {_ast.unparse(c.func) for c in _ast.walk(start)
+                                              if isinstance(c, _ast.Call)}
+    ok("BH-7/BH-10: eine Kasten-Regel fuer beide Renderer und den Einlass, "
+       "Ereignisse mit Herkunft, Ring nur unter CHAT_SPERRE veraendert")
+
+
+def _test_bh8_bh9_bh11_restream_start():
+    """BH-8, BH-9, BH-11: Restream-Start und Avatar-Takt (statisch, im Syntaxbaum).
+
+    BH-8: startete die Sendebruecke nicht, stand im except nur _br.stop() —
+    und dann Status „live", Ping, Monitor, desired=1 und ok=True.
+    BH-11: der Discord-Ping nannte die globalen Ziele statt der dieses
+    Restreams (Overrides). BH-9: der Avatar-Writer schluckte jeden Fehler mit
+    `pass`, zweimal."""
+    import ast as _ast
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    klasse = next(k for k in baum.body if isinstance(k, _ast.ClassDef)
+                  and any(getattr(m, "name", "") == "_nebenlaeufer_abraeumen" for m in k.body))
+    start = next(f for f in klasse.body if isinstance(f, _ast.AsyncFunctionDef) and f.name == "start")
+
+    # BH-8: der Try um `to_thread(_br.start)` kehrt im Fehlerfall mit ok=False zurueck.
+    versuch = next(t for t in _ast.walk(start) if isinstance(t, _ast.Try)
+                   and "_br.start" in _ast.unparse(t.body))
+    h = versuch.handlers[0]
+    rufe = [_ast.unparse(c) for c in _ast.walk(h) if isinstance(c, _ast.Call)]
+    rueck = [r for r in _ast.walk(h) if isinstance(r, _ast.Return)]
+    assert rueck and "'ok': False" in _ast.unparse(rueck[-1]), \
+        "BH-8: Bruecken-Fehlstart kehrt nicht zurueck — es folgt Status live und ok=True"
+    for teil in ("_reap_proc(proc)", "self._bruecke_abraeumen(", "self._nebenlaeufer_abraeumen(",
+                 "self._set_status(rid, 'error'", "log.error("):
+        assert any(teil in r for r in rufe), ("BH-8: im Fehlerpfad fehlt", teil)
+    namen = [_ast.unparse(c.func) for c in _ast.walk(h) if isinstance(c, _ast.Call)]
+    assert namen.index("_reap_proc") < namen.index("self._bruecke_abraeumen"), \
+        "BH-8: erst den Sender, dann die Bruecke (W179)"
+
+    # BH-11: _plats aus den Zielen dieses Restreams.
+    zuw = next(a for a in _ast.walk(start) if isinstance(a, _ast.Assign)
+               and any(isinstance(t, _ast.Name) and t.id == "_plats" for t in a.targets))
+    quelle = _ast.unparse(zuw.value)
+    assert "active_targets" not in quelle and "_targets" in quelle, \
+        ("BH-11: der Ping nennt die globale Zielliste", quelle)
+
+    # BH-9: im Avatar-Writer kein stiller except mehr, Fehler ueber _loop_fehler.
+    feeder = next(f for f in baum.body if isinstance(f, _ast.FunctionDef)
+                  and f.name == "_restream_avatar_feeder_start")
+    writer = next(f for f in _ast.walk(feeder) if isinstance(f, _ast.FunctionDef) and f.name == "_writer")
+    melder = 0
+    for h in (x for x in _ast.walk(writer) if isinstance(x, _ast.ExceptHandler)):
+        assert not all(isinstance(s, _ast.Pass) for s in h.body), \
+            "BH-9: Zeile %d schluckt den Fehler wieder still" % h.lineno
+        if h.type is not None and _ast.unparse(h.type) == "Exception":
+            assert "_loop_fehler(f'avatar-fifo#{rid}'" in _ast.unparse(h), _ast.unparse(h)
+            melder += 1
+    assert melder == 2, "BH-9: Bild-Schreiben UND Schleife melden ueber _loop_fehler"
+    ok("BH-8/BH-9/BH-11: Bruecken-Fehlstart ist ein Fehlstart, Avatar-Fehler laut, "
+       "Ping nennt die Ziele dieses Restreams")
+
+
+def _test_bh12_deck_servertext_escaped():
+    """BH-12: Server-Text im Deck nur escaped, HTML nie per innerHTML geparst."""
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    a = dash.index("async function loadSendStatus(")
+    rumpf = dash[a:dash.index("\n}\n", a)]
+    assert "v.hint" in rumpf and rumpf.count("v.hint") == rumpf.count("esc(v.hint"), \
+        "BH-12: der Hinweis vom Server geht unescaped ins innerHTML"
+    a = dash.index("async function ops6Summary(")
+    rumpf = dash[a:dash.index("\n}\n", a)]
+    assert "DOMParser" in rumpf, "BH-12: Zusammenfassung nicht inert geparst"
+    import re as _re_bh12
+    assert not _re_bh12.search(r"\.innerHTML\s*=\s*d\.text", rumpf), \
+        "BH-12: d.text wird wieder per innerHTML geparst (ein <img onerror> liefe)"
+    ok("BH-12: Sende-Hinweis escaped, Zusammenfassung per DOMParser")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -41794,6 +42845,14 @@ def main():
     _test_v510_w208_eine_seite()
     _test_v511_w209_bereiche_je_nutzer()
     _test_v511_w210_motd_leitstand()
+    _test_v511_w211_chat_kasten_tls()
+    _test_v511_bh_sendebild_je_restream()
+    _test_v511_bh3_clip_tonspur()
+    _test_v511_bh6_pausenbild_vortritt()
+    _test_bh4_gueltiger_cookie_schlaegt_abgelaufenen()
+    _test_bh7_bh10_chat_eine_regel_eine_sperre()
+    _test_bh8_bh9_bh11_restream_start()
+    _test_bh12_deck_servertext_escaped()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

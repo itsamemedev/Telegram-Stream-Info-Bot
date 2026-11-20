@@ -11,6 +11,10 @@ eine halb geschriebene Datei sieht: `os.replace` ist auf demselben Dateisystem
 atomar, ein direktes `open(path, "w")` waere es nicht — ffmpeg koennte mitten
 im Schreiben lesen und fuer einen Frame Muell zeigen.
 
+Seit BH-1/BH-2 (Bughunt v5.11) steht hier auch, welches Sendebild-Feld
+kanalweit ist und welches je Restream (`ziele`, `*_fuer`, `overlay_url`) —
+die Begruendung je Feld steht am Abschnitt unten.
+
 `overlay_src_ok` liest, ob Events von einer Quelle (kick|tiktok) ins Overlay
 duerfen. Default ist 'kick': beim Restream sitzt das Publikum auf Kick, ein
 TikTok-Gift kommt vom FREMDEN Publikum des Quell-Streamers und wuerde im
@@ -18,8 +22,10 @@ Sendebild wie ein eigener Zufluss aussehen.
 """
 
 import os
+import urllib.parse as _urlparse
 
 from nc import schriftzeichen as _schriftzeichen
+from nc import textutil as _textutil
 
 # v4.2-W22: aus .env, einmal beim Start gesetzt — siehe configure(). Als
 # Modul-Konstante statt Parameter, weil overlay_src_ok() an vielen Stellen
@@ -91,3 +97,134 @@ def overlay_src_ok(src):
     """True wenn Events von 'src' (kick|tiktok) ins Overlay dürfen. Default 'kick' —
        beim Restream sitzt das Publikum auf Kick, TikTok-Gifts sind das fremde Publikum."""
     return _OVERLAY_GIFT_SOURCE == "both" or _OVERLAY_GIFT_SOURCE == src
+
+
+# ---- BH-1/BH-2 (Bughunt v5.11): was gehoert in WELCHES Sendebild ----------
+#
+# Bis hierher fuellte der Overlay-Schreiber den Wurzelordner aus dem zuletzt
+# GESTARTETEN Restream (_restream_active()) und kopierte Titel, Reaktion, Ziel,
+# Follower, Alert, Caption und Brand von dort in jeden weiteren rid-Ordner;
+# die HTML-Seite kannte gar keinen Restream. Mit zwei Restreams brannte A
+# AZRAELs Reaktion auf B, Bs Follower-Zahl und Bs TikTok-Gifts ins Bild.
+#
+# Die Regel je Feld — kanalweit heisst: EINE Quelle fuer alle Sendebilder:
+#
+#   title    kanalweit  der Sendername (OVERLAY_TITLE / Deck): EIN Konfigwert,
+#                       es gibt keinen je Restream. Quelle und Label des
+#                       Restreams stehen in `source`.
+#   goal     kanalweit  das EINE Spendenziel (nc/spendenziel.py, seit W173
+#                       dasselbe fuer Website, Sendebild und /spenden).
+#   caption  kanalweit  Legende der Chat-Quellen — Konfiguration, kein Stream.
+#   brand    kanalweit  Adressen der EIGENEN Kanaele (Kick, Discord).
+#   source   je rid     @Quellnutzer · Label.
+#   react    je rid     react() stempelt source=<Quellnutzer>. Eine Reaktion
+#                       ohne Quelle gilt allen; AZRAELs Zeile im EIGENEN
+#                       Kick-Chat (last_spoken) bleibt kanalweiter Rueckfall.
+#   follow   je rid     die ZAHL ist die des Quellnutzers (profile_snapshots);
+#                       der Name des letzten Followers ist kanalweit
+#                       (overlay_events traegt keine Herkunft).
+#   alert    je rid     Events der eigenen Kanaele (kick/twitch/youtube) gelten
+#                       allen; ein TikTok-Gift/-Follow kommt aus dem Raum EINES
+#                       Quellnutzers und traegt seit BH-1 origin=.
+#   chat     je rid     seit V37-P6.
+
+
+def gehoert_zu(herkunft, nutzer) -> bool:
+    """Gehoert etwas mit dieser Herkunft ins Sendebild von `nutzer`?
+
+    nutzer=None heisst „keine Zuordnung verlangt" — die OBS-Seite ohne rid,
+    der Weg wie bisher. Leere Herkunft heisst kanalweit: gilt fuer alle.
+    Verglichen wird der bereinigte Handle ohne Gross/klein, wie beim
+    Chat-Filter (nc.channels.chat_eintraege) — sonst faellt „@Anna" gegen
+    „anna" durch und A sieht seine eigene Reaktion nicht."""
+    if nutzer is None:
+        return True
+    h = _textutil.clean_username(str(herkunft or "")).lower()
+    return (not h) or h == _textutil.clean_username(str(nutzer or "")).lower()
+
+
+def reaktion_fuer(reaktion, gesprochen, nutzer, frisch_s, wand, mono):
+    """AZRAELs Zeile fuer das Sendebild von `nutzer` (eine Zeile, max. 140), sonst "".
+
+    V37-B99: Primaerquelle ist die Reaktion (nc.azraelstate.REACTION, setzt
+    react() selbst, Wanduhr). KickModerator.last_spoken wird NUR gesetzt, wenn
+    der Bot in den Kick-Chat schreibt — als einzige Quelle tauchten AZRAELs
+    Live-Reaktionen im Sendebild nie auf. Es bleibt der Rueckfall (monotonic).
+
+    BH-1: eine Reaktion auf einen ANDEREN Quellnutzer zaehlt hier nicht als
+    vorhanden — dann greift der Rueckfall, wie ohne Reaktion."""
+    r = reaktion or {}
+    txt, alter = "", 1e9
+    if r.get("text") and gehoert_zu(r.get("source"), nutzer):
+        txt = ov_oneline(r.get("text") or "", 140)
+        alter = wand - (r.get("ts") or 0.0)
+    if not txt:
+        ls = gesprochen or {}
+        txt = ov_oneline(ls.get("text") or "", 140)
+        alter = mono - (ls.get("ts") or 0.0)
+    return txt if (txt and alter <= frisch_s) else ""
+
+
+def alert_fuer(ereignis, nutzer, mono, halt_s=8.0):
+    """Transienter Alert (letztes Event der letzten `halt_s` s) fuers Sendebild von `nutzer`."""
+    ev = ereignis or {}
+    zeile = ""
+    if ev.get("name") and (mono - (ev.get("ts") or 0.0)) <= halt_s \
+            and gehoert_zu(ev.get("origin"), nutzer):
+        if ev.get("kind") == "follow":
+            zeile = "▲▲ FOLLOWER  " + ov_oneline(ev["name"], 30)
+        else:
+            amt = ev.get("amount") or ""
+            extra = ((": " + str(amt)) if amt
+                     else ((" · " + str(ev.get("message"))) if ev.get("message") else ""))
+            zeile = "◆ " + ov_oneline(ev["name"], 30) + extra
+    return zeile
+
+
+def follow_zeile(zahl, name):
+    """Follower-Zeile: Zahl des Quellnutzers und/oder Name des letzten Followers."""
+    zeile = ""
+    if zahl and name:
+        zeile = f"▲ {_textutil.fmt_number(zahl)}  · +{ov_oneline(name, 22)}"
+    elif zahl:
+        zeile = f"▲ {_textutil.fmt_number(zahl)} FOLLOWER"
+    elif name:
+        zeile = "▲ FOLLOWER  " + ov_oneline(name, 32)
+    return zeile
+
+
+def quelle_zeile(info, laeuft):
+    """„└ @nutzer · Label" — nur solange der Restream wirklich sendet."""
+    info = info or {}
+    zeile = ""
+    if laeuft and info.get("user"):
+        zeile = "└ @" + str(info["user"])
+        if info.get("label"):
+            zeile += "  · " + str(info["label"])
+    return zeile
+
+
+def ziele(aktiv_alle, primaer, wurzel):
+    """[(rid, info)] — jedes Sendebild, das in diesem Takt beschrieben wird.
+
+    Jeder Registry-Eintrag mit seinem eingefrorenen Ordner (V37-P6). Gehoert
+    der Wurzelordner keinem davon, kommt er mit rid=None und dem primaeren
+    Restream dazu — der Weg der Aufrufer ohne rid, exakt wie bisher."""
+    aus = [(rid, dict(info or {})) for rid, info in list((aktiv_alle or {}).items())]
+    if not any(i.get("ovdir") == wurzel for _rid, i in aus):
+        aus.insert(0, (None, dict(primaer or {})))
+    return aus
+
+
+def overlay_url(basis, rid):
+    """BH-2: die Overlay-Seite fuer EINEN Restream — `rid=<rid>` an `basis`.
+
+    Eine vorhandene Query bleibt Zeichen fuer Zeichen stehen (kein
+    parse_qsl/urlencode, das kodierte sie um), ein altes rid= wird ersetzt,
+    ein Fragment bleibt hinten. rid=None laesst die Adresse unveraendert."""
+    if rid is None:
+        return basis
+    teile = _urlparse.urlsplit(basis)
+    stuecke = [s for s in teile.query.split("&") if s and s.split("=", 1)[0] != "rid"]
+    stuecke.append("rid=" + _urlparse.quote(str(rid), safe=""))
+    return _urlparse.urlunsplit(teile._replace(query="&".join(stuecke)))

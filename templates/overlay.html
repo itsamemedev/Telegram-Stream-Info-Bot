@@ -49,7 +49,9 @@
   @keyframes livePulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
   #title .tcol{display:flex;flex-direction:column;gap:5px;min-width:0}
   #title .tname{font-family:var(--display);font-weight:900;font-size:26px;letter-spacing:.18em;color:var(--neon);text-shadow:0 0 20px color-mix(in srgb,var(--neon) 55%,transparent);line-height:1.14}
-  #title .tsub{font-size:10px;letter-spacing:.42em;text-transform:uppercase;color:var(--dim)}
+  #title .tsub{font-size:10px;letter-spacing:.42em;text-transform:uppercase;color:var(--dim);
+    /* BH-2: traegt mit ?rid= Quelle und Label — ein langes Label darf den Kasten nicht quer durchs Bild ziehen */
+    max-width:620px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #title .scan{position:absolute;left:0;right:0;bottom:-1px;height:1px;background:linear-gradient(90deg,transparent,var(--neon),transparent);opacity:.6;animation:scanX 3.4s linear infinite}
   @keyframes scanX{0%{transform:translateX(-40%);opacity:0}30%{opacity:.7}100%{transform:translateX(40%);opacity:0}}
 
@@ -267,7 +269,7 @@ html.portrait #alert .amsg{font-size:22px}
     <span class="livedot"></span>
     <div class="tcol">
       <span class="tname" id="t_name">NIGHTCRAWLER</span>
-      <span class="tsub">live · surveillance grid</span>
+      <span class="tsub" id="t_sub">live · surveillance grid</span>
     </div>
     <span class="scan"></span>
   </div>
@@ -449,6 +451,11 @@ function orbDraw(ts){
 requestAnimationFrame(orbDraw);
 
 /* ============ State-Polling ============ */
+/* BH-2: der Bot oeffnet diese Seite JE RESTREAM mit ?rid=<rid> (bot._htmlov_url).
+   Ohne den Parameter sah jeder Tab denselben Zustand — AZRAELs Reaktion auf
+   Quelle B stand im Sendebild von A. Ohne rid (OBS) bleibt alles wie bisher. */
+const _RID=(new URLSearchParams(location.search)).get('rid')||'';
+const _STATE_URL='/api/overlay/state'+(_RID?('?rid='+encodeURIComponent(_RID)):'');
 let _seenFollower=null, _seenDonationTs=null, _initDone=false, _lastLine='', _bubbleTimer=null, _alertQueue=[], _alertBusy=false, _azLast='';
 
 function fmtAmount(a){ if(a==null||a==='') return ''; const s=String(a); return /[€$£]/.test(s)?s:(s+(/^\d+([.,]\d+)?$/.test(s)?' €':'')); }
@@ -519,7 +526,7 @@ function playAudio(url, vol){
 
 async function poll(){
   let d=null;
-  try{ const r=await fetch('/api/overlay/state',{cache:'no-store'}); d=await r.json(); }
+  try{ const r=await fetch(_STATE_URL,{cache:'no-store'}); d=await r.json(); }
   catch(e){ $('#offline').style.display='block'; setTimeout(poll,3000); return; }
   $('#offline').style.display='none';
   if(!d||!d.ok){ setTimeout(poll,3000); return; }
@@ -527,6 +534,10 @@ async function poll(){
 
   // Title
   if(d.title){ $('#t_name').textContent=d.title; }
+  /* BH-2: die Quelle DIESES Restreams (nur mit ?rid=) — wie die Quellzeile
+     im drawtext-Sendebild. Der Sendername darueber ist kanalweit. */
+  const q=d.quelle;
+  if(q&&q.user){ $('#t_sub').textContent='live · @'+q.user+(q.label?(' · '+q.label):''); }
 
   // Goal / Donations
   const goal=d.goal||{};
