@@ -41761,7 +41761,9 @@ def _test_v511_bh_sendebild_je_restream():
     ns_p = {"_OV_PLATFORMS": ("kick", "tiktok"), "is_revenue_platform": lambda p: p == "kick",
             "db_conn": _db, "log": _lg.getLogger("t"), "_time_mod": _t,
             "datetime": __import__("datetime").datetime,
-            "timezone": __import__("datetime").timezone}
+            "timezone": __import__("datetime").timezone,
+            # GELD-3: _overlay_push meldet einen verlorenen INSERT ueber die Drossel
+            "_nc_meldetakt": __import__("nc.meldetakt", fromlist=["x"])}
     _lade(("_overlay_push",), ns_p)
     ns_p["_overlay_push"]("gift", "geber", 5, "Rose", platform="tiktok", origin="anna")
     assert ns_p["_RESTREAM_LAST_EVENT"]["origin"] == "anna", "Herkunft des Gifts verloren"
