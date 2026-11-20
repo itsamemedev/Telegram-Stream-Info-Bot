@@ -456,7 +456,7 @@ requestAnimationFrame(orbDraw);
    Quelle B stand im Sendebild von A. Ohne rid (OBS) bleibt alles wie bisher. */
 const _RID=(new URLSearchParams(location.search)).get('rid')||'';
 const _STATE_URL='/api/overlay/state'+(_RID?('?rid='+encodeURIComponent(_RID)):'');
-let _seenFollower=null, _seenDonationTs=null, _initDone=false, _lastLine='', _bubbleTimer=null, _alertQueue=[], _alertBusy=false, _azLast='';
+let _seenFollower=null, _seenDonationTs=null, _seenTest=null, _initDone=false, _lastLine='', _bubbleTimer=null, _alertQueue=[], _alertBusy=false, _azLast='';
 
 function fmtAmount(a){ if(a==null||a==='') return ''; const s=String(a); return /[€$£]/.test(s)?s:(s+(/^\d+([.,]\d+)?$/.test(s)?' €':'')); }
 
@@ -632,6 +632,12 @@ async function poll(){
       const top=dons[0];
       queueAlert('donation', top.name, (fmtAmount(top.amount)? fmtAmount(top.amount)+(top.message? ' · '+top.message:'') : top.message||''), top.platform);
     }
+  }
+  /* GELD-1: Test-Ereignis aus dem Deck — wird nur gezeigt, steht in keiner Summe */
+  const te=d.test;
+  if(te && te.id!==_seenTest){
+    if(_initDone) queueAlert(te.kind, te.name, te.kind==='donation' ? (fmtAmount(te.amount)||'')+(te.message? ' · '+te.message:'') : '', te.platform);
+    _seenTest=te.id;
   }
   if(lf&&lf.name) _seenFollower=lf.name+lf.ts;
   _seenDonationTs=topDonTs;

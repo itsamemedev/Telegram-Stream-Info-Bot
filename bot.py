@@ -21600,14 +21600,20 @@ REVENUE_PLATFORMS = _nc_revenue.PLATFORMS
 is_revenue_platform = _nc_revenue.is_revenue_platform
 
 
-def _overlay_push(kind, name, amount=None, message=None, platform="kick", origin=None):
+def _overlay_push(kind, name, amount=None, message=None, platform="kick", origin=None,
+                  test=False):
     """Follower-/Donation-Event ins Overlay.
        V37-OVMP: platform sagt, WOHER das Event kam (kick|twitch|youtube|tiktok)
        — das Overlay zeigt Badges und rechnet Summen pro Plattform. Default
        'kick' hält alte Aufrufer kompatibel.
        BH-1: origin = der TikTok-Quellnutzer, in dessen Raum es geschah. Ohne
        ihn zeigte jeder parallele Restream das Gift aus fremdem Raum als Alert;
-       leer = eigener Kanal, gilt fuer alle Sendebilder (nc.overlaytext.alert_fuer)."""
+       leer = eigener Kanal, gilt fuer alle Sendebilder (nc.overlaytext.alert_fuer).
+       GELD-1: test=True zeigt das Ereignis nur (Alarm im Sendebild) und
+       speichert es NIE. Der Deck-Knopf „Test-Donation" schrieb bis hier eine
+       echte Kick-Spende über 5 € nach overlay_events — erfundene Einnahme in
+       Spendenziel, /spenden, Website, Overlay-Bilanz und ledger.crosscheck,
+       dieselbe Klasse wie B120."""
     platform = (platform or "kick").strip().lower()
     if platform not in _OV_PLATFORMS:
         platform = "kick"
@@ -21620,15 +21626,35 @@ def _overlay_push(kind, name, amount=None, message=None, platform="kick", origin
                   platform, name)
         return
     try:
-        with db_conn() as conn:
-            conn.execute("INSERT INTO overlay_events (ts, kind, name, amount, message, platform) "
-                         "VALUES (?,?,?,?,?,?)",
-                         (datetime.now(timezone.utc).isoformat(), kind, (name or "?")[:120],
-                          (str(amount)[:40] if amount is not None else None),
-                          (message or "")[:500], platform))
-            conn.commit()
-    except Exception:
-        pass
+        if not test:
+            with db_conn() as conn:
+                conn.execute("INSERT INTO overlay_events (ts, kind, name, amount, message, platform) "
+                             "VALUES (?,?,?,?,?,?)",
+                             (datetime.now(timezone.utc).isoformat(), kind, (name or "?")[:120],
+                              (str(amount)[:40] if amount is not None else None),
+                              (message or "")[:500], platform))
+                conn.commit()
+            _nc_meldetakt.zuruecksetzen("overlay-push")
+    except Exception as e:
+        # GELD-3: hier stand `pass`. Bei gesperrter Datenbank (Alltag bei
+        # laufendem Recorder) war eine echte Spende damit dauerhaft weg — das
+        # Overlay zeigte sie einmal, in keiner Summe stand sie je.
+        if kind == "donation":
+            # Jede einzeln, ungedrosselt: eine gedrosselte Zeile verschwiege
+            # genau die Angaben, mit denen sie sich nachtragen laesst. Eine
+            # Flut ist das nicht — echte Spenden kommen nicht im Sekundentakt.
+            log.error("Spende NICHT gespeichert (%s: %s) — Plattform %s, Name %r, "
+                      "Betrag %r, Nachricht %r. Sie fehlt in Spendenziel und "
+                      "Spenden-Panel und ist von Hand nachzutragen.",
+                      type(e).__name__, e, platform, (name or "?")[:120], amount,
+                      (message or "")[:80])
+        else:
+            laut, unterdr = _nc_meldetakt.melden("overlay-push", type(e).__name__,
+                                                 _time_mod.monotonic())
+            if laut:
+                log.error("Overlay-Ereignis (%s, %s) nicht gespeichert: %s: %s — es "
+                          "fehlt im Verlauf des Overlays.%s", kind, platform,
+                          type(e).__name__, e, _nc_meldetakt.zusatz(unterdr))
     globals()["_RESTREAM_LAST_EVENT"] = {
         "ts": _time_mod.monotonic(), "kind": kind, "name": (name or "?"),
         "amount": (str(amount) if amount is not None else ""),

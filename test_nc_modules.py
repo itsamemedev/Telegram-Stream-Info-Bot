@@ -1581,9 +1581,16 @@ def _test_w20_overlay_audio_und_geld():
         assert cl.post("/api/overlay/event", json={"kind": "quatsch"}).status_code == 400
         gesehen = []
         A.PUSH["fn"] = lambda *a, **k: gesehen.append((a, k))
+        # VERTRAG KORRIGIERT (GELD-1, nicht nur der Anker): hier stand, dass
+        # eine Spende OHNE Plattform als Kick gebucht wird — genau das war der
+        # Fehler (Test-Knopf des Decks = 5 € erfundene Einnahme).
         assert cl.post("/api/overlay/event",
-                       json={"kind": "donation", "name": "x"}).status_code == 200
+                       json={"kind": "donation", "name": "x"}).status_code == 400
+        assert not gesehen, "eine Spende ohne Plattform erreichte den Haken"
+        assert cl.post("/api/overlay/event", json={"kind": "donation", "name": "x",
+                                                   "platform": "kick"}).status_code == 200
         assert gesehen and gesehen[0][1]["platform"] == "kick", gesehen
+        assert gesehen[0][1]["test"] is False, gesehen
     A.PUSH["fn"] = None
     A.OVERLAY_SESSION["start"] = None
     A.OVERLAY.clear()
@@ -43627,6 +43634,359 @@ def _test_v511_rst5_deckel_zaehlt_anlauf_und_backoff():
     ok("RST-5: Deckel zaehlt _procs, Anlauf und Backoff — Scheduler und start(), Reconnect einmal")
 
 
+def _test_rst2_durchreicher_ganze_gruppe():
+    """RST-2: Bruecke._beende schickte SIGTERM nur an den Durchreicher und
+    wartete 3 s — dessen eigener Handler wartet selbst 3 s auf den Wandler,
+    verlor das Rennen also immer und bekam SIGKILL, bevor er Wandler und
+    Zieher beendete. Der Wandler hing in write() (die Bruecke liest nach dem
+    Halt nicht mehr, SIGTERM wirkt dort nicht), beide Kinder hingen an PID 1,
+    hielten die geerbte stderr-Leitung, und der stderr-Leser bekam nie EOF.
+    Je Stopp im Durchreicher-Modus blieben yt-dlp, ffmpeg, ein Thread und eine
+    TikTok-Verbindung liegen. Hier mit ECHTEN Prozessen: dem echten
+    nc/durchreicher.py, einem Zieher, der SIGTERM ueberhoert, und einem
+    Wandler, der wie ffmpeg auf SIGTERM nur ein Flag setzt."""
+    import signal as _sig
+    import subprocess as _sp
+    import sys as _sys
+    import time as _t
+    from nc import sendebruecke as B
+
+    heim = _ph.verzeichnis("nc-pruef-rst2-")
+    marke = os.path.basename(heim).encode()      # steht in jeder Befehlszeile
+
+    def _skript(name, text):
+        pfad = os.path.join(heim, name)
+        with open(pfad, "w", encoding="utf-8") as f:
+            f.write(text)
+        return pfad
+
+    zieher = _skript("zieher.py", (
+        "import signal, sys\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "while True:\n"
+        "    sys.stdout.buffer.write(b'\\0' * 18800)\n"
+        "    sys.stdout.flush()\n"))
+    wandler = _skript("wandler.py", (
+        "import signal, sys\n"
+        "halt = []\n"
+        "signal.signal(signal.SIGTERM, lambda *_: halt.append(1))\n"
+        "sys.stderr.write('wandler laeuft\\n'); sys.stderr.flush()\n"
+        "while not halt:\n"
+        "    d = sys.stdin.buffer.read(65536)\n"
+        "    if not d:\n"
+        "        break\n"
+        "    sys.stdout.buffer.write(d)\n"
+        "    sys.stdout.flush()\n"))
+    attrappe = _skript("durchreicher_attrappe.py", (
+        "import sys\n"
+        "sys.path.insert(0, %r)\n"
+        "from nc import durchreicher as D\n"
+        "D.werkzeuge = lambda which=None: [('yt-dlp', '/bin/true')]\n"
+        "D.zieher_cmd = lambda name, exe, nutzer, cookies=None: [sys.executable, %r]\n"
+        "D.zieher_umgebung = lambda env=None: None\n"
+        "sys.exit(D.main(sys.argv[1:]))\n" % (os.path.abspath("."), zieher)))
+    fueller = _skript("fueller.py", "import time\nwhile True:\n    time.sleep(1)\n")
+    zub_cmd = [_sys.executable, attrappe, "anna", "-", "--", _sys.executable, wandler]
+
+    def _lebende(name=b""):
+        """Prozesse dieses Laufs, die noch LEBEN (ein Zombie haelt keine
+        Leitung und keine Verbindung mehr — und PID 1 erntet hier nicht)."""
+        rest = []
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open("/proc/%s/cmdline" % pid, "rb") as f:
+                    cmd = f.read()
+                with open("/proc/%s/stat" % pid, encoding="utf-8") as f:
+                    zustand = f.read().rsplit(")", 1)[1].split()[0]
+            except OSError:
+                continue
+            if marke in cmd and name in cmd and zustand != "Z":
+                rest.append((int(pid), cmd.replace(b"\0", b" ")[-80:]))
+        return rest
+
+    def _warte(bedingung, frist):
+        ende = _t.monotonic() + frist
+        while _t.monotonic() < ende:
+            if bedingung():
+                return True
+            _t.sleep(0.05)
+        return bedingung()
+
+    lese, schreib = os.pipe()
+    alt_frist = B.Bruecke.BEENDEN_FRIST_S if hasattr(B.Bruecke, "BEENDEN_FRIST_S") else None
+    try:
+        B.Bruecke.BEENDEN_FRIST_S = 1.0
+        br = B.Bruecke(schreib, [_sys.executable, fueller], lambda u, t, n: list(zub_cmd),
+                       lambda: (None, "offline"), erste_url="durchreich://tiktok/anna",
+                       name="#rst2", luecke_s=60.0, anlauf_s=60.0)
+        br.start()
+        assert _warte(lambda: _lebende(b"wandler.py") and _lebende(b"zieher.py"), 10), \
+            "Durchreicher-Attrappe startet ihre Kinder nicht: %r" % _lebende()
+        _t.sleep(0.5)                              # Daten fliessen, Leitung laeuft voll
+        zub = br._zub
+        leser = br._leser.get(id(zub), ())
+        assert zub is not None and len(leser) == 2, (zub, leser)
+        t0 = _t.monotonic()
+        br.stop()
+        dauer = _t.monotonic() - t0
+        _warte(lambda: not _lebende(), 2.0)
+        assert not _lebende(), "Waisen nach stop() (yt-dlp/ffmpeg haengen an PID 1): %r" % _lebende()
+        assert not any(t.is_alive() for t in leser), \
+            "der stderr-Leser der Bruecke wartet weiter auf EOF"
+        assert zub.stdout.closed and zub.stderr.closed, "Leitungen des Zubringers bleiben offen"
+        assert dauer < 6.0, "stop() brauchte %.1f s" % dauer
+
+        # (2) Der Kopf stirbt allein (Absturz, OOM): seine Kinder stehen dann
+        # ohne ihn da. Die Wache (_nach_ende) raeumt diesen Rest der Gruppe ab.
+        br2 = B.Bruecke(None, [], None, None, name="#rst2b")
+        p = br2._oeffne(list(zub_cmd))
+        assert B.Bruecke._gruppe(p) == p.pid, "der Zubringer fuehrt keine eigene Prozessgruppe"
+        assert _warte(lambda: _lebende(b"wandler.py") and _lebende(b"zieher.py"), 10)
+        os.kill(p.pid, _sig.SIGKILL)
+        p.wait(timeout=5)
+        _t.sleep(0.2)
+        assert _lebende(b"wandler.py"), "Vorbedingung: ohne Kopf leben die Kinder weiter"
+        br2._nach_ende(p)
+        _warte(lambda: not _lebende(), 2.0)
+        assert not _lebende(), "Rest der Gruppe eines toten Zubringers bleibt stehen: %r" % _lebende()
+        p.stdout.close()
+        p.stderr.close()
+
+        # (3) Ein Prozess, den NICHT die Bruecke gestartet hat, bekommt nie ein
+        # Gruppensignal — seine Gruppe kann die des Bots sein.
+        fremd = _sp.Popen([_sys.executable, "-c", "pass"])
+        fremd.wait()
+        assert B.Bruecke._gruppe(fremd) is None
+    finally:
+        if alt_frist is not None:
+            B.Bruecke.BEENDEN_FRIST_S = alt_frist
+        for pid, _cmd in _lebende():               # nach einer Mutationsprobe
+            try:
+                os.kill(pid, _sig.SIGKILL)
+            except OSError:
+                pass
+        for fd in (lese, schreib):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    ok("RST-2: Stopp im Durchreicher-Modus beendet die ganze Prozessgruppe — keine Waisen, Leser enden")
+
+
+_GELD_PUSH = {}
+
+
+class _GeldLog:
+    def __init__(self):
+        self.zeilen = []
+
+    def _merke(self, stufe):
+        def _f(*a, **_k):
+            self.zeilen.append((stufe, a[0] % a[1:] if len(a) > 1 else str(a[0])))
+        return _f
+
+    def __getattr__(self, name):
+        if name in ("debug", "info", "warning", "error", "exception", "critical"):
+            return self._merke(name)
+        raise AttributeError(name)
+
+    def stufe(self, s):
+        return [z for st, z in self.zeilen if st == s]
+
+
+def _geld_overlay_push(lg):
+    """Das ECHTE _overlay_push aus bot.py, im eigenen Namensraum ausgefuehrt."""
+    import ast as _ast
+    import time as _time
+    from datetime import datetime as _dt, timezone as _tz
+    from nc import dbwrap as W
+    from nc import meldetakt as MT
+    from nc import revenue as R
+    if "fn" not in _GELD_PUSH:
+        baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+        _GELD_PUSH["fn"] = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+                                and n.name == "_overlay_push")
+    ns = {"_OV_PLATFORMS": R.OV_PLATFORMS, "is_revenue_platform": R.is_revenue_platform,
+          "log": lg, "db_conn": W.db_conn, "datetime": _dt, "timezone": _tz,
+          "_nc_meldetakt": MT, "_time_mod": _time}
+    exec(compile(_ast.Module(body=[_GELD_PUSH["fn"]], type_ignores=[]), "bot.py", "exec"), ns)
+    return ns["_overlay_push"], ns
+
+
+def _geld_db(name):
+    from nc import dbwrap as W
+    db = os.path.join(_ph.verzeichnis("nc-pruef-geld-"), name)
+    W.configure_db(db_path=db, backend="sqlite")
+    with W.db_conn() as c:
+        c.execute("CREATE TABLE overlay_events (id INTEGER PRIMARY KEY, ts TEXT, kind TEXT, "
+                  "name TEXT, amount TEXT, message TEXT, platform TEXT)")
+        c.commit()
+
+
+def _geld_zeilen():
+    from nc import dbwrap as W
+    with W.db_conn() as c:
+        return [tuple(r) for r in c.execute(
+            "SELECT kind, name, amount, platform FROM overlay_events ORDER BY id")]
+
+
+def _test_geld1_testereignis_nie_gebucht():
+    """GELD-1: der Deck-Knopf „▸ Test-Donation" schickte {kind:'donation',
+    name:'TestSpender', amount:'5'} ohne Plattform, die Route setzte „kick",
+    und _overlay_push speicherte eine ECHTE Kick-Spende — 5 € erfundene
+    Einnahme in Spendenziel, /spenden, Website, Overlay-Bilanz und
+    ledger.crosscheck (dieselbe Klasse wie B120). Jetzt: Test-Ereignisse
+    werden gezeigt und nie gespeichert, und eine echte Spende ohne
+    ausdrueckliche Erloesplattform wird abgelehnt."""
+    from flask import Flask
+    from nc import azraelstate as A
+    from nc import dbwrap as W
+    import nc.routes.overlay as OV
+
+    lg = _GeldLog()
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    alt_push = A.PUSH["fn"]
+    try:
+        _geld_db("geld1.db")
+        push, ns = _geld_overlay_push(lg)
+        A.PUSH["fn"] = push
+        app = Flask(__name__)
+        app.register_blueprint(OV.bp)
+        k = app.test_client()
+        # (1) Genau das, was das Deck schickt — plus test:true.
+        r = k.post("/api/overlay/event", json={"kind": "donation", "name": "TestSpender",
+                                               "amount": "5", "message": "Viel Erfolg!",
+                                               "test": True})
+        assert r.status_code == 200 and r.get_json()["gespeichert"] is False, r.get_json()
+        assert _geld_zeilen() == [], "die Test-Spende steht als Einnahme in overlay_events"
+        assert ns["_RESTREAM_LAST_EVENT"]["name"] == "TestSpender", "kein Alarm im Sendebild"
+        st = k.get("/api/overlay/state").get_json()
+        assert st["test"] and st["test"]["kind"] == "donation" \
+            and st["test"]["name"] == "TestSpender", st.get("test")
+        assert st["donations"] == [] and st["by_platform"]["kick"]["donations"] == 0, st
+        # (2) Der Follow-Test ebenso — ein erfundener Follower ist kein Geld,
+        # steht aber sonst im Ticker und in der Bilanz.
+        r = k.post("/api/overlay/event", json={"kind": "follow", "name": "TestFollower",
+                                               "test": True})
+        assert r.status_code == 200 and _geld_zeilen() == [], _geld_zeilen()
+        # (3) Eine echte Spende braucht eine Erloesplattform — keine wird Kick.
+        for koerper in ({}, {"platform": ""}, {"platform": "manual"},
+                        {"platform": "tiktok"}, {"platform": "streamelements"}):
+            r = k.post("/api/overlay/event", json=dict({"kind": "donation", "name": "x",
+                                                        "amount": "5"}, **koerper))
+            assert r.status_code == 400, (koerper, r.status_code, r.get_json())
+        assert _geld_zeilen() == [], _geld_zeilen()
+        r = k.post("/api/overlay/event", json={"kind": "donation", "name": "Echt",
+                                               "amount": "3", "platform": "twitch"})
+        assert r.status_code == 200 and r.get_json()["gespeichert"] is True
+        assert _geld_zeilen() == [("donation", "Echt", "3", "twitch")], _geld_zeilen()
+        # (4) Das Deck schickt test:true — Kommentare ausgenommen, sonst liest
+        # der Vertrag seine eigene Begruendung als Befund.
+        dh = open("templates/dashboard.html", encoding="utf-8").read()
+        fn = dh[dh.index("async function ovTest(kind){"):]
+        code = re.sub(r"//[^\n]*", "", fn[:fn.index("\n}\n")])
+        assert re.search(r"\btest\s*:\s*true\b", code), "ovTest schickt kein test:true"
+        ov = open("templates/overlay.html", encoding="utf-8").read()
+        assert "queueAlert(te.kind" in ov, "das Browser-Overlay zeigt das Test-Ereignis nicht"
+    finally:
+        A.PUSH["fn"] = alt_push
+        OV._TEST.update(id=0, ts=0.0, ereignis=None)
+        W.configure_db(db_path=alt[0], backend=alt[1])
+    ok("GELD-1: Test-Ereignisse nur gezeigt, nie gebucht; Spende ohne Erloesplattform abgelehnt")
+
+
+def _test_geld2_reset_laesst_manuelle_spenden():
+    """GELD-2: /api/donations/reset loeschte mit `WHERE kind='donation'` auch
+    die manuell erfassten echten Spenden (platform='manual', W102), und der
+    Dialog nannte nur den Ziel-Fortschritt."""
+    import json as _json
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc import dbwrap as W
+    import nc.routes.money as MO
+
+    lg = _GeldLog()
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    alt_ctx = _ncctx._CTX
+    try:
+        _ncctx.configure(log=lg, arg_int=lambda n, dflt, lo=None, hi=None: dflt)
+        _geld_db("geld2.db")
+        with W.db_conn() as c:
+            for kind, name, plat in (("donation", "Kick1", "kick"), ("donation", "Alt", None),
+                                     ("donation", "PayPal", "manual"),
+                                     ("donation", "Bits", "twitch"), ("follow", "F", "kick")):
+                c.execute("INSERT INTO overlay_events (ts, kind, name, amount, message, platform) "
+                          "VALUES ('2026-11-19T10:00:00+00:00',?,?,'5','',?)", (kind, name, plat))
+            c.commit()
+        app = Flask(__name__)
+        app.register_blueprint(MO.bp)
+        k = app.test_client()
+        r = k.post("/api/donations/reset", json={})
+        assert r.status_code == 200 and r.get_json()["removed"] == 3, r.get_json()
+        assert _geld_zeilen() == [("donation", "PayPal", "5", "manual"), ("follow", "F", "5", "kick")], \
+            "manuell erfasste Spende geloescht oder Altbestand ohne Herkunft stehen geblieben: %r" \
+            % _geld_zeilen()
+        r = k.get("/api/donations/manual")
+        assert r.status_code == 200 and r.get_json()["count"] == 1, r.get_json()
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+        _ncctx._CTX = alt_ctx
+    # Der Dialog sagt, was bleibt — in allen drei Sprachen.
+    dh = open("templates/dashboard.html", encoding="utf-8").read()
+    fn = dh[dh.index("async function donReset(){"):dh.index("async function donLoad(")]
+    m = re.search(r"confirm\(T\('([^']+)'\)\)", fn)
+    assert m and "Manuell erfasste Spenden bleiben" in m.group(1), "der Dialog verschweigt es"
+    for sp in ("en", "es"):
+        kat = _json.load(open("locales/%s.json" % sp, encoding="utf-8"))["strings"]
+        assert m.group(1) in kat, "Dialogtext fehlt in locales/%s.json" % sp
+    ok("GELD-2: Spenden-Reset laesst manuell erfasste Spenden stehen, Dialog sagt es")
+
+
+def _test_geld3_verlorene_spende_laut():
+    """GELD-3: der INSERT jeder echten Spende von Kick/Twitch/YouTube stand in
+    `except Exception: pass` — bei gesperrter Datenbank war sie dauerhaft weg,
+    das Overlay zeigte sie trotzdem einmal. Jetzt: jede verlorene Spende
+    einzeln auf ERROR mit Plattform, Name und Betrag; andere Ereignisse
+    gedrosselt ueber nc/meldetakt, und ein Erfolg setzt die Drossel zurueck."""
+    import sqlite3 as _sq
+    from nc import dbwrap as W
+    from nc import meldetakt as MT
+
+    def _gesperrt():
+        raise _sq.OperationalError("database is locked")
+
+    lg = _GeldLog()
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    try:
+        _geld_db("geld3.db")
+        push, ns = _geld_overlay_push(lg)
+        MT.zuruecksetzen("overlay-push")
+        ns["db_conn"] = _gesperrt
+        push("donation", "Spender1", "12,50", "Danke", platform="kick")
+        push("donation", "Spender2", "100 Bits", None, platform="twitch")
+        fe = lg.stufe("error")
+        assert len(fe) == 2, "jede verlorene Spende gehoert einzeln ins ERROR-Log: %r" % lg.zeilen
+        for zeile, teile in zip(fe, (("kick", "Spender1", "12,50"),
+                                     ("twitch", "Spender2", "100 Bits"))):
+            assert all(t in zeile for t in teile), (teile, zeile)
+        assert ns["_RESTREAM_LAST_EVENT"]["name"] == "Spender2", "das Overlay zeigt sie nicht mehr"
+        push("follow", "a", platform="kick")
+        push("follow", "b", platform="kick")
+        assert len(lg.stufe("error")) == 3, "Follows nicht gedrosselt: %r" % lg.stufe("error")
+        ns["db_conn"] = W.db_conn                  # Datenbank wieder frei
+        push("follow", "c", platform="kick")
+        assert _geld_zeilen() == [("follow", "c", None, "kick")], _geld_zeilen()
+        ns["db_conn"] = _gesperrt
+        push("follow", "d", platform="kick")
+        assert len(lg.stufe("error")) == 4, "nach einem Erfolg blieb der naechste Ausfall stumm"
+    finally:
+        MT.zuruecksetzen("overlay-push")
+        W.configure_db(db_path=alt[0], backend=alt[1])
+    ok("GELD-3: eine nicht gespeicherte Spende steht mit Plattform, Name und Betrag im ERROR-Log")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -44112,6 +44472,10 @@ def main():
     _test_v511_rst3_stop_all_erreicht_alle()
     _test_v511_rst4_relays_vor_overlay()
     _test_v511_rst5_deckel_zaehlt_anlauf_und_backoff()
+    _test_rst2_durchreicher_ganze_gruppe()
+    _test_geld1_testereignis_nie_gebucht()
+    _test_geld2_reset_laesst_manuelle_spenden()
+    _test_geld3_verlorene_spende_laut()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

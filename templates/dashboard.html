@@ -6939,7 +6939,7 @@ VIEW_LOADERS.system = async function(){
             <option value="90">90 Tage</option>
           </select>
           <button class="btn sm" onclick="donLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button>
-          <button class="btn sm" id="don_reset" onclick="donReset()" aria-label="Spenden-DB leeren" title="Alle Spenden-Einträge löschen (Bug-Altbestand)">🗑 Leeren</button></div>
+          <button class="btn sm" id="don_reset" onclick="donReset()" aria-label="Spenden-DB leeren" title="Plattform-Spenden löschen — manuell erfasste bleiben">🗑 Leeren</button></div>
         <div class="body">
           <!-- v4.0-W102: manuelle Spende erfassen (fließt in den Website-Fortschritt) -->
           <div class="don-manual" style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:14px;background:color-mix(in srgb,var(--panel) 90%,var(--phos) 4%)">
@@ -9532,7 +9532,8 @@ async function donManualDelete(id){
 }
 /* v4.0-W65: Spenden-DB leeren (Bug-Altbestand; es gab real nie Spenden) */
 async function donReset(){
-  if(!confirm(T('Wirklich ALLE Spenden-Einträge löschen? Der Ziel-Fortschritt geht auf 0 zurück. (Follows/Reaktionen bleiben.)'))) return;
+  // GELD-2: manuell erfasste Spenden sind echtes Geld und bleiben — der Dialog sagt, was geht und was bleibt.
+  if(!confirm(T('Alle Plattform-Spenden löschen (Kick, Twitch, YouTube und Einträge ohne Herkunft)? Manuell erfasste Spenden bleiben und zählen weiter zum Ziel. Follows/Reaktionen bleiben.'))) return;
   const btn=document.getElementById('don_reset');
   if(btn){btn.disabled=true;btn.textContent='🗑 …';}
   try{
@@ -10288,10 +10289,12 @@ async function ovConfig(){
 }
 async function ovTest(kind){
   const name = kind==='donation' ? 'TestSpender' : 'TestFollower';
-  const body = {kind, name};
+  // GELD-1: test:true — angezeigt, nie gespeichert. Ohne das buchte der Knopf
+  // eine echte Kick-Spende über 5 € in Spendenziel, Website und Ledger-Abgleich.
+  const body = {kind, name, test:true};
   if(kind==='donation'){ body.amount='5'; body.message='Viel Erfolg!'; }
   const d=await apiPost('/api/overlay/event',body);
-  if(d&&d.ok) toast('Test-Event gesendet — siehe Overlay'); else toast((d&&d.error)||'Fehler','err');
+  if(d&&d.ok) toast(T('Test-Ereignis gezeigt — nicht gespeichert, zählt in keiner Summe')); else toast((d&&d.error)||T('Fehler'),'err');
 }
 
 /* ---- Insights ---- */

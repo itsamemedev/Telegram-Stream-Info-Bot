@@ -58,17 +58,24 @@ def _donations_unknown_count(conn, days=30):
 
 @bp.route("/api/donations/reset", methods=["POST"])
 def api_donations_reset():
-    """v4.0-W65: Spenden-DB leeren. Löscht alle overlay_events mit kind='donation'
+    """v4.0-W65: Spenden-DB leeren. Löscht die overlay_events mit kind='donation'
        (die bisherigen Einträge sind durch Bugs entstanden, es gab real keine
-       Spenden). Der Ziel-Fortschritt wird live aus genau diesen Zeilen summiert
-       und geht dadurch automatisch auf 0 zurück. Follows/Reaktionen bleiben."""
+       Spenden). Follows/Reaktionen bleiben.
+
+       GELD-2: manuell erfasste Spenden (platform='manual', seit W102) bleiben
+       ebenfalls. Sie sind vom Betreiber gebuchtes echtes Geld — PayPal, Krypto
+       —, und der Knopf löschte sie bis hier mit, ohne dass der Dialog es sagte.
+       `platform IS NULL` steht ausdrücklich da: `NULL <> 'manual'` ist NULL,
+       nicht wahr, und der Altbestand ohne Herkunft (B138) bliebe sonst stehen."""
     try:
         with db_conn() as conn:
             cur = conn.cursor()
-            cur.execute("DELETE FROM overlay_events WHERE kind='donation'")
+            cur.execute("DELETE FROM overlay_events WHERE kind='donation' "
+                        "AND (platform IS NULL OR platform <> 'manual')")
             removed = cur.rowcount if (cur.rowcount is not None and cur.rowcount >= 0) else 0
             conn.commit()
-        log.info("Spenden-DB geleert: %s Zeilen entfernt (Dashboard)", removed)
+        log.info("Spenden-DB geleert: %s Zeilen entfernt, manuelle Spenden bleiben (Dashboard)",
+                 removed)
         return jsonify(ok=True, removed=int(removed))
     except Exception as e:
         log.error("Spenden-Reset fehlgeschlagen: %s", e)
