@@ -9,6 +9,90 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.11.3] — 2026-11-20 · „Kehrwoche" (Bughunt Welle 3)
+
+Nach dem zweiten Durchgang ein eigener Bughunt: vier Jäger, nur lesend, je
+ein Bereich (Aufnahme und Versand, Restream und Prozesse, Deck und
+Sicherheit, Datenbank/Geld/KI/Discord), danach vier Fixer. 17 verifizierte
+Befunde, alle behoben. Datenbank-Dialekt, Ledger, Brain-Router und die
+Rechteprüfung der Befehle wurden geprüft und sind ohne Befund.
+
+### Behoben — Aufräumer, die zu viel löschten
+
+- **AUF-1 (kritisch) — der tägliche Aufräumer löschte Zustandsdateien.**
+  `nc/storage.cleanup()` löschte bei gesetztem `RECORDINGS_RETAIN_DAYS`
+  JEDE alte Datei im Aufnahmeordner — auch `youtube_oauth.json`,
+  `twitch_oauth.json`, `tg_topics.json`, `tg_migriert.json` und
+  `pending_uploads.json`. Folge: nach N Tagen war der YouTube-Refresh-Token
+  weg (Restream still getrennt), und Telegram legte jedes Forum-Thema neu an.
+  Jetzt eine Erlaubnisliste der Videoendungen. **Schon gelöschte Tokens holt
+  das Update nicht zurück** — einmal neu verbinden.
+- **AUF-2 — „Reste aufräumen" traf Aufnahmen.** Als Rest galt jede Datei mit
+  `_part` oder `_re_` im Namen; Nutzer wie `dj_partyking` oder `re_becca`
+  verloren damit jede Aufnahme, auch die laufende. Jetzt das exakte
+  Erzeugungsmuster (`<aufnahme>.mp4_part_000.mp4`), Teile eines laufenden
+  Uploads sind angemeldet und geschützt; `/cleanup` folgt derselben Regel.
+- **AUF-3** — eine zusammengefügte Sitzung (`sitzung_<id>.mp4`) galt nach
+  15 Minuten als Waise. **AUF-4** — scheitert der Aufnahme-Eintrag, drei
+  Anläufe, dann ERROR mit Pfad und „NICHT löschen". **AUF-5** — Teil-Dateien
+  bleiben auf keinem Ausstiegsweg liegen, und ein Wiederholungslauf schickt
+  keine alten Teile mehr mit. **AUF-6** — die Aufbewahrungsregel committet je
+  Datei; ein Datenbankfehler hinterlässt keine Spuren ohne Datei mehr.
+
+### Behoben — Restream-Lebenszyklus
+
+- **RST-1 — ein Stop während des Starts wurde überschrieben.** Starts dauern
+  bis ~40 s; ein Stop in dieser Zeit setzte desired=0, und der Start schrieb
+  danach desired=1 zurück und ging auf Sendung — nach `/delete` sogar ohne
+  Knopf im Deck. start() prüft die Sitzung jetzt an drei Stellen und verwirft
+  den Anlauf.
+- **RST-2 — Waisen im Durchreicher-Modus.** Beim Stopp bekam der Zubringer
+  SIGKILL, bevor er yt-dlp und ffmpeg beendet hatte; beide hingen danach an
+  PID 1, hielten die stderr-Pipe und blockierten für immer — je Stopp,
+  Neuaufbau und Quellwechsel. Der Zubringer läuft jetzt in eigener
+  Prozessgruppe und wird ganz beendet.
+- **RST-3** — „Alle stoppen" erreicht auch Restreams im Backoff und im
+  Anlauf. **RST-4** — die Relays werden vor dem Overlay-Abbau geerntet (vorher
+  sendeten sie nach einem Stop bis zu sechs Minuten weiter). **RST-5** — der
+  Deckel `RESTREAM_MAX_CONCURRENT` zählt Anlauf und Backoff mit.
+
+### Behoben — Geld
+
+- **GELD-1 — „Test-Donation" buchte 5 € echte Kick-Einnahme** (Spendenziel,
+  `/spenden`, Website, Bilanz, `ledger.crosscheck` — dieselbe Klasse wie
+  B120). Test-Ereignisse werden nur angezeigt; eine echte Spende ohne
+  Plattform lehnt die Route ab.
+- **GELD-2** — „Leeren" löschte auch manuell erfasste Spenden. **GELD-3** —
+  eine Spende, die nicht gespeichert werden konnte, war still verloren; jetzt
+  einzeln auf ERROR mit Plattform, Name, Betrag und Nachricht.
+
+### Behoben — Deck und Sicherheit
+
+- **SEC-2 — die Wiederherstellung setzte jede Datei ein** (`bot.py`, `.env`,
+  eine alte Sicherung …); nach dem Neustart: Exitcode 3. Jetzt nur eine
+  vorbereitete Sicherung, die `integrity_check` wörtlich mit `ok` besteht;
+  unter MariaDB mit Grund abgelehnt.
+- **SEC-1** — „Duplikate löschen" löscht nur, wenn eine byteweise gleiche
+  zweite Kopie bleibt, und Datei und Archiv-Zeile gemeinsam. **SEC-3** — der
+  Config-Snapshot gab Anthropic-Schlüssel und Kick-Tokens im Klartext aus;
+  jetzt geschwärzt, und ein Restore schreibt die Maske nie zurück.
+  **Ältere Snapshot-Dateien enthalten die Schlüssel noch** — wurden sie
+  geteilt, die Schlüssel drehen.
+
+### Nach dem Update
+
+Neustart nötig. Wer `RECORDINGS_RETAIN_DAYS` gesetzt hatte: YouTube- und
+Twitch-Verbindung im Deck prüfen und notfalls neu verbinden.
+
+### Geprüft
+
+17 neue Verträge, 68 Mutationsproben, alle gefangen. Die Fixer
+arbeiteten auf v5.11.1; beim Zusammenführen auf v5.11.2 sind drei Anker
+gewandert (BH-10 und GELD-3 im Attrappen-Namensraum), und der BH-8-Fehlerpfad
+entfernt nur noch den eigenen Eintrag (RST-1-Regel).
+
+---
+
 ## [5.11.2] — 2026-11-19 · „Gegenprobe" (W211, Bughunt BH-1 bis BH-13)
 
 Der Betreiber am 19.11., mit Screenshot: im Studio-Sendebild steht statt des

@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.11.2"
-CODENAME = "Gegenprobe"
+VERSION = "5.11.3"
+CODENAME = "Kehrwoche"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,22 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.11.3",
+        "date": "2026-11",
+        "title": "Kehrwoche",
+        # Patch-Fassung: der eigene Bughunt (Welle 3) — Aufraeumer, Restream-
+        # Lebenszyklus, Geld, Wiederherstellung.
+        "highlights": [
+            "Der taegliche Aufraeumer loeschte bei gesetztem RECORDINGS_RETAIN_DAYS jede alte Datei im Aufnahmeordner — auch die OAuth-Tokens von YouTube und Twitch und die Telegram-Themenliste; jetzt nur noch Videodateien",
+            "„Reste aufraeumen“ und /cleanup erkennen Teil-Dateien am exakten Muster: ein Nutzername mit _part oder re_ riss vorher jede Aufnahme mit, auch die laufende; Teile eines laufenden Uploads und eine zusammengefuegte Sitzung bleiben stehen",
+            "Ein Stop waehrend eines laufenden Restream-Starts gilt — vorher ging der Restream trotzdem auf Sendung und kam nach jedem Neustart wieder; „Alle stoppen“ erreicht auch Restreams im Backoff",
+            "Beim Stopp im Durchreicher-Modus blieben yt-dlp und ffmpeg als Waisen haengen (je Stopp); die Zubringer-Gruppe wird jetzt ganz beendet",
+            "„Test-Donation“ bucht keine 5 € echte Kick-Einnahme mehr; „Leeren“ laesst manuell erfasste Spenden stehen; eine Spende, die nicht gespeichert werden kann, steht mit allen Angaben im Fehlerlog",
+            "Datenbank-Wiederherstellung nimmt nur eine vorbereitete, heile Sicherung an (integrity_check); der Config-Snapshot schwaerzt Schluessel und Tokens",
+            "Archiv-Dubletten werden nur geloescht, wenn eine byteweise gleiche zweite Kopie bleibt; die Aufbewahrungsregel hinterlaesst keine verschwundenen Aufnahmen mehr",
+        ],
+    },
     {
         "version": "5.11.2",
         "date": "2026-11",
