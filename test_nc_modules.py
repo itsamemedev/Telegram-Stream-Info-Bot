@@ -42494,6 +42494,18 @@ def _test_v5112_sec2_nur_vorbereitete_heile_sicherung():
         assert _bestand() == vorher, \
             "%s wurde eingesetzt — die laufende Datenbank ist weg" % _os.path.basename(pfad)
         assert heim not in str(r.get_json()), "Serverpfad in der Antwort: %s" % r.get_json()
+        # Kein Ausnahmetext in der Antwort (CodeQL py/stack-trace-exposure,
+        # NIGHTCRAWLER-Fassung): er steht im Log, nicht im Deck. Gemessen an
+        # der Meldung, die SQLite fuer genau diese Datei wirft.
+        try:
+            _c = _sq3.connect("file:%s?mode=ro" % pfad, uri=True)
+            try:
+                _c.execute("PRAGMA integrity_check").fetchall()
+            finally:
+                _c.close()
+        except _sq3.DatabaseError as _e:
+            assert str(_e) not in str(r.get_json()), \
+                "Ausnahmetext in der API-Antwort: %s" % r.get_json()
         # Die Pruefung liest nur: die gepruefte Datei bleibt, wie sie war.
         assert open(pfad, "rb").read() == roh_vor, "die Pruefung hat %s veraendert" % pfad
 

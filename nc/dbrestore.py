@@ -248,7 +248,10 @@ def pruefen(pfad: str):
             kopf = f.read(len(SQLITE_KOPF))
     except OSError as e:
         log.warning("Wiederherstellung: %s nicht lesbar (%s)", pfad, e)
-        return False, "%s ist nicht zu lesen (%s)." % (name, type(e).__name__)
+        # Der Grund geht als API-Antwort ans Deck: dort nur der Name und der
+        # Hinweis aufs Log — der Ausnahmetext traegt Pfade (CodeQL
+        # py/stack-trace-exposure), und im Log steht er vollstaendig.
+        return False, "%s ist nicht zu lesen (Einzelheiten im Log)." % name
     if kopf != SQLITE_KOPF:
         return False, ("%s ist keine SQLite-Datenbank (die ersten Bytes: %s)."
                        % (name, kopf.hex() or "leer"))
@@ -261,7 +264,8 @@ def pruefen(pfad: str):
             con.close()
     except sqlite3.DatabaseError as e:
         log.warning("Wiederherstellung: %s nicht pruefbar (%s)", pfad, e)
-        return False, "%s laesst sich nicht pruefen: %s" % (name, e)
+        return False, ("%s laesst sich nicht pruefen — beschaedigt oder gesperrt "
+                       "(Einzelheiten im Log)." % name)
     if befund != ["ok"]:
         return False, ("integrity_check fuer %s meldet: %s"
                        % (name, (befund[0] if befund else "nichts"))[:300])
@@ -306,8 +310,9 @@ def einsetzen(live_db: str, neue_db: str, stempel: str = None):
             log.error("Wiederherstellung: %s liess sich nicht zur Seite legen "
                       "(%s) — drehe zurueck.", quelle, e)
             _zurueck(weggeraeumt)
-            return False, ("%s liess sich nicht zur Seite legen (%s) — es "
-                           "wurde nichts veraendert." % (quelle, e)), []
+            return False, ("%s liess sich nicht zur Seite legen (Einzelheiten im "
+                           "Log) — es wurde nichts veraendert."
+                           % os.path.basename(quelle)), []
         weggeraeumt.append((ziel, quelle))
     try:
         shutil.copy2(neue_db, live_db)
@@ -315,8 +320,8 @@ def einsetzen(live_db: str, neue_db: str, stempel: str = None):
         log.error("Wiederherstellung: %s liess sich nicht einsetzen (%s) — "
                   "drehe zurueck.", neue_db, e)
         _zurueck(weggeraeumt)
-        return False, ("Die neue Datenbank liess sich nicht einsetzen (%s) — "
-                       "der vorige Stand ist zurueckgelegt." % e), []
+        return False, ("Die neue Datenbank liess sich nicht einsetzen (Einzelheiten "
+                       "im Log) — der vorige Stand ist zurueckgelegt."), []
     return True, ("Eingesetzt. JETZT NEU STARTEN: der laufende Prozess haelt "
                   "die alte Datei am inode fest und schreibt weiter hinein — "
                   "alles, was er bis zum Neustart schreibt, ist danach weg. "

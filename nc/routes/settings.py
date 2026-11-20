@@ -422,7 +422,7 @@ def api_db_restore_apply():
                 "Wirkung. Für MariaDB gilt der Daten-Import "
                 "(NIGHTCRAWLER-DB-EXPORT).")), 409
         verz = os.path.dirname(os.path.abspath(db_pfad))
-        if os.path.abspath(os.path.join(verz, name)) == os.path.abspath(db_pfad):
+        if name == os.path.basename(db_pfad):
             return jsonify(ok=False, error=_t(
                 "Das ist die laufende Datenbank selbst.")), 400
         # SEC-2: NUR, was der Vorbereiten-Schritt baut. Bis hierher durfte
@@ -433,8 +433,14 @@ def api_db_restore_apply():
             return jsonify(ok=False, error=_t(
                 "Nur eine vorbereitete Sicherung (wiederhergestellt_<Zeitstempel>.db) "
                 "lässt sich einsetzen.")), 400
-        neu = _nc_sicherpfad.sicher_join(verz, name, "wiederhergestellt.db")
-        if not os.path.isfile(neu):
+        # Den Pfad NICHT aus der Anfrage bauen (CLAUDE.md W98: ein dichter
+        # Riegel ist fuer CodeQL kein Riegel — py/path-injection). Er kommt
+        # aus dem serverseitigen Verzeichnis; der Name aus der Anfrage wirkt
+        # nur als Filter per Zeichenketten-Vergleich.
+        neu = next((os.path.join(verz, e) for e in sorted(os.listdir(verz))
+                    if e == name and _WIEDERHERGESTELLT.fullmatch(e)
+                    and os.path.isfile(os.path.join(verz, e))), None)
+        if neu is None:
             return jsonify(ok=False, error=_t("Datei nicht gefunden")), 404
         # Und der Inhalt: Kopf und integrity_check == "ok", bevor irgendetwas
         # zur Seite geht. einsetzen() prueft dasselbe noch einmal (fuer jeden
