@@ -12209,7 +12209,7 @@ async function ops6Restore(){
   if(typeof confirm==='function' && !confirm(T('app_config aus diesem Snapshot wiederherstellen?'))) return;
   const d=await apiPost('/api/config/restore',{confirm:true, app_config:cfg});
   out.innerHTML='<div class="kc-row '+(d&&d.ok?'sev-info':'sev-high')+'"><div class="kc-t">'+
-    (d&&d.ok?('Wiederhergestellt: '+(d.restored||0)+' Schlüssel'):esc((d&&d.error)||'Fehler'))+'</div></div>';
+    (d&&d.ok?('Wiederhergestellt: '+(d.restored||0)+' Schlüssel'+(d.hinweis?' · '+esc(d.hinweis):'')):esc((d&&d.error)||'Fehler'))+'</div></div>';
 }
 let _ops6CleanupDays=null;
 async function ops6Cleanup(dry){

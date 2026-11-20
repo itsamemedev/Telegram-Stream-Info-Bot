@@ -483,6 +483,122 @@ def _scan_for_duplicates(scan_root, full_hash_max_bytes=100 * 1024 * 1024):
     }
 
 
+def _gleicher_inhalt(a, b, block=1 << 20):
+    """Byte fuer Byte gleich? Bricht beim ersten Unterschied ab.
+
+    Bewusst kein Hash: der Scan oben hasht Dateien ueber 100 MB nur im
+    ERSTEN Megabyte ("_hdr"). Zwei Aufnahmen gleicher Groesse mit gleichem
+    Anfang waren damit "Dubletten" — und genau bei grossen Aufnahmen kostet
+    ein Irrtum am meisten. Der Vergleich ist strenger als jeder Hash
+    (keine Kollision) und billiger, wo er Nein sagt (frueher Abbruch).
+    """
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        while True:
+            x, y = fa.read(block), fb.read(block)
+            if x != y or not x:
+                return x == y
+
+
+def andere_kopien(scan_root, ziel):
+    """Andere Dateien unter scan_root mit genau diesem Inhalt (Generator).
+
+    Ein Generator, damit der Aufrufer beim ERSTEN Treffer aufhoert —
+    `next(andere_kopien(...), None)` liest keine weitere Datei mehr.
+
+    "Andere" heisst: nicht `ziel` selbst, und kein Symlink — ein Symlink
+    auf `ziel` zeigt nach dem Loeschen ins Leere, einer nach draussen auf
+    etwas, das hier niemand verwaltet. Was bleibt, muss eine echte Datei im
+    Ordner sein. Ein harter Link zaehlt: die Bytes bleiben unter seinem
+    Namen erhalten. Versteckte und tmp-Ordner wie beim Scan ausgenommen.
+    `ziel` kommt aufgeloest (realpath) herein.
+    """
+    groesse = os.path.getsize(ziel)
+    for root, dirs, files in os.walk(scan_root):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d != "tmp"]
+        for fname in files:
+            if fname.startswith("."):
+                continue
+            p = os.path.join(root, fname)
+            try:
+                if (os.path.islink(p) or os.path.getsize(p) != groesse
+                        or os.path.realpath(p) == ziel):
+                    continue
+                gleich = _gleicher_inhalt(p, ziel)
+            except OSError as e:
+                # Nicht still: eine Kopie, die hier nicht lesbar ist, zaehlt
+                # nicht als vorhanden — dann wird eben NICHT geloescht.
+                log.warning("Dubletten-Pruefung: %s nicht lesbar (%s)", p, e)
+                continue
+            if gleich:
+                yield p
+
+
+def dublette_loeschen(scan_root, ziel):
+    """Eine Dublette loeschen — Datei und Archivzeile gemeinsam. -> dict
+
+    SEC-1. Bis hierher loeschte die Route nur die Datei, und ob sie es durfte,
+    entschied allein der Scan-Stand im Browser:
+
+      * die Zeile in `archive` blieb stehen — ein Eintrag ohne Datei, der
+        Download antwortet 410. Die Umkehrung von W91 ("wer die Datei nicht
+        loeschen kann, darf auch ihre Spur nicht loeschen"): wer die Datei
+        loescht, muss auch ihre Spur loeschen.
+      * war der Scan veraltet — die andere Kopie inzwischen geloescht,
+        verschoben, von der Aufbewahrung geraeumt —, fiel die LETZTE Kopie.
+        Zwei Klicks auf zwei Dateien derselben Gruppe genuegten.
+
+    Jetzt entscheidet der Server, jedes Mal neu: geloescht wird nur, wenn
+    `andere_kopien()` eine andere Datei mit demselben Inhalt findet.
+
+    Reihenfolge: Zeilen loeschen (noch nicht festgeschrieben), Datei
+    loeschen, dann festschreiben. Scheitert die Datei, rollt db_conn die
+    Zeilen zurueck — beides bleibt. Ist die Archivtabelle nicht lesbar, wird
+    NICHTS geloescht (BestandUnbekannt, W91/W98): ohne sie ist nicht zu
+    entscheiden, welche Zeile zur Datei gehoert.
+
+    -> {"ok": True, "bleibt", "zeilen", "groesse"} oder
+       {"ok": False, "grund": "keine_zweite_kopie" | "datei" | "zeile"}
+    """
+    ziel = os.path.realpath(ziel)
+    bleibt = next(andere_kopien(scan_root, ziel), None)
+    if not bleibt:
+        return {"ok": False, "grund": "keine_zweite_kopie"}
+    groesse = os.path.getsize(ziel)
+    datei_weg = False
+    ids = []
+    try:
+        with db_conn() as conn:
+            # Beide Seiten normalisiert (W98): in der Tabelle darf ein
+            # relativer Pfad stehen, `ziel` ist absolut und aufgeloest.
+            ids = [r["id"] for r in conn.execute(
+                       "SELECT id, filepath FROM archive").fetchall()
+                   if r["filepath"] and os.path.realpath(r["filepath"]) == ziel]
+            for eid in ids:
+                conn.execute("DELETE FROM archive WHERE id=?", (eid,))
+            try:
+                os.remove(ziel)
+            except OSError as e:
+                log.warning("Dublette %s nicht loeschbar (%s) — die Zeile(n) "
+                            "bleiben ebenfalls", ziel, e)
+                conn.rollback()
+                return {"ok": False, "grund": "datei", "fehler": type(e).__name__}
+            datei_weg = True
+            conn.commit()
+    except Exception as e:
+        if not datei_weg:
+            raise BestandUnbekannt("Archivtabelle nicht les- oder schreibbar — es "
+                                   "wurde nichts geloescht (%s)" % type(e).__name__) from e
+        # Der eine Fall, der sich nicht zurueckdrehen laesst: die Datei ist
+        # schon weg, das Festschreiben der Zeilen scheiterte. Laut, mit IDs —
+        # /api/archive/check findet sie dann als "Eintrag ohne Datei".
+        log.error("Dublette %s geloescht, aber die Archivzeile(n) %s nicht "
+                  "(%s) — /api/archive/check raeumt sie auf", ziel, ids, e)
+        return {"ok": False, "grund": "zeile", "zeilen": ids}
+    log.info("Dublette geloescht: %s (%d B, %d Archivzeile(n)); es bleibt %s",
+             ziel, groesse, len(ids), bleibt)
+    return {"ok": True, "bleibt": bleibt, "zeilen": len(ids), "groesse": groesse}
+
+
 def compute_recording_fingerprint(filepath: str,
                                    sample_bytes: int = 1024 * 1024) -> Optional[str]:
     """SHA256 von den ersten N Bytes. Bei kompletten Duplikaten reicht das

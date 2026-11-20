@@ -9,6 +9,7 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 from datetime import datetime, timezone
 import json
 import os
+import re
 from flask import Blueprint, Response, jsonify, request
 
 from nc import fehlertext as _nc_fehlertext
@@ -24,6 +25,7 @@ from nc import cookieholen as _nc_cookieholen
 from nc.dbexport import db_export_sql as _dbx_export, db_import_sql as _dbx_import, export_summary as _dbx_summary
 from nc import dbrestore as _nc_dbrest   # v4.2-W96: Sicherung im Deck einsetzen
 from nc import sicherpfad as _nc_sicherpfad
+from nc import einstellungen as _nc_einst   # SEC-3: dieselbe Geheimnis-Erkennung wie das Deck
 
 from nc import ctx as _ctx
 
@@ -388,6 +390,11 @@ def api_db_restore_prepare():
         return jsonify(ok=False, error=_fehler_text(e, "api_db_restore_prepare")), 500
 
 
+# Genau der Name, den api_db_restore_prepare vergibt ("wiederhergestellt_%s.db",
+# Stempel %Y%m%d_%H%M%S). Eine Erlaubnisliste: was nicht passt, geht nicht.
+_WIEDERHERGESTELLT = re.compile(r"wiederhergestellt_\d{8}_\d{6}\.db")
+
+
 @bp.route("/api/db/restore/apply", methods=["POST"])
 def api_db_restore_apply():
     """v4.2-W96: die vorbereitete Datei an die Stelle der laufenden setzen.
@@ -404,13 +411,38 @@ def api_db_restore_apply():
         return jsonify(ok=False, error=_t("datei erforderlich")), 400
     try:
         db_pfad = _c().cfg["DB_PATH"]
+        # SEC-2: unter MariaDB liest der Bot DB_PATH gar nicht. Ein Tausch
+        # dort meldete "eingesetzt, neu starten" — und nach dem Neustart
+        # stuende derselbe Bestand da wie vorher. Eine Wirkung zusagen, die
+        # nicht eintritt, ist schlimmer als abzulehnen.
+        if str(_c().cfg.get("DB_BACKEND") or "sqlite").lower() == "mariadb":
+            return jsonify(ok=False, error=_t(
+                "Der Betrieb läuft auf MariaDB (DB_BACKEND=mariadb) — der Bot "
+                "liest diese SQLite-Datei nicht, ein Einsetzen hätte keine "
+                "Wirkung. Für MariaDB gilt der Daten-Import "
+                "(NIGHTCRAWLER-DB-EXPORT).")), 409
         verz = os.path.dirname(os.path.abspath(db_pfad))
+        if os.path.abspath(os.path.join(verz, name)) == os.path.abspath(db_pfad):
+            return jsonify(ok=False, error=_t(
+                "Das ist die laufende Datenbank selbst.")), 400
+        # SEC-2: NUR, was der Vorbereiten-Schritt baut. Bis hierher durfte
+        # `datei` jede Datei im Datenbankverzeichnis sein — bot.py, .env, eine
+        # alte .vor_wiederherstellung_* —, und die laufende Datenbank ging
+        # fuer sie zur Seite. Der Name ist eine Erlaubnisliste, kein Filter.
+        if not _WIEDERHERGESTELLT.fullmatch(name):
+            return jsonify(ok=False, error=_t(
+                "Nur eine vorbereitete Sicherung (wiederhergestellt_<Zeitstempel>.db) "
+                "lässt sich einsetzen.")), 400
         neu = _nc_sicherpfad.sicher_join(verz, name, "wiederhergestellt.db")
         if not os.path.isfile(neu):
             return jsonify(ok=False, error=_t("Datei nicht gefunden")), 404
-        if os.path.abspath(neu) == os.path.abspath(db_pfad):
-            return jsonify(ok=False, error=_t(
-                "Das ist die laufende Datenbank selbst.")), 400
+        # Und der Inhalt: Kopf und integrity_check == "ok", bevor irgendetwas
+        # zur Seite geht. einsetzen() prueft dasselbe noch einmal (fuer jeden
+        # anderen Aufrufer); hier, damit das Deck 422 statt 500 bekommt.
+        heil, grund = _nc_dbrest.pruefen(neu)
+        if not heil:
+            log.error("Wiederherstellung abgelehnt: %s", grund)
+            return jsonify(ok=False, error=grund), 422
         ok_, meldung, weggeraeumt = _nc_dbrest.einsetzen(db_pfad, neu)
         if not ok_:
             log.error("Wiederherstellung fehlgeschlagen: %s", meldung)
@@ -427,16 +459,88 @@ def api_db_restore_apply():
         return jsonify(ok=False, error=_fehler_text(e, "api_db_restore_apply")), 500
 
 
+# SEC-3: was im Snapshot an Stelle eines Geheimnisses steht. Unverwechselbar
+# gewaehlt, weil die Wiederherstellung es wiedererkennen MUSS — ein "***",
+# das auch ein echter Wert sein koennte, waere kein Marker.
+MASKE = "***geschwaerzt***"
+# Namensteile, die geheim() fuer Umgebungsvariablen nicht braucht, in
+# app_config aber vorkommen: der PKCE-Verifier in kick.oauth_pending.
+_GEHEIM_ZUSATZ = {"VERIFIER"}
+
+
+def _geheimer_name(name):
+    """Traegt dieser Schluessel ein Geheimnis? Dieselbe Erkennung wie die
+       Einstellungen im Deck (nc.einstellungen.geheim, Namensteile statt
+       Teilzeichenketten), nur auf app_config-Schluessel umgelegt:
+       "ai.anthropic_key" -> AI_ANTHROPIC_KEY, "accessToken" -> ACCESS_TOKEN."""
+    roh = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(name))
+    teile = [t for t in re.split(r"[^A-Za-z0-9]+", roh.upper()) if t]
+    return _nc_einst.geheim("_".join(teile)) or bool(_GEHEIM_ZUSATZ.intersection(teile))
+
+
+def _schwaerzen(wert, geheim=False):
+    """Struktur bleibt, Blaetter unter einem geheimen Namen werden MASKE.
+
+    Rekursiv, weil die Geheimnisse hier nicht nur oben stehen:
+    kick.user_token ist ein Woerterbuch mit access_token/refresh_token,
+    mcp.server eine Liste mit `token` je Eintrag. Wahrheitswerte und leere
+    Werte bleiben — "kein Token gesetzt" ist eine Auskunft, kein Geheimnis."""
+    if isinstance(wert, dict):
+        return {k: _schwaerzen(v, geheim or _geheimer_name(k)) for k, v in wert.items()}
+    if isinstance(wert, list):
+        return [_schwaerzen(v, geheim) for v in wert]
+    if geheim and wert is not None and wert != "" and not isinstance(wert, bool):
+        return MASKE
+    return wert
+
+
+def _snapshot_wert(k, v):
+    """Ein app_config-Wert fuer den Snapshot. -> (wert, geschwaerzt?)
+
+    Das Format bleibt das alte (JSON-Text je Schluessel), damit ein Snapshot
+    in /api/config/restore weiter passt. Neu geschrieben wird nur, was sich
+    durch das Schwaerzen geaendert hat."""
+    try:
+        geladen = json.loads(v) if isinstance(v, str) else v
+    except ValueError:
+        # Altbestand ohne JSON: der rohe Text ist der Wert und wird als
+        # solcher geschwaerzt. Kein Fehler, nur eine Auskunft.
+        log.debug("Config-Snapshot: %s ist kein JSON, roh uebernommen", k)
+        geladen = v
+    neu = _schwaerzen(geladen, _geheimer_name(k))
+    if neu == geladen:
+        return v, False
+    return json.dumps(neu, ensure_ascii=False), True
+
+
+def _traegt_maske(v):
+    """Steht irgendwo in diesem Snapshot-Wert die MASKE?"""
+    return MASKE in (v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+
+
 @bp.route("/api/config/snapshot")
 def api_config_snapshot():
-    """Exportiert app_config + learned_params als JSON-Snapshot (Backup)."""
+    """Exportiert app_config + learned_params als JSON-Snapshot (Backup).
+
+    SEC-3: Geheimnisse geschwaerzt. Bis hierher stand app_config im Klartext
+    darin — ai.anthropic_key und kick.user_token samt Access- und
+    Refresh-Token —, waehrend die Route, die den Schluessel setzt, zusagt,
+    ihn nie zurueckzugeben. Ein Snapshot ist eine Datei, die man ablegt,
+    verschickt und in Tickets haengt; dort hat ein Kanal-Schluessel nichts
+    zu suchen."""
     try:
         with db_conn() as conn:
-            cfg = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM app_config").fetchall()}
+            roh = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM app_config").fetchall()}
             learned = [dict(r) for r in conn.execute(
                 "SELECT k, v, confidence, samples, category FROM learned_params").fetchall()]
+        cfg, geschwaerzt = {}, []
+        for k, v in roh.items():
+            cfg[k], maskiert = _snapshot_wert(k, v)
+            if maskiert:
+                geschwaerzt.append(k)
         return jsonify(ok=True, generated_at=datetime.now(timezone.utc).isoformat(),
                        app_config=cfg, learned_params=learned,
+                       geschwaerzt=sorted(geschwaerzt),
                        counts={"config": len(cfg), "learned": len(learned)})
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_config_snapshot")), 500
@@ -455,7 +559,16 @@ def api_config_restore():
     try:
         restored = 0
         failed = 0
+        uebersprungen = []
         for k, v in cfg.items():
+            # SEC-3: ein geschwaerzter Wert geht NIE zurueck in die Datenbank.
+            # Sonst machte das Rueckspielen eines Snapshots aus dem echten
+            # Kick-Token ein "***geschwaerzt***" — Kick antwortet danach mit
+            # 401, und AZRAEL schweigt, ohne dass jemand weiss, warum. Der
+            # bestehende Wert bleibt, der Schluessel wird genannt.
+            if _traegt_maske(v):
+                uebersprungen.append(k)
+                continue
             try:
                 _cfg_set(k, json.loads(v) if isinstance(v, str) else v)
                 restored += 1
@@ -468,6 +581,14 @@ def api_config_restore():
                     restored += 1
                 except Exception:
                     failed += 1
+        if uebersprungen:
+            log.info("Config-Restore: %d geschwaerzte Schluessel nicht zurueckgeschrieben: %s",
+                     len(uebersprungen), ", ".join(sorted(uebersprungen)))
+            return jsonify(ok=True, restored=restored, failed=failed,
+                           uebersprungen=sorted(uebersprungen),
+                           hinweis=_t("Geschwärzte Geheimnisse wurden nicht "
+                                      "zurückgeschrieben — dort bleibt der "
+                                      "bestehende Wert."))
         return jsonify(ok=True, restored=restored, failed=failed)
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_config_restore")), 500

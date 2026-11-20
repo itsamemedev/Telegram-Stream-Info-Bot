@@ -34069,7 +34069,8 @@ def _test_v42_w175_kleinbefunde():
             return list(teile), None
         _tv._nc_videoteil = _ty.SimpleNamespace(
             ZIEL_TEIL_MB=45, TELEGRAM_HARD_MB=50, platz_reicht=lambda p: (True, ""),
-            kopier_teilen=_kopier, zu_gross=lambda t, g=None: [], wegwerfen=lambda t: None)
+            kopier_teilen=_kopier, zu_gross=lambda t, g=None: [], wegwerfen=lambda t: None,
+            teile_entfernen=lambda p: 0)     # v5.11.2-AUF-5: neue Schnittstelle
         _tv.asyncio.sleep = _kein_schlaf
         erg = {}
         del sends[:]
@@ -42381,6 +42382,461 @@ def _test_bh12_deck_servertext_escaped():
     ok("BH-12: Sende-Hinweis escaped, Zusammenfassung per DOMParser")
 
 
+def _test_v5112_sec2_nur_vorbereitete_heile_sicherung():
+    """SEC-2: /api/db/restore/apply setzte JEDE Datei im Datenbankverzeichnis
+    ein — bot.py, .env, eine alte .vor_wiederherstellung_*. einsetzen() pruefte
+    nur isfile; die laufende Datenbank ging samt -wal/-shm zur Seite, und nach
+    dem Neustart endete der Bot mit "file is not a database" (Exitcode 3).
+
+    Gemessen wird am Verhalten: die laufende Datenbank muss in jedem
+    Ablehnungsfall Byte fuer Byte dieselbe bleiben, und es darf nichts zur
+    Seite gelegt worden sein."""
+    import logging as _logging
+    import os as _os
+    import sqlite3 as _sq3
+    from flask import Flask as _Flask
+    from nc import ctx as _ncctx
+    from nc import dbrestore as R
+    from nc.routes import settings as _rt
+
+    heim = _ph.verzeichnis()
+
+    def _db(pfad, namen):
+        con = _sq3.connect(pfad)
+        con.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, u TEXT)")
+        con.executemany("INSERT INTO trackings (u) VALUES (?)", [(n,) for n in namen])
+        con.commit()
+        con.close()
+        return pfad
+
+    live = _db(_os.path.join(heim, "tiktok_bot.db"), ["@live"])
+
+    def _bestand():
+        return (open(live, "rb").read(),
+                sorted(n for n in _os.listdir(heim) if "vor_wiederherstellung" in n))
+
+    app = _Flask(__name__)
+    app.register_blueprint(_rt.bp)
+    kl = app.test_client()
+    _ncctx.configure(cfg={"DB_PATH": live, "DB_BACKEND": "sqlite"},
+                     log=_logging.getLogger("TikTokBot"))
+
+    # ── (1) EIN GUELTIGER NAME IST EINE ERLAUBNISLISTE. Die gefaehrlichste
+    # fremde Datei ist eine HEILE Datenbank: eine alte, zur Seite gelegte.
+    # integrity_check sagt dort "ok" — nur der Name haelt sie auf.
+    _db(_os.path.join(heim, "tiktok_bot.db.vor_wiederherstellung_20250101_000000"),
+        ["@uralt"])
+    with open(_os.path.join(heim, "bot.py"), "w", encoding="utf-8") as f:
+        f.write("print('ich bin keine Datenbank')\n")
+    vorher = _bestand()
+    for name in ("tiktok_bot.db.vor_wiederherstellung_20250101_000000", "bot.py",
+                 ".env", "wiederhergestellt_x.db", "../wiederhergestellt_20260101_000000.db"):
+        r = kl.post("/api/db/restore/apply", json={"confirm": True, "datei": name})
+        assert r.status_code == 400, (name, r.status_code, r.get_json())
+        assert _bestand() == vorher, "%s: die laufende Datenbank wurde angefasst" % name
+
+    # ── (2) DER RICHTIGE NAME MIT FALSCHEM INHALT. 422, nicht 500 — und die
+    # laufende Datenbank bleibt. Der leere Fall ist der heimtueckische:
+    # SQLite oeffnet eine 0-Byte-Datei als leere Datenbank, und
+    # integrity_check sagt "ok". Ohne Kopfpruefung stuende danach eine LEERE
+    # Datenbank am Platz — das sah in W143 aus wie verlorene Daten.
+    muell = _os.path.join(heim, "wiederhergestellt_20260101_000001.db")
+    with open(muell, "wb") as f:
+        f.write(b"print('kein sqlite')\n" * 200)
+    leer = _os.path.join(heim, "wiederhergestellt_20260101_000002.db")
+    open(leer, "wb").close()
+    # Kopf heil, Seiten zerstoert: die Tabellenwurzel (Seite 2) ueberschrieben.
+    kaputt = _db(_os.path.join(heim, "wiederhergestellt_20260101_000003.db"),
+                 ["@x%04d" % i for i in range(400)])
+    with open(kaputt, "r+b") as f:
+        seite = int.from_bytes(open(kaputt, "rb").read(18)[16:18], "big") or 65536
+        f.seek(seite)
+        f.write(b"\xff" * 64)
+    # Und die Lage, in der integrity_check NICHT wirft, sondern antwortet:
+    # ein Index, der nicht zur Tabelle passt. Hier entscheidet allein, dass
+    # woertlich "ok" verlangt ist — "keine Ausnahme" liesse sie durch (W94).
+    schief = _os.path.join(heim, "wiederhergestellt_20260101_000005.db")
+    con = _sq3.connect(schief)
+    con.execute("CREATE TABLE t (a INTEGER, b INTEGER)")
+    con.execute("CREATE INDEX i ON t(a)")
+    con.executemany("INSERT INTO t VALUES (?, ?)", [(i, 1000 - i) for i in range(50)])
+    con.commit()
+    con.execute("PRAGMA writable_schema=ON")
+    con.execute("UPDATE sqlite_master SET sql='CREATE INDEX i ON t(b)' WHERE name='i'")
+    con.commit()
+    con.close()
+    for pfad in (muell, leer, kaputt, schief):
+        roh_vor = open(pfad, "rb").read()
+        r = kl.post("/api/db/restore/apply",
+                    json={"confirm": True, "datei": _os.path.basename(pfad)})
+        assert r.status_code == 422, (_os.path.basename(pfad), r.status_code, r.get_json())
+        assert _bestand() == vorher, \
+            "%s wurde eingesetzt — die laufende Datenbank ist weg" % _os.path.basename(pfad)
+        assert heim not in str(r.get_json()), "Serverpfad in der Antwort: %s" % r.get_json()
+        # Die Pruefung liest nur: die gepruefte Datei bleibt, wie sie war.
+        assert open(pfad, "rb").read() == roh_vor, "die Pruefung hat %s veraendert" % pfad
+
+    # ── (3) DASSELBE IM MODUL. einsetzen() hat weitere Aufrufer; die Pruefung
+    # dort ist nicht die der Route, und eine allein reicht nicht.
+    for pfad in (muell, leer, kaputt, schief):
+        ok_, meldung, weg = R.einsetzen(live, pfad)
+        assert not ok_ and not weg and "nichts veraendert" in meldung, (pfad, meldung)
+        assert _bestand() == vorher, "einsetzen() hat %s eingesetzt" % pfad
+
+    # ── (4) UNTER MARIADB IST DER TAUSCH WIRKUNGSLOS — also abgelehnt, mit Grund.
+    gut = _db(_os.path.join(heim, "wiederhergestellt_20260101_000004.db"),
+              ["@aus_sicherung"])
+    _ncctx.configure(cfg={"DB_PATH": live, "DB_BACKEND": "mariadb"},
+                     log=_logging.getLogger("TikTokBot"))
+    r = kl.post("/api/db/restore/apply",
+                json={"confirm": True, "datei": _os.path.basename(gut)})
+    assert r.status_code == 409 and "MariaDB" in r.get_json()["error"], r.get_json()
+    assert _bestand() == vorher, "unter MariaDB wurde trotzdem getauscht"
+
+    # ── (5) UND DER NORMALFALL GEHT WEITER.
+    _ncctx.configure(cfg={"DB_PATH": live, "DB_BACKEND": "sqlite"},
+                     log=_logging.getLogger("TikTokBot"))
+    r = kl.post("/api/db/restore/apply",
+                json={"confirm": True, "datei": _os.path.basename(gut)})
+    assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+    con = _sq3.connect(live)
+    assert [z[0] for z in con.execute("SELECT u FROM trackings")] == ["@aus_sicherung"]
+    con.close()
+    ok("v5.11.2-SEC-2: nur wiederhergestellt_<stempel>.db mit SQLite-Kopf und "
+       "integrity_check == ok wird eingesetzt; unter MariaDB abgelehnt")
+
+
+def _test_v5112_sec1_dublette_nur_mit_zweiter_kopie():
+    """SEC-1: /api/archive/duplicates/delete loeschte die Datei und liess die
+    archive-Zeile stehen (Download dann 410), und ob geloescht werden durfte,
+    entschied allein der Scan-Stand im Browser — bei veraltetem Scan fiel die
+    letzte Kopie."""
+    import logging as _logging
+    import os as _os
+    import sqlite3 as _sq3
+    from flask import Flask as _Flask
+    from nc import ctx as _ncctx
+    from nc import archive as A
+    from nc.routes import archive as _rt
+    from nc.dbwrap import configure_db as _cfgdb
+
+    heim = _ph.verzeichnis()
+    ordner = _os.path.join(heim, "archiv")
+    _os.makedirs(_os.path.join(ordner, "unter"))
+    db = _os.path.join(heim, "sec1.db")
+    con = _sq3.connect(db)
+    con.execute("CREATE TABLE archive (id INTEGER PRIMARY KEY, filename TEXT NOT NULL, "
+                "filepath VARCHAR(500) NOT NULL UNIQUE, title TEXT, notes TEXT, "
+                "size_bytes BIGINT, mime_type TEXT, source_url TEXT, created_at TEXT NOT NULL)")
+    con.commit()
+    con.close()
+    _cfgdb(db_path=db, backend="sqlite")
+    A.configure(archive_dir=ordner)
+    _ncctx.configure(cfg={"ARCHIVE_DIR": ordner, "_MANUAL_ARCHIVE_DIR": ordner},
+                     log=_logging.getLogger("TikTokBot"))
+    app = _Flask(__name__)
+    app.register_blueprint(_rt.bp)
+    kl = app.test_client()
+
+    inhalt = bytes(range(256)) * 40
+
+    def datei(name, daten=inhalt, eintragen=False):
+        pfad = _os.path.join(ordner, name)
+        with open(pfad, "wb") as f:
+            f.write(daten)
+        if eintragen:
+            # RELATIV eingetragen, absichtlich (W98): beide Seiten normalisieren.
+            A.add_archive_entry(filename=_os.path.basename(pfad),
+                                filepath=_os.path.relpath(pfad, _os.getcwd()),
+                                title=None, notes=None, size=len(daten), mime=None,
+                                source_url=None)
+        return pfad
+
+    def zeilen():
+        c = _sq3.connect(db)
+        try:
+            return sorted(_os.path.basename(r[0])
+                          for r in c.execute("SELECT filepath FROM archive"))
+        finally:
+            c.close()
+
+    def loeschen(pfad):
+        return kl.post("/api/archive/duplicates/delete",
+                       json={"path": pfad, "scan_root": ordner})
+
+    a = datei("a.mp4", eintragen=True)
+    b = datei(_os.path.join("unter", "b.mp4"), eintragen=True)
+
+    # ── (1) ZWEI KOPIEN: geloescht wird Datei UND Zeile, die andere bleibt.
+    r = loeschen(a)
+    assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+    assert not _os.path.exists(a) and _os.path.exists(b)
+    assert zeilen() == ["b.mp4"], \
+        "die Archivzeile der geloeschten Datei steht noch: %s" % zeilen()
+
+    # ── (2) DER VERALTETE SCAN. Im Browser steht die Gruppe noch mit zwei
+    # Dateien; die andere ist laengst weg. Jetzt waere b die LETZTE Kopie.
+    r = loeschen(b)
+    assert r.status_code == 409, (r.status_code, r.get_json())
+    assert _os.path.exists(b) and zeilen() == ["b.mp4"], "die letzte Kopie ist gefallen"
+
+    # ── (3) GLEICHE GROESSE IST KEINE KOPIE. Der Scan hasht ueber 100 MB nur
+    # das erste Megabyte; hier entscheidet der Inhalt.
+    c = datei("c.mp4", inhalt[:-1] + b"X")
+    assert _os.path.getsize(c) == _os.path.getsize(b)
+    r = loeschen(b)
+    assert r.status_code == 409 and _os.path.exists(b), \
+        "gleiche Groesse, anderer Inhalt — und trotzdem geloescht"
+
+    # ── (4) EIN SYMLINK IST KEINE ZWEITE KOPIE — weder einer auf b (zeigte
+    # danach ins Leere) noch einer nach draussen auf gleichen Inhalt (den
+    # verwaltet hier niemand; er kann morgen weg sein).
+    aussen = _os.path.join(heim, "aussen.mp4")
+    with open(aussen, "wb") as f:
+        f.write(inhalt)
+    for ziel_link in (b, aussen):
+        link = _os.path.join(ordner, "link.mp4")
+        try:
+            _os.symlink(ziel_link, link)
+        except (OSError, NotImplementedError):
+            break                # Windows ohne Rechte: der Fall entfaellt dort
+        try:
+            r = loeschen(b)
+        finally:
+            _os.remove(link)
+        assert r.status_code == 409 and _os.path.exists(b), \
+            "ein Symlink (auf %s) galt als zweite Kopie" % _os.path.basename(ziel_link)
+
+    # ── (5) DATEI NICHT LOESCHBAR: dann bleibt auch die Zeile (W91).
+    d2 = datei("d.mp4", eintragen=True)
+    echt_remove = A.os.remove
+
+    def _gesperrt(p, *a_, **k_):
+        if _os.path.basename(p) == "d.mp4":
+            raise PermissionError(13, "Permission denied")
+        return echt_remove(p, *a_, **k_)
+    A.os.remove = _gesperrt
+    try:
+        r = loeschen(d2)
+    finally:
+        A.os.remove = echt_remove
+    assert r.status_code == 500, (r.status_code, r.get_json())
+    assert _os.path.exists(d2) and "d.mp4" in zeilen(), \
+        "die Datei blieb, ihre Zeile ist weg: %s" % zeilen()
+
+    # ── (6) ARCHIVTABELLE NICHT LESBAR: 503, und es faellt NICHTS.
+    echt_conn = A.db_conn
+
+    def _kaputt():
+        raise _sq3.OperationalError("database is locked")
+    A.db_conn = _kaputt
+    try:
+        r = loeschen(d2)
+    finally:
+        A.db_conn = echt_conn
+    assert r.status_code == 503, (r.status_code, r.get_json())
+    assert _os.path.exists(d2) and _os.path.exists(b), "ohne Bestand wurde geloescht"
+    ok("v5.11.2-SEC-1: Dublette nur mit inhaltsgleicher zweiter Kopie, Datei und "
+       "Archivzeile gemeinsam, ohne Bestand nichts")
+
+
+def _test_v5112_sec3_snapshot_schwaerzt_geheimnisse():
+    """SEC-3: /api/config/snapshot gab app_config im Klartext aus —
+    ai.anthropic_key, kick.user_token mit Access- und Refresh-Token, die
+    MCP-Tokens. Und /api/config/restore durfte einen geschwaerzten Snapshot
+    nicht zurueckspielen: aus dem echten Token waere die Maske geworden."""
+    import json as _json
+    import logging as _logging
+    import os as _os
+    import sqlite3 as _sq3
+    from flask import Flask as _Flask
+    from nc import ctx as _ncctx
+    from nc import cfgstore as C
+    from nc.routes import settings as _rt
+    from nc.dbwrap import configure_db as _cfgdb
+
+    heim = _ph.verzeichnis()
+    db = _os.path.join(heim, "sec3.db")
+    con = _sq3.connect(db)
+    con.execute("CREATE TABLE app_config (k TEXT NOT NULL, v TEXT, updated_at TEXT)")
+    con.execute("CREATE UNIQUE INDEX idx_app_config_k ON app_config(k)")
+    con.execute("CREATE TABLE learned_params (k TEXT NOT NULL, v TEXT, confidence REAL, "
+                "samples INT, category TEXT, updated_at TEXT)")
+    con.commit()
+    con.close()
+    _cfgdb(db_path=db, backend="sqlite")
+    _ncctx.configure(cfg={}, log=_logging.getLogger("TikTokBot"))
+    werte = {
+        "ai.anthropic_key": "sk-ant-GEHEIM-1",
+        "kick.user_token": {"access_token": "AT-GEHEIM-2", "refresh_token": "RT-GEHEIM-3",
+                            "scope": "chat:write moderation:ban", "expires_at": 1999999999},
+        "kick.oauth_pending": {"verifier": "VERIFIER-GEHEIM-4", "state": "s1"},
+        "mcp.server": [{"id": "a1", "name": "werkzeug", "url": "https://mcp.example/x",
+                        "token": "MCP-GEHEIM-5", "accessToken": "CAMEL-GEHEIM-6",
+                        "aktiv": True}],
+        "quiet_hours": {"start": 1, "end": 7},
+    }
+    for k, v in werte.items():
+        C.set_(k, v)
+    app = _Flask(__name__)
+    app.register_blueprint(_rt.bp)
+    kl = app.test_client()
+
+    # ── (1) KEIN GEHEIMNIS IM SNAPSHOT — und die Struktur bleibt lesbar.
+    r = kl.get("/api/config/snapshot")
+    assert r.status_code == 200, r.get_json()
+    text = r.get_data(as_text=True)
+    assert "GEHEIM" not in text, "Klartext-Geheimnis im Snapshot: %s" % [
+        z for z in text.split('"') if "GEHEIM" in z]
+    snap = r.get_json()
+    cfg = snap["app_config"]
+    kt = _json.loads(cfg["kick.user_token"])
+    # Der Schluessel heisst *_token: der ganze Wert ist geheim, die Felder
+    # bleiben als Gerippe stehen.
+    assert kt == dict.fromkeys(("access_token", "refresh_token", "scope", "expires_at"),
+                               _rt.MASKE), kt
+    assert _json.loads(cfg["kick.oauth_pending"]) == {"verifier": _rt.MASKE, "state": "s1"}
+    mcp = _json.loads(cfg["mcp.server"])
+    assert mcp[0]["url"] == "https://mcp.example/x" and mcp[0]["aktiv"] is True, \
+        "das Schwaerzen hat Nicht-Geheimes mitgenommen: %s" % mcp
+    assert mcp[0]["token"] == _rt.MASKE and mcp[0]["accessToken"] == _rt.MASKE, mcp
+    assert _json.loads(cfg["quiet_hours"]) == {"start": 1, "end": 7}, cfg["quiet_hours"]
+    assert set(snap["geschwaerzt"]) == {"ai.anthropic_key", "kick.user_token",
+                                        "kick.oauth_pending", "mcp.server"}, snap["geschwaerzt"]
+
+    # ── (2) DER RUECKWEG. Der Snapshot geht unveraendert zurueck, nur mit
+    # geaenderten Ruhezeiten: die Ruhezeiten kommen an, die Geheimnisse
+    # bleiben ECHT — nicht "***geschwaerzt***".
+    cfg["quiet_hours"] = _json.dumps({"start": 2, "end": 8})
+    r = kl.post("/api/config/restore", json={"confirm": True, "app_config": cfg})
+    d = r.get_json()
+    assert r.status_code == 200 and d["ok"], d
+    assert C.get("ai.anthropic_key") == "sk-ant-GEHEIM-1", C.get("ai.anthropic_key")
+    assert C.get("kick.user_token")["refresh_token"] == "RT-GEHEIM-3", \
+        "das Rueckspielen hat den echten Token mit der Maske ueberschrieben"
+    assert C.get("mcp.server")[0]["token"] == "MCP-GEHEIM-5"
+    assert C.get("quiet_hours") == {"start": 2, "end": 8}, "der Restore wirkt nicht mehr"
+    assert sorted(d["uebersprungen"]) == sorted(snap["geschwaerzt"]) and d.get("hinweis"), d
+    ok("v5.11.2-SEC-3: Config-Snapshot schwaerzt Geheimnisse rekursiv, Restore "
+       "schreibt keine Maske zurueck")
+
+
+def _test_v5112_auf5_teile_eines_laufs():
+    """AUF-5: Teil-Dateien blieben liegen (toter Chat, gescheiterter Re-Split
+    oder Neu-Kodieren, Abbruch), und `glob("{praefix}_*.mp4")` sammelte sie
+    beim naechsten Lauf mit ein — doppelte und vertauschte Teile."""
+    import asyncio as _aio
+    import os as _os
+    import types as _ty
+    from nc import videoteil as V
+
+    MB = 1024 * 1024
+    d = _ph.verzeichnis()
+    quelle = _os.path.join(d, "rec[1].mp4")       # [ ist fuer glob eine Klasse
+    _ph.attrappe(quelle, 100 * MB)
+    praefix = quelle + "_part"
+
+    def lege(*namen):
+        for n in namen:
+            _ph.attrappe(praefix + n, 2 * MB)
+
+    # ── (1) DAS MUSTER IST EXAKT.
+    lege("_000.mp4", "_001.mp4", "_1000.mp4", "_re_000.mp4", "_x.mp4", "_000.mp4.bak")
+    _ph.attrappe(_os.path.join(d, "andere.mp4_part_000.mp4"), 2 * MB)
+    assert [_os.path.basename(t) for t in V.teile(praefix)] == [
+        "rec[1].mp4_part_000.mp4", "rec[1].mp4_part_001.mp4", "rec[1].mp4_part_1000.mp4"], \
+        V.teile(praefix)
+    assert [_os.path.basename(t) for t in V.teile(praefix, V._TEIL_NEU)] == [
+        "rec[1].mp4_part_re_000.mp4"]
+    assert V.teile_entfernen(praefix) == 4
+    assert sorted(_os.listdir(d)) == sorted([
+        "rec[1].mp4", "rec[1].mp4_part_x.mp4", "rec[1].mp4_part_000.mp4.bak",
+        "andere.mp4_part_000.mp4"]), "falsche Dateien geloescht: %s" % _os.listdir(d)
+
+    # ── (2) EIN WIEDERHOLUNGSLAUF SAMMELT KEINE ALTEN TEILE EIN. Der erste
+    # Lauf hatte zehn Teile, der neue schreibt zwei.
+    lege(*["_%03d.mp4" % i for i in range(10)], "_re_000.mp4")
+    alt = {k: getattr(V, k) for k in ("dauer",)}
+    alt_aus = V._kind.ausfuehren
+    rc = [0]
+
+    async def _dauer(p):
+        return 100.0
+
+    async def _ffmpeg(cmd, *a, **k):
+        for i in range(2):
+            _ph.attrappe("%s_%03d.mp4" % (praefix, i), 5 * MB)
+        return rc[0], b"", b"kaputt"
+    V.dauer, V._kind.ausfuehren = _dauer, _ffmpeg
+    try:
+        teile, fehler = _aio.run(V.kopier_teilen(quelle, praefix, 45))
+        assert fehler is None and [_os.path.basename(t) for t in teile] == [
+            "rec[1].mp4_part_000.mp4", "rec[1].mp4_part_001.mp4"], \
+            "alte Teile eines frueheren Laufs gehen mit hinaus: %s" % teile
+        # ── (3) EIN GESCHEITERTER SPLIT HINTERLAESST NICHTS.
+        rc[0] = 1
+        teile, fehler = _aio.run(V.kopier_teilen(quelle, praefix, 45))
+        assert teile is None and fehler and V.teile(praefix) == [], V.teile(praefix)
+    finally:
+        V.dauer, V._kind.ausfuehren = alt["dauer"], alt_aus
+
+    # ── (4) DER VERSAND: toter Chat und Abbruch lassen keinen Teil liegen.
+    _tv = _w175_telegram_stub()
+    BR = _tv.BadRequest
+    tot = [False]
+
+    async def _safe(*a, **k):
+        return None
+
+    async def _topic(c, u, b):
+        return None
+
+    async def _mig(a, n):
+        return None
+
+    def _mark(c):
+        tot[0] = True
+    _tv.konfiguriere(chat_migriert=_mig, ensure_topic=_topic, is_dead=lambda c: tot[0],
+                     mark_dead=_mark, safe_send=_safe, topic_forget=lambda c, u: None)
+
+    class _Bot:
+        def __init__(self, fehler):
+            self.fehler = fehler
+
+        async def send_video(self, *a, **k):
+            raise self.fehler
+
+    alt_k, alt_schlaf = V.kopier_teilen, _tv.asyncio.sleep
+
+    async def _kopier(pfad, p, ziel):
+        aus = []
+        for i in range(3):
+            t = "%s_%03d.mp4" % (p, i)
+            _ph.attrappe(t, 5 * MB)
+            aus.append(t)
+        return aus, None
+
+    async def _kein_schlaf(_s):
+        return None
+    alt_platz = V.platz_reicht
+    V.kopier_teilen, _tv.asyncio.sleep = _kopier, _kein_schlaf
+    V.platz_reicht = lambda p, faktor=1.2: (True, "")
+    try:
+        for fehler in (BR("Bad Request: chat not found"), _aio.CancelledError()):
+            tot[0] = False
+            try:
+                _aio.run(_tv.split_and_send_video(-7, quelle, _ty.SimpleNamespace(
+                    bot=_Bot(fehler)), "anna"))
+            except _aio.CancelledError:
+                pass
+            assert V.teile(praefix) == [], \
+                "%s: Teile bleiben liegen: %s" % (type(fehler).__name__, V.teile(praefix))
+            assert _os.path.exists(quelle), "die Aufnahme selbst ist weg"
+    finally:
+        V.kopier_teilen, _tv.asyncio.sleep, V.platz_reicht = alt_k, alt_schlaf, alt_platz
+    ok("v5.11.2-AUF-5: Teile exakt je Lauf, vor dem Split und auf jedem Ausstieg geraeumt")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -42853,6 +43309,10 @@ def main():
     _test_bh7_bh10_chat_eine_regel_eine_sperre()
     _test_bh8_bh9_bh11_restream_start()
     _test_bh12_deck_servertext_escaped()
+    _test_v5112_sec2_nur_vorbereitete_heile_sicherung()
+    _test_v5112_sec1_dublette_nur_mit_zweiter_kopie()
+    _test_v5112_sec3_snapshot_schwaerzt_geheimnisse()
+    _test_v5112_auf5_teile_eines_laufs()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

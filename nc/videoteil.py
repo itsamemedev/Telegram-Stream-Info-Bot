@@ -22,9 +22,9 @@ haette jemand die falsche behalten.)
 """
 
 import asyncio
-import glob
 import logging
 import os
+import re
 import shutil
 
 from nc import encodeschlange as _encodeschlange  # v4.2-W174
@@ -106,14 +106,57 @@ def platz_reicht(pfad, faktor=1.2):
         return True, f"disk-check failed: {e}"
 
 
-async def _pruefe_teile(muster):
+# AUF-5: die Teile EINES Laufs, exakt. `%03d` schreibt mindestens drei
+# Ziffern; "re_" kennzeichnet das Neu-Kodieren.
+_TEIL_KOPIE = r"_\d{3,}\.mp4"
+_TEIL_NEU = r"_re_\d{3,}\.mp4"
+
+
+def teile(praefix, art=_TEIL_KOPIE):
+    """Die Teil-Dateien zu `praefix`, sortiert. -> [Pfad]
+
+    AUF-5: hier stand `glob(f"{praefix}_*.mp4")`. Das traf beim Kopier-Split
+    auch die `_re_NNN` des Neu-Kodierens und JEDEN liegengebliebenen Teil
+    eines frueheren Laufs — nach einem Neustart reiht W175 den Upload neu
+    ein, und hatte der erste Lauf zehn Teile, der zweite fuenf, gingen 005
+    bis 009 vom ersten mit hinaus: doppelte und vertauschte Teile. Jetzt ein
+    exaktes Muster je Art, als Regex gegen den Dateinamen, und der Praefix
+    ist woertlich — ein `[` im Aufnahmepfad waere fuer glob eine Klasse.
+    """
+    verz = os.path.dirname(praefix) or "."
+    muster = re.compile(re.escape(os.path.basename(praefix)) + art)
+    try:
+        namen = os.listdir(verz)
+    except OSError as e:
+        log.warning("split: %s nicht lesbar (%s)", verz, e)
+        return []
+    return sorted(os.path.join(verz, n) for n in namen if muster.fullmatch(n))
+
+
+def teile_entfernen(praefix):
+    """Alle Teile zu `praefix` weg, beider Arten. -> Anzahl
+
+    AUF-5: vor jedem Split (Reste eines frueheren Laufs) und auf jedem
+    Ausstiegspfad des Versands (toter Chat, gescheiterter Re-Split, Abbruch).
+    Die Aufnahme selbst traegt keinen dieser Namen und bleibt immer.
+    """
+    n = 0
+    for t in teile(praefix, _TEIL_KOPIE) + teile(praefix, _TEIL_NEU):
+        try:
+            os.remove(t)
+            n += 1
+        except OSError:
+            pass               # Aufraeumpfad: schon weg ist auch weg
+    return n
+
+
+async def _pruefe_teile(kandidaten):
     """Die erzeugten Teile durchsehen und Schrott wegwerfen (B52).
 
     Ohne diese Pruefung landen header-only-Dateien und Teile ohne Stream beim
     Upload — und der scheitert dann mit einer Telegram-Fehlermeldung, die
     nichts ueber die Ursache sagt.
     """
-    kandidaten = sorted(glob.glob(muster))
     gut = []
     for teil in kandidaten:
         try:
@@ -147,6 +190,9 @@ async def kopier_teilen(pfad, praefix, ziel_mb):
     daraus die Segmentlaenge, die ziel_mb ergibt. Scheitert ffprobe, wird
     konservativ mit 2 Mbps gerechnet.
     """
+    # AUF-5: Reste eines frueheren Laufs weg, bevor ffmpeg schreibt — sonst
+    # sammelt die Auswahl unten sie mit ein.
+    teile_entfernen(praefix)
     groesse_mb = os.path.getsize(pfad) / 1024 / 1024
     laenge = await dauer(pfad)
     if laenge and laenge > 0:
@@ -172,15 +218,18 @@ async def kopier_teilen(pfad, praefix, ziel_mb):
         rc, _, stderr = await _kind.ausfuehren(cmd, deckel, art="ffmpeg-split",
                                                stdout=_kind.DEVNULL)
     except asyncio.TimeoutError:
+        teile_entfernen(praefix)      # AUF-5: was ffmpeg bis dahin schrieb
         return None, f"ffmpeg split timeout nach {deckel}s (segment_time={seg})"
     if rc != 0:
+        teile_entfernen(praefix)      # AUF-5: halbe Teile eines Abbruchs
         # Der echte Fehler steht am ENDE von stderr; der Anfang ist Banner.
         schwanz = _ffmpeg_stderr_tail(stderr.decode(errors="ignore"), max_len=800)
         return None, (f"[rc={rc}] ffmpeg -segment_time {seg} → "
                       f"{praefix}_%03d.mp4\n{schwanz}")
 
-    kandidaten, gut = await _pruefe_teile(f"{praefix}_*.mp4")
+    kandidaten, gut = await _pruefe_teile(teile(praefix, _TEIL_KOPIE))
     if not gut:
+        teile_entfernen(praefix)
         return None, "Alle Teile vom Split waren ungueltig (ffprobe-failed)"
     if len(gut) < len(kandidaten):
         log.warning("split: %d/%d Teile verworfen wegen Validierungsfehler — "
@@ -198,6 +247,7 @@ async def neu_kodieren(pfad, praefix, ziel_mb):
     den Segmentgrenzen erzwungen und die Bitrate gedeckelt. Langsamer als
     Kopieren, dafuer zuverlaessig.
     """
+    teile_entfernen(praefix)          # AUF-5: Reste eines frueheren Laufs
     laenge = await dauer(pfad)
     groesse_mb = os.path.getsize(pfad) / 1024 / 1024
     if not laenge or laenge <= 0:
@@ -232,14 +282,18 @@ async def neu_kodieren(pfad, praefix, ziel_mb):
                                                    art="ffmpeg-reencode",
                                                    stdout=_kind.DEVNULL)
     except asyncio.TimeoutError:
+        teile_entfernen(praefix)      # AUF-5: die halben _re_NNN
         return None, "re-encode timeout"
     except Exception as e:
+        teile_entfernen(praefix)
         return None, f"re-encode exception: {e}"
     if rc != 0:
+        teile_entfernen(praefix)
         return None, _ffmpeg_stderr_tail(stderr.decode(errors="ignore"), 600)
 
-    _, gut = await _pruefe_teile(f"{praefix}_re_*.mp4")
+    _, gut = await _pruefe_teile(teile(praefix, _TEIL_NEU))
     if not gut:
+        teile_entfernen(praefix)
         return None, "re-encode: keine gueltigen Teile"
     return gut, None
 

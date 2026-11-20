@@ -55,6 +55,7 @@ import sqlite3
 import tarfile
 import tempfile
 from datetime import datetime, timezone
+from urllib.request import pathname2url
 
 log = logging.getLogger("TikTokBot")
 
@@ -66,6 +67,9 @@ DUMP_MARKEN = ("BEGIN TRANSACTION", "CREATE TABLE", "INSERT INTO")
 # Die Beiwerk-Dateien des WAL-Modus. Sie MUESSEN beim Tausch mit, sonst
 # spielt SQLite das alte WAL auf die neue Datenbank — siehe Modulkopf.
 BEIWERK = ("-wal", "-shm", "-journal")
+
+# Die ersten 16 Bytes jeder SQLite-Datei (https://sqlite.org/fileformat.html).
+SQLITE_KOPF = b"SQLite format 3\x00"
 
 
 def archive(verzeichnis: str):
@@ -218,6 +222,52 @@ def _zurueck(weggeraeumt):
                       "startet der Bot nicht.", ziel, quelle, e)
 
 
+def pruefen(pfad: str):
+    """Ist `pfad` eine heile SQLite-Datenbank? -> (ok, grund)
+
+    v5.11.2-SEC-2: `einsetzen()` pruefte bis hierher nur `isfile`. Die Route
+    nahm jeden Namen im Datenbankverzeichnis — `bot.py`, `.env`, eine alte
+    `.vor_wiederherstellung_*` — legte die laufende Datenbank samt -wal/-shm
+    zur Seite und setzte die fremde Datei ein. Nach dem Neustart: "file is
+    not a database", Exitcode 3 (W92), der Bot ist aus. Ein Knopf im Deck
+    durfte damit den ganzen Betrieb abschalten.
+
+    Entschieden wird wie in tools/dbkopf.py (W94): der Kopf muss stimmen,
+    und `PRAGMA integrity_check` muss woertlich "ok" sagen — nichts sonst.
+    "Keine Ausnahme" als Kriterium haette dort eine zu 85 % leere Datenbank
+    als Rettung ausgegeben.
+
+    Nur lesend: der Kopf mit "rb", die Datenbank per `mode=ro`. Eine Pruefung,
+    die die gepruefte Datei veraendert (ein -journal anlegt, ein WAL
+    einspielt), prueft am Ende etwas anderes als das, was eingesetzt wird.
+    Die Meldung nennt nur den Dateinamen — sie geht als API-Antwort ans Deck.
+    """
+    name = os.path.basename(pfad)
+    try:
+        with open(pfad, "rb") as f:
+            kopf = f.read(len(SQLITE_KOPF))
+    except OSError as e:
+        log.warning("Wiederherstellung: %s nicht lesbar (%s)", pfad, e)
+        return False, "%s ist nicht zu lesen (%s)." % (name, type(e).__name__)
+    if kopf != SQLITE_KOPF:
+        return False, ("%s ist keine SQLite-Datenbank (die ersten Bytes: %s)."
+                       % (name, kopf.hex() or "leer"))
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % pathname2url(os.path.abspath(pfad)),
+                              uri=True)
+        try:
+            befund = [r[0] for r in con.execute("PRAGMA integrity_check").fetchall()]
+        finally:
+            con.close()
+    except sqlite3.DatabaseError as e:
+        log.warning("Wiederherstellung: %s nicht pruefbar (%s)", pfad, e)
+        return False, "%s laesst sich nicht pruefen: %s" % (name, e)
+    if befund != ["ok"]:
+        return False, ("integrity_check fuer %s meldet: %s"
+                       % (name, (befund[0] if befund else "nichts"))[:300])
+    return True, "ok"
+
+
 def einsetzen(live_db: str, neue_db: str, stempel: str = None):
     """Die geprüfte Datei an die Stelle der laufenden setzen.
        -> (ok, meldung, weggeraeumt)
@@ -230,6 +280,12 @@ def einsetzen(live_db: str, neue_db: str, stempel: str = None):
     """
     if not os.path.isfile(neue_db):
         return False, "%s gibt es nicht." % os.path.basename(neue_db), []
+    # SEC-2: VOR dem Wegraeumen pruefen. Danach ist es zu spaet — dann liegt
+    # die laufende Datenbank schon unter dem Ausweichnamen.
+    heil, grund = pruefen(neue_db)
+    if not heil:
+        log.error("Wiederherstellung abgelehnt: %s", grund)
+        return False, grund + " Es wurde nichts veraendert.", []
     stempel = stempel or datetime.now().strftime("%Y%m%d_%H%M%S")
     # v5.2-W191: freie Verbindungen VOR dem Tausch schliessen. Ihr letztes
     # close() loescht `<pfad>-wal` per Namen — nach dem Tausch die WAL der

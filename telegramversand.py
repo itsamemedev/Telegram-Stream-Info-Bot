@@ -26,7 +26,6 @@ komplette Teil- und Retry-Kette, bevor er aufgibt.
 """
 
 import asyncio
-import glob
 import logging
 import os
 import re
@@ -287,6 +286,13 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
     # der Retention-Cleanup nach RECORDINGS_RETAIN_DAYS Tagen griff). Wir tracken
     # sie und räumen im finally auf — das Original bleibt als reguläre Aufnahme.
     _b47_repaired = None
+    # AUF-5: die Teile dieses Laufs gehen auf JEDEM Ausstieg weg (finally
+    # unten). Bis hierher raeumte nur die Schleife den GERADE gesendeten Teil
+    # — ein toter Chat (break), ein gescheiterter Re-Split oder Neu-Kodieren
+    # (return) und ein Abbruch (CancelledError beim Neustart) liessen alle
+    # uebrigen liegen, und der naechste Lauf sammelte sie mit ein.
+    _teil_praefix = None
+    _remux_tmp = None
     try:
         size_mb = os.path.getsize(filepath) / 1024 / 1024
         log.info(f"Upload @{username}: {filepath} ({size_mb:.1f} MB) → chat {chat_id}")
@@ -312,6 +318,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
 
         # Multi-Part-Pfad: bitrate-basiert splitten
         prefix = f"{filepath}_part"
+        _teil_praefix = prefix
         # B53: Pre-flight Disk-Check — sonst crasht ffmpeg mitten im Split mit
         # "No space left on device" und wir haben verstreute Half-Parts.
         disk_ok, disk_info = _nc_videoteil.platz_reicht(filepath)
@@ -356,9 +363,6 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
         if part_files is None:
             log.error(f"ffmpeg split failed: {split_err}")
             _fehlschlag("Split gescheitert")
-            for orphan in glob.glob(f"{prefix}_*.mp4"):
-                try: os.remove(orphan)
-                except OSError: pass
             try:
                 await _safe_send(
                     bot_app.bot, chat_id,
@@ -428,6 +432,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
             # kaputten Timestamps toleriert. Ein vorheriger Re-Mux mit
             # -fflags +genpts erzeugt saubere Timestamps → Re-Encode klappt dann.
             remux_path = filepath + ".remux.mp4"
+            _remux_tmp = remux_path       # AUF-5: auch beim Abbruch weg
             _remux_ok, _rm_err = await _nc_videoteil.zeitstempel_richten(
                 filepath, remux_path)
             if _remux_ok:
@@ -531,3 +536,8 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
         if _b47_repaired:
             try: os.remove(_b47_repaired)
             except OSError: pass
+        if _remux_tmp:
+            try: os.remove(_remux_tmp)
+            except OSError: pass
+        if _teil_praefix:
+            _nc_videoteil.teile_entfernen(_teil_praefix)
