@@ -7553,7 +7553,9 @@ def _test_v42_w44_aufnahmesitzung():
     # Vertrag, der nur nach dem Text sucht, bleibt gruen, waehrend die Klammer
     # in Wahrheit auf geschaetzte Zeiten faellt — genau so ist er beim Bauen
     # einmal durchgerutscht.
-    assert ("add_recording(username, output_file, file_size=file_size, "
+    # ANKER GEWANDERT (AUF-4): der Aufruf laeuft im Thread (to_thread), weil
+    # add_recording bei gesperrter Datenbank wartet und erneut versucht.
+    assert ("asyncio.to_thread(add_recording, username, output_file, file_size=file_size, "
             "duration_secs=int(duration), tracking_id=tid, "
             "started_at=started_at, ended_at=ended_at)") in flach, \
         "handle_recording_finished gibt die echten Zeiten nicht an " \
@@ -16699,8 +16701,14 @@ def _test_v42_w91_aufraeumer_loescht_nicht_alles():
     # "nach dem Loeschen gezaehlt" beides 0.0. Genau daran ist die
     # Mutationsprobe zunaechst entwischt. Dank truncate() kostet die Groesse
     # nichts (siehe W90).
-    rest = P.attrappe(_os.path.join(aufnahmen, "stream_a_part2.mp4"),
+    # ANKER GEWANDERT (AUF-2): "stream_a_part2.mp4" ist keine Form, die ein
+    # Erzeuger schreibt (praefix = f"{filepath}_part" -> <aufnahme>_part_000.mp4),
+    # und ein frischer Rest gehoert noch einem laufenden Versand. Die Attrappe
+    # traegt deshalb die echte Form und ein Alter jenseits von FRISCH_S.
+    rest = P.attrappe(_os.path.join(aufnahmen, "stream_a.mp4_part_000.mp4"),
                       5 * 1024 * 1024)
+    _alt = __import__("time").time() - rt.FRISCH_S - 60
+    _os.utime(rest, (_alt, _alt))
 
     class _Log:
         def __init__(self): self.zeilen = []
@@ -16799,7 +16807,7 @@ def _test_v42_w91_aufraeumer_loescht_nicht_alles():
         rt.db_conn = lambda: _ConnKennt()
         treffer = rt._find_orphans()
         namen = {t["name"] for t in treffer}
-        assert namen == {"stream_a_part2.mp4"}, \
+        assert namen == {"stream_a.mp4_part_000.mp4"}, \
             "erwartet nur den Split-Rest, bekommen: %r" % namen
 
         echt_remove = rt.os.remove
@@ -25102,8 +25110,12 @@ def _test_v42_w131_aufnahme_luecken():
                and n.name == "handle_recording_finished")
 
     def zeilen(name):
+        # ANKER GEWANDERT (AUF-4): add_recording laeuft per to_thread — der
+        # Name steht dann als erstes Argument, nicht als aufgerufene Funktion.
         return sorted(c.lineno for c in _ast.walk(hrf) if isinstance(c, _ast.Call)
-                      and _ast.unparse(c.func).split(".")[-1] == name)
+                      and (_ast.unparse(c.func).split(".")[-1] == name
+                           or (_ast.unparse(c.func).endswith("to_thread") and c.args
+                               and _ast.unparse(c.args[0]) == name)))
     frei = zeilen("_aufnahme_platz_frei")
     assert frei, "die Sperre wird erst im finally frei — nach dem Upload"
     # ANKER GEWANDERT (v4.2-W158): `sichern` laeuft im benannten Schritt
@@ -42837,6 +42849,365 @@ def _test_v5112_auf5_teile_eines_laufs():
     ok("v5.11.2-AUF-5: Teile exakt je Lauf, vor dem Split und auf jedem Ausstieg geraeumt")
 
 
+def _test_auf1_cleanup_nur_aufnahmen():
+    """AUF-1: nc.storage.cleanup() loeschte JEDE regulaere Datei im
+    Aufnahmeordner, die aelter als RECORDINGS_RETAIN_DAYS war — auch die
+    Zustandsdateien, die der Bot dort ablegt. Nachgewiesen: cleanup(d, 14) auf
+    20 Tage alten Dateien -> alle geloescht, darunter youtube_oauth.json mit dem
+    Refresh-Token (Restream still getrennt) und tg_topics.json (Telegram legt
+    jedes Forum-Thema neu an). Geloescht wird jetzt nur, was eine
+    Videoendung traegt — eine Erlaubnisliste, keine Verbotsliste."""
+    import time as _t
+    from nc import storage as S
+    d = _ph.verzeichnis()
+    alt = _t.time() - 20 * 86400
+    zustand = ("twitch_oauth.json", "youtube_oauth.json", "tg_topics.json",
+               "tg_migriert.json", "pending_uploads.json", "irgendwas_neues.db")
+    videos = ("tiktok_live_1_a_20261030_101010.mp4", "b.flv", "c.TS", "d.mp4.part")
+    for n in zustand + videos:
+        p = _ph.attrappe(os.path.join(d, n), 1000)
+        os.utime(p, (alt, alt))
+    # Die Markierung ist hier nicht der Gegenstand (W149 hat eigene Vertraege);
+    # die Testdatenbank kennt die Spalte nicht, und dann bricht cleanup ab.
+    echt_markiert = S._markierte_pfade
+    S._markierte_pfade = lambda: set()
+    try:
+        probe = S.cleanup(d, days=14, dry_run=True)
+        e = S.cleanup(d, days=14)
+    finally:
+        S._markierte_pfade = echt_markiert
+    assert probe["would_delete"] == len(videos), \
+        "der Probelauf zaehlt Zustandsdateien als Aufnahmen: %r" % (probe,)
+    assert e["deleted"] == len(videos) and e["errors"] == 0, e
+    weg = [n for n in zustand if not os.path.exists(os.path.join(d, n))]
+    assert not weg, ("cleanup hat Zustandsdateien geloescht — YouTube-Kopplung "
+                     "und Telegram-Themen waeren weg", weg)
+    uebrig = [n for n in videos if os.path.exists(os.path.join(d, n))]
+    assert not uebrig, ("alte Aufnahmen blieben liegen", uebrig)
+    ok("AUF-1: cleanup loescht nur Videoendungen — OAuth-, Themen- und "
+       "Warteschlangen-Dateien im Aufnahmeordner bleiben")
+
+
+def _test_auf2_splitreste_exakt():
+    """AUF-2: „split-rest" war jede Datei, deren Name `_part` oder `_re_`
+    enthaelt — ohne Bestandsliste, ohne Alter. Aufnahmen heissen
+    tiktok_live_<chat>_<nutzer>_<zeit>.mp4: ein Nutzer „dj_partyking" oder
+    „re_becca" machte JEDE seiner Aufnahmen (auch die laufende) zum Rest, und
+    „Reste aufraeumen" loeschte sie. Dazu die Teile eines noch laufenden
+    Uploads: der Versand loescht jeden Teil erst NACH dessen Upload."""
+    import ast as _ast
+    import asyncio as _aio
+    import time as _t
+    from nc import ctx as _ncctx
+    from nc import videoteil as V
+    from nc.routes import recordings as rt
+
+    # (1) Die Form ist genau die der Erzeuger (praefix = f"{filepath}_part").
+    for name, rest in (("tiktok_live_1_dj_partyking_20261119_101010.mp4", False),
+                       ("tiktok_live_1_re_becca_20261119_101010.mp4", False),
+                       ("tiktok_live_1_x_part_123.mp4", False),
+                       ("a.mp4_part_000.mp4", True), ("a.mp4_part_re_007.mp4", True),
+                       ("a.mp4_dcpart_001.mp4", True), ("a.flv_part_1000.mp4", True),
+                       ("a.mp4.repaired.mp4", True),
+                       ("a.mp4.repaired.mp4.remux.mp4", True)):
+        assert V.ist_rest(name) is rest, (name, rest)
+
+    # (2) Die Erzeuger melden sich an, BEVOR die erste Datei entsteht.
+    heim = _ph.verzeichnis()
+    auf = os.path.join(heim, "aufnahmen")
+    os.makedirs(auf)
+    fehlt = os.path.join(auf, "laeuft_noch.mp4")
+    alt_kind, alt_dauer = V._kind, V.dauer
+
+    class _Kind:
+        DEVNULL = None
+
+        async def ausfuehren(self, *a, **k):
+            raise RuntimeError("kein ffmpeg im Vertrag")
+
+    async def _dauer(_p):
+        raise RuntimeError("kein ffprobe im Vertrag")
+
+    async def _erzeuger():
+        for ruf in (lambda: V.kopier_teilen(fehlt, fehlt + "_part", 45),
+                    lambda: V.neu_kodieren(fehlt, fehlt + "_dcpart", 45),
+                    lambda: V.reparieren(fehlt, fehlt + ".repaired.mp4")):
+            try:
+                await ruf()
+            except Exception:
+                pass        # die Datei gibt es nicht — gemessen wird die Anmeldung
+    V._kind, V.dauer = _Kind(), _dauer
+    try:
+        _aio.run(_erzeuger())
+    finally:
+        V._kind, V.dauer = alt_kind, alt_dauer
+    for n in ("_part_000.mp4", "_part_re_003.mp4", "_dcpart_001.mp4", ".repaired.mp4"):
+        assert V.in_arbeit(fehlt + n), ("Zerlegung nicht angemeldet", n)
+    assert not V.in_arbeit(os.path.join(auf, "fremd.mp4_part_000.mp4"))
+    echte_uhr = V.time
+    V.time = type("U", (), {"monotonic": staticmethod(
+        lambda: echte_uhr.monotonic() + V.ARBEIT_MAX_S + 1)})()
+    try:
+        assert not V.in_arbeit(fehlt + "_part_000.mp4"), \
+            "eine Anmeldung gilt ewig — ein abgestuerzter Versand haelt seine Reste fuer immer"
+    finally:
+        V.time = echte_uhr
+
+    # (3) _find_orphans: nur echte, alte, unbenutzte Reste.
+    vorher = _t.time() - rt.FRISCH_S - 60
+    namen_alt = ("tiktok_live_1_dj_partyking_20261119_101010.mp4",
+                 "tiktok_live_1_re_becca_20261119_101010.mp4",
+                 "tiktok_live_1_dj_partyking_20261119_101010.mp4_part_000.mp4",
+                 "tiktok_live_1_re_becca_20261119_101010.mp4.repaired.mp4",
+                 "laeuft_noch.mp4_part_000.mp4", "laeuft_noch.mp4.repaired.mp4",
+                 # Mutationsprobe M2a: mit Bestand und Alter allein blieb der
+                 # alte Teilstring-Test unentdeckt. Er unterschied sich nur hier:
+                 # Beilagen ohne Videoendung, und der GRUND einer echten Waise.
+                 "tiktok_live_1_re_becca_20261119_101010.jpg",
+                 "tiktok_live_2_dj_partyking_20261119_111111.mp4")
+    for n in namen_alt:
+        p = _ph.attrappe(os.path.join(auf, n), 2048)
+        os.utime(p, (vorher, vorher))
+    _ph.attrappe(os.path.join(auf, "frisch.mp4_part_001.mp4"), 2048)
+    laufend = os.path.join(auf, namen_alt[1])
+    bekannt = os.path.join(auf, namen_alt[0])
+
+    class _Zeilen(list):
+        def fetchall(self): return self
+
+    class _Conn:
+        def execute(self, sql, args=()):
+            if "trackings" in sql:
+                return _Zeilen([{"output_file": laufend}])
+            return _Zeilen([{"filepath": bekannt}])
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    alt_ctx, echt_db = _ncctx._CTX, rt.db_conn
+    _ncctx.configure(recordings_dir=auf, log=type("L", (), {
+        "warning": print, "info": print, "error": print, "debug": print})(),
+        log_event=lambda *a, **k: None, arg_int=lambda *a, **k: 0,
+        ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    try:
+        rt.db_conn = lambda: _Conn()
+        gefunden = {o["name"]: o["reason"] for o in rt._find_orphans()}
+    finally:
+        rt.db_conn = echt_db
+        _ncctx._CTX = alt_ctx
+    assert namen_alt[0] not in gefunden and namen_alt[1] not in gefunden, \
+        ("eine Aufnahme gilt wegen ihres Nutzernamens als Split-Rest", gefunden)
+    assert "laeuft_noch.mp4_part_000.mp4" not in gefunden \
+        and "laeuft_noch.mp4.repaired.mp4" not in gefunden, \
+        ("die Teile eines laufenden Versands stehen zum Loeschen an", gefunden)
+    assert "frisch.mp4_part_001.mp4" not in gefunden, gefunden
+    assert gefunden == {namen_alt[2]: "split-rest", namen_alt[3]: "split-rest",
+                        namen_alt[7]: "kein-db-eintrag"}, \
+        ("die echten Reste werden nicht mehr gefunden", gefunden)
+
+    # (4) Telegram /cleanup: dieselbe Erkennung, kein Glob auf "_part_".
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "cleanup")
+    texte = {k.value for k in _ast.walk(fn) if isinstance(k, _ast.Constant)
+             and isinstance(k.value, str)}
+    assert not any("_part_" in t for t in texte), \
+        "/cleanup sucht wieder per Glob nach '_part_' — trifft Nutzernamen"
+    rufe = {_ast.unparse(k.func) for k in _ast.walk(fn) if isinstance(k, _ast.Call)}
+    assert {"_nc_videoteil.ist_rest", "_nc_videoteil.in_arbeit"} <= rufe, rufe
+    ok("AUF-2: Split-Reste nur in exakter Erzeugerform, nicht frisch, nicht im "
+       "Bestand, nicht im laufenden Versand — Deck und /cleanup")
+
+
+def _test_auf3_sitzungsdatei_keine_waise():
+    """AUF-3: die zusammengefuegte Sitzung (sitzung_<sid>.mp4) bekommt keine
+    Datenbankzeile und galt nach FRISCH_S als „kein-db-eintrag" — „Reste
+    aufraeumen" loeschte den gerade gebauten Join. Eine Zeile anzulegen waere
+    schlimmer: _sitzung_bestimmen haengt neue Segmente an die JUENGSTE Zeile
+    des Nutzers (Begruendung in nc.aufnahmesitzung.ist_zieldatei)."""
+    import time as _t
+    from nc import aufnahmesitzung as AS
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+    auf = _ph.verzeichnis()
+    sid = AS.sitzung_id("dj.party_72", "2026-11-19T20:00:00+00:00")
+    ziel = AS.zieldatei(auf, sid)
+    assert AS.ist_zieldatei(ziel), ("die Erkennung passt nicht zur Erzeugung", ziel)
+    assert AS.ist_zieldatei("sitzung_unbenannt.mp4")
+    assert not AS.ist_zieldatei("tiktok_live_1_sitzung_20261119_101010.mp4")
+    vorher = _t.time() - rt.FRISCH_S - 60
+    waise = os.path.join(auf, "tiktok_live_1_x_20261119_101010.mp4")
+    for p in (ziel, waise):
+        _ph.attrappe(p, 2048)
+        os.utime(p, (vorher, vorher))
+
+    class _Zeilen(list):
+        def fetchall(self): return self
+
+    class _Conn:
+        def execute(self, sql, args=()): return _Zeilen()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    alt_ctx, echt_db = _ncctx._CTX, rt.db_conn
+    _ncctx.configure(recordings_dir=auf, log=type("L", (), {
+        "warning": print, "info": print, "error": print, "debug": print})(),
+        log_event=lambda *a, **k: None, arg_int=lambda *a, **k: 0,
+        ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    try:
+        rt.db_conn = lambda: _Conn()
+        gefunden = {o["name"] for o in rt._find_orphans()}
+    finally:
+        rt.db_conn = echt_db
+        _ncctx._CTX = alt_ctx
+    assert os.path.basename(ziel) not in gefunden, \
+        "der gerade zusammengefuegte Join steht unter den Waisen und wuerde geloescht"
+    assert gefunden == {os.path.basename(waise)}, ("echte Waise nicht gefunden", gefunden)
+    ok("AUF-3: zusammengefuegte Sitzungsdatei ist keine Waise")
+
+
+def _test_auf4_add_recording_wiederholt_und_meldet():
+    """AUF-4: scheiterten beide INSERTs in add_recording, stand nur ein
+    log.warning da und der Upload lief weiter — die Datei lag ohne Zeile im
+    Ordner und wurde spaeter als Waise zum Loeschen angeboten. Die laute
+    Meldung im Stopp-Pfad (W121) kam nie, weil die Funktion nicht wirft.
+    Jetzt: kurzer zweiter Anlauf, danach log.error mit Pfad und „NICHT
+    loeschen". Gemessen am echten Funktionskoerper aus bot.py."""
+    import ast as _ast
+    from datetime import datetime, timedelta, timezone
+    from typing import Optional
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    teile = [k for k in baum.body
+             if (isinstance(k, _ast.FunctionDef) and k.name == "add_recording")
+             or (isinstance(k, _ast.Assign) and any(
+                 getattr(t, "id", "").startswith("_ADD_RECORDING_") for t in k.targets))]
+    assert len(teile) == 3, [getattr(k, "name", "=") for k in teile]
+
+    class _Log:
+        def __init__(self):
+            self.zeilen = []
+
+        def _merk(self, stufe, msg, a):
+            self.zeilen.append((stufe, msg % a if a else msg))
+
+        def warning(self, msg, *a): self._merk("warning", msg, a)
+        def error(self, msg, *a): self._merk("error", msg, a)
+        def info(self, msg, *a): self._merk("info", msg, a)
+        def debug(self, msg, *a): self._merk("debug", msg, a)
+
+    def _lauf(scheitern):
+        zustand = {"n": 0, "pausen": []}
+
+        class _Cur:
+            lastrowid = 77
+
+        class _Conn:
+            def execute(self, sql, args=()):
+                zustand["n"] += 1
+                if zustand["n"] <= scheitern:
+                    raise RuntimeError("database is locked")
+                return _Cur()
+
+            def commit(self): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        log = _Log()
+        raum = {"db_conn": lambda: _Conn(), "log": log, "os": os,
+                "datetime": datetime, "timezone": timezone, "timedelta": timedelta,
+                "Optional": Optional, "_iso": lambda d: d.isoformat() if d else None,
+                "_sitzung_bestimmen": lambda *a: "@x_1",
+                "log_event": lambda *a, **k: None,
+                "_time_mod": type("T", (), {"sleep": staticmethod(
+                    lambda s: zustand["pausen"].append(s))})()}
+        exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), raum)
+        rid = raum["add_recording"]("x", "/rec/tiktok_live_1_x_1.mp4", file_size=1,
+                                     duration_secs=5)
+        return rid, log.zeilen, zustand
+
+    # Gesperrt, dann frei: der zweite Anlauf traegt ein.
+    rid, zeilen, z = _lauf(scheitern=2)
+    assert rid == 77, ("kein zweiter Anlauf — die Aufnahme bleibt ohne Zeile", rid, zeilen)
+    assert z["pausen"], "kein Warten zwischen den Anlaeufen"
+    assert not [m for s, m in zeilen if s == "error"], zeilen
+    # Dauerhaft kaputt: laut, mit Pfad und Warnhinweis.
+    rid, zeilen, z = _lauf(scheitern=10 ** 6)
+    assert rid is None
+    fehler = [m for s, m in zeilen if s == "error"]
+    assert len(fehler) == 1, ("kein log.error — ein WARNING erscheint im ERROR-Log nie", zeilen)
+    assert "/rec/tiktok_live_1_x_1.mp4" in fehler[0] and "NICHT loeschen" in fehler[0], fehler
+    assert len(z["pausen"]) == 2, z["pausen"]
+    ok("AUF-4: add_recording versucht es erneut und meldet das Scheitern auf "
+       "error mit Pfad und „NICHT loeschen“")
+
+
+def _test_auf6_retention_je_datei_committen():
+    """AUF-6: /api/rec/retention/apply loeschte Datei um Datei und committete
+    erst nach der Schleife. Warf ein spaeteres DELETE („database is locked"),
+    rollte die Transaktion ALLE Zeilen zurueck, waehrend die Dateien laengst
+    weg waren. Jetzt je Datei: Datei, dann Zeile, dann commit — und beim
+    ersten Datenbankfehler Abbruch, bevor weitere Dateien fallen."""
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+    auf = _ph.verzeichnis()
+    pfade = {i: _ph.attrappe(os.path.join(auf, "r%d.mp4" % i), 4096) for i in (1, 2, 3)}
+    zeilen = {1, 2, 3}
+    sperre = {"id": 2, "zu": False}
+
+    # Eine Sperre bleibt, wenn sie einmal da ist: auch der commit danach
+    # scheitert. Ohne das deckte der commit beim Verlassen des with-Blocks
+    # den fehlenden commit je Datei zu (Mutationsprobe).
+    class _Conn:
+        def __init__(self): self.offen = set()
+        def execute(self, sql, args=()):
+            assert sql.startswith("DELETE FROM recordings"), sql
+            if args[0] == sperre["id"]:
+                sperre["zu"] = True
+            if sperre["zu"]:
+                raise RuntimeError("database is locked")
+            self.offen.add(args[0])
+        def commit(self):
+            # Ein leerer commit braucht keine Sperre (sqlite3: kein offener
+            # Schreibvorgang -> nichts zu tun).
+            if sperre["zu"] and self.offen:
+                raise RuntimeError("database is locked")
+            zeilen.difference_update(self.offen)
+            self.offen.clear()
+        def __enter__(self): return self
+        def __exit__(self, typ, *a):
+            if typ is None:
+                self.commit()
+            self.offen.clear()          # Ausnahme: Rollback
+            return False
+
+    alt_ctx, echt_db, echt_match = _ncctx._CTX, rt.db_conn, rt._retention_match
+    _ncctx.configure(recordings_dir=auf, log=type("L", (), {
+        "warning": print, "info": print, "error": print, "debug": print})(),
+        log_event=lambda *a, **k: None, arg_int=lambda *a, **k: 0,
+        ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    app = Flask(__name__)
+    app.register_blueprint(rt.bp)
+    klient = app.test_client()
+    try:
+        rt.db_conn = lambda: _Conn()
+        rt._retention_match = lambda rules: [{"id": i, "filepath": pfade[i]}
+                                             for i in sorted(zeilen)]
+        d = klient.post("/api/rec/retention/apply", json={"confirm": True}).get_json()
+        assert not os.path.exists(pfade[1]) and 1 not in zeilen, \
+            ("Datei 1 weg, Zeile 1 zurueckgerollt — die W91-Lage andersherum", zeilen)
+        assert os.path.exists(pfade[3]) and 3 in zeilen, \
+            "nach dem Datenbankfehler wurde weiter geloescht"
+        assert d["deleted"] == 1 and d["failed"] == 1, d
+        # Der Rest heilt beim zweiten Lauf: Zeile 2 hat keine Datei mehr.
+        sperre.update(id=None, zu=False)
+        d = klient.post("/api/rec/retention/apply", json={"confirm": True}).get_json()
+        assert zeilen == set() and not os.path.exists(pfade[3]), (zeilen, d)
+    finally:
+        rt.db_conn, rt._retention_match = echt_db, echt_match
+        _ncctx._CTX = alt_ctx
+    ok("AUF-6: Retention committet je Datei — ein spaeterer Datenbankfehler "
+       "rollt keine geloeschten Dateien zurueck")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -43313,6 +43684,11 @@ def main():
     _test_v5112_sec1_dublette_nur_mit_zweiter_kopie()
     _test_v5112_sec3_snapshot_schwaerzt_geheimnisse()
     _test_v5112_auf5_teile_eines_laufs()
+    _test_auf1_cleanup_nur_aufnahmen()
+    _test_auf2_splitreste_exakt()
+    _test_auf3_sitzungsdatei_keine_waise()
+    _test_auf4_add_recording_wiederholt_und_meldet()
+    _test_auf6_retention_je_datei_committen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

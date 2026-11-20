@@ -49,6 +49,7 @@ from nc.dbwrap import db_conn
 from nc import sicherpfad as _nc_sicherpfad   # v4.2-W149: Loeschen nur im Aufnahmeordner
 from nc import stats as _nc_stats             # v5.10-W207: Tageszaehlung, geteilt mit dem Leitstand
 from nc import trackingdb as _nc_trackingdb   # v4.0-W117: Tags direkt statt ueber nc.ctx
+from nc import videoteil as _nc_videoteil     # AUF-2: Teil-Reste exakt + laufender Versand
 from nc.archive import compute_recording_fingerprint, _retention_match
 from nc.ffdiag import _rec_quality
 from nc.notes import add_annotation, set_recording_note, toggle_bookmark
@@ -422,10 +423,21 @@ def _find_orphans():
         if not os.path.isfile(full):
             continue
         reason = None
-        if "_part" in name or name.endswith(".repaired.mp4") or "_re_" in name:
-            reason = "split-rest"
+        if _nc_videoteil.ist_rest(name):
+            # AUF-2: bis hier `"_part" in name or "_re_" in name` — ohne
+            # known, ohne Alter. Der Nutzer „dj_partyking" machte damit jede
+            # seiner Aufnahmen (auch die laufende) zum Rest. Jetzt nur die
+            # exakte Erzeugerform, und auch die nicht, solange ein Versand sie
+            # noch braucht: der loescht jeden Teil erst NACH dessen Upload.
+            # Ein geschuetzter Rest faellt bewusst NICHT in den Zweig darunter
+            # — er endet auf .mp4 und stuende sonst als „kein-db-eintrag" da.
+            if (os.path.abspath(full) not in known
+                    and not _nc_videoteil.in_arbeit(full)
+                    and not _frisch(full)):
+                reason = "split-rest"
         elif (os.path.abspath(full) not in known
               and name.endswith((".mp4", ".flv", ".ts", ".part"))
+              and not _sitzung.ist_zieldatei(name)   # AUF-3, s. dort
               and not _frisch(full)):
             reason = "kein-db-eintrag"
         if reason:
@@ -1057,9 +1069,28 @@ def api_rec_retention_apply():
                         wortlaut.append("%s (%s)" % (os.path.basename(fp), e))
                         continue
                     freed += groesse
-                conn.execute("DELETE FROM recordings WHERE id=?", (m["id"],))
+                # AUF-6: je Datei committen. Bis hier stand EIN commit nach der
+                # Schleife — warf ein spaeteres DELETE oder der commit
+                # („database is locked", Alltag bei laufendem Recorder), rollte
+                # die Transaktion alle Zeilen zurueck, waehrend die Dateien
+                # laengst geloescht waren: Eintraege ohne Datei, das Deck
+                # zaehlte den Platz als belegt. Die W91-Regel gilt in beide
+                # Richtungen. Reihenfolge Datei, dann Zeile: faellt die Zeile,
+                # bleibt genau EIN Eintrag ohne Datei, und ein zweiter Lauf
+                # raeumt ihn weg (fehlende Datei -> nur DELETE). Andersherum
+                # bliebe eine Datei ohne Eintrag, die kein Lauf mehr findet.
+                try:
+                    conn.execute("DELETE FROM recordings WHERE id=?", (m["id"],))
+                    conn.commit()
+                except Exception as e:
+                    gescheitert.append({"id": m["id"], "name": os.path.basename(fp or ""),
+                                        "grund": _fehler_text(e, "retention_apply")})
+                    log.error("retention_apply: Datenbank nach %d Aufnahmen nicht mehr "
+                              "schreibbar (%s) — abgebrochen. %s ist von der Platte, "
+                              "die Zeile steht noch; erneut anwenden raeumt sie weg.",
+                              deleted, e, os.path.basename(fp or "") or "#%s" % m["id"])
+                    break
                 deleted += 1
-            conn.commit()
         try:
             log_event("retention_apply", "warn",
                       f"Retention löschte {deleted} Aufnahmen ({round(freed/1048576.0)} MB)")

@@ -26,6 +26,8 @@ import logging
 import os
 import re
 import shutil
+import threading
+import time
 
 from nc import encodeschlange as _encodeschlange  # v4.2-W174
 from nc import kindprozess as _kind  # v4.2-W120
@@ -47,6 +49,64 @@ ZIEL_TEIL_MB = 45
 _MIN_TEIL_BYTES = 10_240
 
 _cfg = {"threads_bg": None, "nice_bg": None}
+
+
+# ---- Teil-Reste erkennen und laufende Arbeit schuetzen (AUF-2) ---------------
+#
+# Bis hierher galt beim Aufraeumen (Deck „Reste aufraeumen", Telegram /cleanup)
+# jede Datei als Split-Rest, deren Name „_part" oder „_re_" ENTHAELT. Aufnahmen
+# heissen tiktok_live_<chat>_<nutzer>_<zeit>.mp4 — ein Nutzer „dj_partyking"
+# oder „re_becca" machte damit JEDE seiner Aufnahmen zum Rest, auch die gerade
+# laufende, und der Knopf loeschte sie ohne Alters- oder Bestandspruefung.
+#
+# Erkannt wird jetzt genau das, was die Erzeuger schreiben — und die Erzeuger
+# stehen hier bzw. rufen hier her:
+#   <aufnahme>_part_000.mp4      kopier_teilen   (telegramversand: praefix "_part")
+#   <aufnahme>_part_re_000.mp4   neu_kodieren
+#   <aufnahme>_dcpart_000.mp4    nc/discordaufnahme (praefix "_dcpart")
+#   <aufnahme>.repaired.mp4      reparieren      (telegramversand, B47)
+#   <aufnahme>.remux.mp4         zeitstempel_richten (telegramversand, B70+)
+# <aufnahme> traegt dabei SEINE Endung (praefix = f"{filepath}_part"). Eine
+# Videoendung MITTEN im Namen kommt in keinem Aufnahmenamen vor — genau daran
+# unterscheidet sich ein Teil von einer Aufnahme, deren Nutzer „part" heisst.
+_REST = re.compile(r"^.+\.(?:mp4|flv|ts|mkv|webm|m4v|mov)"
+                   r"(?:_(?:dc)?part(?:_re)?_\d{3,}\.mp4|\.repaired\.mp4|\.remux\.mp4)$")
+
+# Wie lange eine angemeldete Zerlegung als laufend gilt. Der Versand loescht
+# jeden Teil erst NACH seinem Upload; bei 45-MB-Teilen und FloodWait dauert
+# eine Zehn-Stunden-Aufnahme leicht ueber eine Stunde — die alte Schranke von
+# /cleanup (1 h) loeschte dann die Teile, die noch drankamen. Zwoelf Stunden
+# sind grosszuegig: nach einem Neustart ist die Liste ohnehin leer, und ein
+# Rest, der einen halben Tag laenger liegt, kostet nur Platz.
+ARBEIT_MAX_S = 12 * 3600.0
+
+_IN_ARBEIT = {}                 # abs. Praefix bzw. Ziel -> time.monotonic()
+_IN_ARBEIT_LOCK = threading.Lock()
+
+
+def ist_rest(name) -> bool:
+    """Traegt `name` (Dateiname oder Pfad) exakt die Form eines Teil-Rests?"""
+    return bool(_REST.match(os.path.basename(name or "")))
+
+
+def _anmelden(praefix_oder_ziel):
+    """Eine Zerlegung/ein Re-Mux beginnt: alles, was mit diesem Pfad anfaengt,
+    gehoert einem laufenden Versand. Die Liste lebt im Prozess — Bot und Deck
+    laufen in demselben, und nach einem Neustart laeuft kein Versand mehr."""
+    jetzt = time.monotonic()
+    with _IN_ARBEIT_LOCK:
+        for k in [k for k, t in _IN_ARBEIT.items() if jetzt - t >= ARBEIT_MAX_S]:
+            del _IN_ARBEIT[k]
+        _IN_ARBEIT[os.path.abspath(praefix_oder_ziel)] = jetzt
+
+
+def in_arbeit(pfad) -> bool:
+    """Gehoert `pfad` zu einer Zerlegung, deren Versand noch laufen kann?"""
+    voll = os.path.abspath(pfad)
+    jetzt = time.monotonic()
+    with _IN_ARBEIT_LOCK:
+        return any(voll.startswith(k) and jetzt - t < ARBEIT_MAX_S
+                   for k, t in _IN_ARBEIT.items())
 
 
 def configure(threads_bg=None, nice_bg=None):
@@ -190,6 +250,7 @@ async def kopier_teilen(pfad, praefix, ziel_mb):
     daraus die Segmentlaenge, die ziel_mb ergibt. Scheitert ffprobe, wird
     konservativ mit 2 Mbps gerechnet.
     """
+    _anmelden(praefix)          # AUF-2: ab hier gehoeren <praefix>_* dem Versand
     # AUF-5: Reste eines frueheren Laufs weg, bevor ffmpeg schreibt — sonst
     # sammelt die Auswahl unten sie mit ein.
     teile_entfernen(praefix)
@@ -247,6 +308,7 @@ async def neu_kodieren(pfad, praefix, ziel_mb):
     den Segmentgrenzen erzwungen und die Bitrate gedeckelt. Langsamer als
     Kopieren, dafuer zuverlaessig.
     """
+    _anmelden(praefix)          # AUF-2, s. kopier_teilen
     teile_entfernen(praefix)          # AUF-5: Reste eines frueheren Laufs
     laenge = await dauer(pfad)
     groesse_mb = os.path.getsize(pfad) / 1024 / 1024
@@ -300,6 +362,7 @@ async def neu_kodieren(pfad, praefix, ziel_mb):
 
 async def _mux(pfad, ziel, flags, deckel=300):
     """Neu muxen ohne neu zu kodieren. -> (ok, fehlertext)"""
+    _anmelden(ziel)             # AUF-2: .repaired/.remux sind Versand-Zwischenstand
     try:
         # v4.2-W120: jetzt mit Thread-Deckel (_bau). Vorher stand der Befehl
         # als Einzelargumente da, und der Deckel-Vertrag sah ihn nicht.

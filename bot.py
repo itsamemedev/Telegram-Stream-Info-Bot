@@ -5013,6 +5013,11 @@ def _sitzung_bestimmen(conn, username: str, start_iso: str):
     return _nc_sitzung.sitzung_id(username, start_iso)
 
 
+# AUF-4: Anlaeufe fuer add_recording, Pause waechst je Anlauf (1 s, 2 s).
+_ADD_RECORDING_VERSUCHE = 3
+_ADD_RECORDING_PAUSE_S = 1.0
+
+
 def add_recording(username: str, filepath: str, *,
                   file_size: Optional[int] = None,
                   duration_secs: Optional[int] = None,
@@ -5042,49 +5047,68 @@ def add_recording(username: str, filepath: str, *,
         start_iso = _iso(datetime.now(timezone.utc)
                          - timedelta(seconds=int(duration_secs)))
     start_iso = start_iso or end_iso
-    try:
-        with db_conn() as conn:
-            sid = _sitzung_bestimmen(conn, username, start_iso)
-            cur = conn.execute(
-                "INSERT INTO recordings (username, filepath, created_at, "
-                "  file_size, duration_secs, tracking_id, "
-                "  session_id, started_at, ended_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (username, filepath, jetzt_iso,
-                 file_size, duration_secs, tracking_id,
-                 sid, start_iso, end_iso))
-            conn.commit()
-            new_id = cur.lastrowid
-        # X-Event: Aufnahme abgeschlossen → Event-Log
+    fehler = None
+    # AUF-4: bis hier nach zwei gescheiterten INSERTs nur log.warning und
+    # `return None` — der Upload lief weiter, und die Datei lag danach ohne
+    # Zeile im Aufnahmeordner: nach FRISCH_S bietet „Reste aufraeumen" sie als
+    # „kein-db-eintrag" zum Loeschen an. Der Stopp-Pfad (W121) hatte dafuer
+    # schon eine laute Meldung — die nie kam, weil diese Funktion nicht wirft.
+    # Haeufigste Ursache ist ein gesperrtes SQLite unter laufendem Recorder,
+    # also ein kurzer zweiter Anlauf; die Aufrufer rufen ueber to_thread, das
+    # Warten haelt den Event-Loop nicht an.
+    for versuch in range(1, _ADD_RECORDING_VERSUCHE + 1):
         try:
-            log_event("recording.saved", "info",
-                      f"Aufnahme @{username} gespeichert ({(file_size or 0)/1024/1024:.1f} MB)",
-                      {"recording_id": new_id, "username": username,
-                       "file_size": file_size, "duration_secs": duration_secs,
-                       "session_id": sid})
-        except Exception: pass
-        return new_id
-    except Exception as e:
-        log.warning(f"add_recording @{username} → {filepath}: {e} "
-                    f"(zweiter Versuch ohne Sitzungs-Spalten)")
-    # v4.2-W44: Rueckfall auf den Spaltensatz vor dieser Welle. Wenn
-    # _migrate_columns auf einem Bestand nicht durchkam, waere der INSERT oben
-    # dauerhaft kaputt — und dann fehlte nicht die Klammer, sondern JEDE
-    # Aufnahme im Dashboard. Die Klammer ist Komfort, der Eintrag ist Pflicht.
-    try:
-        with db_conn() as conn:
-            cur = conn.execute(
-                "INSERT INTO recordings (username, filepath, created_at, "
-                "  file_size, duration_secs, tracking_id) "
-                "VALUES (?,?,?,?,?,?)",
-                (username, filepath, jetzt_iso,
-                 file_size, duration_secs, tracking_id))
-            conn.commit()
-            return cur.lastrowid
-    except Exception as e:
-        log.warning(f"add_recording @{username} → {filepath}: {e} "
-                    f"(Upload läuft weiter, aber Dashboard zeigt diese Aufnahme nicht)")
-        return None
+            with db_conn() as conn:
+                sid = _sitzung_bestimmen(conn, username, start_iso)
+                cur = conn.execute(
+                    "INSERT INTO recordings (username, filepath, created_at, "
+                    "  file_size, duration_secs, tracking_id, "
+                    "  session_id, started_at, ended_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    (username, filepath, jetzt_iso,
+                     file_size, duration_secs, tracking_id,
+                     sid, start_iso, end_iso))
+                conn.commit()
+                new_id = cur.lastrowid
+            # X-Event: Aufnahme abgeschlossen → Event-Log
+            try:
+                log_event("recording.saved", "info",
+                          f"Aufnahme @{username} gespeichert ({(file_size or 0)/1024/1024:.1f} MB)",
+                          {"recording_id": new_id, "username": username,
+                           "file_size": file_size, "duration_secs": duration_secs,
+                           "session_id": sid})
+            except Exception: pass
+            return new_id
+        except Exception as e:
+            fehler = e
+            log.warning(f"add_recording @{username} → {filepath}: {e} "
+                        f"(Versuch {versuch}, zweiter Anlauf ohne Sitzungs-Spalten)")
+        # v4.2-W44: Rueckfall auf den Spaltensatz vor dieser Welle. Wenn
+        # _migrate_columns auf einem Bestand nicht durchkam, waere der INSERT oben
+        # dauerhaft kaputt — und dann fehlte nicht die Klammer, sondern JEDE
+        # Aufnahme im Dashboard. Die Klammer ist Komfort, der Eintrag ist Pflicht.
+        try:
+            with db_conn() as conn:
+                cur = conn.execute(
+                    "INSERT INTO recordings (username, filepath, created_at, "
+                    "  file_size, duration_secs, tracking_id) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (username, filepath, jetzt_iso,
+                     file_size, duration_secs, tracking_id))
+                conn.commit()
+                return cur.lastrowid
+        except Exception as e:
+            fehler = e
+            log.warning(f"add_recording @{username} → {filepath}: {e} "
+                        f"(Versuch {versuch}, auch ohne Sitzungs-Spalten)")
+        if versuch < _ADD_RECORDING_VERSUCHE:
+            _time_mod.sleep(_ADD_RECORDING_PAUSE_S * versuch)
+    log.error("Aufnahme @%s NICHT eingetragen (%d Versuche, zuletzt: %s): %s liegt "
+              "ohne Datenbankzeile und erscheint deshalb unter den Waisen "
+              "(/api/rec/orphans) — dort NICHT loeschen, die Datei ist eine echte "
+              "Aufnahme. Der Upload laeuft weiter.",
+              username, _ADD_RECORDING_VERSUCHE, fehler, filepath)
+    return None
 
 def get_all_recordings(limit = 50, include_deleted = False):
     # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
@@ -6583,19 +6607,17 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except OSError: pass
     except Exception: pass
 
-    # F69: Orphan _part_*.mp4 Dateien aus split_and_send_video. Wenn der
-    # Upload-Flow während des Splits crashed (Bot-Restart, OOM, etc.), bleiben
-    # die _part_NNN.mp4-Files zurück. Sind nutzlos ohne ihren Eltern-Recording-
-    # Kontext, fressen aber Disk. Hier weg räumen — Pattern matched genau
-    # was split_and_send_video generiert (prefix = f"{filepath}_part",
-    # output = f"{prefix}_%03d.mp4").
+    # F69: Orphan-Teile aus split_and_send_video (Bot-Restart, OOM mitten im
+    # Split) — nutzlos ohne ihren Upload, fressen aber Disk. AUF-2: das Glob
+    # "*_part_*.mp4" traf auch die AUFNAHME eines Nutzers „dj_part_x". Jetzt
+    # nur die exakte Erzeugerform (nc.videoteil.ist_rest), nichts, was ein
+    # laufender Versand noch braucht (in_arbeit: er loescht jeden Teil erst
+    # nach dessen Upload, und das dauert oft ueber eine Stunde), und nur > 1 h.
     cleaned_orphan_parts = 0
     try:
-        for f in (g for m in ("*_part_*.mp4", "*_dcpart_*.mp4")  # W175: + Discord-Teile
-                  for g in glob.glob(os.path.join(RECORDINGS_DIR, m))):
+        for f in (g for g in glob.glob(os.path.join(RECORDINGS_DIR, "*.mp4"))
+                  if _nc_videoteil.ist_rest(g) and not _nc_videoteil.in_arbeit(g)):
             try:
-                # Defensiv: nur löschen wenn > 1h alt damit wir keine
-                # gerade-laufende Split-Operation killen.
                 if os.path.getmtime(f) < datetime.now(timezone.utc).timestamp() - 3600:
                     os.remove(f); cleaned_orphan_parts += 1
                     log.info(f"cleanup: orphan part-file entfernt: {os.path.basename(f)}")
@@ -10328,12 +10350,14 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # Dashboard sieht's nicht, kein Cleanup möglich.
             # X-Series: file_size + duration + tracking_id mitgeben für
             # Quality-Score, Forecast, Analytics.
-            add_recording(username, output_file,
-                          file_size=file_size,
-                          duration_secs=int(duration),
-                          tracking_id=tid,
-                          started_at=started_at, ended_at=ended_at)
+            # AUF-4: im Thread (add_recording wartet und wiederholt). VOR dem await: ein
+            # Abbruch laesst den Thread zu Ende schreiben — keine zweite Zeile (W175).
             nachlauf.update(eingetragen=True, ende=ended_at)
+            await asyncio.to_thread(add_recording, username, output_file,
+                                    file_size=file_size,
+                                    duration_secs=int(duration),
+                                    tracking_id=tid,
+                                    started_at=started_at, ended_at=ended_at)
 
             # F37: Multi-Chat-Fan-Out. Wenn mehrere Chats denselben User tracken,
             # sollen ALLE die OFFLINE-Notif + Upload bekommen, nicht nur der Chat
