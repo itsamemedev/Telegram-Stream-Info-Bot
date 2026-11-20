@@ -1704,7 +1704,9 @@ def test_restream_max_concurrent():
     assert 'RESTREAM_MAX_CONCURRENT", 2' in src, "Default nicht 2"
     # Der Deckel greift in der Multi-Modus-Schleife per break
     body = _ab(src, "V37-MAXLIVE: gedeckelt")         # v4.0-W117
-    assert "len(self._procs) >= RESTREAM_MAX_CONCURRENT" in body and "break" in body, \
+    # ANKER GEWANDERT (RST-5, nicht der Vertrag): gezaehlt wird jeder belegte
+    # Platz (_belegt: _procs, Anlauf, Backoff), nicht mehr nur _procs.
+    assert "len(_belegt) >= RESTREAM_MAX_CONCURRENT" in body and "break" in body, \
         "Deckel-Prüfung fehlt oder bricht nicht ab"
     ok("maxlive: Multi-Restream auf RESTREAM_MAX_CONCURRENT gedeckelt (Default 2)")
 

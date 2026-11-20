@@ -15190,9 +15190,15 @@ class RestreamManager:
             return {"ok": False, "error": f"Restream deaktiviert ({why})"}
         if rid in self._procs:
             return {"ok": True, "already": True}
-        # v4.2-W118: nur die fd-Sperre — den Deckel fuer Restreams haelt
-        # RESTREAM_MAX_CONCURRENT im Scheduler.
-        _gd = _start_gesperrt("restream", "#%s" % rid, len(self._procs), 0)
+        # RST-1: die Sitzung beim Anlauf merken. stop() zaehlt sie hoch, und
+        # zwischen hier und dem Sendestart liegen bis ~40 s Wartepunkte
+        # (Resolve, Preflight, YouTube, Chromium) — siehe _anlauf_verwerfen.
+        _gen = self._sitzung.get(rid, 0)
+        # v4.2-W118: die fd-Sperre. RST-5: und der Deckel RESTREAM_MAX_CONCURRENT
+        # — der stand nur im Scheduler, und manueller Start, Guard und
+        # Reconnect liefen an ihm vorbei (drei Transcodes bei Grenze 2).
+        _gd = (_start_gesperrt("restream", "#%s" % rid, len(self._procs), 0)
+               or self._deckel_grund(rid))
         if _gd:
             self._set_status(rid, "idle", err=_gd)
             return {"ok": False, "error": _gd}
@@ -15362,6 +15368,8 @@ class RestreamManager:
         except asyncio.TimeoutError:
             log.warning("YouTube-Restream NICHT aktiv: Key-Abfrage ueber 10 s "
                         "— Sendestart geht ohne YouTube weiter.")
+        if self._sitzung.get(rid, 0) != _gen:      # RST-1: vor dem ersten Feeder
+            return await self._anlauf_verwerfen(rid, feeder=False)
         # v4.0-W77: gleichberechtigte Zielliste dieses Restreams (inkl. Overrides).
         _targets = _nc_rst.active_targets(overrides=_row_overrides)
         if not _targets:
@@ -15491,6 +15499,9 @@ class RestreamManager:
             await self._nebenlaeufer_abraeumen(rid)
             self._set_status(rid, "error", err=f"ffmpeg-Start: {e}")
             return {"ok": False, "error": str(e)}
+        if self._sitzung.get(rid, 0) != _gen:      # RST-1: stop() waehrend Feeder/Spawn
+            return await self._anlauf_verwerfen(rid, {"proc": proc},
+                                                fd=(_br_fds or (None, None))[1])
         # B141: echte Kick-URL + tee-Ziel-Reihenfolge dieses Prozesses festhalten.
         # _read_stderr labelt tee-Fehler damit korrekt (statt _multistream_targets()
         # frisch neu zu raten), und die Kollisions-Pruefung unten braucht die Kick-URL.
@@ -15499,13 +15510,13 @@ class RestreamManager:
         _base_url = _targets[0][1]
         _kick_url = _base_url          # Rückwärtskompat: Kollisions-Check/Consumer
         _tee_targets = list(_targets)
-        self._procs[rid] = {"proc": proc, "started": _time_mod.monotonic(),
-                            "attempts": _attempts, "transcode": transcode,
-                            "kick_url": _kick_url, "base_url": _base_url,
-                            "tee_targets": _tee_targets,
-                            "src_watch": _src_watch,     # v4.2-W179: ueber Reconnects
-                            "health": {"bitrate": None, "fps": None, "frame": 0, "drop": 0,
-                                       "speed": None, "out_time": "00:00:00", "size_mb": 0}}
+        _mein = self._procs[rid] = {"proc": proc, "started": _time_mod.monotonic(),
+                                    "attempts": _attempts, "transcode": transcode,
+                                    "kick_url": _kick_url, "base_url": _base_url,
+                                    "tee_targets": _tee_targets,
+                                    "src_watch": _src_watch,     # v4.2-W179: ueber Reconnects
+                                    "health": {"bitrate": None, "fps": None, "frame": 0, "drop": 0,
+                                               "speed": None, "out_time": "00:00:00", "size_mb": 0}}
         _nc_rutil.freigeben(self, rid)   # ab hier greift `rid in self._procs`
         if _bruecke_an:
             _br = _nc_bruecke.Bruecke(
@@ -15528,7 +15539,13 @@ class RestreamManager:
                 _grund = f"Sendebruecke startet nicht ({type(e).__name__}: {e})"
                 log.error("Restream #%d: %s — ffmpeg im PATH? Der Sender wird "
                           "beendet, der Start gilt als gescheitert.", rid, _grund)
-                _info = self._procs.pop(rid, None)
+                # Nur den EIGENEN Eintrag entfernen (RST-1): kam waehrend
+                # _br.start ein stop() und danach ein neuer Start derselben
+                # rid, gehoert _procs[rid] schon jenem. Die Bruecke steckt in
+                # _mein, nicht im Register.
+                _info = _mein
+                if self._procs.get(rid) is _mein:
+                    del self._procs[rid]
                 # Erst den Sender, dann die Bruecke — dieselbe Reihenfolge wie
                 # in stop() (W179): ein os.write in den nicht lesenden Sender
                 # haelt sonst den Bruecken-Abbau auf.
@@ -15537,6 +15554,11 @@ class RestreamManager:
                 await self._nebenlaeufer_abraeumen(rid)
                 self._set_status(rid, "error", err=_grund)
                 return {"ok": False, "error": _grund}
+        # RST-1: der letzte Wartepunkt vor dem Sendestart. Von hier bis
+        # _set_desired(rid, True) wartet nichts mehr (Vertrag RST-1) — ein
+        # stop() kann danach erst kommen, wenn der Eintrag vollstaendig steht.
+        if self._sitzung.get(rid, 0) != _gen:
+            return await self._anlauf_verwerfen(rid, _mein, feeder=False)
         self._set_status(rid, "live", pid=proc.pid)
         # B141: Kollisions-Warnung. Teilen sich zwei aktive Restreams denselben
         # Kick-Key, kann nur EINER senden (ein RTMP-Key = ein Slot) — die anderen
@@ -16316,13 +16338,23 @@ class RestreamManager:
         wartet bis 5 s, deshalb im Thread), Avatar-Feeder und, mit `info`,
         die unabhaengigen Relays. Aufgerufen vom Prozessende (_monitor), vom
         Fehlstart (start) und vom Stop — vorher raeumte jeder Pfad nur einen
-        Teil ab."""
+        Teil ab.
+
+        RST-4: die Relays ZUERST. _monitor ruft das hier, NACHDEM er den
+        _procs-Eintrag entfernt hat; ein stop() in diesem Fenster findet
+        nichts (raeumt also ohne `info` ab) und cancelt den Monitor. Standen
+        die Relays hinter dem Overlay-Ende (bis 5 s im Thread), kamen sie nie
+        dran: sie sendeten bis zum Ablauf der Quell-URL (~6 min) weiter, und
+        ein neuer Lauf stand als zweiter Publisher auf demselben Key. Das
+        Cancel der Relay-Tasks laeuft vor dem ersten Wartepunkt — wird der
+        Aufrufer danach abgebrochen, erntet jeder Relay seinen Prozess selbst
+        (Ausgang von _relay_loop)."""
+        if info is not None:
+            await self._relays_abraeumen(info)
         _restream_tts_stop(rid)
         await asyncio.to_thread(_restream_html_overlay_stop, rid)
         await asyncio.to_thread(_nc_chatbild.beenden, rid)       # v5.9-W205
         _restream_avatar_feeder_stop(rid)
-        if info is not None:
-            await self._relays_abraeumen(info)
 
     async def _relays_abraeumen(self, info):
         """V37-INDEP: Relay-Tasks canceln und ihre ffmpeg-Prozesse ernten.
@@ -16337,6 +16369,45 @@ class RestreamManager:
             _p = _e.get("proc")
             if _p:
                 await _reap_proc(_p)   # v4.0-W75: terminate+wait → kein Zombie
+
+    async def _anlauf_verwerfen(self, rid, info=None, feeder=True, fd=None):
+        """RST-1: ein stop() kam, waehrend start() noch lief — nicht live gehen.
+
+        Bis hierher verglich nur _wiederanlauf die Sitzung, start() selbst
+        nicht. stop() fand im Anlauf keinen _procs-Eintrag, setzte desired=0
+        und meldete ok; danach startete ffmpeg trotzdem, der Status sprang auf
+        live, und `_set_desired(rid, True)` schrieb den Soll-Zustand zurueck.
+        Nach /api/restream/<id>/delete sendete das Ziel damit ohne Knopf im
+        Deck weiter (der Fall aus W178), und Starts kommen auch aus Guard,
+        Scheduler und Quellenwechsel. Hier wird alles abgeraeumt, was dieser
+        Anlauf schon gestartet hat: `info` traegt den Sender (und ggf. die
+        Bruecke), `fd` das noch nicht uebergebene Schreibende der Bruecke.
+        `feeder=False`, wenn stop() die Nebenlaeufer schon geerntet hat und
+        dieser Anlauf seither keine neuen gestartet hat."""
+        log.warning("Restream #%s: waehrend des Starts gestoppt — der Anlauf wird "
+                    "verworfen, es geht nichts auf Sendung.", rid)
+        await self._anlauf_abraeumen(rid, info, feeder=feeder, fd=fd)
+        if rid not in self._procs:      # ein neuer Start derselben rid behaelt seinen Status
+            self._set_status(rid, "stopped", pid=None)
+        return {"ok": False, "error": "waehrend des Starts gestoppt"}
+
+    async def _anlauf_abraeumen(self, rid, info=None, feeder=True, fd=None):
+        """RST-1: alles abraeumen, was ein abgebrochener Anlauf schon gestartet
+        hat — in der Reihenfolge von stop(): Nebenlaeufer (Relays zuerst,
+        RST-4), DANN der Sender, DANN die Bruecke (W179: umgekehrt hing der
+        Bruecken-Abbau an einem os.write in den nicht lesenden Sender).
+
+        Nur den EIGENEN _procs-Eintrag entfernen: nach stop() kann unter
+        derselben rid schon ein neuer Start stehen."""
+        if fd is not None:
+            os.close(fd)
+        if info is not None and self._procs.get(rid) is info:
+            del self._procs[rid]
+        if feeder:
+            await self._nebenlaeufer_abraeumen(rid, info)
+        if info is not None:
+            await _reap_proc(info.get("proc"))
+            await self._bruecke_abraeumen(rid, info)
 
     async def stop(self, rid, _keep_desired=False):
         """_keep_desired=True: interner Neustart durch den Guard — der
@@ -16408,10 +16479,62 @@ class RestreamManager:
         harten Absturz funktioniert, wo stop_all() nie laeuft.
 
         Ein Shutdown ist KEINE Betreiber-Entscheidung gegen den Restream,
-        also bleibt der Soll-Zustand bestehen."""
-        for rid in list(self._procs.keys()):
+        also bleibt der Soll-Zustand bestehen.
+
+        RST-3: nicht nur _procs. Ziele im Reconnect-Backoff (der Monitor hat
+        den Eintrag vor dem Schlaf entfernt), Starts im Anlauf und — beim Stop
+        des Betreibers — Zeilen mit desired=1, die gerade nichts senden,
+        bekamen weder desired=0 noch eine neue Sitzung; _wiederanlauf und die
+        Wiederaufnahme nach dem Neustart bauten sie danach wieder auf."""
+        ziele = (set(self._procs) | set(self._monitors)
+                 | set(_nc_rutil.startend(self)))
+        if not _keep_desired:
+            ziele |= await self._soll_an()
+        for rid in list(ziele):
             await self.stop(rid, _keep_desired=_keep_desired)
         return {"ok": True}
+
+    async def _soll_an(self):
+        """RST-3: die ids mit desired=1 — auch die, die gerade nichts senden."""
+        try:
+            rows = await db_async(lambda c: c.execute(
+                "SELECT id FROM restreams WHERE desired=1").fetchall())
+        except Exception as e:
+            log.warning("Restream: Soll-Zustand fuer „alle stoppen“ nicht lesbar "
+                        "(%s: %s) — gestoppt wird, was im Speicher laeuft.",
+                        type(e).__name__, e)
+            return set()
+        return {r["id"] for r in rows}
+
+    def _belegt(self, ausser=None):
+        """RST-5: welche Ziele gerade einen Sende-Platz halten — je rid einmal.
+
+        `len(self._procs)` allein zaehlte weder Ziele im Reconnect-Backoff
+        (der Monitor hat den Eintrag entfernt und schlaeft) noch Starts im
+        Anlauf. Der Scheduler vergab deren Platz neu, der Reconnect kam
+        danach trotzdem — drei Transcodes bei Grenze 2. `ausser`: die rid, die
+        gerade selbst startet; ein Reconnect zaehlt sich nicht doppelt."""
+        belegt = {r for r, t in self._monitors.items() if not t.done()}
+        belegt |= set(self._procs) | set(_nc_rutil.startend(self))
+        belegt.discard(ausser)
+        return belegt
+
+    def _deckel_grund(self, rid):
+        """RST-5: der Grund, warum `rid` den Deckel RESTREAM_MAX_CONCURRENT
+        sprengen wuerde — ohne Rueckgabe ist ein Platz frei. Im Einzel-Modus
+        entscheidet slot_belegt in start()."""
+        andere = self._belegt(ausser=rid)
+        if not RESTREAM_SINGLE and len(andere) >= RESTREAM_MAX_CONCURRENT:
+            grund = ("Deckel erreicht: %d/%d Restreams laufen oder laufen an (#%s) — "
+                     "RESTREAM_MAX_CONCURRENT schuetzt die CPU vor einem Transcode "
+                     "je Ziel." % (len(andere), RESTREAM_MAX_CONCURRENT,
+                                   ", #".join(sorted(map(str, andere)))))
+            laut, weg = _nc_meldetakt.melden("restream-deckel", "voll",
+                                             _time_mod.monotonic())
+            if laut:
+                log.warning("Restream #%s nicht gestartet — %s%s", rid, grund,
+                            _nc_meldetakt.zusatz(weg))
+            return grund
 
     async def auto_start_due(self):
         """Auto-Restream-Scheduler.
@@ -16454,11 +16577,14 @@ class RestreamManager:
         # V37-MAXLIVE: gedeckelt auf RESTREAM_MAX_CONCURRENT gleichzeitige Restreams
         # (Default 2). Schützt den GPU-losen Server — bei vielen Live-Usern würde
         # sonst pro User ein ffmpeg-Encode starten und die CPU überrennen.
+        # RST-5: gezaehlt wird jeder belegte Platz (_belegt), nicht nur _procs —
+        # ein Ziel im Reconnect-Backoff kommt gleich zurueck und behaelt ihn.
         for r in rows:
-            if len(self._procs) >= RESTREAM_MAX_CONCURRENT:
-                break                          # Deckel erreicht → keine weiteren starten
-            if r["id"] in self._procs:
+            _belegt = self._belegt()
+            if r["id"] in _belegt:
                 continue
+            if len(_belegt) >= RESTREAM_MAX_CONCURRENT:
+                break                          # Deckel erreicht → keine weiteren starten
             src, err = await self._resolve_source(r["source_username"])
             if err:
                 await asyncio.to_thread(self._reflect_source_status, r["id"], err)
@@ -16467,7 +16593,7 @@ class RestreamManager:
                 self._quelle_melden(r["source_username"], err)
                 continue
             log.info(f"Auto-Restream: @{r['source_username']} live → starte #{r['id']} "
-                     f"({len(self._procs) + 1}/{RESTREAM_MAX_CONCURRENT})")
+                     f"({len(_belegt) + 1}/{RESTREAM_MAX_CONCURRENT})")
             await self.start(r["id"], _src_watch=True)   # V37-SRCFAIL
 
     def tee_fehler(self, ttl_s=None):

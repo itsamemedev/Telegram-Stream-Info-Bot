@@ -43208,6 +43208,422 @@ def _test_auf6_retention_je_datei_committen():
        "rollt keine geloeschten Dateien zurueck")
 
 
+def _rst_start_manager(baum, ueber=None):
+    """RST-1/RST-5: RestreamManager.start() aus bot.py, alles drumherum als
+    Attrappe. Gefahren wird der echte Ablauf; die Attrappen zaehlen nur mit,
+    was gespawnt, geerntet und geschrieben wurde. `warten` setzt je
+    Wartepunkt eine Dauer — dort hinein faellt der stop() des Vertrags."""
+    import asyncio as _aio
+    import time as _t
+    import types as _ty
+    from nc import meldetakt as MT
+    from nc import restream_util as RU
+    spur = {"spawn": [], "geerntet": [], "status": [], "soll": [], "tts": 0,
+            "ov_an": False, "br": []}
+    warten = {}
+
+    async def _ewig(*a, **k):
+        await _aio.sleep(3600)
+
+    class _Proc:
+        returncode = None
+
+        def __init__(self):
+            self.pid = 4711 + len(spur["spawn"])
+
+    async def _spawn(*cmd, **kw):
+        await _aio.sleep(warten.get("spawn", 0))
+        p = _Proc()
+        spur["spawn"].append(p)
+        return p
+
+    aio = _ty.ModuleType("asyncio_rst")
+    aio.__dict__.update(vars(_aio))
+    aio.create_subprocess_exec = _spawn
+
+    async def _ernte(p):
+        if p is not None:
+            spur["geerntet"].append(p)
+
+    async def _zeile(fn):
+        return {"ingest_url": "rtmp://ingest.test/app", "stream_key": "sk_test",
+                "source_username": "quelle", "label": "", "transcode": 0}
+
+    async def _preflight(url, who=None):
+        await _aio.sleep(warten.get("preflight", 0))
+        return url
+
+    async def _yt(force=False):
+        return None
+
+    def _tts(rid):
+        spur["tts"] += 1
+
+    def _ov_start(rid, source_url=None):
+        _t.sleep(warten.get("overlay", 0))
+        spur["ov_an"] = True
+
+    def _ov_stop(rid):
+        spur["ov_an"] = False
+
+    class _Bruecke:
+        ende = ""
+
+        def __init__(self, fd, *a, **k):
+            self.fd = fd
+
+        def start(self):
+            _t.sleep(warten.get("bruecke", 0))
+            spur["br"].append("start")
+
+        def stop(self):
+            spur["br"].append("stop")
+            if self.fd is not None:
+                os.close(self.fd)
+                self.fd = None
+
+    ns = {"asyncio": aio, "os": os, "_nc_rutil": RU, "_nc_meldetakt": MT,
+          "_restream_enabled": lambda: (True, ""), "_start_gesperrt": lambda *a: None,
+          "RESTREAM_SINGLE": False, "RESTREAM_MAX_CONCURRENT": 2, "db_async": _zeile,
+          "KICK_INGEST_URL": "", "KICK_STREAM_KEY": "", "KICK_INGEST_URL_BACKUP": "",
+          "KICK_STREAM_KEY_BACKUP": "", "_normalize_ingest": lambda s: s,
+          "_preflight_url": _preflight, "_nc_channels": _ty.SimpleNamespace(RESTREAM_ACTIVE={}),
+          "_RESTREAM_ACTIVE_ALL": {}, "_RESTREAM_OV_DIR": "/nirgends/ov",
+          "clean_username": lambda u: u, "_restream_active_sources": lambda: set(),
+          "_RESTREAM_CHAT": [], "_overlay_session_reset": lambda: None,
+          "_youtube_restream_autoconfig": _yt,
+          "_nc_rst": _ty.SimpleNamespace(
+              active_targets=lambda overrides=None: [("kick", "rtmp://ingest.test/app/sk_test")]),
+          "RESTREAM_MULTI_ALLOW_COPY": False, "RESTREAM_OVERLAY": False,
+          "_nc_rscfg": _ty.SimpleNamespace(bruecke=lambda tc, unabhaengig=False: (False, tc),
+                                           bruecke_luecke=lambda: 1.0,
+                                           bruecke_offline=lambda: 1.0),
+          "RESTREAM_MULTI_MODE": "tee", "_nc_durch": _ty.SimpleNamespace(ist=lambda s: False),
+          "_drossel_stufe": lambda rid: 0, "_restream_tts_start": _tts,
+          "_restream_tts_stop": lambda rid: None, "_restream_layout_mode": lambda: "klassisch",
+          "_nc_chatbild": _ty.SimpleNamespace(an=lambda: False, beenden=lambda rid: None),
+          "_nc_rscmd": _ty.SimpleNamespace(drossel_avatar_aus=lambda s: True,
+                                           fueller=lambda: [], zubringer=None),
+          "_build_restream_cmd": lambda *a, **k: ["ffmpeg", "-i", "x"],
+          "_write_restream_overlay": lambda: None,
+          "_restream_html_overlay_start": _ov_start, "_restream_html_overlay_stop": _ov_stop,
+          "_restream_avatar_feeder_start": lambda rid: None,
+          "_restream_avatar_feeder_stop": lambda rid: None,
+          "_nc_bruecke": _ty.SimpleNamespace(Bruecke=_Bruecke),
+          "_redact_stream_urls": lambda s: s, "COMMUNITY_LIVE_PING_ENABLED": False,
+          "COMMUNITY_LIVE_PING_MIN_GAP_S": 0, "DISCORD_WEBHOOK_URL": "",
+          "_community": None, "_discord_notify": None, "_spawn": None,
+          "_restream_chat_guardian": _ewig, "RESTREAM_SRC_FAILOVER": False,
+          "_RESTREAM_GUARD": _ty.SimpleNamespace(note_started=lambda rid, t: None),
+          "_reap_proc": _ernte}
+    ns.update(ueber or {})
+    RM = _w179_manager(baum, {"__init__", "start", "stop", "_anlauf_verwerfen",
+                              "_anlauf_abraeumen",
+                              "_nebenlaeufer_abraeumen", "_relays_abraeumen",
+                              "_bruecke_abraeumen", "_monitor_eintragen", "_deckel_grund",
+                              "_belegt"}, ns)
+    m = RM()
+    m._set_status = lambda rid, st, pid=None, err=None: spur["status"].append(st)
+    m._set_desired = lambda rid, on: spur["soll"].append(on)
+
+    async def _quelle(u, force_fresh=False):
+        return "https://pull.test/live.flv", None
+    m._resolve_source = _quelle
+    m._drossel_vorsorge = lambda rid: None
+    m._monitor = _ewig
+    m._stall_watch = _ewig
+    m._bruecke_quelle = lambda u, rid: None
+    return m, spur, warten
+
+
+def _rst_lauf(m, rid, stop_nach=None):
+    """start(rid) als Task; mit `stop_nach` kommt ein stop() mitten hinein."""
+    import asyncio as _aio
+
+    async def _los():
+        t = _aio.create_task(m.start(rid))
+        if stop_nach is not None:
+            await _aio.sleep(stop_nach)
+            await m.stop(rid)
+        try:
+            erg = await t
+        except Exception as e:          # ohne Riegel: KeyError auf _procs[rid]
+            erg = {"ausnahme": repr(e)}
+        lebt = sorted(r for r, x in m._monitors.items() if not x.done())
+        return erg, lebt
+    return _aio.run(_aio.wait_for(_los(), 10))
+
+
+def _test_v511_rst1_stop_waehrend_start():
+    """RST-1: ein stop() WAEHREND start() — nur _wiederanlauf verglich die
+    Sitzung, start() nicht. stop() fand keinen _procs-Eintrag, setzte
+    desired=0 und meldete ok; danach startete ffmpeg, der Status sprang auf
+    live, und `_set_desired(rid, True)` schrieb desired=1 zurueck. Nach
+    /delete sendete das Ziel ohne Knopf im Deck weiter. Gefahren wird der
+    echte start() mit einem stop() in jedem der drei Fenster."""
+    import ast as _ast
+    from nc import restream_util as RU
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    verworfen = {"ok": False, "error": "waehrend des Starts gestoppt"}
+
+    # Gegenprobe ohne stop(): die Attrappen tragen den ganzen Start.
+    m, spur, warten = _rst_start_manager(baum)
+    erg, lebt = _rst_lauf(m, 7)
+    assert erg.get("ok") and spur["soll"] == [True] and spur["status"][-1] == "live", (erg, spur)
+    assert 7 in m._procs and lebt == [7], "Gegenprobe: der Start lief nicht durch"
+
+    # (1) stop() im Resolve/Preflight: nichts darf mehr anlaufen.
+    m, spur, warten = _rst_start_manager(baum)
+    warten["preflight"] = 0.3
+    erg, lebt = _rst_lauf(m, 7, stop_nach=0.1)
+    assert erg == verworfen, erg
+    assert spur["spawn"] == [] and spur["tts"] == 0, \
+        "stop() im Preflight — Feeder/ffmpeg starteten trotzdem: %r" % spur
+    assert True not in spur["soll"] and spur["status"][-1] == "stopped", spur
+    assert 7 not in m._procs and lebt == [] and RU.startend(m) == {}
+
+    # (2) stop() waehrend das Overlay anlaeuft (Chromium, bis 20 s): der
+    # stop() raeumte ein Overlay ab, das es noch nicht gab — der Anlauf muss
+    # seins selbst wieder abbauen, und der Sender wird geerntet.
+    m, spur, warten = _rst_start_manager(baum, {"RESTREAM_OVERLAY": True})
+    warten["overlay"] = 0.3
+    erg, lebt = _rst_lauf(m, 7, stop_nach=0.1)
+    assert erg == verworfen, erg
+    assert spur["ov_an"] is False, "stop() im Overlay-Anlauf — das Overlay laeuft weiter"
+    assert spur["spawn"] and all(p in spur["geerntet"] for p in spur["spawn"]), \
+        "der nach stop() gespawnte Sender wurde nicht geerntet: %r" % spur
+    assert True not in spur["soll"] and spur["status"][-1] == "stopped", spur
+    assert 7 not in m._procs and lebt == []
+
+    # (3) stop() waehrend die Sendebruecke anlaeuft (Eintrag steht schon):
+    # kein live, kein desired=1, kein Monitor, Bruecke zuletzt gestoppt.
+    import types as _ty
+    m, spur, warten = _rst_start_manager(baum, {"_nc_rscfg": _ty.SimpleNamespace(
+        bruecke=lambda tc, unabhaengig=False: (True, True),
+        bruecke_luecke=lambda: 1.0, bruecke_offline=lambda: 1.0)})
+    warten["bruecke"] = 0.3
+    erg, lebt = _rst_lauf(m, 7, stop_nach=0.1)
+    assert erg == verworfen, erg
+    assert "live" not in spur["status"] and True not in spur["soll"], spur
+    assert spur["br"][-1:] == ["stop"] and all(p in spur["geerntet"] for p in spur["spawn"]), spur
+    assert 7 not in m._procs and lebt == [] and m._chatguards == {}
+
+    # Nach der letzten Sitzungspruefung wartet nichts mehr bis desired=1 —
+    # sonst kaeme ein stop() wieder in eine Luecke ohne Pruefung.
+    rm = next(n for n in baum.body if getattr(n, "name", "") == "RestreamManager")
+    sa = next(n for n in rm.body if getattr(n, "name", "") == "start")
+    pruef = [n.lineno for n in _ast.walk(sa) if isinstance(n, _ast.Compare)
+             and _ast.unparse(n) == "self._sitzung.get(rid, 0) != _gen"]
+    assert len(pruef) >= 3, "start() prueft die Sitzung nicht vor Feeder, nach Spawn und vor live"
+    gen_z = next(n.lineno for n in _ast.walk(sa) if isinstance(n, _ast.Assign)
+                 and _ast.unparse(n) == "_gen = self._sitzung.get(rid, 0)")
+    erste = min(n.lineno for n in _ast.walk(sa) if isinstance(n, _ast.Await))
+    assert gen_z < erste, "die Sitzung wird erst nach dem ersten Wartepunkt gemerkt"
+    soll_z = next(n.lineno for n in _ast.walk(sa) if isinstance(n, _ast.Call)
+                  and _ast.unparse(n) == "self._set_desired(rid, True)")
+    danach = [_ast.unparse(n.value) for n in _ast.walk(sa) if isinstance(n, _ast.Await)
+              and max(pruef) < n.lineno < soll_z
+              and not _ast.unparse(n.value).startswith("self._anlauf_verwerfen(")]
+    assert all(a.startswith("self._spawn_independent(") for a in danach), \
+        "neuer Wartepunkt zwischen letzter Sitzungspruefung und desired=1: %r" % danach
+    si = next(n for n in rm.body if getattr(n, "name", "") == "_spawn_independent")
+    stapel, flach = list(si.body), []
+    while stapel:
+        n = stapel.pop()
+        if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.Lambda)):
+            continue
+        flach += [n] if isinstance(n, _ast.Await) else []
+        stapel.extend(_ast.iter_child_nodes(n))
+    assert flach == [], "_spawn_independent wartet jetzt selbst — RST-1-Pruefung danach noetig"
+    ok("RST-1: stop() waehrend start() — kein Sender, kein live, kein desired=1 (drei Fenster)")
+
+
+def _test_v511_rst3_stop_all_erreicht_alle():
+    """RST-3: stop_all() iterierte nur _procs. Ziele im Reconnect-Backoff,
+    Starts im Anlauf und Zeilen mit desired=1 bekamen weder desired=0 noch
+    eine neue Sitzung — _wiederanlauf baute sie nach dem Backoff wieder auf."""
+    import ast as _ast
+    import asyncio as _aio
+    from nc import restream_util as RU
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    gelesen = []
+
+    async def _zeilen(fn):
+        gelesen.append(1)
+        return [{"id": 4}]
+
+    async def _nichts(*a, **k):
+        return None
+
+    RM = _w179_manager(baum, {"__init__", "stop", "stop_all", "_soll_an",
+                              "_nebenlaeufer_abraeumen", "_relays_abraeumen"},
+                       {"_nc_rutil": RU, "db_async": _zeilen, "_reap_proc": _nichts,
+                        "_restream_tts_stop": lambda rid: None,
+                        "_restream_html_overlay_stop": lambda rid: None,
+                        "_restream_avatar_feeder_stop": lambda rid: None,
+                        "_nc_chatbild": type("_CB", (), {"beenden": staticmethod(lambda rid: None)})})
+
+    async def _lauf(halten):
+        m = RM()
+        soll = []
+        m._set_status = lambda *a, **k: None
+        m._set_desired = lambda rid, on: soll.append((rid, on))
+        m._bruecke_abraeumen = _nichts
+        m._procs[1] = {"proc": None}                                 # sendet
+        m._monitors[2] = mon = _aio.create_task(_aio.sleep(3600))   # Backoff
+        RU.startend(m)[3] = object()                                 # im Anlauf
+        await m.stop_all(_keep_desired=halten)
+        await _aio.sleep(0)
+        # IM Loop messen: asyncio.run cancelt beim Beenden ohnehin alles.
+        return m, soll, mon.done()
+
+    m, soll, mon = _aio.run(_lauf(False))
+    assert set(m._sitzung) == {1, 2, 3, 4}, \
+        "stop_all() erreicht Backoff/Anlauf/desired=1 nicht: %r" % m._sitzung
+    assert sorted(soll) == [(1, False), (2, False), (3, False), (4, False)], soll
+    assert mon, "der Monitor im Backoff laeuft nach stop_all() weiter"
+    del gelesen[:]
+    m, soll, mon = _aio.run(_lauf(True))
+    assert set(m._sitzung) == {1, 2, 3} and soll == [] and gelesen == [], \
+        "Shutdown: Soll-Zustand muss bleiben, Backoff/Anlauf trotzdem beenden"
+    ok("RST-3: stop_all() stoppt auch Backoff, Anlauf und desired=1 — Shutdown haelt den Soll")
+
+
+def _test_v511_rst4_relays_vor_overlay():
+    """RST-4: _monitor entfernt _procs[rid] und raeumt dann ab — erst das
+    Overlay (bis 5 s im Thread), dann die Relays. Ein stop() in diesem
+    Fenster cancelte den Monitor, und die Relays (independent) sendeten
+    ~6 min weiter. Gemessen mit einem haengenden Overlay-Ende."""
+    import ast as _ast
+    import asyncio as _aio
+    import time as _t
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    geerntet = []
+
+    class _Stab:
+        @staticmethod
+        def budget_after_run(a, ran, pol, progressed=True):
+            return a
+
+    async def _ernte(p):
+        geerntet.append(p)
+
+    async def _nichts(*a, **k):
+        return None
+
+    async def _zeile(fn):
+        return {"enabled": 1, "status": "error", "source_username": "quelle"}
+
+    RM = _w179_manager(baum, {"__init__", "_monitor", "_monitor_eintragen",
+                              "_nebenlaeufer_abraeumen", "_relays_abraeumen", "stop"},
+                       {"_nc_rstab": _Stab, "_RESTREAM_POLICY": None, "db_async": _zeile,
+                        "_restream_tts_stop": lambda rid: None,
+                        "_restream_html_overlay_stop": lambda rid: _t.sleep(0.4),
+                        "_restream_avatar_feeder_stop": lambda rid: None,
+                        "_nc_chatbild": type("_CB", (), {"beenden": staticmethod(lambda rid: None)}),
+                        "_reap_proc": _ernte})
+
+    class _Proc:
+        pid, returncode = 4242, 1
+
+        async def wait(self):
+            return 1
+
+    async def _lauf():
+        m = RM()
+        m._set_status = lambda *a, **k: None
+        m._set_desired = lambda rid, on: None
+        m._read_progress = m._read_stderr = m._bruecke_abraeumen = _nichts
+        m._abbruch_diagnose = lambda *a: None
+        relay, relproc = _aio.create_task(_aio.sleep(3600)), object()
+        m._procs[7] = {"proc": _Proc(), "started": _t.monotonic(), "attempts": 0,
+                       "indep_tasks": {"twitch": relay}, "indep": {"twitch": {"proc": relproc}}}
+        m._monitor_eintragen(7)
+        await _aio.sleep(0.15)           # Monitor steckt im Overlay-Ende
+        assert 7 not in m._procs, "Attrappe: der Monitor hat den Eintrag nicht entfernt"
+        await m.stop(7)
+        await _aio.sleep(0.05)
+        # IM Loop messen: asyncio.run cancelt beim Beenden ohnehin alles.
+        return relay.done(), relproc
+
+    relay, relproc = _aio.run(_aio.wait_for(_lauf(), 10))
+    assert relay, "stop() waehrend des Abraeumens im Monitor — der Relay sendet weiter"
+    assert relproc in geerntet, "der Relay-Prozess wurde nicht geerntet"
+    ok("RST-4: Relays vor dem Overlay-Ende geerntet — stop() im Monitor-Abbau laesst keinen zurueck")
+
+
+def _test_v511_rst5_deckel_zaehlt_anlauf_und_backoff():
+    """RST-5: RESTREAM_MAX_CONCURRENT zaehlte nur len(self._procs). Backoff und
+    Anlauf fehlten, und start()/Reconnect prueften die Grenze gar nicht —
+    drei Transcodes bei Grenze 2."""
+    import ast as _ast
+    import asyncio as _aio
+    from nc import restream_util as RU
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+
+    # start(): zwei andere senden -> kein dritter; ein Reconnect desselben
+    # Ziels (Monitor im Backoff) zaehlt sich nicht selbst.
+    m, spur, warten = _rst_start_manager(baum)
+    m._procs.update({1: {}, 2: {}})
+    erg, _l = _rst_lauf(m, 5)
+    assert not erg.get("ok") and "Deckel" in (erg.get("error") or "") and spur["spawn"] == [], \
+        "start() sprengt RESTREAM_MAX_CONCURRENT: %r" % erg
+
+    async def _zaehlen(m):
+        m._procs[1] = {}
+        m._monitors[2] = _aio.create_task(_aio.sleep(3600))      # #2 im Backoff
+        RU.startend(m)[3] = object()                              # #3 im Anlauf
+        voll = (m._belegt(), m._belegt(ausser=2), m._deckel_grund(2), m._deckel_grund(9))
+        del RU.startend(m)[3]
+        return voll
+    m, spur, warten = _rst_start_manager(baum)
+    belegt, ohne2, grund2, grund9 = _aio.run(_zaehlen(m))
+    assert belegt == {1, 2, 3} and ohne2 == {1, 3}, (belegt, ohne2)
+    assert grund2 and "Deckel" in grund9, "Backoff und Anlauf fehlen in der Zaehlung"
+
+    # Reconnect: #5 selbst im Backoff, #1 sendet -> darf wieder an.
+    m, spur, warten = _rst_start_manager(baum)
+
+    async def _wieder():
+        m._procs[1] = {}
+        m._monitors[5] = _aio.create_task(_aio.sleep(3600))
+        return await m.start(5)
+    erg = _aio.run(_aio.wait_for(_wieder(), 10))
+    assert erg.get("ok"), "der Reconnect zaehlt sich selbst doppelt: %r" % erg
+
+    # Scheduler: #1 sendet, #2 im Backoff -> Deckel 2 voll, nichts startet.
+    gestartet = []
+
+    async def _zeilen(fn):
+        return [{"id": i, "source_username": "u%d" % i} for i in (1, 2, 5, 6)]
+
+    RA = _w179_manager(baum, {"__init__", "auto_start_due", "_belegt"},
+                       {"_nc_rutil": RU, "db_async": _zeilen, "RESTREAM_SINGLE": False,
+                        "RESTREAM_MAX_CONCURRENT": 2, "_restream_enabled": lambda: (True, "")})
+
+    async def _plan(backoff):
+        a = RA()
+
+        async def _quelle(u, force_fresh=False):
+            return "https://pull.test/x.flv", None
+
+        async def _start(rid, **kw):
+            gestartet.append(rid)
+            a._procs[rid] = {}
+            return {"ok": True}
+        a._resolve_source, a.start = _quelle, _start
+        a._procs[1] = {}
+        if backoff:
+            a._monitors[2] = _aio.create_task(_aio.sleep(3600))
+        await a.auto_start_due()
+    _aio.run(_plan(True))
+    assert gestartet == [], "Scheduler vergibt den Platz eines Ziels im Backoff: %r" % gestartet
+    _aio.run(_plan(False))
+    assert gestartet == [2], gestartet
+    ok("RST-5: Deckel zaehlt _procs, Anlauf und Backoff — Scheduler und start(), Reconnect einmal")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -43689,6 +44105,10 @@ def main():
     _test_auf3_sitzungsdatei_keine_waise()
     _test_auf4_add_recording_wiederholt_und_meldet()
     _test_auf6_retention_je_datei_committen()
+    _test_v511_rst1_stop_waehrend_start()
+    _test_v511_rst3_stop_all_erreicht_alle()
+    _test_v511_rst4_relays_vor_overlay()
+    _test_v511_rst5_deckel_zaehlt_anlauf_und_backoff()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
