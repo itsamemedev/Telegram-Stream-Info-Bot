@@ -44718,6 +44718,85 @@ def _test_upd1_upd2_teilweise_und_rollback():
     ok("UPD-1/2: Teilfehler behaelt den alten Stand und heisst nie aktuell; Rollback setzt Stand und neue Dateien zurueck")
 
 
+def _test_ops3_deploy_sichert_und_schreibt_nur_code():
+    """OPS-3: tools/deploy.sh sicherte das GANZE BOT_DIR — recordings/, die
+    laufende Datenbank samt -wal/-shm, tiktok_cookies.txt, .nc_update.json —
+    und abbruch() spielte das komplett zurueck. Alles, was der Bot zwischen
+    Backup und Abbruch geschrieben hatte, war danach weg, und ein tar einer
+    SQLite-Datei mitten im Betrieb ist kein konsistenter Stand. Dazu schrieb
+    der Umschwenk das ganze Nebenverzeichnis ueber den Bestand, also auch
+    website/news.json (die der News-Agent im Betrieb schreibt) und alles, was
+    die Vorabpruefung dort angelegt hatte.
+
+    Geprueft wird der echte Python-Block aus deploy.sh gegen einen
+    Attrappen-Bestand — nicht der Wortlaut —, und dass Backup und Umschwenk
+    an genau diesen Listen haengen. Dazu der Installer: das WAL einer fremden
+    Datenbank, Cookies, OAuth-Stores und der Update-Stand bleiben zurueck."""
+    import subprocess as _sp
+    import shutil
+    import tempfile
+    src = open("tools/deploy.sh", encoding="utf-8").read()
+    kopf = '"$PY" - "$STAGING" "$BOT_DIR" "$LISTE" "$BESTAND_LISTE" <<\'PYEOF\'\n'
+    assert kopf in src, "der Listen-Block in deploy.sh fehlt"
+    i = src.index(kopf) + len(kopf)
+    block = src[i:src.index("\nPYEOF", i)]
+    # Reihenfolge: die Liste entsteht VOR der Vorabpruefung (die Suiten legen
+    # im Nebenverzeichnis eigene Dateien an) und vor dem Backup, das sie braucht.
+    assert src.index(kopf) < src.index('"$PY" test_smoke.py'), \
+        "die Liste muss vor der Vorabpruefung entstehen"
+    assert src.index(kopf) < src.index('tar czf "$BACKUP"')
+    zeilen = [z.strip() for z in src.splitlines() if not z.strip().startswith("#")]
+    assert 'tar czf "$BACKUP" -C "$BOT_DIR" --null -T "$BESTAND_LISTE"' in zeilen, \
+        "das Backup haengt nicht an der Bestandsliste"
+    assert not any(z.startswith('tar czf "$BACKUP" -C "$BOT_DIR" .') for z in zeilen), \
+        "das Backup packt wieder das ganze BOT_DIR"
+    assert 'rsync -a --from0 --files-from="$LISTE" "$STAGING"/ "$BOT_DIR"/' in zeilen
+    assert not any(z == 'rsync -a "$STAGING"/ "$BOT_DIR"/' for z in zeilen), \
+        "der Umschwenk kopiert wieder das ganze Nebenverzeichnis"
+    assert '(cd "$STAGING" && tar cf - --null -T "$LISTE") | (cd "$BOT_DIR" && tar xf -)' in zeilen
+
+    w = tempfile.mkdtemp(prefix="nc_ops3_")
+    try:
+        quelle, ziel = os.path.join(w, "staging"), os.path.join(w, "bot")
+        def leg(wurzel, rel, inhalt="x"):
+            pfad = os.path.join(wurzel, rel)
+            os.makedirs(os.path.dirname(pfad), exist_ok=True)
+            with open(pfad, "w", encoding="utf-8") as f:
+                f.write(inhalt)
+        for rel in ("bot.py", "nc/neu.py", "templates/dashboard.html", "website/news.json",
+                    "website/lafap_index.html", "recordings/a.mp4", "tiktok_bot.db",
+                    "tiktok_bot.db-wal", ".env", "tiktok_cookies.txt", ".nc_update.json",
+                    "nc/__pycache__/neu.cpython-312.pyc", "logs/bot.log",
+                    "datei mit leerzeichen.txt"):
+            leg(quelle, rel)
+        for rel in ("bot.py", "website/news.json", "website/lafap_index.html",
+                    "tiktok_bot.db", "datei mit leerzeichen.txt"):
+            leg(ziel, rel, "alt")
+        liste, bestand = os.path.join(w, "liste"), os.path.join(w, "bestand")
+        r = _sp.run([sys.executable, "-", quelle, ziel, liste, bestand], input=block,
+                    capture_output=True, text=True, timeout=60, cwd=os.getcwd())
+        assert r.returncode == 0, r.stderr[-800:]
+        def lies(pfad):
+            roh = open(pfad, "rb").read()
+            assert roh.endswith(b"\0"), "die Liste muss nullgetrennt sein (Leerzeichen im Namen)"
+            return set(roh[:-1].decode("utf-8").split("\0"))
+        alle, vorh = lies(liste), lies(bestand)
+        assert alle == {"bot.py", "nc/neu.py", "templates/dashboard.html",
+                        "website/lafap_index.html", "datei mit leerzeichen.txt"}, alle
+        assert vorh == {"bot.py", "website/lafap_index.html", "datei mit leerzeichen.txt"}, vorh
+    finally:
+        shutil.rmtree(w, ignore_errors=True)
+
+    inst = open("tools/installer.sh", encoding="utf-8").read()
+    i = inst.index("AUS_KOPIE=(")
+    aus = inst[i:inst.index(")", i)]
+    for muster in ("'*.db-wal'", "'*.db-shm'", "'tiktok_cookies.txt'", "'*_oauth.json'",
+                   "'.nc_update.json'"):
+        assert muster in aus, "%s fehlt in der Ausschlussliste des Installers" % muster
+    ok("OPS-3: deploy.sh sichert und schreibt nur Code (Schutzliste der Update-Funktion), "
+       "Installer kopiert keine Betriebsdaten der Quelle")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -45216,6 +45295,7 @@ def main():
     _test_ops1_motd_laedt_nichts_aus_bot_dir()
     _test_ops2_mysqldump_ohne_passwort_in_argv()
     _test_upd1_upd2_teilweise_und_rollback()
+    _test_ops3_deploy_sichert_und_schreibt_nur_code()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

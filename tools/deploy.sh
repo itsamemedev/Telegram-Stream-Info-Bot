@@ -44,6 +44,8 @@ abbruch() {
     tar xzf "$BACKUP" -C "$BOT_DIR"
     sudo systemctl start "$SERVICE" || true
     rot "Backup zurueckgespielt: $BACKUP"
+    rot "Zurueckgespielt sind nur die ersetzten Code-Dateien. Datenbank, Aufnahmen,"
+    rot "Cookies und .env standen nie im Backup und sind auf dem Stand von eben."
   else
     gruen "Der laufende Bot wurde NICHT angefasst — er laeuft unveraendert weiter."
   fi
@@ -62,17 +64,54 @@ systemctl list-unit-files | grep -q "^${SERVICE}.service" \
 info "Archiv:  $ZIP"
 info "Ziel:    $BOT_DIR   Dienst: $SERVICE"
 
-# ── Backup ───────────────────────────────────────────────────────────────
-kopf "Backup anlegen (Rettungsanker)"
-BACKUP="$HOME/nightcrawler_backup_$(date +%F_%H%M%S).tgz"
-tar czf "$BACKUP" -C "$BOT_DIR" .
-gruen "Backup: $BACKUP ($(du -h "$BACKUP" | cut -f1))"
-
 # ── Staging ──────────────────────────────────────────────────────────────
 kopf "Neuen Build in ein Nebenverzeichnis entpacken"
 rm -rf "$STAGING"
 mkdir -p "$STAGING"
 unzip -q -o "$ZIP" -d "$STAGING"
+
+# Die Liste der Dateien, die der Umschwenk schreibt — und NUR diese sichert
+# das Backup. Bis v5.11.4 packte es das ganze BOT_DIR, also auch recordings/,
+# die laufende Datenbank samt -wal/-shm, tiktok_cookies.txt und .nc_update.json.
+# Brach die Nachkontrolle ab, spielte abbruch() das komplett zurueck: alles,
+# was der Bot zwischen Backup und Abbruch geschrieben hatte, war weg, die
+# Cookies waren wieder die alten, und eine SQLite-Datei aus einem tar mitten
+# im Betrieb ist kein konsistenter Stand. Dazu belegte jede Auslieferung den
+# Aufnahmebestand ein zweites Mal auf derselben Platte.
+# Ausgeschlossen wird mit DERSELBEN Schutzliste wie in der Update-Funktion
+# (nc/updater.is_protected) — zwei Listen fuer denselben Zweck sind in diesem
+# Bestand schon dreimal auseinandergelaufen (CLAUDE.md W100). Damit faehrt
+# auch website/news.json nicht mehr ueber den Bestand: der News-Agent schreibt
+# sie im Betrieb, und das Archiv brachte den Stand des Build-Rechners zurueck.
+# Die Liste entsteht VOR der Vorabpruefung: die Suiten legen im Nebenverzeichnis
+# eigene Dateien an, und die gehoeren nicht in den Bestand.
+LISTE="${STAGING}.liste"
+BESTAND_LISTE="${STAGING}.bestand"
+"$PY" - "$STAGING" "$BOT_DIR" "$LISTE" "$BESTAND_LISTE" <<'PYEOF'
+import os, sys
+quelle, ziel, liste, bestand = sys.argv[1:5]
+sys.path.insert(0, quelle)
+from nc.updater import is_protected
+alle, vorhanden = [], []
+for wurzel, _dirs, dateien in os.walk(quelle):
+    for name in dateien:
+        rel = os.path.relpath(os.path.join(wurzel, name), quelle).replace(os.sep, "/")
+        if is_protected(rel):
+            continue
+        alle.append(rel)
+        if os.path.lexists(os.path.join(ziel, rel)):
+            vorhanden.append(rel)
+for pfad, eintraege in ((liste, alle), (bestand, vorhanden)):
+    with open(pfad, "wb") as f:
+        f.write(b"".join(e.encode("utf-8") + b"\0" for e in sorted(eintraege)))
+print("  %d Dateien im Archiv, %d davon ersetzen eine bestehende" % (len(alle), len(vorhanden)))
+PYEOF
+
+# ── Backup ───────────────────────────────────────────────────────────────
+kopf "Backup anlegen (Rettungsanker, nur die Dateien, die ersetzt werden)"
+BACKUP="$HOME/nightcrawler_backup_$(date +%F_%H%M%S).tgz"
+tar czf "$BACKUP" -C "$BOT_DIR" --null -T "$BESTAND_LISTE"
+gruen "Backup: $BACKUP ($(du -h "$BACKUP" | cut -f1))"
 # Der laufende Bestand bleibt unberuehrt. Geprueft wird ausschliesslich hier.
 # .env wird BEWUSST NICHT kopiert: test_smoke.py wechselt selbst in ein
 # Temp-Verzeichnis und erzwingt DB_BACKEND=sqlite — es braucht keine
@@ -154,13 +193,14 @@ kopf "Dienst stoppen und umschwenken"
 cd "$HOME"
 sudo systemctl stop "$SERVICE"
 UMGESCHWENKT=1
-# Nur den Code ueberschreiben. .env, Datenbank, Aufnahmen und OAuth-Stores
-# liegen im Zielverzeichnis und stehen NICHT im Archiv — sie bleiben damit
-# unangetastet. Kein --delete: was der Bestand zusaetzlich hat, bleibt.
+# Nur die Dateien aus der Liste (oben). Das Nebenverzeichnis traegt nach der
+# Vorabpruefung auch __pycache__/ und was die Suiten dort anlegen; ein
+# Kopieren des ganzen Verzeichnisses brachte das mit. Kein --delete: was der
+# Bestand zusaetzlich hat, bleibt.
 if command -v rsync >/dev/null; then
-  rsync -a "$STAGING"/ "$BOT_DIR"/
+  rsync -a --from0 --files-from="$LISTE" "$STAGING"/ "$BOT_DIR"/
 else
-  cp -a "$STAGING"/. "$BOT_DIR"/
+  (cd "$STAGING" && tar cf - --null -T "$LISTE") | (cd "$BOT_DIR" && tar xf -)
 fi
 gruen "Code uebernommen."
 
@@ -243,4 +283,4 @@ echo "                       sudo systemctl start $SERVICE"
 echo
 echo "  Jetzt sinnvoll mitlesen:"
 echo "    journalctl -u $SERVICE -f | grep -E 'Kick-Ziel|YouTube-Restream|Schleife'"
-rm -rf "$STAGING"
+rm -rf "$STAGING" "$LISTE" "$BESTAND_LISTE"
