@@ -69,3 +69,73 @@ def gleicher(a, b) -> bool:
     drei Felder, an denen `_upload_queue_remove` ihn seit jeher erkennt."""
     return (a.get("file") == b.get("file") and a.get("chat_id") == b.get("chat_id")
             and a.get("ziel") == b.get("ziel") and a.get("queued_at") == b.get("queued_at"))
+
+
+# ── ARC-5: die Datei streng lesen ───────────────────────────────────────────
+# Bis v5.11.3 gab `_upload_queue_load` bei JEDEM Lesefehler `[]` zurueck. Der
+# naechste Schreibvorgang (Einreihen, Entfernen, Fortschreiben) schrieb diese
+# leere Liste dann zurueck — alle aufgeschobenen Uploads waren weg, und
+# `_clip_prune` loeschte mit derselben leeren Schutzmenge die aufgeschobenen
+# Meme-Zusammenschnitte. Dieselbe Klasse wie W198/W199 („Lesen mit Vorgabe,
+# dann zurueckschreiben"), nur in einer JSON-Datei statt in app_config.
+
+import json as _json
+import os as _os
+import time as _time
+
+
+class SchlangeUnlesbar(RuntimeError):
+    """Die Warteschlange war nicht zu lesen.
+
+    `inhalt` trennt die beiden Lagen: True heisst „die Datei ist da, aber kein
+    JSON / keine Liste" — sie wird nie wieder lesbar und darf beiseitegelegt
+    werden. False heisst „das Lesen selbst scheiterte" (Rechte, E/A) — das
+    kann voruebergehend sein, also nichts anfassen und nichts schreiben."""
+
+    def __init__(self, text, *, inhalt):
+        super().__init__(text)
+        self.inhalt = inhalt
+
+
+def lesen(pfad) -> list:
+    """Die Eintraege der Schlange. Fehlende Datei = leere Schlange (Normalfall).
+
+    Alles andere wirft SchlangeUnlesbar statt `[]` — wer danach schreibt,
+    wuerde sonst den ganzen Bestand ueberschreiben."""
+    roh = b"[]"                      # fehlende Datei = leere Schlange
+    if _os.path.exists(pfad):
+        try:
+            with open(pfad, "rb") as f:
+                roh = f.read()
+        except OSError as e:
+            # Auch ein FileNotFoundError zwischen exists und open landet hier:
+            # dann wird in diesem Durchgang nicht geschrieben — harmlos, der
+            # naechste sieht die fehlende Datei als leere Schlange.
+            raise SchlangeUnlesbar("%s nicht lesbar (%s: %s)"
+                                   % (pfad, type(e).__name__, e), inhalt=False) from e
+    try:
+        data = _json.loads(roh.decode("utf-8"))
+    except ValueError as e:          # auch UnicodeDecodeError
+        raise SchlangeUnlesbar("%s ist kein gueltiges JSON (%s)" % (pfad, e),
+                               inhalt=True) from e
+    if not isinstance(data, list):
+        raise SchlangeUnlesbar("%s enthaelt keine Liste, sondern %s"
+                               % (pfad, type(data).__name__), inhalt=True)
+    return data
+
+
+def beiseite(pfad, jetzt=None) -> str:
+    """Die kaputte Datei unter `<pfad>.kaputt-<stempel>` wegstellen. -> neuer Pfad
+
+    Umbenennen statt loeschen: in ihr stehen die aufgeschobenen Uploads, und
+    die lassen sich von Hand oft noch retten (abgeschnittenes JSON). Ein
+    vorhandener Name wird nie ueberschrieben — zwei Ausfaelle in derselben
+    Sekunde bekommen einen Zaehler."""
+    stempel = _time.strftime("%Y%m%d-%H%M%S", _time.localtime(jetzt))
+    ziel = "%s.kaputt-%s" % (pfad, stempel)
+    n = 1
+    while _os.path.exists(ziel):
+        ziel = "%s.kaputt-%s-%d" % (pfad, stempel, n)
+        n += 1
+    _os.rename(pfad, ziel)
+    return ziel

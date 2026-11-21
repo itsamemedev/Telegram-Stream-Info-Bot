@@ -1438,14 +1438,27 @@ def _should_defer_upload() -> bool:
     return not _is_upload_window(datetime.now())
 
 def _upload_queue_load() -> list:
+    """ARC-5: streng — wirft _nc_uschlange.SchlangeUnlesbar statt `[]`.
+    Bis hier wurde aus „nicht lesbar" eine leere Liste, und der naechste
+    Schreibvorgang loeschte damit ALLE aufgeschobenen Uploads."""
+    return _nc_uschlange.lesen(_upload_queue_path())
+
+
+def _upload_queue_schreibbar() -> list:
+    """Die Liste fuer einen Schreibvorgang (nur unter _UPLOAD_QUEUE_LOCK).
+
+    Kaputter Inhalt wird beiseitegelegt, nie ueberschrieben; danach beginnt
+    die Schlange leer. Ein Lesefehler (Rechte, E/A) wirft weiter — dann wird
+    gar nicht geschrieben."""
     try:
-        with open(_upload_queue_path(), encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
-    except FileNotFoundError:
-        return []
-    except Exception as e:
-        log.warning(f"Upload-Queue lesen fehlgeschlagen: {e}")
+        return _upload_queue_load()
+    except _nc_uschlange.SchlangeUnlesbar as e:
+        if not e.inhalt:
+            raise
+        weg = _nc_uschlange.beiseite(_upload_queue_path())
+        log.error("Upload-Warteschlange unlesbar (%s) — beiseitegelegt als %s. Die "
+                  "Eintraege darin werden NICHT mehr gesendet: von Hand pruefen und "
+                  "zurueckholen. Die Schlange beginnt leer.", e, weg)
         return []
 
 def _upload_queue_save(items: list):
@@ -1469,7 +1482,7 @@ def _upload_queue_add(chat_id, filepath, username, started_at, ended_at,
     if ziel:
         entry["ziel"] = ziel
     with _UPLOAD_QUEUE_LOCK:
-        items = _upload_queue_load()
+        items = _upload_queue_schreibbar()
         items.append(entry)
         _upload_queue_save(items)
     log.info("Upload aufgeschoben (%s): @%s → %s", grund or (
@@ -1555,7 +1568,7 @@ def _dashboard_trackings_umziehen():
 
 def _upload_queue_remove(entry):
     with _UPLOAD_QUEUE_LOCK:
-        items = _upload_queue_load()
+        items = _upload_queue_schreibbar()
         items = [e for e in items if not _nc_uschlange.gleicher(e, entry)]
         _upload_queue_save(items)
 
@@ -1564,12 +1577,19 @@ def _upload_queue_update(entry, neu):
     """v4.2-W175: einen Eintrag nach einem Fehlschlag fortschreiben (Zaehler,
     naechster Versuch) — an seiner Stelle, damit die Reihenfolge bleibt."""
     with _UPLOAD_QUEUE_LOCK:
-        items = [neu if _nc_uschlange.gleicher(e, entry) else e for e in _upload_queue_load()]
+        items = [neu if _nc_uschlange.gleicher(e, entry) else e
+                 for e in _upload_queue_schreibbar()]
         _upload_queue_save(items)
 
-def _upload_queue_count() -> int:
-    with _UPLOAD_QUEUE_LOCK:
-        return len(_upload_queue_load())
+def _upload_queue_count():
+    """Zahl der Eintraege — oder None, wenn die Schlange nicht zu lesen ist.
+    None und nicht 0: „nichts wartet" und „nicht nachsehbar" sind zwei Lagen."""
+    try:
+        with _UPLOAD_QUEUE_LOCK:
+            return len(_upload_queue_load())
+    except _nc_uschlange.SchlangeUnlesbar as e:
+        _loop_fehler("upload-schlange-lesen", e)
+        return None
 
 async def _upload_window_loop(bot_app):
     """Lädt aufgeschobene Aufnahmen hoch, sobald das Upload-Fenster offen ist.
@@ -1599,7 +1619,9 @@ async def _upload_window_loop(bot_app):
 async def _upload_queue_abarbeiten(bot_app):
     """Ein Durchgang ueber die faelligen Eintraege (siehe nc/uploadschlange)."""
     with _UPLOAD_QUEUE_LOCK:
-        items = _upload_queue_load()
+        # ARC-5: schreibbar statt load — kaputter Inhalt wird hier spaetestens
+        # nach einer Minute beiseitegelegt, statt die Schleife dauerhaft zu stoppen.
+        items = _upload_queue_schreibbar()
     faellig = [e for e in items if _nc_uschlange.faellig(e, _time_mod.time())]
     if faellig:
         log.info(f"Upload-Warteschlange: {len(faellig)} aufgeschobene "
@@ -5004,10 +5026,15 @@ def _sitzung_bestimmen(conn, username: str, start_iso: str):
     Aufnahme. Eine Aufnahme ohne Klammer ist unbequem, eine verlorene
     Aufnahme ist weg.
     """
+    # ARC-2: nur Zeilen MIT Sitzung zaehlen. Manuelle Aufnahmen (sitzung=False
+    # in add_recording) laufen parallel zur Worker-Aufnahme und tragen keine
+    # session_id — als juengste Zeile risse eine solche die laufende Sitzung
+    # mitten durch, das naechste Segment begaenne eine neue.
     try:
         row = conn.execute(
             "SELECT session_id, ended_at, created_at FROM recordings "
-            "WHERE username=? ORDER BY id DESC LIMIT 1", (username,)).fetchone()
+            "WHERE username=? AND session_id IS NOT NULL "
+            "ORDER BY id DESC LIMIT 1", (username,)).fetchone()
     except Exception as e:
         log.debug("Sitzungs-Zuordnung @%s: %s", username, e)
         return None
@@ -5028,7 +5055,7 @@ def add_recording(username: str, filepath: str, *,
                   file_size: Optional[int] = None,
                   duration_secs: Optional[int] = None,
                   tracking_id: Optional[int] = None,
-                  started_at=None, ended_at=None):
+                  started_at=None, ended_at=None, sitzung: bool = True):
     """X-Series: add_recording captured optional file_size + duration_secs
        für Quality-Score, Storage-Forecast, Bandwidth-Calc. Beide optional —
        Caller die diese Werte nicht haben, übergeben einfach None.
@@ -5040,7 +5067,11 @@ def add_recording(username: str, filepath: str, *,
        gerechnet: created_at entsteht erst beim INSERT, also nach dem Ende der
        Aufnahme und nach dem Ermitteln der Dateigroesse — je Segment ein paar
        Sekunden daneben, und genau diese Sekunden sind die Naht, die wir
-       messen wollen."""
+       messen wollen.
+       ARC-2: sitzung=False fuer manuelle Aufnahmen — sie laufen PARALLEL zur
+       Worker-Aufnahme, in einer Sitzung kaemen beim Zusammenfuegen dieselben
+       Minuten zweimal hinein. Ohne Zeile verschwanden sie aber ganz (Liste,
+       Archivregeln) und galten als Waise."""
     if file_size is None and filepath and os.path.exists(filepath):
         try: file_size = os.path.getsize(filepath)
         except OSError: file_size = None
@@ -5065,7 +5096,7 @@ def add_recording(username: str, filepath: str, *,
     for versuch in range(1, _ADD_RECORDING_VERSUCHE + 1):
         try:
             with db_conn() as conn:
-                sid = _sitzung_bestimmen(conn, username, start_iso)
+                sid = _sitzung_bestimmen(conn, username, start_iso) if sitzung else None
                 cur = conn.execute(
                     "INSERT INTO recordings (username, filepath, created_at, "
                     "  file_size, duration_secs, tracking_id, "
@@ -5276,7 +5307,8 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
     duration_secs = max(10, min(int(duration_secs or 300), 3600))
 
     # File-Path
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    start_dt = datetime.now(timezone.utc)
+    ts = start_dt.strftime("%Y%m%d_%H%M%S")
     output_file = os.path.join(
         RECORDINGS_DIR, f"manual_{username}_{ts}.mp4")
 
@@ -5370,6 +5402,17 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
                     (status, datetime.now(timezone.utc).isoformat(),
                      file_size, manual_id)), c.commit()))
             except Exception: pass
+            if status == "completed":
+                # ARC-2: bis hier stand die Aufnahme NUR in manual_recordings.
+                # Nach FRISCH_S galt sie in „Reste aufraeumen" als
+                # „kein-db-eintrag" und wurde geloescht; Liste, Sitzungen und
+                # Archivregeln kannten sie nie. add_recording wirft nicht und
+                # meldet ein Scheitern selbst auf error.
+                ende_dt = datetime.now(timezone.utc)
+                await asyncio.to_thread(
+                    add_recording, username, output_file, file_size=file_size,
+                    duration_secs=int((ende_dt - start_dt).total_seconds()),
+                    started_at=start_dt, ended_at=ende_dt, sitzung=False)
             log_event("manual.recording.end", "info" if status == "completed" else "warning",
                       f"Manual #{manual_id} @{username} → {status} ({(file_size or 0)/1024/1024:.1f} MB)"
                       + (f" | stderr: {_stderr_tail[:200]}" if status == "empty" and _stderr_tail else ""),
@@ -22771,8 +22814,17 @@ def _clip_prune():
         # Meme-Zusammenschnitt), ist noch nicht gesendet — die Retention
         # loeschte ihn sonst vor dem Fenster, und die Warteschlange verwarf den
         # Eintrag danach still als „Datei weg".
-        with _UPLOAD_QUEUE_LOCK:
-            wartend = {os.path.abspath(e.get("file") or "") for e in _upload_queue_load()}
+        # ARC-5: ist die Schlange nicht zu lesen, ist die Schutzmenge unbekannt —
+        # dann wird NICHTS geloescht. Mit `[]` als Vorgabe fielen die
+        # aufgeschobenen Meme-Zusammenschnitte unter die Retention.
+        try:
+            with _UPLOAD_QUEUE_LOCK:
+                wartend = {os.path.abspath(e.get("file") or "") for e in _upload_queue_load()}
+        except _nc_uschlange.SchlangeUnlesbar as e:
+            _loop_fehler("clip-prune", RuntimeError(
+                "Clip-Retention uebersprungen, die Upload-Warteschlange ist nicht "
+                "zu lesen: %s" % e))
+            return
         files = [os.path.join(CLIP_DIR, f) for f in os.listdir(CLIP_DIR) if f.endswith(".mp4")
                  and os.path.abspath(os.path.join(CLIP_DIR, f)) not in wartend]
         files.sort(key=os.path.getmtime)        # ältester zuerst

@@ -59,7 +59,8 @@ import shutil
 from datetime import datetime, timezone
 from typing import Optional
 
-from nc.archive import add_archive_entry, evaluate_archive_rule
+from nc.archive import (BestandUnbekannt, add_archive_entry,
+                        evaluate_archive_rule, hat_quelle)
 from nc.dbwrap import db_conn
 from nc.sicherpfad import sicher_join
 
@@ -117,6 +118,15 @@ def _archiviere_eine(src: str, archive_dir: str, rule_name: str,
     # gegen Symlinks. Wirft ValueError, wenn das Ergebnis ausbrechen wuerde —
     # kein stiller Rueckfall auf einen Ersatzpfad, denn dann schriebe der Lauf
     # in eine Datei, die niemand gemeint hat.
+    # ARC-3: "schon archiviert" entschied bis hier allein der Dateiname im
+    # Archiv. Benennt der Betreiber die Kopie im Deck um (oder nimmt die
+    # Datei von Hand weg), ist der Name frei, und der naechste Regellauf
+    # kopiert dieselbe Aufnahme ein zweites Mal hinein. Die Zeile mit
+    # `source_url = recording/<id>` ueberlebt das Umbenennen — sie ist die
+    # Spur, die zaehlt. Wirft BestandUnbekannt: nicht lesbar heisst nicht
+    # "noch nicht archiviert".
+    if hat_quelle(f"recording/{rec_id}"):
+        return False
     try:
         target = sicher_join(archive_dir, os.path.basename(src),
                              "aufnahme.bin")
@@ -125,9 +135,35 @@ def _archiviere_eine(src: str, archive_dir: str, rule_name: str,
         # Quelle zu. Der Betreiber merkt das nie, die Datei ist ja da.
         if os.path.exists(target):
             return False
-        shutil.copy2(src, target)
     except Exception as e:
         log.warning(f"archive rule '{rule_name}' on rec#{rec_id}: {e}")
+        return False
+    # ARC-1: copy2 schrieb direkt unter den endgueltigen Namen. Riss die
+    # Kopie mittendrin ab (Platte voll, Neustart), lag eine abgeschnittene
+    # Datei OHNE Zeile im Archiv: `os.path.exists` oben meldete sie danach
+    # bei jedem Lauf als "schon da" — die Aufnahme war nie wieder
+    # archivierbar —, und "Ordner pruefen" bot sie als gueltige Datei zum
+    # Aufnehmen an. Jetzt entsteht die Kopie unter einem Punktnamen (den der
+    # Ordner-Scan nicht sieht) und bekommt den echten Namen erst, wenn sie
+    # vollstaendig ist. os.replace ist auf demselben Dateisystem atomar.
+    teil = os.path.join(os.path.dirname(target),
+                        "." + os.path.basename(target) + ".teil")
+    try:
+        shutil.copy2(src, teil)
+        os.replace(teil, target)
+    except Exception as e:
+        log.error("archive rule '%s' on rec#%s: Kopie ins Archiv "
+                  "gescheitert (%s: %s) — nichts eingetragen, der naechste "
+                  "Lauf versucht es erneut.",
+                  rule_name, rec_id, type(e).__name__, e)
+        try:
+            # exists: kam copy2 nicht bis zum Anlegen, ist nichts zurueckzunehmen
+            if os.path.exists(teil):
+                os.remove(teil)
+        except OSError as e2:
+            log.error("archive rule '%s': der Kopie-Rest %s liess sich nicht "
+                      "entfernen (%s) — von Hand loeschen, er belegt Platz.",
+                      rule_name, teil, e2)
         return False
 
     # Ab hier liegt die Kopie im Archiv. Schlaegt der Eintrag fehl, MUSS sie
@@ -202,7 +238,15 @@ def run_archive_rules(rule_id: Optional[int] = None, archive_dir: str = "",
             src = r["filepath"]
             if not src or not os.path.isfile(src):
                 skipped += 1; continue
-            if _archiviere_eine(src, archive_dir, rule["name"], r["id"]):
+            try:
+                erfolg = _archiviere_eine(src, archive_dir, rule["name"], r["id"])
+            except BestandUnbekannt as e:
+                # Abbrechen statt raten: ohne Archivliste waere jede weitere
+                # Kopie eine moegliche Dublette (ARC-3).
+                log.error("archive rule '%s': Lauf abgebrochen — %s",
+                          rule["name"], e)
+                return {"ok": False, "error": str(e), "results": results}
+            if erfolg:
                 archived += 1
             else:
                 skipped += 1

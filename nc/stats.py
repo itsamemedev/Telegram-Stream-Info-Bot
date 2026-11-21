@@ -13,6 +13,14 @@ from nc.textmore import _parse_iso
 
 log = logging.getLogger("TikTokBot")
 
+# ARC-9: was als gelungener Aufnahmeversuch zaehlt — EINE Stelle. Bis v5.11.3
+# zaehlte trefferquote() nur 'ok', die Streamer-Statistik und der Gesundheits-
+# wert 'ok' + 'stall_killed_partial': zwei Erfolgsquoten fuer dieselben
+# Versuche, je nach Kachel ein anderer Wert. Ein Teilstueck nach Stall-Kill ist
+# eine Aufnahme (Datei liegt da, wird versendet), also zaehlt es mit.
+ERFOLG = ("ok", "stall_killed_partial")
+ERFOLG_SQL = "outcome IN ('ok','stall_killed_partial')"
+
 
 def get_per_user_stats(limit: int = 20, sort_by: str = "rec_count") -> list:
     """Per-User-Aggregat über alle Trackings. Liefert eine Liste mit:
@@ -36,7 +44,8 @@ def get_per_user_stats(limit: int = 20, sort_by: str = "rec_count") -> list:
         rec_rows = conn.execute(
             "SELECT username, COUNT(*) AS rec_count, "
             "MAX(created_at) AS last_recording_at "
-            "FROM recordings GROUP BY username").fetchall()
+            # ARC-9: Papierkorb zaehlt nicht — die Uebersicht nebenan auch nicht.
+            "FROM recordings WHERE deleted_at IS NULL GROUP BY username").fetchall()
         rec_map = {r["username"]: (r["rec_count"], r["last_recording_at"])
                    for r in rec_rows}
 
@@ -44,7 +53,7 @@ def get_per_user_stats(limit: int = 20, sort_by: str = "rec_count") -> list:
         att_rows = conn.execute(
             "SELECT username, "
             "COUNT(*) AS attempts, "
-            "SUM(CASE WHEN outcome IN ('ok', 'stall_killed_partial') THEN 1 ELSE 0 END) AS ok_count "
+            "SUM(CASE WHEN " + ERFOLG_SQL + " THEN 1 ELSE 0 END) AS ok_count "
             "FROM recording_attempts GROUP BY username").fetchall()
         att_map = {}
         for r in att_rows:
@@ -71,7 +80,7 @@ def get_per_user_stats(limit: int = 20, sort_by: str = "rec_count") -> list:
         # (recordings-Tabelle hat keinen size_bytes-Spalte)
         size_rows = conn.execute(
             "SELECT username, SUM(file_size) AS total FROM recording_attempts "
-            "WHERE outcome IN ('ok', 'stall_killed_partial') AND file_size > 0 "
+            "WHERE " + ERFOLG_SQL + " AND file_size > 0 "
             "GROUP BY username").fetchall()
         size_map = {r["username"]: (r["total"] or 0) for r in size_rows}
 
@@ -149,7 +158,7 @@ def get_activity_pulse(minutes: int = 60) -> list:
             if not b: continue
             b["started"] += 1
             o = r["outcome"]
-            if o in ("ok", "stall_killed_partial"):
+            if o in ERFOLG:
                 b["ok"] += 1
             elif o not in ("running", None):
                 b["fail"] += 1
@@ -184,7 +193,7 @@ def trefferquote() -> dict:
     with db_conn() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS total, "
-            "SUM(CASE WHEN outcome='ok' THEN 1 ELSE 0 END) AS ok "
+            "SUM(CASE WHEN " + ERFOLG_SQL + " THEN 1 ELSE 0 END) AS ok "
             "FROM recording_attempts").fetchone()
     total, ok = int(row["total"] or 0), int(row["ok"] or 0)
     return {"total_attempts": total, "successful": ok,
@@ -259,7 +268,7 @@ def _streamer_health(username, conn):
     cut = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     r = conn.execute(
         "SELECT COUNT(*) AS att, "
-        "SUM(CASE WHEN outcome IN ('ok','stall_killed_partial') THEN 1 ELSE 0 END) AS ok, "
+        "SUM(CASE WHEN " + ERFOLG_SQL + " THEN 1 ELSE 0 END) AS ok, "
         "MAX(started_at) AS last FROM recording_attempts WHERE username=? AND started_at >= ?",
         (username, cut)).fetchone()
     att, ok_n, last = int(r["att"] or 0), int(r["ok"] or 0), r["last"]

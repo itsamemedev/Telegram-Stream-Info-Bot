@@ -11874,7 +11874,9 @@ def _test_v42_w89_kopie_wird_zurueckgenommen():
         assert os.listdir(archiv) == [], \
             "im Archiv liegt etwas, obwohl die Kopie scheiterte: %r" % (
                 os.listdir(archiv),)
-        assert any(stufe == "warning" for stufe, _ in schrift.zeilen), \
+        # ARC-1: der Anker ist gewandert, nicht die Aussage — eine gescheiterte
+        # Kopie meldet sich seither auf error statt warning (strenger).
+        assert any(stufe == "error" for stufe, _ in schrift.zeilen), \
             "eine gescheiterte Kopie meldet sich nicht: %r" % (
                 schrift.zeilen,)
 
@@ -16821,7 +16823,7 @@ def _test_v42_w91_aufraeumer_loescht_nicht_alles():
         def execute(self, sql, args=()):
             # v4.2-W131: _find_orphans fragt zusaetzlich die laufenden
             # Aufnahmen ab — hier laeuft keine.
-            if "trackings" in sql:
+            if "output_file" in sql:   # trackings + manual_recordings (ARC-2)
                 return _Zeilen()
             return _Zeilen({"filepath": p} for p in echte)
         def commit(self): pass
@@ -25193,6 +25195,8 @@ def _test_v42_w131_aufnahme_luecken():
 
     class _Conn:
         def execute(self, sql, args=()):
+            if "manual_recordings" in sql:   # ARC-2: hier keine
+                return _Zeilen()
             if "trackings" in sql:
                 assert "recording=1" in sql.replace(" ", "")
                 return _Zeilen([{"output_file": _rel}, {"output_file": None}])
@@ -33694,6 +33698,7 @@ def _test_v42_w175_upload_schlange():
               "_nc_tgfehler": T, "_nc_meldetakt": M, "_nc_discordziele": Z,
               "_nc_dcaufnahme": DA}
         _exec(baum, ["_upload_queue_load", "_upload_queue_save", "_upload_queue_remove",
+                     "_upload_queue_schreibbar",   # ARC-5: neuer Helfer, Anker gewandert
                      "_upload_queue_update", "_upload_queue_abarbeiten", "_upload_queue_nachher",
                      "_telegram_ziele"], ns)
 
@@ -43030,7 +43035,7 @@ def _test_auf2_splitreste_exakt():
 
     class _Conn:
         def execute(self, sql, args=()):
-            if "trackings" in sql:
+            if "output_file" in sql:   # trackings + manual_recordings (ARC-2)
                 return _Zeilen([{"output_file": laufend}])
             return _Zeilen([{"filepath": bekannt}])
         def __enter__(self): return self
@@ -45637,6 +45642,561 @@ def _test_live7_lockzeile_gedrosselt():
                and isinstance(a.value.args[0], _ast.Constant) and a.value.args[0].value == "rec-lock"
                for a in quelle), "Bedingung kommt nicht aus meldetakt.melden('rec-lock', …)"
     ok("LIVE-7: die Zeile Lock-nicht-bekommen geht durch nc/meldetakt (Kanal rec-lock)")
+class _ArcDb:
+    """ARC-Vertraege: Temp-SQLite mit dem ECHTEN Schema (nc.schema) und
+    danach die vorige Datenbank zurueck. Eine handgebaute Tabelle pruefte nur
+    das, was der Vertragsautor fuer die Spalten haelt."""
+
+    def __enter__(self):
+        import logging as _lg
+        from nc import dbwrap as _dbw
+        from nc import schema as S
+        self._alt = (_dbw.DB_PATH, _dbw.DB_BACKEND)
+        self.heim = _ph.verzeichnis()
+        configure_db(db_path=os.path.join(self.heim, "arc.db"), backend="sqlite")
+        lg = _lg.getLogger("arc-vertrag")
+        p = S.parameter("sqlite")
+        with db_conn() as c:
+            S.create_schema(
+                c, pk=p["pk"], txt_idx=p["txt_idx"], txt_long=p["txt_long"],
+                txt_big=p["txt_big"], iv=p["iv"], tbl_opts=p["tbl_opts"], is_my=False,
+                _create_index_safe=lambda conn, a, b=None: S.index_sicher(
+                    conn, a, b, backend="sqlite", log=lg),
+                _migrate_columns=lambda conn, t, e: S.spalten_nachziehen(
+                    conn, t, e, backend="sqlite", mariadb_db="", log=lg),
+                log=lg, ts=p.get("ts"))
+            c.commit()
+        return self
+
+    def __exit__(self, *a):
+        configure_db(db_path=self._alt[0], backend=self._alt[1])
+        return False
+
+
+class _ArcLog:
+    def __init__(self):
+        self.zeilen = []
+
+    def __getattr__(self, stufe):
+        def _f(fmt, *a, **k):
+            self.zeilen.append((stufe, str(fmt) % a if a else str(fmt)))
+        return _f
+
+    def stufe(self, s):
+        return [t for st, t in self.zeilen if st == s]
+
+
+def _test_arc1_arc3_archivkopie_atomar_und_einmal():
+    """ARC-1: copy2 schrieb direkt unter den endgueltigen Namen. Riss die
+    Kopie ab (Platte voll), lag eine abgeschnittene Datei ohne Zeile im
+    Archiv — `os.path.exists` meldete sie danach bei jedem Lauf als „schon
+    da", und „Ordner pruefen" bot sie als gueltig an. ARC-3: „schon
+    archiviert" hing allein am Dateinamen; nach Umbenennen im Deck kopierte
+    der naechste Lauf dieselbe Aufnahme erneut. Lesefehler => abbrechen."""
+    import errno as _errno
+    import shutil as _sh
+    import nc.archive as AR
+    import nc.archiverules as A
+
+    with _ArcDb() as db:
+        archiv = os.path.join(db.heim, "archiv")
+        quelle = os.path.join(db.heim, "rec")
+        os.makedirs(archiv)
+        os.makedirs(quelle)
+        src = _ph.attrappe(os.path.join(quelle, "tiktok_live_1_u_20261120_101010.mp4"), 8192)
+        with db_conn() as c:
+            c.execute("INSERT INTO recordings (username, filepath, created_at, file_size) "
+                      "VALUES (?,?,?,?)", ("u", src, "2026-11-20T10:00:00+00:00", 8192))
+            rid = c.execute("SELECT MAX(id) AS m FROM recordings").fetchone()["m"]
+            c.commit()
+        gesehen = {}
+
+        class _VolleDisk:
+            @staticmethod
+            def copy2(a, b):
+                with open(b, "wb") as f:
+                    f.write(b"\0" * 1000)
+                gesehen["scan"] = AR._scan_kandidaten(archiv, AR.VIDEO_ENDUNGEN)
+                raise OSError(_errno.ENOSPC, "No space left on device")
+
+        alt_sh, alt_log, alt_db = A.shutil, A.log, AR.db_conn
+        lg = _ArcLog()
+        try:
+            A.log, A.shutil = lg, _VolleDisk
+            assert A._archiviere_eine(src, archiv, "R", rid) is False
+            assert gesehen["scan"] == [], \
+                ("der Ordner-Scan sieht die halbe Kopie und boete sie an", gesehen)
+            assert os.listdir(archiv) == [], \
+                ("nach abgerissener Kopie liegt etwas im Archiv — es blockiert "
+                 "jeden weiteren Lauf", os.listdir(archiv))
+            assert lg.stufe("error"), ("abgerissene Kopie nur auf warning", lg.zeilen)
+            A.shutil = _sh
+            assert A._archiviere_eine(src, archiv, "R", rid) is True, \
+                "nach der vollen Platte gelingt der naechste Lauf nicht"
+            ziel = os.path.join(archiv, os.path.basename(src))
+            assert os.listdir(archiv) == [os.path.basename(src)] \
+                and os.path.getsize(ziel) == 8192, os.listdir(archiv)
+
+            # ARC-3: Umbenennen im Deck (Datei + Zeile, source_url bleibt).
+            neu = os.path.join(archiv, "umbenannt.mp4")
+            os.rename(ziel, neu)
+            with db_conn() as c:
+                c.execute("UPDATE archive SET filename=?, filepath=? WHERE filepath=?",
+                          ("umbenannt.mp4", neu, ziel))
+                c.commit()
+            assert A._archiviere_eine(src, archiv, "R", rid) is False
+            assert sorted(os.listdir(archiv)) == ["umbenannt.mp4"], \
+                ("nach Umbenennen kopiert der Regellauf dieselbe Aufnahme erneut",
+                 os.listdir(archiv))
+            with db_conn() as c:
+                n = c.execute("SELECT COUNT(*) AS n FROM archive WHERE source_url=?",
+                              ("recording/%s" % rid,)).fetchone()["n"]
+            assert n == 1, n
+
+            # Lesefehler der Archivliste: abbrechen, nicht raten.
+            os.remove(neu)
+            with db_conn() as c:
+                c.execute("DELETE FROM archive")
+                c.commit()
+            echt = AR.db_conn
+
+            class _Gesperrt:
+                def __init__(self):
+                    self._c = echt()
+
+                def __enter__(self):
+                    self._inner = self._c.__enter__()
+                    return self
+
+                def __exit__(self, *a):
+                    return self._c.__exit__(*a)
+
+                def execute(self, sql, *a):
+                    if "FROM archive WHERE source_url" in sql:
+                        raise RuntimeError("database is locked")
+                    return self._inner.execute(sql, *a)
+
+                def commit(self):
+                    return self._inner.commit()
+
+            AR.db_conn = _Gesperrt
+            try:
+                A._archiviere_eine(src, archiv, "R", rid)
+                raise AssertionError("unlesbare Archivliste gilt als „nicht archiviert“")
+            except AR.BestandUnbekannt:
+                pass
+            assert os.listdir(archiv) == [], os.listdir(archiv)
+            A.add_archive_rule("alle", {}, {"action": "copy_to_archive"})
+            erg = A.run_archive_rules(archive_dir=archiv)
+            assert erg["ok"] is False and os.listdir(archiv) == [], erg
+        finally:
+            A.shutil, A.log, AR.db_conn = alt_sh, alt_log, alt_db
+    ok("ARC-1/ARC-3: Archivkopie erst unter Punktnamen, abgerissene Kopie "
+       "verschwindet; schon archiviert = Zeile mit source_url, Lesefehler bricht ab")
+
+
+def _test_arc2_manuelle_aufnahme_keine_waise():
+    """ARC-2: manuelle Aufnahmen standen nur in manual_recordings und galten
+    nach FRISCH_S als „kein-db-eintrag" — „Reste aufraeumen" loeschte sie.
+    Jetzt (a) kennt _find_orphans manual_recordings.output_file, (b) traegt
+    _wait_and_finish fertige in recordings ein — OHNE Sitzung, weil sie
+    parallel zur Worker-Aufnahme laufen, und (c) die naechste Worker-Zeile
+    setzt die laufende Sitzung trotz dazwischenliegender manueller Zeile fort."""
+    import ast as _ast
+    import time as _t
+    from datetime import datetime, timedelta, timezone
+    from typing import Optional
+    from nc import aufnahmesitzung as AS
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+
+    with _ArcDb() as db:
+        auf = os.path.join(db.heim, "recordings")
+        os.makedirs(auf)
+        vorher = _t.time() - rt.FRISCH_S - 60
+        manuell = os.path.join(auf, "manual_u_20261120_101010.mp4")
+        waise = os.path.join(auf, "tiktok_live_1_u_20261120_090909.mp4")
+        for p in (manuell, waise):
+            _ph.attrappe(p, 4096)
+            os.utime(p, (vorher, vorher))
+        with db_conn() as c:
+            c.execute("INSERT INTO manual_recordings (username, max_duration_secs, "
+                      "started_at, output_file, status) VALUES (?,?,?,?,?)",
+                      ("u", 300, "2026-11-20T10:10:10+00:00",
+                       os.path.relpath(manuell), "completed"))
+            c.commit()
+        alt_ctx = _ncctx._CTX
+        _ncctx.configure(recordings_dir=auf, log=_ArcLog(),
+                         log_event=lambda *a, **k: None, arg_int=lambda *a, **k: 0,
+                         ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+        try:
+            gefunden = {o["name"] for o in rt._find_orphans()}
+        finally:
+            _ncctx._CTX = alt_ctx
+        assert gefunden == {os.path.basename(waise)}, \
+            ("die manuelle Aufnahme steht unter den Waisen und wuerde geloescht",
+             gefunden)
+
+        # (b)+(c): echte Funktionskoerper aus bot.py gegen die Temp-Datenbank.
+        baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+        teile = [k for k in baum.body
+                 if (isinstance(k, _ast.FunctionDef)
+                     and k.name in ("add_recording", "_sitzung_bestimmen"))
+                 or (isinstance(k, _ast.Assign) and any(
+                     getattr(t, "id", "").startswith("_ADD_RECORDING_")
+                     for t in k.targets))]
+        raum = {"db_conn": db_conn, "log": _ArcLog(), "os": os,
+                "datetime": datetime, "timezone": timezone, "timedelta": timedelta,
+                "Optional": Optional, "_iso": lambda d: d.isoformat() if d else None,
+                "_nc_sitzung": AS, "log_event": lambda *a, **k: None,
+                "_time_mod": _t}
+        exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), raum)
+        add = raum["add_recording"]
+        t0 = datetime(2026, 11, 20, 10, 0, 0, tzinfo=timezone.utc)
+        s = timedelta(seconds=1)
+        r1 = add("u", "/r/s1.mp4", started_at=t0, ended_at=t0 + 600 * s)
+        rm = add("u", "/r/manual_u.mp4", started_at=t0 + 300 * s,
+                 ended_at=t0 + 700 * s, sitzung=False)
+        r2 = add("u", "/r/s2.mp4", started_at=t0 + 605 * s, ended_at=t0 + 1200 * s)
+        with db_conn() as c:
+            sid = {r["id"]: r["session_id"] for r in c.execute(
+                "SELECT id, session_id FROM recordings").fetchall()}
+        assert sid[rm] is None, ("die manuelle Aufnahme landet in einer Sitzung — "
+                                 "beim Zusammenfuegen kaemen Minuten doppelt", sid)
+        assert sid[r1] and sid[r2] == sid[r1], \
+            ("die manuelle Zeile reisst die laufende Sitzung durch", sid)
+
+    fn = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "trigger_manual_recording")
+    rufe = [k for k in _ast.walk(fn) if isinstance(k, _ast.Call)
+            and _ast.unparse(k.func) == "asyncio.to_thread"
+            and k.args and _ast.unparse(k.args[0]) == "add_recording"]
+    assert rufe and any(kw.arg == "sitzung" and getattr(kw.value, "value", 1) is False
+                        for kw in rufe[0].keywords), \
+        "_wait_and_finish traegt die fertige manuelle Aufnahme nicht (ohne Sitzung) ein"
+    ok("ARC-2: manuelle Aufnahmen sind keine Waisen, stehen in recordings und "
+       "reissen keine Sitzung durch")
+
+
+def _test_arc5_uploadschlange_streng():
+    """ARC-5: `_upload_queue_load` gab bei jedem Lesefehler `[]` zurueck; der
+    naechste Schreibvorgang (Einreihen, Entfernen, Fortschreiben) loeschte
+    damit ALLE aufgeschobenen Uploads, und `_clip_prune` nahm dieselbe leere
+    Liste als Schutzmenge und loeschte aufgeschobene Meme-Zusammenschnitte.
+    Jetzt: streng lesen, kaputten Inhalt beiseitelegen (nie ueberschreiben),
+    Lesefehler => nichts schreiben, Retention ueberspringt laut. Gemessen an
+    den echten Funktionskoerpern aus bot.py."""
+    import ast as _ast
+    import json as _json
+    import threading as _th
+    import time as _tm
+    from datetime import datetime, timezone
+    from nc import uploadschlange as U
+
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    namen = {"_upload_queue_load", "_upload_queue_schreibbar", "_upload_queue_save",
+             "_upload_queue_add", "_upload_queue_remove", "_clip_prune"}
+    teile = [k for k in baum.body if getattr(k, "name", "") in namen]
+    assert len(teile) == len(namen), [k.name for k in teile]
+    heim = _ph.verzeichnis()
+    clips = os.path.join(heim, "clips")
+    os.makedirs(clips)
+    qpfad = os.path.join(heim, "pending_uploads.json")
+    meme = _ph.attrappe(os.path.join(clips, "memes_u.mp4"), 10)
+    os.utime(meme, (1000, 1000))
+    lg = _ArcLog()
+    fehler = []
+    ns = {"_UPLOAD_QUEUE_LOCK": _th.Lock(), "_upload_queue_path": lambda: qpfad,
+          "json": _json, "os": os, "log": lg, "_nc_uschlange": U,
+          "datetime": datetime, "timezone": timezone, "_time_mod": _tm,
+          "UPLOAD_WINDOW_START": 22, "UPLOAD_WINDOW_END": 6,
+          "CLIP_DIR": clips, "CLIP_MAX_AGE_DAYS": 1, "CLIP_MAX_COUNT": 0,
+          "_loop_fehler": lambda n, e: fehler.append((n, str(e)))}
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
+    alt = [{"chat_id": -1, "file": meme, "username": "u", "queued_at": "q1"}]
+
+    # (1) Kaputtes JSON (abgeschnitten): Einreihen legt es beiseite, statt den
+    # Bestand mit einer Ein-Eintrag-Liste zu ueberschreiben.
+    kaputt = _json.dumps(alt)[:-7]
+    open(qpfad, "w", encoding="utf-8").write(kaputt)
+    try:
+        ns["_upload_queue_load"]()
+        raise AssertionError("kaputte Schlange liest sich als leere Liste")
+    except U.SchlangeUnlesbar:
+        pass
+    # Retention bei unlesbarer Schlange: nichts loeschen, laut melden.
+    ns["_clip_prune"]()
+    assert os.path.isfile(meme), \
+        "die Retention loescht einen aufgeschobenen Zusammenschnitt, weil die Schlange unlesbar war"
+    assert fehler and fehler[0][0] == "clip-prune", fehler
+    ns["_upload_queue_add"](-2, "/rec/b.mp4", "v", None, None)
+    weg = [n for n in os.listdir(heim) if n.startswith("pending_uploads.json.kaputt-")]
+    assert len(weg) == 1 and open(os.path.join(heim, weg[0]), encoding="utf-8").read() \
+        == kaputt, ("der kaputte Bestand ist nicht unverfaelscht beiseitegelegt", weg)
+    neu = ns["_upload_queue_load"]()
+    assert [e["file"] for e in neu] == ["/rec/b.mp4"], neu
+    assert lg.stufe("error") and weg[0] in lg.stufe("error")[0], lg.zeilen
+
+    # (2) Keine Liste: dasselbe, auch beim Entfernen; ein zweiter Ausfall in
+    # derselben Sekunde ueberschreibt den ersten nicht.
+    open(qpfad, "w", encoding="utf-8").write('{"chat_id": -1}')
+    ns["_upload_queue_remove"]({"file": "x"})
+    weg2 = [n for n in os.listdir(heim) if n.startswith("pending_uploads.json.kaputt-")]
+    assert len(weg2) == 2, weg2
+
+    # (3) Lesefehler (E/A, Rechte): nichts schreiben, nichts verschieben.
+    ns["_upload_queue_save"](alt)
+    echt_open = open
+
+    def _io_fehler(p, *a, **k):
+        if p == qpfad:
+            raise PermissionError(13, "Permission denied")
+        return echt_open(p, *a, **k)
+    U.open = _io_fehler   # Modul-Global ueberdeckt das eingebaute open
+    try:
+        for schritt in (lambda: ns["_upload_queue_add"](-3, "/rec/c.mp4", "w", None, None),
+                        lambda: ns["_upload_queue_remove"](alt[0])):
+            try:
+                schritt()
+                raise AssertionError("Schreiben trotz unlesbarer Schlange")
+            except U.SchlangeUnlesbar:
+                pass
+    finally:
+        del U.open
+    assert ns["_upload_queue_load"]() == alt, \
+        "ein Lesefehler hat die Schlange ueberschrieben — alle aufgeschobenen Uploads weg"
+    assert len([n for n in os.listdir(heim) if ".kaputt-" in n]) == 2
+    ok("ARC-5: Upload-Schlange streng gelesen — kaputt wird beiseitegelegt, "
+       "Lesefehler schreibt nichts, Retention ueberspringt laut")
+
+
+def _test_arc4_join_ueber_teildatei():
+    """ARC-4: ein gescheiterter Join liess eine halbe sitzung_*.mp4 liegen —
+    durch AUF-3 (ist_zieldatei) dauerhaft vor dem Aufraeumer geschuetzt, und
+    jeder weitere Join endete auf 409. Nach einem Neustart lagen
+    `.angleich/`-Ordner und Listendateien fuer immer da. Jetzt schreibt
+    ffmpeg in eine Teildatei (Punktname, nicht geschuetzt), os.replace erst
+    nach Erfolg, und vor jedem Join werden Reste eingesammelt — ausser denen
+    eines laufenden Joins. ffmpeg ist eine Attrappe (subprocess.run)."""
+    import types as _ty
+    from nc import aufnahmesitzung as AS
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+
+    auf = _ph.verzeichnis()
+    a = _ph.attrappe(os.path.join(auf, "a.mp4"), 1024)
+    b = _ph.attrappe(os.path.join(auf, "b.mp4"), 1024)
+    sid = "@u_20261120T1000"
+    ziel = AS.zieldatei(auf, sid)
+    teil = AS.teildatei(ziel)
+    assert not AS.ist_zieldatei(os.path.basename(teil)), \
+        "die Teildatei faellt unter den AUF-3-Schutz und bleibt fuer immer liegen"
+    lauf = {"rc": 1, "geschrieben": []}
+
+    def _run(cmd, **kw):
+        if "concat" not in cmd:          # ffprobe/Angleich: nichts zu tun
+            return _ty.SimpleNamespace(returncode=0, stdout="", stderr="")
+        with open(cmd[-1], "wb") as f:   # halb geschrieben, dann Abbruch
+            f.write(b"\0" * (4096 if lauf["rc"] else 8192))
+        lauf["geschrieben"].append(cmd[-1])
+        return _ty.SimpleNamespace(returncode=lauf["rc"], stdout="",
+                                   stderr="No space left on device")
+
+    alt_ctx, alt_sp, alt_le, alt_ang = (_ncctx._CTX, rt.subprocess, rt.log_event,
+                                        rt._tonformat_angleichen)
+    _ncctx.configure(recordings_dir=auf, log=_ArcLog(),
+                     log_event=lambda *x, **k: None, arg_int=lambda *x, **k: 0,
+                     ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    try:
+        rt.subprocess = _ty.SimpleNamespace(run=_run)
+        rt.log_event = lambda *x, **k: None
+        rt._tonformat_angleichen = lambda sid_, pfade, *x: pfade
+        rt._join_lauf(sid, [a, b], ziel, None, None)
+        assert rt._JOIN_LAGE[sid]["status"] == "fehler", rt._JOIN_LAGE[sid]
+        assert lauf["geschrieben"] == [teil], \
+            ("ffmpeg schreibt direkt unter den endgueltigen Namen", lauf["geschrieben"])
+        assert sorted(os.listdir(auf)) == ["a.mp4", "b.mp4"], \
+            ("ein gescheiterter Join hinterlaesst Reste — der naechste endet auf 409",
+             sorted(os.listdir(auf)))
+
+        # Reste eines Neustarts mitten im Lauf; ein laufender Join daneben.
+        ziel2 = AS.zieldatei(auf, "@v_20261120T1100")
+        for z in (ziel, ziel2):
+            os.makedirs(z + ".angleich")
+            _ph.attrappe(os.path.join(z + ".angleich", "000.mp4"), 10)
+            _ph.attrappe(z + ".txt", 10)
+            _ph.attrappe(AS.teildatei(z), 10)
+        rt._JOIN_LAGE["@v_20261120T1100"] = {"status": "laeuft", "ziel": ziel2}
+        rt._join_reste_weg(auf)
+        bleibt = sorted(os.listdir(auf))
+        assert bleibt == sorted(["a.mp4", "b.mp4", os.path.basename(ziel2) + ".angleich",
+                                 os.path.basename(ziel2) + ".txt",
+                                 os.path.basename(AS.teildatei(ziel2))]), \
+            ("Join-Reste falsch eingesammelt (fremde Reste liegen oder der "
+             "laufende Join verliert seine Dateien)", bleibt)
+
+        lauf["rc"] = 0
+        rt._join_lauf(sid, [a, b], ziel, None, None)
+        assert rt._JOIN_LAGE[sid]["status"] == "fertig", rt._JOIN_LAGE[sid]
+        assert os.path.getsize(ziel) == 8192 and not os.path.exists(teil), \
+            "nach Erfolg liegt die Sitzung nicht unter ihrem Namen"
+    finally:
+        rt._JOIN_LAGE.pop(sid, None)
+        rt._JOIN_LAGE.pop("@v_20261120T1100", None)
+        rt.subprocess, rt.log_event, rt._tonformat_angleichen = alt_sp, alt_le, alt_ang
+        _ncctx._CTX = alt_ctx
+    import ast as _ast
+    fn = next(n for n in _ast.parse(open(rt.__file__, encoding="utf-8").read()).body
+              if getattr(n, "name", "") == "api_recording_session_join")
+    assert "_join_reste_weg" in {_ast.unparse(k.func) for k in _ast.walk(fn)
+                                 if isinstance(k, _ast.Call)}, \
+        "die Join-Route sammelt die Reste abgebrochener Laeufe nicht mehr ein"
+    ok("ARC-4: Join ueber Teildatei, gescheiterter Lauf hinterlaesst nichts, "
+       "Reste werden vor dem naechsten Join eingesammelt")
+
+
+def _test_arc6_arc7_arc8_archivrouten():
+    """ARC-6: /api/archive/index/<rid> rief `.get()` auf eine sqlite3.Row
+    (nacktes 500 unter SQLite) und fand nur die juengsten 1000 Aufnahmen.
+    ARC-7: der Ordner-Scan uebernimmt aus MANUAL_ARCHIVE_DIR, Loeschen und
+    Umbenennen prueften nur gegen ARCHIVE_DIR — uebernommene Eintraege waren
+    nie loeschbar. ARC-8: scheiterte beim Upload der Eintrag, lag die Datei
+    ohne Zeile im Archiv (nacktes 500, Wiederholung legte name_2 an).
+    Gemessen ueber die echten Routen gegen Temp-SQLite mit echtem Schema."""
+    import io as _io
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc.routes import archive as rt
+
+    with _ArcDb() as db:
+        arch = os.path.join(db.heim, "archiv")
+        manuell = os.path.join(db.heim, "manuell")
+        # Gleicher Praefix ohne Trenner: „manuell_fremd" liegt NICHT unter „manuell".
+        fremd = manuell + "_fremd"
+        for d in (arch, manuell, fremd):
+            os.makedirs(d)
+        gerufen = []
+        alt_ctx = _ncctx._CTX
+        _ncctx.configure(
+            cfg={"ARCHIVE_DIR": arch, "_MANUAL_ARCHIVE_DIR": manuell,
+                 "ARCHIVE_MAX_UPLOAD_MB": 10, "ARCHIVE_ALLOWED_EXTS": {"mp4"}},
+            log=_ArcLog(), log_event=lambda *a, **k: None,
+            run_async=lambda coro, timeout=None: coro,
+            intel_index_one=lambda rid, pfad, username="": gerufen.append(
+                (rid, pfad, username)) or 3)
+        app = Flask("arc678")
+        app.register_blueprint(rt.bp)
+        cl = app.test_client()
+        alt_add = rt.add_archive_entry
+        try:
+            # ── ARC-6 ─────────────────────────────────────────────────
+            with db_conn() as c:
+                for i in range(1003):
+                    c.execute("INSERT INTO recordings (username, filepath, created_at) "
+                              "VALUES (?,?,?)", ("u%d" % i, "/rec/%d.mp4" % i,
+                                                 "2026-11-20T10:00:00+00:00"))
+                c.commit()
+                alt_rid = c.execute("SELECT MIN(id) AS m FROM recordings").fetchone()["m"]
+            r = cl.post("/api/archive/index/%d" % alt_rid)
+            assert r.status_code == 200 and r.get_json()["segments"] == 3, \
+                ("Index einer Aufnahme ausserhalb der juengsten 1000 / unter SQLite",
+                 r.status_code, r.get_data(as_text=True)[:200])
+            assert gerufen == [(alt_rid, "/rec/0.mp4", "u0")], gerufen
+            assert cl.post("/api/archive/index/999999").status_code == 404
+
+            # ── ARC-7 ─────────────────────────────────────────────────
+            def _eintrag(pfad):
+                _ph.attrappe(pfad, 64)
+                with db_conn() as c:
+                    c.execute("INSERT INTO archive (filename, filepath, created_at) "
+                              "VALUES (?,?,?)", (os.path.basename(pfad), pfad,
+                                                 "2026-11-20T10:00:00+00:00"))
+                    c.commit()
+                    return c.execute("SELECT id FROM archive WHERE filepath=?",
+                                     (pfad,)).fetchone()["id"]
+            eid = _eintrag(os.path.join(manuell, "alt.mp4"))
+            ok_, neu = rt.rename_archive_entry(eid, "neu")
+            assert ok_ and os.path.isfile(os.path.join(manuell, "neu.mp4")), \
+                ("ein aus MANUAL_ARCHIVE_DIR uebernommener Eintrag ist nicht "
+                 "umbenennbar oder wandert dabei in einen anderen Ordner", ok_, neu,
+                 os.listdir(manuell), os.listdir(arch))
+            r = cl.delete("/api/archive/%d" % eid)
+            assert r.status_code == 200 and os.listdir(manuell) == [], \
+                ("ein uebernommener Eintrag ist nicht loeschbar",
+                 r.get_data(as_text=True)[:200], os.listdir(manuell))
+            eid_f = _eintrag(os.path.join(fremd, "x.mp4"))
+            r = cl.delete("/api/archive/%d" % eid_f)
+            assert r.status_code != 200 and os.listdir(fremd) == ["x.mp4"], \
+                "eine Datei ausserhalb beider Wurzeln wurde geloescht"
+            assert rt.rename_archive_entry(eid_f, "y")[0] is False
+
+            # ── ARC-8 ─────────────────────────────────────────────────
+            def _wirft(**kw):
+                raise RuntimeError("database is locked")
+            rt.add_archive_entry = _wirft
+            vorher = sorted(os.listdir(arch))
+            r = cl.post("/api/archive/upload", data={
+                "file": (_io.BytesIO(b"\0" * 2048), "clip.mp4")},
+                content_type="multipart/form-data")
+            assert r.status_code == 503 and r.get_json()["ok"] is False, \
+                (r.status_code, r.get_data(as_text=True)[:200])
+            assert sorted(os.listdir(arch)) == vorher, \
+                ("die Datei liegt nach gescheitertem Eintrag ohne Zeile im Archiv",
+                 os.listdir(arch))
+            rt.add_archive_entry = alt_add
+            r = cl.post("/api/archive/upload", data={
+                "file": (_io.BytesIO(b"\0" * 2048), "clip.mp4")},
+                content_type="multipart/form-data")
+            assert r.status_code == 200 and r.get_json()["filename"] == "clip.mp4", \
+                ("die Wiederholung legt eine Dublette an", r.get_data(as_text=True)[:200])
+        finally:
+            rt.add_archive_entry = alt_add
+            _ncctx._CTX = alt_ctx
+    ok("ARC-6/7/8: Index nach Id unter SQLite, Loeschen/Umbenennen in allen "
+       "Archivwurzeln, Upload ohne Zeile wird zurueckgenommen")
+
+
+def _test_arc9_zaehler_und_erfolgsquote():
+    """ARC-9: die Uebersicht zaehlte Lesezeichen, Notizen und Anmerkungen
+    ohne JOIN — auch die geloeschter Aufnahmen; die Streamer-Statistik
+    zaehlte Papierkorb-Aufnahmen mit; und es gab zwei Erfolgsquoten (nur 'ok'
+    gegen 'ok' + 'stall_killed_partial'). Jetzt JOIN mit deleted_at IS NULL
+    und EINE Erfolgsdefinition (nc.stats.ERFOLG_SQL). Temp-SQLite, echtes
+    Schema, Uebersicht ueber die echte Route."""
+    from flask import Flask
+    from nc import stats as ST
+    from nc.routes import recordings as rt
+
+    ts = "2026-11-20T10:00:00+00:00"
+    with _ArcDb():
+        with db_conn() as c:
+            for pfad, geloescht in (("/r/da.mp4", None), ("/r/weg.mp4", ts)):
+                c.execute("INSERT INTO recordings (username, filepath, created_at, "
+                          "deleted_at) VALUES (?,?,?,?)", ("arc9", pfad, ts, geloescht))
+            ids = [r["id"] for r in c.execute("SELECT id FROM recordings ORDER BY id")]
+            for rid in ids + [987654]:            # dazu eine hart geloeschte
+                c.execute("INSERT INTO bookmarks (recording_id, created_at) VALUES (?,?)",
+                          (rid, ts))
+                c.execute("INSERT INTO recording_notes (recording_id, note) VALUES (?,?)",
+                          (rid, "n"))
+                c.execute("INSERT INTO recording_annotations (recording_id, "
+                          "timestamp_secs, created_at) VALUES (?,?,?)", (rid, 5, ts))
+            for o in ("ok", "stall_killed_partial", "failed"):
+                c.execute("INSERT INTO recording_attempts (username, started_at, outcome) "
+                          "VALUES (?,?,?)", ("arc9", ts, o))
+            c.commit()
+        app = Flask("arc9")
+        app.register_blueprint(rt.bp)
+        j = app.test_client().get("/api/recordings/overview").get_json()
+        assert (j["bookmarked"], j["with_notes"], j["annotated"]) == (1, 1, 1), \
+            ("die Uebersicht zaehlt Zeilen geloeschter Aufnahmen mit", j)
+        zeile = next(r for r in ST.get_per_user_stats(limit=50)
+                     if r["username"] == "arc9")
+        assert zeile["rec_count"] == 1, ("Papierkorb zaehlt in der Streamer-Statistik", zeile)
+        tq = ST.trefferquote()
+        assert tq["successful"] == zeile["attempt_ok_count"] == 2, \
+            ("zwei Erfolgsquoten fuer dieselben Versuche", tq, zeile)
+    ok("ARC-9: Zaehler nur zu vorhandenen Aufnahmen, eine Erfolgsdefinition")
 
 
 def main():
@@ -46150,6 +46710,12 @@ def main():
     _test_live5_combo_geschenk_einmal()
     _test_live6_name_gross_klein_ein_nutzer()
     _test_live7_lockzeile_gedrosselt()
+    _test_arc1_arc3_archivkopie_atomar_und_einmal()
+    _test_arc2_manuelle_aufnahme_keine_waise()
+    _test_arc5_uploadschlange_streng()
+    _test_arc4_join_ueber_teildatei()
+    _test_arc6_arc7_arc8_archivrouten()
+    _test_arc9_zaehler_und_erfolgsquote()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
