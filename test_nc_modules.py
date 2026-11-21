@@ -44767,7 +44767,6 @@ def _test_ops3_deploy_sichert_und_schreibt_nur_code():
     Datenbank, Cookies, OAuth-Stores und der Update-Stand bleiben zurueck."""
     import subprocess as _sp
     import shutil
-    import tempfile
     src = open("tools/deploy.sh", encoding="utf-8").read()
     kopf = '"$PY" - "$STAGING" "$BOT_DIR" "$LISTE" "$BESTAND_LISTE" <<\'PYEOF\'\n'
     assert kopf in src, "der Listen-Block in deploy.sh fehlt"
@@ -44788,7 +44787,7 @@ def _test_ops3_deploy_sichert_und_schreibt_nur_code():
         "der Umschwenk kopiert wieder das ganze Nebenverzeichnis"
     assert '(cd "$STAGING" && tar cf - --null -T "$LISTE") | (cd "$BOT_DIR" && tar xf -)' in zeilen
 
-    w = tempfile.mkdtemp(prefix="nc_ops3_")
+    w = _ph.verzeichnis("nc-pruef-ops3-")
     try:
         quelle, ziel = os.path.join(w, "staging"), os.path.join(w, "bot")
         def leg(wurzel, rel, inhalt="x"):
