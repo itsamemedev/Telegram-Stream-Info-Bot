@@ -139,7 +139,15 @@ def _ermittle(wurzel) -> dict:
                       "Update eingespielte Stand laesst sich damit nicht "
                       "belegen; gemeldet wird der Stand des Archivs.",
                       UPDATE_DATEI, type(e).__name__, e)
-        if isinstance(u, dict) and u.get("sha"):
+        if isinstance(u, dict) and u.get("teilweise"):
+            # v5.11.4 (UPD-1): das letzte Update scheiterte mitten im Lauf.
+            # `sha` ist der Stand VORHER, auf der Platte liegt ein Gemisch —
+            # weder der alte noch der neue Commit darf hier als sauber gelten.
+            aus = {"commit": u.get("sha", ""), "zweig": u.get("branch", ""),
+                   "sauber": False, "gebaut_am": u.get("date", ""),
+                   "version": "", "quelle": "update", "teilweise": True,
+                   "ziel": u.get("ziel_sha", "")}
+        elif isinstance(u, dict) and u.get("sha"):
             aus = {"commit": u.get("sha", ""), "zweig": u.get("branch", ""),
                    "sauber": True, "gebaut_am": u.get("date", ""),
                    "version": "", "quelle": "update"}
@@ -218,7 +226,10 @@ def text(wurzel=None) -> str:
     if d.get("gebaut_am"):
         teile.append("gebaut %s" % d["gebaut_am"])
     teile.append("Quelle %s" % d["quelle"])
-    if d.get("sauber") is False:
+    if d.get("teilweise"):
+        teile.append("UNVOLLSTAENDIG EINGESPIELT (Ziel %s) — Bestand gemischt, "
+                     "Update erneut ausfuehren" % ((d.get("ziel") or "?")[:12]))
+    elif d.get("sauber") is False:
         # Zwei verschiedene Aussagen, nicht eine: aus dem Archiv heisst es,
         # der Baum war BEIM BAUEN schmutzig — dann entspricht das Archiv
         # keinem Commit. Aus git heisst es, der Baum ist es JETZT, und das ist

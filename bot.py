@@ -1438,14 +1438,27 @@ def _should_defer_upload() -> bool:
     return not _is_upload_window(datetime.now())
 
 def _upload_queue_load() -> list:
+    """ARC-5: streng — wirft _nc_uschlange.SchlangeUnlesbar statt `[]`.
+    Bis hier wurde aus „nicht lesbar" eine leere Liste, und der naechste
+    Schreibvorgang loeschte damit ALLE aufgeschobenen Uploads."""
+    return _nc_uschlange.lesen(_upload_queue_path())
+
+
+def _upload_queue_schreibbar() -> list:
+    """Die Liste fuer einen Schreibvorgang (nur unter _UPLOAD_QUEUE_LOCK).
+
+    Kaputter Inhalt wird beiseitegelegt, nie ueberschrieben; danach beginnt
+    die Schlange leer. Ein Lesefehler (Rechte, E/A) wirft weiter — dann wird
+    gar nicht geschrieben."""
     try:
-        with open(_upload_queue_path(), encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
-    except FileNotFoundError:
-        return []
-    except Exception as e:
-        log.warning(f"Upload-Queue lesen fehlgeschlagen: {e}")
+        return _upload_queue_load()
+    except _nc_uschlange.SchlangeUnlesbar as e:
+        if not e.inhalt:
+            raise
+        weg = _nc_uschlange.beiseite(_upload_queue_path())
+        log.error("Upload-Warteschlange unlesbar (%s) — beiseitegelegt als %s. Die "
+                  "Eintraege darin werden NICHT mehr gesendet: von Hand pruefen und "
+                  "zurueckholen. Die Schlange beginnt leer.", e, weg)
         return []
 
 def _upload_queue_save(items: list):
@@ -1469,7 +1482,7 @@ def _upload_queue_add(chat_id, filepath, username, started_at, ended_at,
     if ziel:
         entry["ziel"] = ziel
     with _UPLOAD_QUEUE_LOCK:
-        items = _upload_queue_load()
+        items = _upload_queue_schreibbar()
         items.append(entry)
         _upload_queue_save(items)
     log.info("Upload aufgeschoben (%s): @%s → %s", grund or (
@@ -1555,7 +1568,7 @@ def _dashboard_trackings_umziehen():
 
 def _upload_queue_remove(entry):
     with _UPLOAD_QUEUE_LOCK:
-        items = _upload_queue_load()
+        items = _upload_queue_schreibbar()
         items = [e for e in items if not _nc_uschlange.gleicher(e, entry)]
         _upload_queue_save(items)
 
@@ -1564,12 +1577,19 @@ def _upload_queue_update(entry, neu):
     """v4.2-W175: einen Eintrag nach einem Fehlschlag fortschreiben (Zaehler,
     naechster Versuch) — an seiner Stelle, damit die Reihenfolge bleibt."""
     with _UPLOAD_QUEUE_LOCK:
-        items = [neu if _nc_uschlange.gleicher(e, entry) else e for e in _upload_queue_load()]
+        items = [neu if _nc_uschlange.gleicher(e, entry) else e
+                 for e in _upload_queue_schreibbar()]
         _upload_queue_save(items)
 
-def _upload_queue_count() -> int:
-    with _UPLOAD_QUEUE_LOCK:
-        return len(_upload_queue_load())
+def _upload_queue_count():
+    """Zahl der Eintraege — oder None, wenn die Schlange nicht zu lesen ist.
+    None und nicht 0: „nichts wartet" und „nicht nachsehbar" sind zwei Lagen."""
+    try:
+        with _UPLOAD_QUEUE_LOCK:
+            return len(_upload_queue_load())
+    except _nc_uschlange.SchlangeUnlesbar as e:
+        _loop_fehler("upload-schlange-lesen", e)
+        return None
 
 async def _upload_window_loop(bot_app):
     """Lädt aufgeschobene Aufnahmen hoch, sobald das Upload-Fenster offen ist.
@@ -1599,7 +1619,9 @@ async def _upload_window_loop(bot_app):
 async def _upload_queue_abarbeiten(bot_app):
     """Ein Durchgang ueber die faelligen Eintraege (siehe nc/uploadschlange)."""
     with _UPLOAD_QUEUE_LOCK:
-        items = _upload_queue_load()
+        # ARC-5: schreibbar statt load — kaputter Inhalt wird hier spaetestens
+        # nach einer Minute beiseitegelegt, statt die Schleife dauerhaft zu stoppen.
+        items = _upload_queue_schreibbar()
     faellig = [e for e in items if _nc_uschlange.faellig(e, _time_mod.time())]
     if faellig:
         log.info(f"Upload-Warteschlange: {len(faellig)} aufgeschobene "
@@ -3532,8 +3554,8 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
     # einer 20-s-Aufloesung ankommt.
     if force_fresh:
         return await _gemessen()
-    return await _nc_livecache.einflug(_LIVE_EINFLUG, username, _gemessen,
-                                       ("unknown", None))
+    return await _nc_livecache.einflug(_LIVE_EINFLUG, _nc_livecache.schluessel(username),
+                                       _gemessen, ("unknown", None))
 
 
 # v4.2-W119: username -> Future des laufenden Aufloesungslaufs (nc/livecache.einflug)
@@ -4914,13 +4936,19 @@ def _lock_update(tracking_id: int, username: str = None) -> bool:
             # Single atomic statement: claim nur wenn weder dieses noch ein
             # username-gleiches Tracking gerade recording=1 hat, und dieses
             # hier nicht pausiert ist (B10).
+            # LIVE-6: LOWER() auf beiden Seiten. Gespeichert wird der Name wie
+            # eingegeben; unter SQLite ist `=` case-sensitiv, also durfte
+            # „maxmuster" aus Chat B neben „MaxMuster" aus Chat A eine ZWEITE
+            # Aufnahme desselben Streams starten. MariaDB vergleicht unter
+            # einer _ci-Kollation ohnehin so — LOWER() macht beide gleich,
+            # statt sich auf die Kollation der Tabelle zu verlassen.
             cur = conn.execute(
                 "UPDATE trackings SET recording=1 "
                 "WHERE id=? AND recording=0 "
                 "AND COALESCE(paused, 0) = 0 "
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM trackings t2 "
-                "  WHERE t2.username=? AND t2.recording=1 AND t2.id != trackings.id"
+                "  WHERE LOWER(t2.username)=LOWER(?) AND t2.recording=1 AND t2.id != trackings.id"
                 ")",
                 (tracking_id, username))
         else:
@@ -4998,10 +5026,15 @@ def _sitzung_bestimmen(conn, username: str, start_iso: str):
     Aufnahme. Eine Aufnahme ohne Klammer ist unbequem, eine verlorene
     Aufnahme ist weg.
     """
+    # ARC-2: nur Zeilen MIT Sitzung zaehlen. Manuelle Aufnahmen (sitzung=False
+    # in add_recording) laufen parallel zur Worker-Aufnahme und tragen keine
+    # session_id — als juengste Zeile risse eine solche die laufende Sitzung
+    # mitten durch, das naechste Segment begaenne eine neue.
     try:
         row = conn.execute(
             "SELECT session_id, ended_at, created_at FROM recordings "
-            "WHERE username=? ORDER BY id DESC LIMIT 1", (username,)).fetchone()
+            "WHERE username=? AND session_id IS NOT NULL "
+            "ORDER BY id DESC LIMIT 1", (username,)).fetchone()
     except Exception as e:
         log.debug("Sitzungs-Zuordnung @%s: %s", username, e)
         return None
@@ -5022,7 +5055,7 @@ def add_recording(username: str, filepath: str, *,
                   file_size: Optional[int] = None,
                   duration_secs: Optional[int] = None,
                   tracking_id: Optional[int] = None,
-                  started_at=None, ended_at=None):
+                  started_at=None, ended_at=None, sitzung: bool = True):
     """X-Series: add_recording captured optional file_size + duration_secs
        für Quality-Score, Storage-Forecast, Bandwidth-Calc. Beide optional —
        Caller die diese Werte nicht haben, übergeben einfach None.
@@ -5034,7 +5067,11 @@ def add_recording(username: str, filepath: str, *,
        gerechnet: created_at entsteht erst beim INSERT, also nach dem Ende der
        Aufnahme und nach dem Ermitteln der Dateigroesse — je Segment ein paar
        Sekunden daneben, und genau diese Sekunden sind die Naht, die wir
-       messen wollen."""
+       messen wollen.
+       ARC-2: sitzung=False fuer manuelle Aufnahmen — sie laufen PARALLEL zur
+       Worker-Aufnahme, in einer Sitzung kaemen beim Zusammenfuegen dieselben
+       Minuten zweimal hinein. Ohne Zeile verschwanden sie aber ganz (Liste,
+       Archivregeln) und galten als Waise."""
     if file_size is None and filepath and os.path.exists(filepath):
         try: file_size = os.path.getsize(filepath)
         except OSError: file_size = None
@@ -5059,7 +5096,7 @@ def add_recording(username: str, filepath: str, *,
     for versuch in range(1, _ADD_RECORDING_VERSUCHE + 1):
         try:
             with db_conn() as conn:
-                sid = _sitzung_bestimmen(conn, username, start_iso)
+                sid = _sitzung_bestimmen(conn, username, start_iso) if sitzung else None
                 cur = conn.execute(
                     "INSERT INTO recordings (username, filepath, created_at, "
                     "  file_size, duration_secs, tracking_id, "
@@ -5270,7 +5307,8 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
     duration_secs = max(10, min(int(duration_secs or 300), 3600))
 
     # File-Path
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    start_dt = datetime.now(timezone.utc)
+    ts = start_dt.strftime("%Y%m%d_%H%M%S")
     output_file = os.path.join(
         RECORDINGS_DIR, f"manual_{username}_{ts}.mp4")
 
@@ -5364,6 +5402,17 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
                     (status, datetime.now(timezone.utc).isoformat(),
                      file_size, manual_id)), c.commit()))
             except Exception: pass
+            if status == "completed":
+                # ARC-2: bis hier stand die Aufnahme NUR in manual_recordings.
+                # Nach FRISCH_S galt sie in „Reste aufraeumen" als
+                # „kein-db-eintrag" und wurde geloescht; Liste, Sitzungen und
+                # Archivregeln kannten sie nie. add_recording wirft nicht und
+                # meldet ein Scheitern selbst auf error.
+                ende_dt = datetime.now(timezone.utc)
+                await asyncio.to_thread(
+                    add_recording, username, output_file, file_size=file_size,
+                    duration_secs=int((ende_dt - start_dt).total_seconds()),
+                    started_at=start_dt, ended_at=ende_dt, sitzung=False)
             log_event("manual.recording.end", "info" if status == "completed" else "warning",
                       f"Manual #{manual_id} @{username} → {status} ({(file_size or 0)/1024/1024:.1f} MB)"
                       + (f" | stderr: {_stderr_tail[:200]}" if status == "empty" and _stderr_tail else ""),
@@ -5519,6 +5568,13 @@ def profile_keyboard(handle: str, is_live: bool) -> InlineKeyboardMarkup:
 def _is_authorized(update: Update) -> bool:
     if not ALLOWED_USER_IDS and not ALLOWED_CHAT_IDS:
         return True   # open mode
+    # DC-6: der Discord-Shim (discordbot._run_tg_handler) hat _is_admin schon
+    # geprueft und setzt dieses Merkmal. Bis dahin bestand er die Pruefung nur,
+    # weil er die erste ALLOWED_CHAT_ID als Chat ausgab — und arbeitete damit
+    # auf der Telegram-Liste statt auf der, in die /track auf Discord schreibt.
+    # Ein echtes telegram.Update traegt das Merkmal nie.
+    if getattr(update, "nc_discord_admin", False) is True:
+        return True
     uid = update.effective_user.id if update.effective_user else None
     cid = update.effective_chat.id if update.effective_chat else None
     if ALLOWED_USER_IDS and uid in ALLOWED_USER_IDS:
@@ -5866,7 +5922,18 @@ async def untrack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(_nc_i18n.t("Benutzung: <code>/untrack @username</code>"),
                                         parse_mode=ParseMode.HTML); return
     username = clean_username(context.args[0])
-    _nc_trackingdb.remove_tracking(update.effective_chat.id, username)
+    chat_id = update.effective_chat.id
+    # v5.11.4 (TG-2): dieselbe Pruefung wie der Stopp-KNOPF (F24). Hier stand
+    # nur `_is_authorized` — im offenen Modus und in jeder freigeschalteten
+    # Gruppe durfte damit jedes Mitglied fremde Trackings per /untrack
+    # loeschen, waehrend der Knopf daneben genau das verweigerte. Der
+    # Discord-Shim prueft selbst auf Admin (nc_discord_admin, W190); seine uid
+    # ist im offenen Modus 0 und waere sonst nie der Anleger.
+    if not getattr(update, "nc_discord_admin", False):
+        erlaubt, grund = _can_stop_tracking(update, chat_id, username)
+        if not erlaubt:
+            await update.message.reply_text(_nc_i18n.t(grund)); return
+    _nc_trackingdb.remove_tracking(chat_id, username)
     await update.message.reply_text(
         f"🗑 <b>TRACKING BEENDET · @{safe(username)}</b>\n"
         f"<i>Keine Benachrichtigungen mehr für diesen Nutzer.</i>",
@@ -8706,7 +8773,7 @@ async def _handle_single_tracking(t, bot_app):
     # einen zweiten Check ohne Cache. Bestätigt der den OFFLINE, glauben
     # wir es. Sonst: ignorieren.
     if not is_live and old_last_live:
-        _LIVE_STATUS_CACHE.pop(username, None)   # cache bypass
+        _LIVE_STATUS_CACHE.pop(_nc_livecache.schluessel(username), None)   # cache bypass (LIVE-6: Schluessel klein)
         await asyncio.sleep(2)                    # kurz warten dann nochmal
         verify_resp = await _get_live_info(username, session=session)
         if verify_resp["is_live"] is True:
@@ -8841,7 +8908,12 @@ async def _handle_single_tracking(t, bot_app):
             # v4.2-W176: einmal je NUTZER — der zweite Chat bekam sonst ein
             # zweites Embed mit leerer Bilanz (der Start war schon weg).
             if _nc_livemeldung.live_aus(username):
+                # LIVE-6: den Start hat vielleicht der Chat mit der ANDEREN
+                # Schreibweise gesetzt (live_an zaehlt klein) — sonst blieb
+                # die Bilanz leer und der fremde Eintrag fuer immer stehen.
                 _sess_start = _LIVE_SESSION_START.pop(username, None)
+                for _k in [k for k in list(_LIVE_SESSION_START) if k.lower() == username.lower()]:
+                    _sess_start = _LIVE_SESSION_START.pop(_k, None) or _sess_start
                 _ACTIVE_TIER.pop(username, None)   # v37 W3: Tier-Sichtbarkeit aufräumen
                 _nc_geschuetzt.zuruecksetzen(username, laut=False)   # v4.2-W161: neues Live, neuer Raum
                 _nc_raumsperre.vergessen(username)                   # v5.4-W195: dito
@@ -8934,8 +9006,17 @@ async def _handle_single_tracking(t, bot_app):
             # F41: INFO statt DEBUG damit der User in Multi-User-Setups
             # SIEHT warum eine Aufnahme nicht startet (z.B. wenn derselbe
             # User aus zwei Chats getrackt wird — nur ein Recording).
-            log.info(f"@{username}: Lock nicht bekommen — anderer Tracking-"
-                     f"Eintrag für selben User nimmt bereits auf. Skip.")
+            # LIVE-7: gedrosselt ueber nc/meldetakt, Kanal „rec-lock", Grund =
+            # Nutzer. Ungedrosselt stand die Zeile bei JEDEM Poll jedes
+            # weiteren Chats (~180/h je Zusatz-Chat) im Log — dieselbe Flut wie
+            # W97/W103. Ein neuer Nutzer meldet sofort, derselbe erst nach der
+            # Ruhezeit, mit der Zahl der verschluckten Faelle.
+            _laut, _weg = _nc_meldetakt.melden("rec-lock", (username or "?").lower(),
+                                               _time_mod.monotonic())
+            if _laut:
+                log.info(f"@{username}: Lock nicht bekommen — anderer Tracking-"
+                         f"Eintrag für selben User nimmt bereits auf. Skip."
+                         f"{_nc_meldetakt.zusatz(_weg)}")
             _nc_gegendruck.freigeben()
             return
 
@@ -9276,7 +9357,10 @@ def _pruef_runde(trackings, now, _pflege_runde):
             _LAST_CHECK_RESULT.pop(k, None)
             _nc_prueflage.vergessen(k)
         # Rate-limit-Maps sind per-username — schon mit list() geschützt
-        valid_users = {t["username"] for t in trackings}
+        # LIVE-6: der Live-Cache fuehrt kleingeschriebene Schluessel — ohne die
+        # zweite Haelfte flog jeder Eintrag eines „MaxMuster" hier als Rest raus.
+        valid_users = ({t["username"] for t in trackings}
+                       | {_nc_livecache.schluessel(t["username"]) for t in trackings})
         for m in (_RATE_LIMIT_BACKOFF, _RATE_LIMIT_PENALTY, _LIVE_STATUS_CACHE, _ABO_LIVE):
             stale = [u for u in list(m.keys()) if u not in valid_users]
             for u in stale: m.pop(u, None)
@@ -10700,7 +10784,20 @@ _LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # ihre Schriften von hier und hat keinen Token. Es sind sechs OFL-Dateien und
 # ein CSS, nichts davon verraet etwas.
 _AUTH_EXEMPT_PREFIXES = ("/api/public/", "/fonts/")
-_AUTH_EXEMPT_READ = ("/overlay", "/api/overlay/state")
+# v5.11.3-WEB-6: dieselbe OBS-Quelle laedt den Uebersetzer und dessen Katalog
+# (templates/overlay.html) — mit Token oder PIN bekam sie 401, und das
+# Overlay blieb im englischen Stream deutsch. Der Uebersetzer allein haette
+# nicht gereicht: er holt /api/i18n/katalog und hoert bei `!d.ok` still auf.
+# Beides ist der ausgelieferte Inhalt von locales/*.json, nichts Geheimes.
+# /api/i18n/waehlen (POST) und /api/i18n/sprachen bleiben geschuetzt.
+_AUTH_EXEMPT_READ = ("/overlay", "/api/overlay/state", "/api/i18n/uebersetzer.js", "/api/i18n/katalog")
+# v5.11.3-WEB-6: die AZRAEL-Stimme. Das Overlay spielt `az.audio` ab, also
+# /api/tts/az_<ms>_<nnn>.wav (_piper_say) — mit Token oder PIN ein 401, und
+# die Stimme war in OBS stumm. Frei ist NUR ein flacher .wav-Name: kein "/"
+# (Werkzeug dekodiert %2F vorher), kein fuehrender Punkt; die Route prueft
+# danach selbst mit safe_join + datei_in. Kein Praefix — /api/tts/ als
+# Praefix haette jede kuenftige Route darunter ohne Anmeldung geoeffnet.
+_AUTH_EXEMPT_TTS = re.compile(r"/api/tts/[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.wav")
 _AUTH_EXEMPT_EXACT = ("/healthz",
                       "/api/kick/oauth/callback", "/api/twitch/oauth/callback",
                       "/api/youtube/oauth/callback")   # v5.6-W197: /api/yt/... gab es nie
@@ -10920,7 +11017,9 @@ def _auth_guard():                                                    # C9 → F
     p = request.path or "/"
     if p in _AUTH_EXEMPT_EXACT or p.startswith(_AUTH_EXEMPT_PREFIXES):
         return None
-    if request.method == "GET" and p in _AUTH_EXEMPT_READ:   # OBS-Browserquelle
+    # OBS-Browserquelle und ihre Stimme (WEB-6) — beides nur lesend.
+    if request.method == "GET" and p in _AUTH_EXEMPT_READ or (
+            request.method == "GET" and _AUTH_EXEMPT_TTS.fullmatch(p)):
         return None
     if not DASHBOARD_TOKEN and not DASHBOARD_PIN:
         # v4.2-W149: ohne Geheimnis ist das Deck NUR lokal gedacht — dafuer
@@ -11098,10 +11197,31 @@ def _sicheres_ziel(roh):
     https://example.com aufloest — ein offener Redirect mitten im
     Login-Flow, ideal fuers Phishing ("das Dashboard hat dich ausgeloggt").
     Der Backslash-Fall deckt die Browser-Eigenheit /\\host mit ab.
+
+    v5.11.3-WEB-1: `next=/%09/evil.example` kam als "/\\t/evil.example" an,
+    bestand den Praefix-Riegel und ging als `302 Location: //evil.example`
+    hinaus — Werkzeug (und jeder Browser nach WHATWG) entfernt Tab und
+    Zeilenumbruch beim Normalisieren. Ein Zeilenumbruch endete dagegen in
+    einem HTTP 500 (Header-Riegel von Werkzeug). Deshalb: Steuerzeichen
+    ablehnen, auch nach einer Prozent-Dekodierung (`%2509`), und das Ergebnis
+    mit urlsplit gegenpruefen statt der Normalisierung zu vertrauen — kein
+    Schema, kein Host, Pfad beginnt mit genau einem "/".
     """
+    from urllib.parse import unquote as _unquote
     z = (roh or "/").strip()
     if (not z.startswith("/")) or z[:2] in ("//", "/\\"):
         return "/"
+    for probe in (z, _unquote(z)):
+        if any(ord(c) < 0x20 or ord(c) == 0x7F for c in probe):
+            return "/"
+        # Auch dekodiert kein "//" oder "/\\" vorn: urlsplit("///host") meldet
+        # weder Host noch "//"-Pfad, ein Browser nach WHATWG sieht dort einen.
+        if probe[:2] in ("//", "/\\"):
+            return "/"
+        teile = urlsplit(probe)
+        if teile.scheme or teile.netloc or not teile.path.startswith("/") \
+                or teile.path[:2] in ("//", "/\\"):
+            return "/"
     return z
 
 
@@ -18979,19 +19099,19 @@ async def _start_chat_listener(username, chat_buf, flags=None):
             who = (getattr(getattr(ev, "user", None), "nickname", None)
                    or getattr(getattr(ev, "from_user", None), "nickname", None) or "?")
             gname = getattr(getattr(ev, "gift", None), "name", None) or "Geschenk"
-            # UPGRADE: Gift-Wert (Diamanten × Anzahl) defensiv ermitteln
-            dia = (getattr(getattr(ev, "gift", None), "diamond_count", None)
-                   or getattr(ev, "diamond_count", None) or 0)
-            cnt = (getattr(ev, "repeat_count", None) or getattr(ev, "combo_count", None) or 1)
-            try: value = int(dia) * int(cnt)
-            except Exception: value = 0
+            # LIVE-5: Combo-Geschenke feuern je Streak-Schritt; nur das Ende zaehlt
+            # (sonst 30 Rosen = 465 Diamanten, 30 Clips, 30 Sendebild-Zeilen).
+            fertig, value = _nc_revenue.tiktok_geschenk(ev)
+            if not fertig:
+                return
             if value > 0:
                 if _overlay_src_ok("tiktok"):
                     # B120: TikTok-Gifts gehen an den GETRACKTEN Streamer, nicht
                     # an uns — sie sind keine Einnahme und werden nicht mehr als
                     # 'donation' gebucht. Als 'gift' bleiben sie fuer Overlay/
                     # Statistik erhalten, ohne je in eine Geldsumme zu laufen.
-                    _overlay_push("gift", who, value, gname, platform="tiktok", origin=username)
+                    # LIVE-5: neben dem Loop — der synchrone INSERT haelt sonst den Bot an (W176)
+                    await asyncio.to_thread(_overlay_push, "gift", who, value, gname, platform="tiktok", origin=username)
                 if CLIP_ENABLED and value >= CLIP_GIFT_MIN:
                     _spawn(clip_moment(username, f"Gift {value} von {who}", f"{who} -> {gname}"), name="clip-gift")
             if LIVE_REACT_GIFT_THRESHOLD and value >= LIVE_REACT_GIFT_THRESHOLD:
@@ -20202,7 +20322,10 @@ def _live_users():
     """Usernamen aktuell live gehender, getrackter Accounts (last_live=1)."""
     try:
         with db_conn() as conn:
-            rows = conn.execute("SELECT DISTINCT username FROM trackings WHERE last_live=1").fetchall()
+            # LIVE-3: pausierte nicht mitzaehlen — fuer sie ist last_live kein
+            # beobachteter Zustand mehr (Altbestand vor dem Fix trug dort 1).
+            rows = conn.execute("SELECT DISTINCT username FROM trackings "
+                                "WHERE last_live=1 AND COALESCE(paused, 0) = 0").fetchall()
         return [r["username"] for r in rows if r and r["username"]]
     except Exception as e:
         log.debug("live_users query: %s", e); return []
@@ -21809,7 +21932,7 @@ _nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _nc_abwehrlage.ssh_angriffe
 # + volle Server-Verwaltung (Channels, Kategorien, Rollen/Nutzergruppen, Rechte, Bans/Timeouts).
 DISCORD_BOT_TOKEN      = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 DISCORD_GUILD_ID       = _env_int("DISCORD_GUILD_ID", 0)         # optional: 1 Guild → sofortiger Slash-Sync (sonst global, ~1h)
-DISCORD_ADMIN_ROLE     = os.getenv("DISCORD_ADMIN_ROLE", "").strip()    # optional: Rollenname für Admin-/Server-Commands
+DISCORD_ADMIN_ROLE     = os.getenv("DISCORD_ADMIN_ROLE", "").strip()    # optional: Rollen-ID (DC-1, eindeutig) oder -name für Admin-/Server-Commands
 DISCORD_LOG_CHANNEL_ID = _env_int("DISCORD_LOG_CHANNEL_ID", 0)   # optional: Channel-ID für Bot-Benachrichtigungen
 DISCORD_LEVELING       = os.getenv("DISCORD_LEVELING", "1").strip().lower() in ("1","true","yes","on","y")  # XP/Level-Ranking an/aus
 DISCORD_LEVELUP_CHANNEL= os.getenv("DISCORD_LEVELUP_CHANNEL", "").strip()   # optional: Channel-Name für Level-Up-Ansagen (sonst im selben Channel)
@@ -22351,7 +22474,7 @@ def _system_backup():
        und/oder S3 system/. Retention lokal: SYS_BACKUP_KEEP Archive."""
     if not _backup_active():
         return {"ok": False, "error": "Kein Backup-Ziel konfiguriert (LOCAL_BACKUP/S3_BACKUP)"}
-    import tarfile, tempfile, shutil as _sh, subprocess as _sp
+    import tarfile, tempfile, shutil as _sh
     base_dir = os.path.dirname(os.path.abspath(__file__)) or "."
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
     name = f"nightcrawler_sys_{stamp}.tar.gz"
@@ -22370,9 +22493,12 @@ def _system_backup():
         if DB_BACKEND == "mariadb":
             md = _sh.which("mysqldump")
             if md:
+                # v5.11.4 (OPS-2): Passwort per MYSQL_PWD statt `-p…` in der
+                # argv, `-P` dazu, und eine Fehlermeldung ohne Kommandozeile —
+                # sie geht ins Deck, ins error.log und nach Discord.
                 with open(dump_path, "w", encoding="utf-8") as fh:
-                    _sp.run([md, MARIADB_DB, "-h", MARIADB_HOST, "-u", MARIADB_USER,
-                             f"-p{MARIADB_PASSWORD}"], stdout=fh, check=True, timeout=600)
+                    _nc_sicherung.mysqldump(md, fh, MARIADB_DB, MARIADB_HOST, MARIADB_PORT,
+                                            MARIADB_USER, MARIADB_PASSWORD)
             else:
                 with open(dump_path, "w", encoding="utf-8") as fh:
                     fh.write("-- mysqldump nicht installiert — kein Dump möglich\n")
@@ -22489,8 +22615,11 @@ def _system_backup():
                 "geprueft": pruefung["ok"], "error": _fehler,
                 "nicht_gesichert": len(nicht_gesichert)}
     except Exception as e:
-        _SYS_BACKUP_STATE["error"] = str(e)
-        return {"ok": False, "error": str(e)}
+        # Geschwaerzt auch hier: was immer die Ausnahme traegt, geht als
+        # Klartext an /api/backup/status und weiter in Log und Discord.
+        _fehler_e = _nc_sicherung.schwaerzen(str(e), MARIADB_PASSWORD)
+        _SYS_BACKUP_STATE["error"] = _fehler_e
+        return {"ok": False, "error": _fehler_e}
     finally:
         _SYS_BACKUP_STATE["running"] = False
         import shutil as _sh2
@@ -22692,8 +22821,17 @@ def _clip_prune():
         # Meme-Zusammenschnitt), ist noch nicht gesendet — die Retention
         # loeschte ihn sonst vor dem Fenster, und die Warteschlange verwarf den
         # Eintrag danach still als „Datei weg".
-        with _UPLOAD_QUEUE_LOCK:
-            wartend = {os.path.abspath(e.get("file") or "") for e in _upload_queue_load()}
+        # ARC-5: ist die Schlange nicht zu lesen, ist die Schutzmenge unbekannt —
+        # dann wird NICHTS geloescht. Mit `[]` als Vorgabe fielen die
+        # aufgeschobenen Meme-Zusammenschnitte unter die Retention.
+        try:
+            with _UPLOAD_QUEUE_LOCK:
+                wartend = {os.path.abspath(e.get("file") or "") for e in _upload_queue_load()}
+        except _nc_uschlange.SchlangeUnlesbar as e:
+            _loop_fehler("clip-prune", RuntimeError(
+                "Clip-Retention uebersprungen, die Upload-Warteschlange ist nicht "
+                "zu lesen: %s" % e))
+            return
         files = [os.path.join(CLIP_DIR, f) for f in os.listdir(CLIP_DIR) if f.endswith(".mp4")
                  and os.path.abspath(os.path.join(CLIP_DIR, f)) not in wartend]
         files.sort(key=os.path.getmtime)        # ältester zuerst
@@ -23006,13 +23144,15 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
             emb.timestamp = datetime.now(timezone.utc)
         except Exception:
             emb = view = None   # Fallback: Plaintext
-    async def _send(ch, mention=None):
+    async def _send(ch, mention=None, rolle=None):
+        # DC-2: der Client pingt per Vorgabe niemanden; /follow nennt seine Rolle selbst.
+        am = discord.AllowedMentions(roles=[rolle]) if rolle is not None else None
         try:
             if emb is not None:
-                await ch.send(content=mention, embed=emb, view=view)
+                await ch.send(content=mention, embed=emb, view=view, allowed_mentions=am)
             else:
                 body = f"{mention} {text}" if mention else text
-                await ch.send(_nc_i18n.t(body[:1950]))
+                await ch.send(_nc_i18n.t(body[:1950]), allowed_mentions=am)
         except Exception:
             pass
     try:
@@ -23022,12 +23162,12 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
             if feed and not posted_feed:
                 fc = discord.utils.get(g.text_channels, name=feed)
                 if fc:
-                    mention = None
+                    mention = role = None
                     if ping_notify:
                         role = discord.utils.get(g.roles, name=f"🔔 {slug}")
                         if role:
                             mention = role.mention
-                    await _send(fc, mention)
+                    await _send(fc, mention, role)
                     posted_feed = True
     except Exception as e:
         log.debug("Discord user-post: %s", e)
@@ -24716,13 +24856,20 @@ async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if mode in ("zurueck", "zurück", "rollback"):
-        bl = _nc_updater.list_backups()
+        # v5.11.4: im Thread. rollback() schreibt Datei fuer Datei auf die
+        # Platte und list_backups() oeffnet jedes ZIP — im Event-Loop hielt
+        # das Telegram, Discord und den Restream-Takt fuer die Dauer an (W97).
+        bl = await asyncio.to_thread(_nc_updater.list_backups)
         if not bl:
             await update.message.reply_text(_nc_i18n.t("Kein Backup vorhanden — nichts zurueckzuspielen."))
             return
-        res = _nc_updater.rollback(bl[0]["name"])
+        res = await asyncio.to_thread(_nc_updater.rollback, bl[0]["name"])
         if not res.get("ok"):
-            await update.message.reply_text(_nc_i18n.t(f"❌ {res.get('error')}"))
+            # Ein halber Rollback hat kein `error`, sondern `failed` — sonst
+            # stand hier „❌ None".
+            _grund = res.get("error") or "%s — nicht zurueckgespielt: %s" % (
+                res.get("summary") or "?", ", ".join(res.get("failed") or []) or "?")
+            await update.message.reply_text(_nc_i18n.t(f"❌ {_grund}"))
             return
         log_event("update_rollback", "warning", f"Backup {bl[0]['name']} zurueckgespielt")
         await update.message.reply_text(
@@ -24902,6 +25049,44 @@ async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(_nc_i18n.t(md[i:i + 3800]))
     except Exception as e:
         await update.message.reply_text(_nc_i18n.t(f"❌ Report fehlgeschlagen: {e}"))
+
+
+async def _telegram_starten(app):
+    """v5.11.4 (TG-1): initialize/start/start_polling bis zum Erfolg.
+
+    Bis dahin lief die Folge genau EINMAL. Jede Ausnahme wurde ein ERROR —
+    und dann nichts mehr (PTB: `bootstrap_retries` Vorgabe 0). War
+    api.telegram.org beim Neustart kurz weg, blieben die Telegram-Befehle bis
+    zum naechsten HAENDISCHEN Neustart aus, waehrend der Prozess weiterlief:
+    Exitcode 4, OnFailure und Restart=always griffen damit alle nicht.
+
+    Jeder Schritt ist wiederholbar gebaut, weil ein Versuch mittendrin
+    scheitern kann: `initialize()` ist in PTB idempotent, `start()` und
+    `start_polling()` werfen dagegen "already running", wenn sie im vorigen
+    Versuch schon durch waren — deshalb die beiden Abfragen davor.
+    Klassierung, Pause und Drossel stehen bot-frei in nc/telegramfehler.py.
+    """
+    async def _schritt():
+        await app.initialize()
+        if not app.running:
+            await app.start()
+        if not app.updater.running:
+            # v4.2-W93: die Straehne gehoert beim Start geleert. Ein Prozess,
+            # der sich einen alten Zaehlerstand aus einer frueheren
+            # Polling-Phase mitnimmt, meldete den ersten Konflikt sofort als
+            # "haelt seit Stunden an" — die Eskalation, die den Betreiber eine
+            # zweite Instanz suchen laesst, die es nicht gibt.
+            _nc_tgfehler.zuruecksetzen()
+            _nc_meldetakt.zuruecksetzen("telegram-polling")
+            # error_callback: sonst greift PTBs default_error_callback und
+            # schreibt je Vorkommen zwoelf Zeilen fremden Traceback (18.09.).
+            # add_error_handler taugt hier NICHT — der faengt Fehler beim
+            # VERARBEITEN eines Updates, nicht beim Abholen.
+            await app.updater.start_polling(error_callback=_telegram_polling_fehler)
+
+    await _nc_tgfehler.starten(_schritt, log)
+    log.info("Bot läuft — Telegram-Polling AKTIV, Befehle empfangsbereit.")
+    await _telegram_befehlsmenue(app)
 
 
 async def run_bot():
@@ -25102,32 +25287,12 @@ async def run_bot():
     _spawn(_marketing_loop(), name="marketing")           # B162: Cross-Promo (self-gated, Default aus)
     _spawn(_news_loop(), name="news")                     # B163: oeffentliche Website-News (self-gated, Default aus)
     _spawn(_stats_loop(), name="public-stats")            # v4.0: stats.json fuer Website (immer an, aufnahmefrei)
-    # v4.0-W46: Telegram-Start gekapselt. Vorher war initialize/start/polling
-    # NACKT — wirft eines davon (ungültiges Token, Netz/Proxy, Bibliotheks-/
-    # Python-Version), bricht run_bot() ab und reißt ALLES danach mit, ohne klare
-    # Meldung. Jetzt eigener try mit lauter Diagnose; der Rest läuft weiter.
-    try:
-        await app.initialize()
-        await app.start()
-        # v4.2-W93: die Straehne gehoert beim Start geleert. Ein Prozess, der
-        # sich einen alten Zaehlerstand aus einer frueheren Polling-Phase
-        # mitnimmt, meldete den ersten Konflikt sofort als "haelt seit Stunden
-        # an" — also genau die Eskalation, die dem Betreiber sagt, er solle
-        # eine zweite Instanz suchen, die es nicht gibt.
-        _nc_tgfehler.zuruecksetzen()
-        _nc_meldetakt.zuruecksetzen("telegram-polling")
-        # error_callback: sonst greift PTBs default_error_callback und schreibt
-        # je Vorkommen zwoelf Zeilen fremden Traceback (18.09., sechsmal
-        # hintereinander). add_error_handler taugt hier NICHT — der faengt
-        # Fehler beim VERARBEITEN eines Updates, nicht beim Abholen.
-        await app.updater.start_polling(error_callback=_telegram_polling_fehler)
-        log.info("Bot läuft — Telegram-Polling AKTIV, Befehle empfangsbereit.")
-        await _telegram_befehlsmenue(app)
-    except Exception as e:
-        log.error("Telegram-Polling FEHLGESCHLAGEN: %s — Telegram-Befehle sind AUS. "
-                  "Häufigste Ursachen: ungültiges/leeres BOT_TOKEN, Netz/Proxy, oder "
-                  "eine inkompatible python-telegram-bot-/Python-Version. Der übrige "
-                  "Bot (Dashboard, Restream, Discord) läuft weiter.", e, exc_info=True)
+    # v4.0-W46: Telegram-Start gekapselt — ein Fehler dort reisst den Rest
+    # nicht mehr mit. v5.11.4 (TG-1): und er wird WIEDERHOLT, statt nach dem
+    # ersten Netzaussetzer fuer immer aufzugeben. Wirft nur noch, wenn Warten
+    # nichts heilt (Token abgelehnt) — dann stirbt run_bot, und main() macht
+    # daraus Exitcode 4 (W100). Begruendung bei `_telegram_starten`.
+    await _telegram_starten(app)
     # F67: Startup-Notification posten (wenn konfiguriert)
     notify_chat = STARTUP_NOTIFY_CHAT_ID or DAILY_SUMMARY_CHAT_ID
     if notify_chat:
@@ -25405,6 +25570,10 @@ def _zustand_kennzahlen():
         "tunnel": _nc_kz.einwertig(_tunnel_lage(), (
             _nc_tunnelwacht.LAGE_OK, _nc_tunnelwacht.LAGE_DIREKT,
             _nc_tunnelwacht.LAGE_AUS, _nc_tunnelwacht.LAGE_FEHLER, "unbekannt")),
+        # UPD-1: „unvollstaendig" erscheint hier bewusst als `sonstig` (das
+        # Dashboard zeigt den Zustand schon); laut wird er im Fehlerlog ueber
+        # _laufstand_loop. Eine eigene Reihe braeuchte Panel, Zuordnung und
+        # Regeltest (W144: jede Reihe hat ein Panel).
         "laufstand": _nc_kz.einwertig(_LAUFSTAND_LETZT["lage"], (
             _nc_laufstand.AKTUELL, _nc_laufstand.VERALTET, _nc_laufstand.UNBEKANNT)),
         "schema_stand": _SCHEMA_STAND,
@@ -26003,11 +26172,16 @@ async def _laufstand_loop():
             # v4.2-W144: fuer /metrics gemerkt — der 10-s-Schnappschuss darf
             # keine Datei lesen, die Antwort von hier ist hoechstens 5 min alt.
             _LAUFSTAND_LETZT["lage"] = lage["lage"]
-            if lage["lage"] == _nc_laufstand.VERALTET:
+            # UPD-1: ein halb eingespielter Stand ist genauso laut wie ein
+            # veralteter — beim Neustart fehlt sonst womoeglich ein Modul, das
+            # bot.py schon importiert, und niemand hat es vorher gesehen.
+            if lage["lage"] in (_nc_laufstand.VERALTET, _nc_laufstand.UNVOLLSTAENDIG):
                 laut, unterdrueckt = _nc_meldetakt.melden(
                     "laufstand", lage["lage"], _time_mod.monotonic())
                 if laut:
-                    log.error("VERALTETER CODE LAEUFT: %s Abhilfe: %s%s",
+                    log.error("%s: %s Abhilfe: %s%s",
+                              "VERALTETER CODE LAEUFT" if lage["lage"] == _nc_laufstand.VERALTET
+                              else "UPDATE UNVOLLSTAENDIG EINGESPIELT",
                               lage["text"], lage["abhilfe"],
                               _nc_meldetakt.zusatz(unterdrueckt))
             else:
@@ -26678,7 +26852,9 @@ def _fatal_vom_botteil(fertig, botteil):
     Was hier NICHT hereinfaellt: ein unerreichbares Telegram. `run_bot` faengt
     das selbst und laeuft weiter (gemessen: httpx.ProxyError 403, Bot lief
     volle 110 s weiter). Der Exitcode 4 ist fuer den Fall, in dem der
-    Telegram-Teil WIRKLICH tot ist.
+    Telegram-Teil WIRKLICH tot ist. Seit v5.11.4 (TG-1) wiederholt
+    `_telegram_starten` den Start; hier landet nur noch ein Token, das
+    Telegram ablehnt (nc.telegramfehler.start_endgueltig).
 
     Erwartet wird `asyncio.wait(..., FIRST_COMPLETED)`: `fertig` ist die Menge
     der abgeschlossenen Tasks. Ist `botteil` nicht darunter, endete die

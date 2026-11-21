@@ -62,7 +62,11 @@ pruefbar.
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Tuple
+
+from nc import meldetakt as _meldetakt
 
 # So lange gilt ein Konflikt als Neustart-Ueberlappung. Gemessen am Fall vom
 # 18.09.: 07:23:42 erster Konflikt, 07:24:39 wieder HTTP 200 — 57 s. 90 s
@@ -205,6 +209,102 @@ def _konflikt_straehne(jetzt: float) -> Tuple[str, float]:
     if dauer > GNADENFRIST_S:
         return "konflikt_dauerhaft", dauer
     return "konflikt_anlauf", dauer
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v5.11.4 (TG-1): der Telegram-Start mit Wiederanlauf
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Bis hierher liefen `initialize()`, `start()` und `start_polling()` genau
+# EINMAL. Jede Ausnahme wurde ein ERROR, und dann nichts mehr — PTB versucht
+# es selbst nicht erneut (`bootstrap_retries` steht per Vorgabe auf 0). Nach
+# einem Neustart, waehrend api.telegram.org kurz nicht erreichbar war, blieben
+# die Telegram-Befehle bis zum naechsten HAENDISCHEN Neustart aus: der Prozess
+# lief weiter, also griffen weder Exitcode 4 (W100) noch OnFailure noch
+# Restart=always. Nichts stuerzte ab, es ging nur nichts.
+#
+# Endgueltig ist nur, was kein Warten heilt: ein abgelehntes Token. Alles
+# andere — Netz, Zeitlimit, Flood-Wait, und auch das Unbekannte — wird mit
+# gedeckelter Pause wiederholt. Ein unbekannter Fehler, der deterministisch
+# ist, kostet damit hoechstens eine gedrosselte ERROR-Zeile je Viertelstunde;
+# ein voruebergehender, den die Liste nicht kennt, kostete sonst wieder den
+# ganzen Telegram-Teil bis zum Neustart.
+
+START_ENDGUELTIG = frozenset({"InvalidToken", "Forbidden", "Unauthorized"})
+START_PAUSE_MIN_S = 5.0
+START_PAUSE_MAX_S = 300.0
+# Ein Flood-Wait gilt, auch wenn er laenger ist als die Deckelung — ein Start
+# vor Ablauf bekommt nur den naechsten RetryAfter. Begrenzt trotzdem, damit
+# ein unsinniger Wert den Start nicht auf Tage verschiebt.
+START_FLOOD_MAX_S = 3600.0
+START_KANAL = "telegram-start"
+
+
+def start_endgueltig(exc) -> bool:
+    """Heilt Warten diesen Startfehler NICHT? Ueber die ganze Klassenkette,
+       nicht nur den letzten Namen — und ueber Namen statt isinstance, aus
+       demselben Grund wie bei `grund()` (bot-frei pruefbar)."""
+    if exc is None:
+        return False
+    return bool({k.__name__ for k in type(exc).__mro__} & START_ENDGUELTIG)
+
+
+def start_pause(versuch: int, exc=None) -> float:
+    """Pause vor dem naechsten Versuch: 5, 10, 20 … hoechstens 300 s —
+       laenger nur, wenn Telegram selbst einen Flood-Wait nennt."""
+    pause = min(START_PAUSE_MAX_S, START_PAUSE_MIN_S * (2 ** max(0, int(versuch) - 1)))
+    wunsch = getattr(exc, "retry_after", None)
+    if hasattr(wunsch, "total_seconds"):        # PTB >= 21: timedelta
+        wunsch = wunsch.total_seconds()
+    if isinstance(wunsch, (int, float)) and wunsch > pause:
+        pause = min(float(wunsch), START_FLOOD_MAX_S)
+    return float(pause)
+
+
+async def starten(schritt, log, schlafen=None, uhr=None) -> int:
+    """`schritt()` so lange versuchen, bis er gelingt. -> Zahl der Versuche.
+
+    Wirft die Ausnahme weiter, wenn sie endgueltig ist (`start_endgueltig`) —
+    der Aufrufer (run_bot) stirbt dann, und `_fatal_vom_botteil` macht daraus
+    Exitcode 4. Ein Abbruch (`CancelledError`) geht ungefangen durch.
+
+    Jeder Fehlversuch ist ein ERROR, gedrosselt ueber nc.meldetakt je
+    (Kanal, Fehlerklasse): beim ersten mit Traceback, danach hoechstens alle
+    15 Minuten mit der Zahl der verschluckten. Ohne Drossel waeren das bei
+    300 s Pause zwoelf Bloecke je Stunde fuer einen Zustand, den der Betreiber
+    nach dem ersten kennt.
+    """
+    schlafen = schlafen or asyncio.sleep
+    uhr = uhr or time.monotonic
+    versuch = 0
+    while True:
+        versuch += 1
+        try:
+            await schritt()
+        except Exception as e:
+            if start_endgueltig(e):
+                log.error("Telegram-Start ENDGUELTIG abgelehnt (%s: %s) — BOT_TOKEN "
+                          "pruefen (@BotFather, /token; ein neu erzeugtes Token macht "
+                          "das alte sofort ungueltig). Der Bot beendet sich mit "
+                          "Exitcode 4, damit systemd es meldet.", _klassenname(e), e)
+                raise
+            pause = start_pause(versuch, e)
+            laut, unterdrueckt = _meldetakt.melden(START_KANAL, _klassenname(e), uhr())
+            if laut:
+                log.error("Telegram-Start fehlgeschlagen (Versuch %d, %s: %s) — neuer "
+                          "Versuch in %.0f s. Telegram-Befehle sind bis dahin AUS; "
+                          "Dashboard, Aufnahme, Restream und Discord laufen weiter. "
+                          "Haeufig: api.telegram.org nicht erreichbar, Netz/Proxy "
+                          "(RECORD_PROXY/Tunnel).%s", versuch, _klassenname(e), e,
+                          pause, _meldetakt.zusatz(unterdrueckt),
+                          exc_info=(versuch == 1))
+            await schlafen(pause)
+            continue
+        if versuch > 1:
+            log.warning("Telegram-Start nach %d Versuchen gelungen — Befehle wieder "
+                        "empfangsbereit.", versuch)
+        _meldetakt.zuruecksetzen(START_KANAL)
+        return versuch
 
 
 def zuruecksetzen() -> None:

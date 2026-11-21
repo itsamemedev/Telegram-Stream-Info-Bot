@@ -30,7 +30,7 @@ from nc import fehlertext as _nc_fehlertext
 from nc.dbwrap import db_conn
 from nc.archive import (get_archive_entries_paged, run_archive_file_check,
                         _scan_for_duplicates, add_archive_entry,
-                        get_archive_entry, delete_archive_entry,
+                        get_archive_entry, delete_archive_entry, unter_wurzel,
                         _kind_from_filename, finde_ohne_eintrag, uebernehmen,
                         dublette_loeschen, BestandUnbekannt, VIDEO_ENDUNGEN)
 from nc.textmore import _safe_archive_filename
@@ -100,6 +100,22 @@ def _archive_open_unique(filename: str) -> tuple:
     # bewiesen). Der atomare os.open (O_CREAT|O_EXCL) bleibt hier.
     return _nc_archivename.open_unique(
         _c().cfg["ARCHIVE_DIR"], filename, lambda full: os.open(full, flags, 0o644))
+
+
+def _upload_zuruecknehmen(target: str) -> None:
+    """Nimmt eine gerade angelegte Upload-Datei wieder weg — nur unter ARCHIVE_DIR.
+
+    target kommt aus _archive_open_unique, liegt also unter ARCHIVE_DIR. Der
+    Abgleich hier ist trotzdem kein Ornament: der Name stammt aus dem Upload,
+    CodeQL verfolgt ihn bis in os.remove (py/path-injection, PR #232) und
+    erkennt eine Barriere nur in DIESER Form — normalisieren, dann startswith
+    gegen die Wurzel. nc.sicherpfad sieht es nicht (CLAUDE.md W98). Wirft
+    OSError wie os.remove, damit der Aufrufer den Fall mit Pfad meldet."""
+    weg = os.path.realpath(target)
+    wurzel = os.path.realpath(_c().cfg["ARCHIVE_DIR"])
+    if not weg.startswith(wurzel + os.sep):
+        raise OSError("liegt nicht unter ARCHIVE_DIR (%s): %s" % (wurzel, weg))
+    os.remove(weg)
 
 
 def get_archive_aggregate_stats(*, kind='all', query=None, date_from=None, date_to=None):
@@ -183,7 +199,7 @@ def bulk_delete_archive_entries(ids):
             failed += 1
             errors.append({"id": str(eid), "error": _t("ungültige ID")})
             continue
-        ok, err = delete_archive_entry(eid)
+        ok, err = delete_archive_entry(eid, _archiv_wurzeln())
         if ok:
             deleted += 1
         else:
@@ -230,16 +246,16 @@ def rename_archive_entry(eid: int, new_name: str):
     if candidate == old_filename:
         return False, "neuer Name ist identisch mit altem Namen"
 
-    # Pfad-Safety: alter Pfad muss innerhalb ARCHIVE_DIR liegen
+    # Pfad-Safety: alter Pfad muss in einer Archivwurzel liegen. ARC-7: bis
+    # v5.11.3 nur ARCHIVE_DIR — ein aus MANUAL_ARCHIVE_DIR uebernommener
+    # Eintrag liess sich nie umbenennen. Umbenannt wird in DERSELBEN Wurzel,
+    # sonst wanderte die Datei beim Umbenennen still in einen anderen Ordner.
     real_archive = os.path.realpath(_c().cfg["ARCHIVE_DIR"])
     if old_filepath:
-        try:
-            real_old = os.path.realpath(old_filepath)
-            if os.path.commonpath([real_archive, real_old]) != real_archive:
-                log.warning(f"rename blocked: old path outside archive: {old_filepath}")
-                return False, "Pfad-Safety-Check fehlgeschlagen (alter Pfad)"
-        except (ValueError, OSError) as e:
-            return False, f"alter Pfad ungültig: {e}"
+        real_archive = unter_wurzel(old_filepath, _archiv_wurzeln())
+        if not real_archive:
+            log.warning(f"rename blocked: old path outside archive: {old_filepath}")
+            return False, "Pfad-Safety-Check fehlgeschlagen (alter Pfad)"
 
     # Ziel-Pfad bestimmen — bei Kollision _2/_3/... anhängen.
     # F39-Bug-Hunt-Fix: Vorher haben wir NUR os.path.exists() geprüft. Wenn
@@ -257,7 +273,7 @@ def rename_archive_entry(eid: int, new_name: str):
     # Ein Riegel, den man beim Lesen der Zeile nicht bemerkt, ist beim
     # naechsten Umbau weg.
     try:
-        target_path = _nc_sicherpfad.sicher_join(_c().cfg["ARCHIVE_DIR"], target_filename)
+        target_path = _nc_sicherpfad.sicher_join(real_archive, target_filename)
     except ValueError:
         return False, "neuer Name verlaesst das Archivverzeichnis"
 
@@ -291,8 +307,7 @@ def rename_archive_entry(eid: int, new_name: str):
             break
         target_filename = f"{base}_{n}{ext}"
         try:
-            target_path = _nc_sicherpfad.sicher_join(_c().cfg["ARCHIVE_DIR"],
-                                                     target_filename)
+            target_path = _nc_sicherpfad.sicher_join(real_archive, target_filename)
         except ValueError:
             return False, "neuer Name verlaesst das Archivverzeichnis"
     else:
@@ -341,6 +356,17 @@ def rename_archive_entry(eid: int, new_name: str):
         "old_filename": old_filename,
         "renamed_on_disk": old_existed,
     }
+
+
+def _archiv_wurzeln():
+    """ARC-7: die EINE Wurzelmenge fuer Loeschen und Umbenennen.
+
+    ARCHIVE_DIR und der Ordner, aus dem „Ordner pruefen" uebernimmt
+    (_scan_wurzel, also MANUAL_ARCHIVE_DIR, sonst ARCHIVE_DIR). Was der Scan
+    eintragen darf, muss das Deck auch wieder loeschen und umbenennen koennen
+    — bis v5.11.3 prueften beide nur gegen ARCHIVE_DIR."""
+    return list(dict.fromkeys(os.path.realpath(w) for w in
+                              (_c().cfg["ARCHIVE_DIR"], _scan_wurzel()) if w))
 
 
 def _scan_wurzel(vorgabe=""):
@@ -768,15 +794,30 @@ def api_archive_upload():
                         "error": f"Datei zu groß ({size/1024**2:.0f} MB > "
                                  f"{_c().cfg["ARCHIVE_MAX_UPLOAD_MB"]} MB)"}), 413
 
-    eid = add_archive_entry(
-        filename=os.path.basename(target),
-        filepath=target,
-        title=title or None,
-        notes=notes or None,
-        size=size,
-        mime=f.mimetype or None,
-        source_url=source or None,
-    )
+    # ARC-8: bis hier ungeschuetzt. Scheiterte der Eintrag (gesperrtes
+    # SQLite, MariaDB weg), lag die Datei ohne Zeile im Archiv, die Antwort war
+    # ein nacktes 500, und die Wiederholung legte `name_2` daneben. Datei und
+    # Zeile sind ein Vorgang — dieselbe Regel wie W89 in nc/archiverules.py.
+    try:
+        eid = add_archive_entry(
+            filename=os.path.basename(target),
+            filepath=target,
+            title=title or None,
+            notes=notes or None,
+            size=size,
+            mime=f.mimetype or None,
+            source_url=source or None,
+        )
+    except Exception as e:
+        log.error("archive upload: Eintrag fuer %s fehlgeschlagen (%s: %s) — die "
+                  "Datei wird zurueckgenommen.", target, type(e).__name__, e)
+        try:
+            _upload_zuruecknehmen(target)
+        except OSError as e2:
+            log.error("archive upload: %s liess sich nicht zuruecknehmen (%s) — "
+                      "liegt ohne Zeile im Archiv, „Ordner pruefen“ nimmt sie auf.",
+                      target, e2)
+        return jsonify({"ok": False, "error": _fehler_text(e, "api_archive_upload")}), 503
     log.info(f"archive: '{os.path.basename(target)}' ({size/1024**2:.1f} MB) abgelegt → id={eid}")
     return jsonify({"ok": True, "id": eid,
                     "filename": os.path.basename(target), "size": size})
@@ -784,7 +825,7 @@ def api_archive_upload():
 
 @bp.route("/api/archive/<int:eid>", methods=["DELETE"])
 def api_archive_delete(eid):
-    ok, err = delete_archive_entry(eid)
+    ok, err = delete_archive_entry(eid, _archiv_wurzeln())
     if ok:
         return jsonify({"ok": True})
     code = 404 if "not found" in err else 500
@@ -829,12 +870,19 @@ def api_archive_status():
 @bp.route("/api/archive/index/<int:rid>", methods=["POST"])
 def api_archive_index_one(rid):
     """Eine bestimmte Aufnahme manuell (neu) transkribieren + indizieren."""
-    rec = next((r for r in recdb.get_all_recordings(limit=1000) if r["id"] == rid), None)
-    if not rec or not rec.get("filepath"):
+    # ARC-6: bis hier `get_all_recordings(limit=1000)` und `rec.get(...)`.
+    # Unter SQLite ist die Zeile ein sqlite3.Row — ohne .get(), also jeder
+    # Aufruf ein nacktes 500 —, und jede Aufnahme jenseits der juengsten 1000
+    # galt als „nicht gefunden". Jetzt gezielt nach Id, Zugriff per [].
+    try:
+        rec = recdb.get_recording_by_id(rid)
+    except Exception as e:
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_index_one")), 503
+    if not rec or rec["deleted_at"] or not rec["filepath"]:
         return jsonify(ok=False, error=_t("Aufnahme/Datei nicht gefunden")), 404
     try:
         n = _c().run_async(
-            _c().intel_index_one(rid, rec["filepath"], username=rec.get("username", "")),
+            _c().intel_index_one(rid, rec["filepath"], username=rec["username"] or ""),
             timeout=900)
         return jsonify(ok=True, recording_id=rid, segments=n)
     except Exception as e:

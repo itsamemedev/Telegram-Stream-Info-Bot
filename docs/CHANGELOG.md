@@ -9,6 +9,94 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.11.4] — 2026-11-21 · „Rangordnung" (Bughunt Welle 4)
+
+Vierter Durchgang mit eigenen Jägern (nur lesend) und sechs Fixern: Discord-
+Rechte, Discord/Telegram-Lebenszyklus, Live-Erkennung, Archiv und
+Aufnahmebestand, Betrieb und Update, Deck. Jede Korrektur mit Vertrag und
+Mutationsprobe; zurückgestellt ist nur LIVE-4 (mehrere Chat-Verbindungen je
+Raum — ein Umbau, keine Korrektur).
+
+### Behoben — Discord-Rechte
+
+- **DC-1 (hoch) — Rechte am Bot vorbei.** `/assign_role`, `/remove_role`,
+  `/set_channel_perms`, `/kick`, `/ban`, `/timeout` und `/warn` prüften nur,
+  ob der Aufrufer „Admin" ist — und `DISCORD_ADMIN_ROLE` verglich den Namen,
+  eine selbst angelegte gleichnamige Rolle genügte. Jetzt gilt die Rangfolge
+  des Aufrufers (`nc/discordrang.py`): Ziel unter der eigenen höchsten Rolle,
+  Rollen mit Verwaltungs-, Kick- oder Bann-Recht nur durch Administratoren,
+  Kanalrechte nur, wer den Kanal sieht. `DISCORD_ADMIN_ROLE` darf eine
+  Rollen-ID sein; beim Namen zählt nur die höchste gleichnamige Rolle.
+- **DC-2 — ungewollte Pings.** Der Client pingt per Vorgabe niemanden
+  (`AllowedMentions.none()`); die gewollten Pings nennen ihr Ziel selbst.
+- **DC-3** — `/track` prüft den Namen wie Telegram und deckelt je Mitglied
+  (`DISCORD_TRACK_MAX_JE_MITGLIED`, Vorgabe 5); `/follow` legt Rollen nur für
+  getrackte Namen an. **DC-6** — Shim-Befehle und `/track` arbeiten auf
+  derselben Liste.
+
+### Behoben — Discord/Telegram-Lebenszyklus
+
+- **TG-1 — ein Netzausfall beim Start legte Telegram still.** Der Start wird
+  wiederholt (5 bis 300 s Pause, Flood-Wait beachtet), jeder Fehlversuch
+  gedrosselt auf ERROR. Endgültig sind nur `InvalidToken` und `Forbidden` —
+  **ein abgelehntes `BOT_TOKEN` beendet den Dienst jetzt mit Exitcode 4**
+  statt still ohne Telegram weiterzulaufen.
+- **DC-4/DC-5** — Netzfehler beenden den Discord-Supervisor nicht mehr
+  (unbegrenzt wiederholt, höchstens alle 300 s); die vier Discord-Schleifen
+  überleben das Neustart-Fenster. **DC-7** — das Stern-Highlight geht genau
+  einmal nach Telegram, und „gepusht" steht nur nach echtem Erfolg im Log.
+  **DC-8** — Sprachnachrichten: keine DMs, 60 s Abklingzeit, ein Lauf
+  zugleich, 25 MB, `DISCORD_VOICE_MAX_S` (Vorgabe 120), Live-Vorrang.
+  **TG-2** — `/untrack` fragt dieselbe Berechtigung wie der Stopp-Knopf.
+
+### Behoben — Live-Erkennung
+
+- **LIVE-2 (hoch) — Proxy-Passwort im Log.** `redact_cmd_for_log` schwärzte
+  nur Cookies; `-http_proxy nutzer:pass@host` stand bei jedem Aufnahmestart
+  im INFO-Log. **Proxy-Passwort rotieren** und alte Logs als belastet ansehen.
+- **LIVE-1** — der yt-dlp-Nachschlag nahm das erste Format, yt-dlp sortiert
+  aufsteigend: die schlechteste Qualität, mitunter nur Ton. Jetzt von hinten,
+  ohne reine Ton-Formate, HEVC hinter H.264. **LIVE-3** — Pausieren beendet
+  den Live-Zustand. **LIVE-5** — Combo-Gifts zählen einmal am Ende der Serie
+  (30 Rosen: 30 statt 465). **LIVE-6** — Groß-/Kleinschreibung des Namens
+  ergibt keine Doppelaufnahme und keinen doppelten LIVE-Post mehr.
+  **LIVE-7** — „Lock nicht bekommen" gedrosselt.
+
+### Behoben — Archiv und Aufnahmebestand
+
+- **ARC-1** — die Archivkopie entsteht als Teildatei und wird erst fertig
+  umbenannt; eine abgerissene Kopie blockierte die Aufnahme vorher für immer.
+  **ARC-2** — manuelle Aufnahmen stehen in der Aufnahmeliste und gelten nicht
+  mehr als Waisen. **ARC-3** — jede Aufnahme wird einmal archiviert, auch nach
+  Umbenennen. **ARC-4** — ein Join hinterlässt keine halbe Datei.
+  **ARC-5** — eine kaputte Upload-Schlange wird beiseitegelegt und gemeldet
+  statt still geleert. **ARC-6..8** — Archivrouten prüfen die Wurzel,
+  erzeugen keine Dublette und melden einen gescheiterten Eintrag.
+  **ARC-9** — Zähler ohne Papierkorb, eine Erfolgsdefinition für alle Ansichten.
+
+### Behoben — Betrieb und Update
+
+- **OPS-1 (hoch) — Weg vom Bot zu root.** Die installierte MOTD lud Dateien
+  aus dem Bot-Ordner, den der Bot-Nutzer schreiben darf, und lief bei jedem
+  Login als root. **Nach dem Update `sudo tools/motd.sh --install` erneut.**
+- **OPS-2** — `mysqldump` bekommt das Passwort nicht mehr in der
+  Prozessliste. **OPS-3** — `deploy.sh` sicherte und spielte im Abbruch das
+  ganze Bot-Verzeichnis zurück, also auch Datenbank, WAL und Cookies; jetzt
+  nur die Dateien, die das Archiv ersetzt (Schutzliste der Update-Funktion),
+  und `website/news.json` fährt nicht mehr über den Bestand. Der Installer
+  kopiert WAL, Cookies, OAuth-Stores und den Update-Stand nicht mehr mit.
+- **UPD-1/UPD-2** — ein teilweise eingespieltes Update meldet sich als
+  „unvollständig" laut (Deck, `/healthz`, ERROR), und der Rollback setzt den
+  Stand zurück.
+
+### Behoben — Deck
+
+- **WEB-1..6** — Login-Ziel ohne Steuerzeichen, OBS-Stimme und Übersetzer
+  ohne Token, Explorer-Fehler gecacht, der Service Worker cacht nur die
+  Shell, Moderations- und Agentenzahlen zählen, was sie sagen.
+
+---
+
 ## [5.11.3] — 2026-11-20 · „Kehrwoche" (Bughunt Welle 3)
 
 Nach dem zweiten Durchgang ein eigener Bughunt: vier Jäger, nur lesend, je

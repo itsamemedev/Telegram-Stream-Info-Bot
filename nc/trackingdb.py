@@ -224,7 +224,16 @@ def set_tracking_paused(tracking_id: int, paused: bool) -> bool:
         if not exists:
             return False
         if paused:
-            conn.execute("UPDATE trackings SET paused=1 WHERE id=?",
+            # LIVE-3: last_live mit zuruecksetzen. Ein pausiertes Tracking wird
+            # nicht mehr gepollt, also beansprucht es auch nie den Wechsel auf
+            # OFFLINE — wer waehrend eines Lives pausierte, liess last_live=1
+            # fuer immer stehen. Folgen: nach dem Fortsetzen keine LIVE-Meldung
+            # (claim_live_transition erwartet 0), und _live_users() zaehlte den
+            # Nutzer weiter, der Live-React-Worker lief gegen einen laengst
+            # beendeten Stream. 0 heisst hier „nicht beobachtet", und genau
+            # das ist ein pausiertes Tracking; ist der Nutzer beim Fortsetzen
+            # noch live, meldet der erste Poll ihn ehrlich neu.
+            conn.execute("UPDATE trackings SET paused=1, last_live=0 WHERE id=?",
                          (tracking_id,))
         else:
             # B54: explizit auto_disable-Flags löschen beim Resume

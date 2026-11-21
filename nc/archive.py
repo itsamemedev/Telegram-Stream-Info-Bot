@@ -643,6 +643,27 @@ def add_archive_entry(filename, filepath, title, notes, size, mime, source_url):
         return cur.lastrowid
 
 
+def hat_quelle(source_url) -> bool:
+    """Traegt das Archiv schon einen Eintrag mit dieser Herkunft? (ARC-3)
+
+    Die Archivregeln fragen hier `recording/<id>`: die Zeile ueberlebt ein
+    Umbenennen im Deck, der Dateiname nicht. Wirft BestandUnbekannt, wenn die
+    Tabelle nicht zu lesen ist — ein `False` als Vorgabe hiesse "kopier sie
+    (nochmal)", bei gesperrtem SQLite unter laufendem Recorder also eine
+    zweite Kopie jeder passenden Aufnahme.
+    """
+    try:
+        with db_conn() as conn:
+            return conn.execute(
+                "SELECT 1 FROM archive WHERE source_url=? LIMIT 1",
+                (source_url,)).fetchone() is not None
+    except Exception as e:
+        raise BestandUnbekannt(
+            "die Archiv-Eintraege waren nicht zu lesen (%s: %s) — ohne sie "
+            "ist nicht zu entscheiden, was schon archiviert ist."
+            % (type(e).__name__, e)) from e
+
+
 def get_archive_entry(eid):
     try:
         with db_conn() as conn:
@@ -652,17 +673,32 @@ def get_archive_entry(eid):
         return None
 
 
-def delete_archive_entry(eid):
-    """Löscht File + DB-Eintrag. Pfad-Safety per realpath+commonpath."""
+def unter_wurzel(pfad, wurzeln) -> str:
+    """ARC-7: die Archivwurzel (realpath), unter der `pfad` liegt — sonst "".
+
+    Zeichenketten-Vergleich auf realpath statt commonpath: der wirft bei
+    gemischten Laufwerken (Windows) ValueError, und ein Riegel, der dann
+    still „nein" sagt, waere ein stiller except mehr."""
+    echt = os.path.realpath(pfad)
+    return next((w for w in (os.path.realpath(x) for x in wurzeln if x)
+                 if echt == w or echt.startswith(w.rstrip(os.sep) + os.sep)), "")
+
+
+def delete_archive_entry(eid, wurzeln=None):
+    """Löscht File + DB-Eintrag. Pfad-Safety per realpath gegen `wurzeln`.
+
+    ARC-7: `wurzeln` ist die Ordnermenge, aus der der Ordner-Scan uebernimmt
+    (nc.routes.archive._archiv_wurzeln). Bis v5.11.3 galt hier nur
+    ARCHIVE_DIR — ein aus MANUAL_ARCHIVE_DIR uebernommener Eintrag war nie
+    loeschbar („path safety check failed")."""
     row = get_archive_entry(eid)
     if not row:
         return False, "not found"
     filepath = row["filepath"]
     if filepath and os.path.exists(filepath):
         try:
-            real_archive = os.path.realpath(_ARCHIVE_DIR) if _ARCHIVE_DIR else ""
-            real_file = os.path.realpath(filepath)
-            if real_archive and os.path.commonpath([real_archive, real_file]) == real_archive:
+            if unter_wurzel(filepath, wurzeln if wurzeln is not None
+                            else [_ARCHIVE_DIR]):
                 os.remove(filepath)
             else:
                 log.warning(f"archive delete: path-traversal-Blockade für {filepath}")

@@ -57,6 +57,17 @@ def frisch(eintrag, jetzt) -> bool:
     return bool(eintrag) and eintrag[0] > jetzt
 
 
+def schluessel(username) -> str:
+    """LIVE-6: der Cache-Schluessel eines Nutzers — kleingeschrieben.
+
+    TikTok-Handles sind gross/klein-unabhaengig; derselbe Nutzer aus zwei
+    Chats in zwei Schreibweisen loeste sonst zweimal auf (zwei Eintraege,
+    zwei Einfluege) — genau die Doppelarbeit, gegen die dieser Cache und
+    einflug() gebaut sind. Wer am Cache vorbei einen Eintrag entfernt
+    (bot.py: Cache-Bypass, Aufraeumen nach Untrack), nimmt DIESEN Schluessel."""
+    return str(username or "").lower()
+
+
 def holen(cache, username, jetzt, force_fresh=False):
     """(status, info) aus dem Cache, oder None wenn nichts Gueltiges da ist.
 
@@ -75,7 +86,7 @@ def holen(cache, username, jetzt, force_fresh=False):
     # „kein Treffer" ist hier kein Misserfolg, sondern der Normalfall. Melden
     # tut der Aufrufer, dieses Modul loggt nicht.
     treffer = None
-    eintrag = cache.get(username)
+    eintrag = cache.get(schluessel(username))
     if frisch(eintrag, jetzt) and (not force_fresh or _ohne_adresse(eintrag)):
         # v5.4-W195: force_fresh will eine NEUE Adresse, weil die alte am
         # Restream gestorben ist. Ein Eintrag „live ohne Adresse" hat keine,
@@ -102,7 +113,7 @@ def setzen(cache, username, status, info, jetzt, ttl) -> bool:
     """
     if status not in DEFINITIV:
         return False
-    cache[username] = (jetzt + ttl, status, info)
+    cache[schluessel(username)] = (jetzt + ttl, status, info)
     return True
 
 

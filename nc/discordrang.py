@@ -7,6 +7,8 @@ Dort drin waren sie weder einzeln aufrufbar noch pruefbar, und die
 XP-Schwelle stand zusaetzlich zweimal woertlich im Code daneben
 (`100 * (lvl + 1) * (lvl + 1)` in /rank und in /profile).
 
+Seit DC-1 steht hier auch die Rangfolge der Server-Befehle (unten).
+
 Bot-frei heisst hier auch discord-frei: dieses Modul importiert die
 Bibliothek nicht. Das Anlegen der Rollen bleibt in discordbot.py, weil es ein
 Guild-Objekt braucht — hier steht nur, WELCHE Raenge es gibt und ab wann.
@@ -88,3 +90,111 @@ TEAM_ROLLEN = (
     ("\U0001f916 Bot",        0x8892a0, False, {}),
     ("\U0001f464 Member",     0x5a6472, False, {}),
 )
+
+
+# ── DC-1: Rangfolge, bevor der Bot mit SEINEN Rechten handelt ────────────
+#
+# Die Server-Befehle (/assign_role, /kick, /ban, /set_channel_perms …)
+# fragten nur `_is_admin` — „Server verwalten" ODER eine Rolle mit dem
+# NAMEN aus DISCORD_ADMIN_ROLE — und handelten danach mit den Rechten des
+# Bots. Ein Mitglied mit nur „Server verwalten" gab sich so
+# `/assign_role @selbst 👑 Owner` (administrator=True, siehe TEAM_ROLLEN),
+# bannte Hoehergestellte und oeffnete #mod-log per /set_channel_perms. Der
+# Bot war damit ein Aufzug an Discords eigener Rangfolge vorbei.
+#
+# Die Regeln hier sind Discords eigene, nur gegen den AUFRUFER statt gegen
+# den Bot gerechnet: eine Rolle oder ein Mitglied laesst sich nur verwalten,
+# wenn es UNTER der eigenen hoechsten Rolle steht; der Eigentuemer steht
+# ueber allem. Wer keine Rangfolge erkennen laesst, darf nichts — ein
+# fehlendes `top_role` ist kein Freibrief.
+
+# Rechte, die eine Rolle zum Werkzeug gegen den Server machen. Vergeben darf
+# sie nur, wer selbst Administrator ist: sonst reicht „Server verwalten",
+# um sich „Rollen verwalten" zu geben, und von dort jede Rolle darunter.
+MACHT_RECHTE = ("administrator", "manage_guild", "manage_roles",
+                "manage_channels", "ban_members", "kick_members")
+
+
+def _position(rolle) -> int:
+    # Discord fuehrt die Position als int. Alles andere (fehlende Rolle,
+    # Attrappe ohne Feld) zaehlt als „ganz unten" — nie als Freibrief.
+    p = getattr(rolle, "position", None)
+    return p if isinstance(p, int) and not isinstance(p, bool) else -1
+
+
+def ist_eigentuemer(mitglied, guild) -> bool:
+    oid = getattr(guild, "owner_id", None)
+    return oid is not None and getattr(mitglied, "id", None) == oid
+
+
+def macht_rechte(rolle) -> list:
+    """Welche der MACHT_RECHTE traegt diese Rolle? -> Liste der Namen."""
+    p = getattr(rolle, "permissions", None)
+    return [n for n in MACHT_RECHTE if getattr(p, n, False) is True]
+
+
+def rang_einwand(aufrufer, guild, rolle=None, ziel=None, selbst_ok=False) -> str:
+    """'frei' = erlaubt, sonst ein Kurzgrund ('rolle_hoeher', 'rolle_macht',
+    'ziel_hoeher'), den discordbot.py in einen Satz fuer den Nutzer uebersetzt.
+    Ein ausdruecklicher Status statt '': ein leerer Text liest sich an der
+    Aufrufstelle wie „nichts gefunden" und an der falschen wie „erlaubt".
+
+    selbst_ok: das Ziel darf der Aufrufer selbst sein. Fuer Rollen-Vergabe
+    richtig (die Rolle steht ja schon unter ihm, und „Macht" ist eigens
+    gesperrt), fuer Kick/Bann/Timeout nicht.
+    """
+    if ist_eigentuemer(aufrufer, guild):
+        return "frei"
+    oben = _position(getattr(aufrufer, "top_role", None))
+    if rolle is not None:
+        if _position(rolle) >= oben:
+            return "rolle_hoeher"
+        darf = getattr(getattr(aufrufer, "guild_permissions", None), "administrator", False)
+        if macht_rechte(rolle) and darf is not True:
+            return "rolle_macht"
+    if ziel is not None:
+        selbst = getattr(ziel, "id", None) == getattr(aufrufer, "id", None)
+        if not (selbst and selbst_ok):
+            if ist_eigentuemer(ziel, guild) or _position(getattr(ziel, "top_role", None)) >= oben:
+                return "ziel_hoeher"
+    return "frei"
+
+
+def kanal_einwand(kanal, aufrufer, guild) -> str:
+    """'frei' = erlaubt, 'kanal_unsichtbar' sonst. Rechte eines Kanals setzt nur,
+    wer ihn selbst sehen darf — sonst oeffnet „Server verwalten" #mod-log."""
+    if ist_eigentuemer(aufrufer, guild):
+        return "frei"
+    # Bewusst ungefangen: wirft permissions_for, faengt das der Befehl als
+    # Fehler ab, und es geschieht nichts — „weiss nicht" ist hier „nein".
+    sicht = getattr(kanal.permissions_for(aufrufer), "view_channel", False)
+    return "frei" if sicht is True else "kanal_unsichtbar"
+
+
+def admin_rolle(alle, kennung):
+    """Die Rolle zu DISCORD_ADMIN_ROLE: Ziffern = Rollen-ID, sonst der Name.
+
+    Beim Namen zaehlt nur die HOECHSTE gleichnamige Rolle. Der reine
+    Namensvergleich machte jeden mit „Rollen verwalten" zum Bot-Admin: eine
+    Rolle gleichen Namens anlegen, sich geben, fertig. Discord legt neue
+    Rollen ganz unten an, und hochschieben laesst sich eine Rolle nur bis
+    unter die eigene hoechste — die echte Admin-Rolle ueberholt also nur,
+    wer sie sich in Discord ohnehin selbst geben koennte. Eindeutig ist
+    allein die ID; der Name bleibt fuer bestehende .env-Eintraege.
+    """
+    k = str(kennung or "").strip()
+    rollen = list(alle or ()) if k else []     # nichts konfiguriert -> keine Rolle
+    if k.isdigit():
+        return next((r for r in rollen if getattr(r, "id", None) == int(k)), None)
+    gleich = [r for r in rollen if getattr(r, "name", None) == k]
+    return max(gleich, key=_position) if gleich else None
+
+
+def admin_rolle_traegt(eigene, alle, kennung) -> bool:
+    """Traegt das Mitglied (Rollen `eigene`) die Admin-Rolle aus `alle`?"""
+    r = admin_rolle(alle, kennung)
+    if r is None:
+        return False
+    rid = getattr(r, "id", None)
+    return any(x is r or (rid is not None and getattr(x, "id", None) == rid)
+               for x in (eigene or ()))

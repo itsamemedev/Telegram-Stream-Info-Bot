@@ -1,7 +1,7 @@
 """nc.ffdiag — ffmpeg-Diagnose-Helfer (keine Bot-Abhängigkeiten).
 
 Extrahiert aus bot.py: stderr-Tail/Diagnostik (Banner-Skip, Fehler-
-Extraktion), Kommando-Redaktion fürs Log (Cookies raus), Codec-Erkennung,
+Extraktion), Kommando-Redaktion fürs Log (Cookies und Proxy-Zugangsdaten raus), Codec-Erkennung,
 Aufnahme-Qualitätsstufe."""
 
 import json
@@ -93,16 +93,42 @@ def _ffmpeg_stderr_diagnostic(text: str, max_len: int = 2000) -> str:
     half = max_len // 2
     return prefix + text[:half] + "\n…[gekürzt]…\n" + text[-half:]
 
+# LIVE-2: Optionen, deren Wert eine Proxy-Adresse ist — ffmpeg (-http_proxy),
+# yt-dlp (--proxy, --geo-verification-proxy), streamlink (--http-proxy,
+# --https-proxy) und die kurze Form -proxy. Bis hierher schwaerzte der
+# Redaktionspfad nur Cookies; `-http_proxy nutzer:pass@host:8118` stand bei
+# JEDEM Aufnahmestart im Klartext im INFO-Log — RECORD_PROXY traegt die
+# Zugangsdaten des bezahlten Proxys, und das Log geht an journald und in zwei
+# rotierende Dateien.
+_PROXY_OPTIONEN = frozenset((
+    "-http_proxy", "-https_proxy", "-proxy", "--proxy", "--http-proxy",
+    "--https-proxy", "--geo-verification-proxy",
+))
+
+
+def _proxy_maske(wert: str) -> str:
+    """Zugangsdaten aus einer Proxy-Adresse — ueber DIESELBE Maske wie Tunnel
+    und Deck (nc.proxyutil._tunnel_mask). Eine eigene Regex hier waere die
+    zweite Liste fuer denselben Zweck, und die erste Fassung der Tunnel-Maske
+    hat gezeigt, wie das endet: sie verlangte ein Schema und liess
+    `nutzer:pass@host` durch (W105)."""
+    from nc.proxyutil import _tunnel_mask
+    return _tunnel_mask(wert) or wert
+
+
 def redact_cmd_for_log(cmd: List[str]) -> List[str]:
-    """Cookies aus dem cmd entfernen bevor's ins Log geht.
+    """Cookies und Proxy-Zugangsdaten aus dem cmd entfernen bevor's ins Log geht.
        Behandelt streamlink (--http-header Cookie=…), yt-dlp (--cookies FILE),
-       und ffmpeg (-headers '...Cookie: ...\\r\\n')."""
+       ffmpeg (-headers '...Cookie: ...\\r\\n') und jede Proxy-Option aus
+       _PROXY_OPTIONEN, getrennt (`--proxy URL`) wie verbunden (`--proxy=URL`)."""
     out = []
     skip_next = False
     redact_kind = None
     for arg in cmd:
         if skip_next:
-            if redact_kind == "cookie_header" and arg.startswith("Cookie="):
+            if redact_kind == "proxy":
+                out.append(_proxy_maske(arg))
+            elif redact_kind == "cookie_header" and arg.startswith("Cookie="):
                 out.append("Cookie=<redacted>")
             elif redact_kind == "cookie_file":
                 out.append("<COOKIE_FILE>")
@@ -128,6 +154,11 @@ def redact_cmd_for_log(cmd: List[str]) -> List[str]:
             skip_next = True; redact_kind = "cookie_file"
         elif arg == "-headers":
             skip_next = True; redact_kind = "ffmpeg_headers"
+        elif arg in _PROXY_OPTIONEN:
+            skip_next = True; redact_kind = "proxy"
+        elif "=" in arg and arg.split("=", 1)[0] in _PROXY_OPTIONEN:
+            name, wert = arg.split("=", 1)
+            arg = name + "=" + _proxy_maske(wert)
         out.append(arg)
     return out
 

@@ -413,6 +413,15 @@ def _find_orphans():
             known |= set(os.path.abspath(r["output_file"]) for r in conn.execute(
                 "SELECT output_file FROM trackings WHERE recording=1").fetchall()
                 if r["output_file"])
+            # ARC-2: manuelle Aufnahmen (manual_<nutzer>_<ts>.mp4) standen bis
+            # v5.11.3 nur in manual_recordings — laufend wie fertig galten sie
+            # nach FRISCH_S als „kein-db-eintrag" und wurden geloescht. Seither
+            # bekommen fertige auch eine recordings-Zeile; dieser Riegel deckt
+            # den Altbestand, die laufenden und den Fall, dass der Eintrag dort
+            # scheiterte.
+            known |= set(os.path.abspath(r["output_file"]) for r in conn.execute(
+                "SELECT output_file FROM manual_recordings").fetchall()
+                if r["output_file"])
     except Exception as e:
         raise BestandUnbekannt(
             "die Liste der bekannten Aufnahmen war nicht zu lesen (%s). "
@@ -761,12 +770,19 @@ def api_recordings_overview():
                 "SELECT SUM(COALESCE(file_size,0)) AS s FROM recordings "
                 "WHERE deleted_at IS NULL"
             ).fetchone()["s"] or 0
+            # ARC-9: nur Zeilen zu Aufnahmen, die es (ausserhalb des
+            # Papierkorbs) noch gibt. Ohne JOIN zaehlten Lesezeichen, Notizen
+            # und Anmerkungen geloeschter Aufnahmen weiter mit — „12 mit
+            # Lesezeichen" bei 3 sichtbaren.
             bookmarked = conn.execute(
-                "SELECT COUNT(*) AS c FROM bookmarks").fetchone()["c"]
+                "SELECT COUNT(*) AS c FROM bookmarks b JOIN recordings r "
+                "ON r.id = b.recording_id WHERE r.deleted_at IS NULL").fetchone()["c"]
             with_notes = conn.execute(
-                "SELECT COUNT(*) AS c FROM recording_notes").fetchone()["c"]
+                "SELECT COUNT(*) AS c FROM recording_notes n JOIN recordings r "
+                "ON r.id = n.recording_id WHERE r.deleted_at IS NULL").fetchone()["c"]
             annotated = conn.execute(
-                "SELECT COUNT(DISTINCT recording_id) AS c FROM recording_annotations"
+                "SELECT COUNT(DISTINCT a.recording_id) AS c FROM recording_annotations a "
+                "JOIN recordings r ON r.id = a.recording_id WHERE r.deleted_at IS NULL"
             ).fetchone()["c"]
             avg_quality = conn.execute(
                 "SELECT AVG(quality_score) AS a FROM recordings "
@@ -1348,14 +1364,19 @@ def _join_lauf(sid, pfade, ziel, threads, nice):
     """
     listendatei = ziel + ".txt"
     angleich_dir = ziel + ".angleich"
+    # ARC-4: erst in die Teildatei, der echte Name erst nach Erfolg — eine
+    # halbe Datei unter `ziel` war vor dem Aufraeumer geschuetzt und
+    # blockierte jeden weiteren Join mit 409 (s. _sitzung.teildatei).
+    teil = _sitzung.teildatei(ziel)
     try:
         pfade = _tonformat_angleichen(sid, pfade, angleich_dir, threads, nice)
         with open(listendatei, "w", encoding="utf-8") as fh:
             fh.write(_sitzung.concat_liste(pfade))
-        cmd = _sitzung.concat_cmd(listendatei, ziel, threads=threads, nice=nice)
+        cmd = _sitzung.concat_cmd(listendatei, teil, threads=threads, nice=nice)
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-        if r.returncode != 0 or not os.path.exists(ziel):
+        if r.returncode != 0 or not os.path.exists(teil):
             raise RuntimeError((r.stderr or "").strip()[-400:] or f"rc={r.returncode}")
+        os.replace(teil, ziel)
         mb = round(os.path.getsize(ziel) / 1048576.0, 1)
         with _JOIN_LOCK:
             _JOIN_LAGE[sid] = {"status": "fertig", "ziel": ziel, "mb": mb,
@@ -1380,6 +1401,34 @@ def _join_lauf(sid, pfade, ziel, threads, nice):
         try: os.remove(listendatei)
         except OSError: pass
         shutil.rmtree(angleich_dir, ignore_errors=True)
+        if os.path.exists(teil):
+            try:
+                os.remove(teil)
+            except OSError as e:
+                # NICHT still: eine liegengebliebene Teildatei belegt bis zu
+                # Gigabytes; _join_reste_weg nimmt sie vor dem naechsten Join.
+                log.error("Sitzung %s: Teildatei %s nicht entfernbar: %s",
+                          sid, teil, e)
+
+
+def _join_reste_weg(verzeichnis):
+    """ARC-4: Reste abgebrochener Joins entfernen (vor jedem neuen Join).
+
+    Unter _JOIN_LOCK, und zwar ueber Auflisten UND Loeschen: die Route setzt
+    „laeuft" unter derselben Sperre, bevor sie den Thread startet. Ohne die
+    Klammer koennte ein paralleler Join seine frische Listendatei verlieren."""
+    with _JOIN_LOCK:
+        laufend = [l.get("ziel") for l in _JOIN_LAGE.values()
+                   if l.get("status") == "laeuft"]
+        for pfad in _sitzung.join_reste(verzeichnis, laufend):
+            try:
+                if os.path.isdir(pfad):
+                    shutil.rmtree(pfad)
+                else:
+                    os.remove(pfad)
+                log.info("Join-Rest entfernt: %s", os.path.basename(pfad))
+            except OSError as e:
+                log.warning("Join-Rest %s nicht entfernbar: %s", pfad, e)
 
 
 def _tonformat_angleichen(sid, pfade, angleich_dir, threads, nice):
@@ -1458,6 +1507,7 @@ def api_recording_session_join(sid):
         sid_db = _sitzung.sitzung_id(rows[0]["username"],
                                      rows[0]["started_at"] or rows[0]["created_at"])
         ziel = _sitzung.zieldatei(c.recordings_dir, sid_db)
+        _join_reste_weg(c.recordings_dir)
         if os.path.exists(ziel) and not (request.get_json(silent=True) or {}).get("force"):
             return jsonify(ok=False, error=_t("Datei existiert bereits — force=true zum Überschreiben"),
                            ziel=os.path.basename(ziel)), 409

@@ -1371,6 +1371,13 @@ elif [ -n "$QUELLE" ]; then
     # in der er entstand. Mitkopiert teilten sich zwei Installationen ihn —
     # ein Cookie der einen galte dann auch in der anderen.
     '.nc_sitzung.key' '.nc_sitzung.key.kaputt'
+    # v5.11.4: dieselbe Lehre fuer alles, was einer Installation gehoert.
+    # '*.db' allein liess das WAL wandern — eine fremde -wal neben einer neuen
+    # Datenbank spielt SQLite beim ersten Oeffnen auf, CLAUDE.md W96. Cookies
+    # und OAuth-Stores sind Zugaenge der Quell-Installation, .nc_update.json
+    # ihr Update-Stand: mitkopiert meldete die neue den Stand der alten.
+    '*.db-wal' '*.db-shm' 'tiktok_cookies.txt' 'cookies.txt' '*_oauth.json'
+    '.nc_update.json'
   )
   if have rsync; then
     RS_ARGS=(); for m in "${AUS_KOPIE[@]}"; do RS_ARGS+=(--exclude "$m"); done

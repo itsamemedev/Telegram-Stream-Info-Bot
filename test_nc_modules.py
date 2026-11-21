@@ -10013,7 +10013,8 @@ def _test_v42_w77_schleifen_folgen_dem_aktuellen_client():
     for n in LAEUFER:
         assert n in oben, "%s steht nicht mehr auf Modulebene" % n
         rumpf = _ast.unparse(oben[n])
-        assert "_dc_client()" in rumpf or "_dc_offen()" in rumpf, \
+        assert ("_dc_client()" in rumpf or "_dc_offen()" in rumpf
+                or "_dc_warten()" in rumpf), \
             "%s holt den Client nicht mehr ueber das Register — nach einem " \
             "Reconnect spricht es dann wieder den toten Client der ersten " \
             "Sitzung an" % n
@@ -10058,9 +10059,20 @@ def _test_v42_w77_schleifen_folgen_dem_aktuellen_client():
         assert DB._dc_offen() is True, "ein offener Client gilt als geschlossen"
     finally:
         DS.CLIENT["obj"] = _alt
-    assert "while _dc_offen():" in src, \
-        "die Dauerschleifen pruefen nicht mehr ueber _dc_offen() — dann " \
-        "steht dort wieder ein Aufruf, der auf None knallt"
+    # VERTRAG KORRIGIERT (v5.11.4 DC-5): hier stand `"while _dc_offen():" in
+    # src` — die Zusicherung hielt genau den Schleifenkopf fest, der im
+    # Neustart-Fenster des Supervisors STILL endete und nie wieder startete.
+    # Die Aussage "haelt None aus" gilt jetzt fuer das Warten: _dc_bereit()
+    # ist bei None False, und die Schleifen warten auf ihn statt zu enden
+    # (Verhalten im DC-5-Vertrag).
+    try:
+        DS.CLIENT["obj"] = None
+        assert DB._dc_bereit() is False, "_dc_bereit() knallt oder meldet None als bereit"
+    finally:
+        DS.CLIENT["obj"] = _alt
+    assert "await _dc_warten()" in src, \
+        "die Dauerschleifen warten nicht mehr ueber _dc_warten() — dann " \
+        "steht dort wieder ein Aufruf, der auf None knallt oder endet"
     ok("W77: die Dauerlaeufer folgen dem aktuellen Client und ueberleben None")
 
     # --- 4) Der Sitzungszustand behaelt seine Lebensdauer ----------------
@@ -11821,10 +11833,16 @@ def _test_v42_w89_kopie_wird_zurueckgenommen():
     with open(src_datei, "wb") as f:
         f.write(b"0" * 4096)
 
-    alt_add, alt_log = A.add_archive_entry, A.log
+    alt_add, alt_log, alt_quelle = A.add_archive_entry, A.log, A.hat_quelle
     schrift = _Log()
     try:
         A.log = schrift
+        # Seit v5.11.4 (ARC-3) fragt _archiviere_eine vorher die Datenbank, ob
+        # die Aufnahme schon archiviert ist. Der Eintrag ist hier eine
+        # Attrappe, die nichts speichert — also auch die Frage: sonst haengt
+        # der Vertrag an der Datenbank, die ein frueherer Vertrag der Suite
+        # gerade konfiguriert hat („no such table: archive" nur im Gesamtlauf).
+        A.hat_quelle = lambda quelle: False
 
         # --- 1) DER GUTE FALL: KOPIE UND EINTRAG ---------------------
         gesehen = []
@@ -11862,7 +11880,9 @@ def _test_v42_w89_kopie_wird_zurueckgenommen():
         assert os.listdir(archiv) == [], \
             "im Archiv liegt etwas, obwohl die Kopie scheiterte: %r" % (
                 os.listdir(archiv),)
-        assert any(stufe == "warning" for stufe, _ in schrift.zeilen), \
+        # ARC-1: der Anker ist gewandert, nicht die Aussage — eine gescheiterte
+        # Kopie meldet sich seither auf error statt warning (strenger).
+        assert any(stufe == "error" for stufe, _ in schrift.zeilen), \
             "eine gescheiterte Kopie meldet sich nicht: %r" % (
                 schrift.zeilen,)
 
@@ -11956,6 +11976,7 @@ def _test_v42_w89_kopie_wird_zurueckgenommen():
     finally:
         A.add_archive_entry = alt_add
         A.log = alt_log
+        A.hat_quelle = alt_quelle
         _sh.rmtree(heim, ignore_errors=True)
 
 
@@ -12326,7 +12347,13 @@ def _test_v42_w102_ytdlp_traegt_die_stream_url():
         {"url": "https://pull-flv/z?e=1", "ext": "flv",
          "format_id": "flv-origion"}]})
     assert echt.get("hls_url", "").startswith("https://pull-hls/"), echt
-    assert echt.get("flv_url", "").startswith("https://pull-rtmp/"), echt
+    # LIVE-1: yt-dlp gibt `formats` aufsteigend aus, gelesen wird von hinten —
+    # bei gleicher Stufe gewinnt das zuletzt angehaengte Format. Die rtmp-Form
+    # steht deshalb einzeln, wie die beiden anderen unten.
+    assert echt.get("flv_url", "").startswith("https://pull-flv/"), echt
+    assert Y.urls_aus_json({"formats": [
+        {"url": "https://pull-rtmp/y?e=1", "ext": "flv", "protocol": "https",
+         "format_id": "rtmp-pull"}]}).get("flv_url"), "rtmp-pull (protocol=https) nicht als FLV erkannt"
     # Und jede der drei Formen einzeln, damit nicht eine die andere traegt.
     assert Y.urls_aus_json({"formats": [
         {"url": "https://p/z?e=1", "ext": "flv", "format_id": "flv-sd"}]}
@@ -16513,6 +16540,11 @@ def richte_testdatenbank_ein():
         cur = c.cursor()
         for stmt in [s.strip() for s in _extract_schema().split(";") if s.strip()]:
             cur.execute(stmt)
+        # deleted_at kommt in nc/schema.py per _migrate_columns, nicht aus dem
+        # CREATE TABLE — der Auszug oben kennt sie also nicht. Seit v5.11.4
+        # (ARC-9) zaehlen die Statistiken den Papierkorb nicht mehr mit und
+        # fragen die Spalte; jede Produktionsdatenbank hat sie.
+        cur.execute("ALTER TABLE recordings ADD COLUMN deleted_at TEXT")
         cur.execute("INSERT INTO recordings (username, filepath, created_at) "
                     "VALUES (?,?,?)",
                     ("helge_72", os.path.join(tmp, "x.mp4"),
@@ -16803,7 +16835,7 @@ def _test_v42_w91_aufraeumer_loescht_nicht_alles():
         def execute(self, sql, args=()):
             # v4.2-W131: _find_orphans fragt zusaetzlich die laufenden
             # Aufnahmen ab — hier laeuft keine.
-            if "trackings" in sql:
+            if "output_file" in sql:   # trackings + manual_recordings (ARC-2)
                 return _Zeilen()
             return _Zeilen({"filepath": p} for p in echte)
         def commit(self): pass
@@ -17527,7 +17559,8 @@ def _test_v42_w93_telegram_konflikt_wird_unterschieden():
     assert "error_callback=_telegram_polling_fehler" in ruf[:400], \
         "start_polling ohne error_callback — PTB schreibt dann weiter seinen " \
         "eigenen Traceback je Vorkommen"
-    anlauf = rumpf_ab(b, b.find("async def run_bot("))
+    # ANKER GEWANDERT (v5.11.4 TG-1): der Start steht in _telegram_starten.
+    anlauf = rumpf_ab(b, b.find("async def _telegram_starten("))
     assert "_nc_tgfehler.zuruecksetzen()" in anlauf, \
         "die Konflikt-Straehne wird beim Start nicht geleert — ein alter " \
         "Zaehlerstand meldet den ersten Konflikt sofort als 'seit Stunden'"
@@ -20713,7 +20746,10 @@ def _test_v42_w109_ein_befehlsverzeichnis():
     menue = {_ast.unparse(c.func) for c in _ast.walk(oben["_telegram_befehlsmenue"])
              if isinstance(c, _ast.Call)}
     assert "app.bot.set_my_commands" in menue and "_nc_befehle.fuer" in menue
-    assert "_telegram_befehlsmenue" in {_ast.unparse(c.func) for c in _ast.walk(oben["run_bot"])
+    # ANKER GEWANDERT (v5.11.4 TG-1): run_bot -> _telegram_starten -> Menue.
+    assert "_telegram_starten" in {_ast.unparse(c.func) for c in _ast.walk(oben["run_bot"])
+                                   if isinstance(c, _ast.Call)}
+    assert "_telegram_befehlsmenue" in {_ast.unparse(c.func) for c in _ast.walk(oben["_telegram_starten"])
                                          if isinstance(c, _ast.Call)}
     for b in B.fuer(B.TG):
         assert 3 <= len(B.beschreibung(b)) <= 100, b.name   # Telegram: 3..256, Discord: <=100
@@ -25171,6 +25207,8 @@ def _test_v42_w131_aufnahme_luecken():
 
     class _Conn:
         def execute(self, sql, args=()):
+            if "manual_recordings" in sql:   # ARC-2: hier keine
+                return _Zeilen()
             if "trackings" in sql:
                 assert "recording=1" in sql.replace(" ", "")
                 return _Zeilen([{"output_file": _rel}, {"output_file": None}])
@@ -32124,7 +32162,10 @@ def _test_v42_w176_live_einmal_je_nutzer():
                and _ast.unparse(n.value) == "_LIVE_SESSION_START"] + \
               [n for n in _ast.walk(h) if isinstance(n, _ast.Call)
                and _ast.unparse(n.func) == "_LIVE_SESSION_START.pop"]
-    assert len(sitzung) == 2 and all(_bedingt(n) for n in sitzung), \
+    # LIVE-6: der Offline-Zweig raeumt auch die andere Schreibweise desselben
+    # Nutzers ab (eine zweite pop-Stelle) — die Aussage bleibt: jede haengt
+    # an der Nutzer-Bedingung.
+    assert len(sitzung) >= 2 and all(_bedingt(n) for n in sitzung), \
         "der Sitzungsstart haengt am Chat, nicht am Nutzer"
     ok("W176: Discord-Embed, Live-Thread, Oracle, Director und Sitzungsstart "
        "einmal je Nutzer")
@@ -33669,6 +33710,7 @@ def _test_v42_w175_upload_schlange():
               "_nc_tgfehler": T, "_nc_meldetakt": M, "_nc_discordziele": Z,
               "_nc_dcaufnahme": DA}
         _exec(baum, ["_upload_queue_load", "_upload_queue_save", "_upload_queue_remove",
+                     "_upload_queue_schreibbar",   # ARC-5: neuer Helfer, Anker gewandert
                      "_upload_queue_update", "_upload_queue_abarbeiten", "_upload_queue_nachher",
                      "_telegram_ziele"], ns)
 
@@ -34018,13 +34060,14 @@ def _test_v42_w175_kleinbefunde():
     gepostet = []
 
     class _Kanal:
-        async def send(self, t):
+        async def send(self, t, **_kw):      # DC-2: allowed_mentions kommt mit
             gepostet.append(t)
     M.zuruecksetzen()
     nsl = _exec(dbaum, ["_on_level_up"], {
         "_nc_rang": _ty.SimpleNamespace(rang_fuer_level=lambda l: None, RANG_STUFEN=()),
         "DISCORD_LEVELUP_CHANNEL": "", "_nc_i18n": _ty.SimpleNamespace(t=lambda t: t),
-        "discord": _ty.SimpleNamespace(utils=_ty.SimpleNamespace(get=lambda *a, **k: None)),
+        "discord": _ty.SimpleNamespace(utils=_ty.SimpleNamespace(get=lambda *a, **k: None),
+                                       AllowedMentions=lambda **k: k),
         "log": lg, "_nc_meldetakt": M, "_time_mod": __import__("time")})
     nutzer = _ty.SimpleNamespace(mention="<@1>")
     _aio.run(nsl["_on_level_up"](_ty.SimpleNamespace(author=nutzer, guild=None,
@@ -40003,10 +40046,13 @@ def _test_v52_w193_sparen():
     # ── (3) Discord
     alt = {k: _os.environ.pop(k, None) for k in ("DISCORD_MITGLIEDER_LADEN", "DISCORD_NACHRICHTEN_PUFFER")}
     try:
-        assert DC.client_optionen() == {"chunk_guilds_at_startup": False, "max_messages": 100}
+        # DC-2: allowed_mentions ist Pflicht und wird durchgereicht (eigener Vertrag).
+        assert DC.client_optionen("AM") == {"chunk_guilds_at_startup": False, "max_messages": 100,
+                                            "allowed_mentions": "AM"}
         _os.environ["DISCORD_NACHRICHTEN_PUFFER"] = "0"
         _os.environ["DISCORD_MITGLIEDER_LADEN"] = "1"
-        assert DC.client_optionen() == {"chunk_guilds_at_startup": True, "max_messages": None}
+        assert DC.client_optionen("AM") == {"chunk_guilds_at_startup": True, "max_messages": None,
+                                            "allowed_mentions": "AM"}
     finally:
         for k, v in alt.items():
             if v is not None:
@@ -40019,7 +40065,7 @@ def _test_v52_w193_sparen():
     dbaum = _ast.parse(dsrc)
     rufe = [c for c in _ast.walk(dbaum) if isinstance(c, _ast.Call)
             and _ast.unparse(c.func) == "discord.Client"]
-    assert rufe and all("_nc_dcspar.client_optionen()" in _ast.unparse(c) for c in rufe)
+    assert rufe and all("_nc_dcspar.client_optionen(" in _ast.unparse(c) for c in rufe)
     lb = next(n for n in _ast.walk(dbaum) if isinstance(n, _ast.AsyncFunctionDef)
               and n.name == "_c_leaderboard")
     assert "discord.AllowedMentions.none()" in _ast.unparse(lb), "die Rangliste pingt zehn Leute an"
@@ -40818,8 +40864,12 @@ def _test_v56_w197_oeffentliche_stats():
         st = O.public_stats()
         assert st["version"] == "9.9.9", "die Fassung kommt nicht per configure()"
         assert len(st["live_7d"]) == 7 and st["live_7d"][-1]["live"] == 2, st["live_7d"]
-        assert st["moderation_7d"] == 2 and st["mod_7d"][-1]["n"] == 1, \
-            ("Moderations-Serie zaehlt falsch (nur timeout/ban/flag/delete/warn)", st["mod_7d"])
+        # v5.11.3-WEB-4: hier stand `moderation_7d == 2` — der Vertrag hielt
+        # den Fehler fest: die Zeile "chat" ist keine Moderation, und die
+        # Kachel zaehlte sie, waehrend das Diagramm daneben 1 zeigte.
+        assert st["moderation_7d"] == 1 and st["mod_7d"][-1]["n"] == 1, \
+            ("Moderations-Serie zaehlt falsch (nur timeout/ban/flag/delete/warn)",
+             st["moderation_7d"], st["mod_7d"])
         for k in st:
             assert "recording" not in k and "aufnahm" not in k.lower(), \
                 "Aufnahme-Zahl in den oeffentlichen Stats: " + k
@@ -41769,8 +41819,11 @@ def _test_v511_bh_sendebild_je_restream():
     assert ns_p["_RESTREAM_LAST_EVENT"]["origin"] == "anna", "Herkunft des Gifts verloren"
     ns_p["_overlay_push"]("follow", "f", platform="kick")
     assert ns_p["_RESTREAM_LAST_EVENT"]["origin"] == "", "eigener Kanal muss kanalweit sein"
+    # LIVE-5: das Gift-Ereignis laeuft seither ueber asyncio.to_thread(_overlay_push, …)
     tiktok = [c for c in _ast.walk(_fn("_start_chat_listener")) if isinstance(c, _ast.Call)
-              and getattr(c.func, "id", "") == "_overlay_push"
+              and (getattr(c.func, "id", "") == "_overlay_push"
+                   or (_ast.unparse(c.func) == "asyncio.to_thread" and c.args
+                       and getattr(c.args[0], "id", "") == "_overlay_push"))
               and any(k.arg == "platform" and getattr(k.value, "value", "") == "tiktok"
                       for k in c.keywords)]
     assert len(tiktok) == 2 and all(any(k.arg == "origin" for k in c.keywords)
@@ -42998,7 +43051,7 @@ def _test_auf2_splitreste_exakt():
 
     class _Conn:
         def execute(self, sql, args=()):
-            if "trackings" in sql:
+            if "output_file" in sql:   # trackings + manual_recordings (ARC-2)
                 return _Zeilen([{"output_file": laufend}])
             return _Zeilen([{"filepath": bekannt}])
         def __enter__(self): return self
@@ -44001,6 +44054,2668 @@ def _test_geld3_verlorene_spende_laut():
     ok("GELD-3: eine nicht gespeicherte Spende steht mit Plattform, Name und Betrag im ERROR-Log")
 
 
+def _web_bot_funktionen(namen, zuweisungen=()):
+    """Funktionen und Modul-Zuweisungen aus bot.py als Syntaxbaum — fuer die
+    WEB-Vertraege, die die ECHTEN Funktionen in eine Flask-App haengen."""
+    import ast as _ast
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    teile = []
+    for n in baum.body:
+        if isinstance(n, _ast.FunctionDef) and n.name in namen:
+            n.decorator_list = []
+            teile.append(n)
+        elif isinstance(n, _ast.Assign) and any(getattr(z, "id", "") in zuweisungen
+                                                for z in n.targets):
+            teile.append(n)
+    gefunden = {getattr(n, "name", None) or n.targets[0].id for n in teile}
+    assert gefunden == set(namen) | set(zuweisungen), ("in bot.py nicht gefunden",
+                                                       set(namen) | set(zuweisungen), gefunden)
+    return _ast.Module(body=teile, type_ignores=[])
+
+
+def _test_web1_login_ziel_ohne_steuerzeichen():
+    """WEB-1 (hoch): `next=/%09/evil.example` bestand den Praefix-Riegel von
+    _sicheres_ziel und ging als `302 Location: //evil.example` hinaus —
+    Werkzeug (und jeder Browser) entfernt den Tab beim Normalisieren. Ein
+    %0a endete in HTTP 500. Gemessen an der ECHTEN Antwort der beiden
+    Login-Routen aus bot.py, nicht an der Hilfsfunktion allein."""
+    from urllib.parse import urlsplit as _us
+    from flask import Flask, Response, redirect, request
+    mod = _web_bot_funktionen(("_sicheres_ziel", "dashboard_login_page", "dashboard_login_submit"))
+    ns = {"request": request, "redirect": redirect, "Response": Response, "urlsplit": _us,
+          "DASHBOARD_PIN": "", "_pin_ok": lambda: False, "_token_ok": lambda: False,
+          "_login_page": lambda fehler, nxt: "login", "_pin_locked": lambda: False,
+          "_pin_clear_fail": lambda: None, "_pin_note_fail": lambda: None,
+          "_pin_auth_value": lambda: "wert", "_cookie_sicher": lambda: False}
+    exec(compile(mod, "bot.py", "exec"), ns)
+    app = Flask(__name__)
+    app.add_url_rule("/login", "login", ns["dashboard_login_page"])
+    app.add_url_rule("/api/login", "login_post", ns["dashboard_login_submit"], methods=["POST"])
+    k = app.test_client()
+
+    def ort(roh):
+        r = k.get("/login?next=" + roh)
+        assert r.status_code == 302, (roh, r.status_code)
+        return r.headers["Location"]
+
+    for roh in ("/%09/evil.example", "/%0a/evil.example", "/%0d/evil.example",
+                "/%09%09/evil.example", "/%7f/evil.example", "%09//evil.example",
+                "//evil.example", "/%5C/evil.example", "/%5C%5Cevil.example",
+                "http://evil.example", "https:evil.example", "javascript:alert(1)",
+                # doppelt kodiert: dekodiert wieder Tab bzw. "//"
+                "/%2509/evil.example", "/%252F/evil.example"):
+        assert ort(roh) == "/", ("offene Weiterleitung", roh, ort(roh))
+    # Rohe Steuerzeichen, wie ein Formular sie schickt.
+    for roh in ("/\t/evil.example", "/\n/evil.example", "/\\/evil.example"):
+        r = k.get("/login", query_string={"next": roh})
+        assert r.status_code == 302 and r.headers["Location"] == "/", (roh, r.headers.get("Location"))
+    # Seiteneigene Ziele bleiben, was sie sind.
+    assert ort("/deck") == "/deck"
+    assert ort("%2Fdeck%3Fseite%3D2") == "/deck?seite=2"
+    assert ort("") == "/"
+    # Der POST-Weg nach erfolgreicher PIN geht ueber dieselbe Pruefung.
+    ns["DASHBOARD_PIN"] = "4711"
+    r = k.post("/api/login", data={"pin": "4711", "next": "/\t/evil.example"})
+    assert r.status_code == 302 and r.headers["Location"] == "/", r.headers.get("Location")
+    r = k.post("/api/login", data={"pin": "4711", "next": "/deck"})
+    assert r.status_code == 302 and r.headers["Location"] == "/deck", r.headers.get("Location")
+    ok("WEB-1: Login-Weiterleitung lehnt Tab, Zeilenumbruch, // und Schema ab (echte Location)")
+
+
+def _test_web6_obs_stimme_und_uebersetzer_ohne_token():
+    """WEB-6: das OBS-Overlay ist seit W15 ohne Token frei, laedt aber die
+    AZRAEL-Stimme von /api/tts/<datei>.wav und den Uebersetzer samt Katalog
+    von /api/i18n/ — mit Token oder PIN je ein 401: Stimme stumm, Overlay
+    deutsch. Gemessen mit dem ECHTEN _auth_guard und der ECHTEN tts-Route aus
+    bot.py, Anfrage von aussen: frei ist genau das, was die Quelle braucht."""
+    import os as _os
+    import re as _re
+    from urllib.parse import quote as _quote
+    from flask import (Flask, abort, jsonify, redirect, request,
+                       send_from_directory)
+    from werkzeug.utils import safe_join
+    from nc import dashauth as _da
+    from nc import util as _util
+    from nc.routes import i18n as _ri
+
+    mod = _web_bot_funktionen(("_auth_guard", "api_tts_file"),
+                              ("_AUTH_EXEMPT_PREFIXES", "_AUTH_EXEMPT_READ",
+                               "_AUTH_EXEMPT_EXACT", "_AUTH_EXEMPT_TTS"))
+    tts = _os.path.join(_ph.verzeichnis(), "tts")
+    _os.makedirs(tts)
+    with open(_os.path.join(tts, "az_1732100000000_123.wav"), "wb") as f:
+        f.write(b"RIFF\x00\x00\x00\x00WAVE")
+    with open(_os.path.join(tts, "notiz.txt"), "w") as f:
+        f.write("nicht fuer OBS")
+    ns = {"request": request, "jsonify": jsonify, "redirect": redirect, "quote": _quote,
+          "re": _re, "os": _os, "abort": abort, "safe_join": safe_join,
+          "send_from_directory": send_from_directory, "_nc_util": _util, "_TTS_DIR": tts,
+          "_ist_lokal": lambda: False, "DASHBOARD_TOKEN": "geheim", "DASHBOARD_PIN": "",
+          "_token_ok": lambda: request.headers.get("X-Dashboard-Token") == "geheim",
+          "_pin_ok": lambda: False, "_rebinding_melden": lambda: None,
+          "_wants_html": lambda: False, "_nc_dashauth": _da}
+    exec(compile(mod, "bot.py", "exec"), ns)
+    app = Flask(__name__)
+    app.before_request(ns["_auth_guard"])
+    app.add_url_rule("/api/tts/<fn>", "tts", ns["api_tts_file"])
+    app.register_blueprint(_ri.bp)
+
+    @app.route("/api/status")
+    def _status():
+        return jsonify(ok=True)
+
+    k = app.test_client()
+    aussen = {"REMOTE_ADDR": "203.0.113.9"}
+
+    def get(pfad, **kw):
+        return k.get(pfad, environ_base=aussen, **kw).status_code
+
+    # (1) Was die OBS-Quelle braucht: kein 401.
+    assert get("/api/tts/az_1732100000000_123.wav") == 200, "AZRAEL-Stimme in OBS stumm"
+    assert get("/api/tts/az_1732100000001_456.wav") == 404, "fehlende Datei: 404, nicht 401"
+    assert get("/api/i18n/uebersetzer.js") == 200, "Uebersetzer fuer das Overlay gesperrt"
+    r = k.get("/api/i18n/katalog?lang=en", environ_base=aussen)
+    assert r.status_code == 200 and r.get_json()["ok"] is True, \
+        "Katalog gesperrt — der Uebersetzer hoert bei !d.ok still auf, Overlay bleibt deutsch"
+    # (2) Nichts sonst: andere Namen, andere Methoden, andere /api/*.
+    for pfad in ("/api/tts/notiz.txt", "/api/tts/.versteckt.wav", "/api/tts/az_1.wav/x",
+                 "/api/tts/..%2F..%2Fbot.wav", "/api/tts/", "/api/tts/az_1.wavx",
+                 "/api/i18n/sprachen", "/api/i18n/uebersetzer.jsx", "/api/status"):
+        assert get(pfad) == 401, ("ohne Token erreichbar", pfad, get(pfad))
+    assert k.post("/api/tts/az_1732100000000_123.wav", environ_base=aussen).status_code == 401
+    assert k.post("/api/i18n/waehlen", json={"sprache": "en"},
+                  environ_base=aussen).status_code == 401, "Sprachwahl ohne Token schreibbar"
+    assert k.get("/api/status", environ_base=aussen,
+                 headers={"X-Dashboard-Token": "geheim"}).status_code == 200
+    # (3) Die Ausnahme passt zu dem, was _piper_say erzeugt und das Overlay laedt.
+    src = open("bot.py", encoding="utf-8").read()
+    assert 'fn = f"az_{int(_time_mod.time()*1000)}_{_rnd.randint(100,999)}.wav"' in src, \
+        "TTS-Dateiname geaendert — passt _AUTH_EXEMPT_TTS noch?"
+    ov = open("templates/overlay.html", encoding="utf-8").read()
+    assert '/api/i18n/uebersetzer.js' in ov and "playAudio(az.audio" in ov
+    ok("WEB-6: OBS-Overlay laedt Stimme + Uebersetzer trotz Token, sonst bleibt alles geschuetzt")
+
+
+def _test_web2_btc_explorer_fehler_gecacht():
+    """WEB-2: snapshot() laeuft ueber /api/public/stats ohne Anmeldung. Bei
+    gestoertem blockstream.info rief JEDE Anfrage urlopen(timeout=8) im
+    waitress-Thread — acht gleichzeitige belegten den Pool. Jetzt: hoechstens
+    ein Netzaufruf je Frist, auch parallel, und der Fehler steht gedrosselt im
+    Log statt in `except: pass`."""
+    import logging as _lg
+    import os as _os
+    import threading as _th
+    import time as _time
+    from nc import crypto as C
+    from nc import meldetakt as M
+
+    alt_env = _os.environ.get("DONATION_BTC_ADDRESS")
+    alt_fetch, alt_cache = C._fetch_btc_sats, dict(C._CACHE)
+    aufrufe = []
+
+    def _langsam_kaputt(adresse, timeout=8):
+        aufrufe.append(adresse)
+        _time.sleep(0.2)                      # wie ein Explorer im Timeout
+        raise OSError("Netz weg")
+
+    class _Fang(_lg.Handler):
+        def __init__(self):
+            super().__init__()
+            self.zeilen = []
+
+        def emit(self, r):
+            if r.levelno >= _lg.WARNING:
+                self.zeilen.append(r.getMessage())
+    fang = _Fang()
+    _lg.getLogger("nc.crypto").addHandler(fang)
+    _os.environ["DONATION_BTC_ADDRESS"] = "bc1qnightcrawlertest"
+    C._fetch_btc_sats = _langsam_kaputt
+    C._CACHE.update(btc_sats=None, ts=0.0, fehl_ts=0.0)
+    M.zuruecksetzen(C._KANAL)
+    try:
+        # (1) Acht gleichzeitige Anfragen: EIN Netzaufruf, keiner wartet mit.
+        start = _th.Barrier(8)
+        dauer = []
+
+        def _anfrage():
+            start.wait()
+            t0 = _time.monotonic()
+            C.snapshot(fetch_live=True)
+            dauer.append(_time.monotonic() - t0)
+        faeden = [_th.Thread(target=_anfrage) for _ in range(8)]
+        for f in faeden:
+            f.start()
+        for f in faeden:
+            f.join(10)
+        assert len(aufrufe) == 1, ("parallele Anfragen gehen alle ins Netz", len(aufrufe))
+        assert sorted(dauer)[-2] < 0.15, ("mehr als ein Thread wartete auf den Explorer", dauer)
+        # (2) Danach innerhalb der Frist: kein Netzaufruf mehr.
+        for _ in range(20):
+            aus = C.snapshot(fetch_live=True)
+        assert len(aufrufe) == 1, ("Fehlschlag nicht gecacht", len(aufrufe))
+        assert "btc_received_btc" not in aus
+        assert len(fang.zeilen) == 1 and "blockstream.info" in fang.zeilen[0], fang.zeilen
+        # (3) Frist um: genau ein neuer Versuch; die Meldung bleibt gedrosselt.
+        C._CACHE["fehl_ts"] -= C._FEHL_TTL + 1
+        C.snapshot(fetch_live=True)
+        C.snapshot(fetch_live=True)
+        assert len(aufrufe) == 2 and len(fang.zeilen) == 1, (len(aufrufe), fang.zeilen)
+        # (4) Erfolg: Wert da, Drossel zurueckgesetzt, 10 min Ruhe.
+        C._fetch_btc_sats = lambda a, timeout=8: aufrufe.append(a) or 150000000
+        C._CACHE["fehl_ts"] -= C._FEHL_TTL + 1
+        aus = C.snapshot(fetch_live=True)
+        C.snapshot(fetch_live=True)
+        assert aus["btc_received_btc"] == 1.5 and len(aufrufe) == 3, (aus, len(aufrufe))
+        assert C._KANAL not in M.ZUSTAND, "Erfolg setzt die Drossel nicht zurueck"
+        # (5) Positiv-Cache abgelaufen, Explorer wieder weg: letzter Stand
+        # bleibt sichtbar, und der neue Ausfall meldet sich sofort.
+        C._fetch_btc_sats = _langsam_kaputt
+        C._CACHE["ts"] -= C._TTL + 1
+        for _ in range(5):
+            aus = C.snapshot(fetch_live=True)
+        assert len(aufrufe) == 4 and aus["btc_received_btc"] == 1.5, (len(aufrufe), aus)
+        assert len(fang.zeilen) == 2, fang.zeilen
+    finally:
+        _lg.getLogger("nc.crypto").removeHandler(fang)
+        C._fetch_btc_sats = alt_fetch
+        C._CACHE.clear()
+        C._CACHE.update(alt_cache)
+        M.zuruecksetzen(C._KANAL)
+        if alt_env is None:
+            _os.environ.pop("DONATION_BTC_ADDRESS", None)
+        else:
+            _os.environ["DONATION_BTC_ADDRESS"] = alt_env
+    ok("WEB-2: BTC-Explorer-Ausfall gecacht — ein Netzaufruf je Frist, auch bei 8 parallelen")
+
+
+def _test_web3_sw_cacht_nur_die_shell():
+    """WEB-3: der Service Worker spiegelte jede GET-200 ausserhalb /api/ in den
+    CacheStorage — Aufnahmen im GB-Bereich (/download/<id>,
+    /archive/<eid>/download), /healthz, /metrics —, und es blieb nach dem
+    Logout liegen. Geprueft am echten sw.js, mit node ausgefuehrt."""
+    import json as _json
+    import shutil as _sh
+    import subprocess as _sp
+    sw = open("templates/sw.js", encoding="utf-8").read()
+    m = re.search(r"const SHELL = (\[[^\]]*\]);", sw)
+    assert m, "SHELL-Liste nicht gefunden"
+    shell = _json.loads(m.group(1))
+    for verboten in ("/download", "/archive", "/healthz", "/metrics", "/api/", "/overlay"):
+        assert not any(p.startswith(verboten) for p in shell), (verboten, shell)
+    ver = re.search(r'const CACHE = "nightcrawler-shell-v(\d+)";', sw)
+    assert ver and int(ver.group(1)) >= 4, "Cache-Name nicht hochgezaehlt — v3 behaelt die Downloads"
+    assert "keys.filter((k) => k !== CACHE)" in sw, "activate raeumt fremde Caches nicht mehr"
+    # Der Riegel steht VOR respondWith (Syntax-Reihenfolge im fetch-Handler,
+    # Kommentare entfernt — ein Kommentar ueber den Riegel ist kein Riegel).
+    code = re.sub(r"//[^\n]*|/\*.*?\*/", "", sw, flags=re.S)
+    h = code[code.index('addEventListener("fetch"'):]
+    assert "SHELL.includes(url.pathname)" in h and "self.location.origin" in h
+    assert h.index("SHELL.includes(url.pathname)") < h.index("e.respondWith("), \
+        "Shell-Riegel nach respondWith — er wirkt nicht"
+
+    if not _sh.which("node"):
+        print("  (kein node — Verhaltensprobe des Service Workers uebersprungen)")
+        ok("WEB-3: Service Worker cacht nur die Shell (ohne Verhaltensprobe)")
+        return
+    prog = r"""
+const src = require('fs').readFileSync('templates/sw.js', 'utf8');
+const h = {}; const puts = [];
+const self = {addEventListener: (t, f) => { h[t] = f; }, location: {origin: 'https://deck.example'},
+              skipWaiting: () => {}, clients: {claim: () => {}}};
+const caches = {open: async () => ({put: (q) => puts.push(q.url), add: async () => {}}),
+                keys: async () => [], match: async () => undefined, delete: async () => true};
+const fetch = async () => ({status: 200, type: 'basic', clone() { return this; }});
+new Function('self', 'caches', 'fetch', 'Response', src)(self, caches, fetch, class {});
+async function probe(url, method) {
+  const ev = {request: {url, method: method || 'GET'}, respondWith(p) { ev.p = p; }};
+  h.fetch(ev); if (ev.p) await ev.p; await new Promise((r) => setTimeout(r, 0));
+  return !!ev.p;
+}
+(async () => {
+  const B = 'https://deck.example';
+  const aus = {};
+  for (const p of ['/', '/login', '/pwa-icon-192.png', '/download/7', '/archive/3/download',
+                   '/healthz', '/metrics', '/overlay', '/api/status', '/?token=geheim']) {
+    aus[p] = await probe(B + p);
+  }
+  aus.fremd = await probe('https://fremd.example/');
+  aus.post = await probe(B + '/', 'POST');
+  aus.puts = puts;
+  console.log(JSON.stringify(aus));
+})();
+"""
+    out = _sp.run(["node", "-e", prog], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr[-800:]
+    aus = _json.loads(out.stdout.strip().splitlines()[-1])
+    for p in ("/", "/login", "/pwa-icon-192.png", "/?token=geheim"):
+        assert aus[p] is True, ("Shell nicht mehr offline-faehig", p)
+    for p in ("/download/7", "/archive/3/download", "/healthz", "/metrics", "/overlay",
+              "/api/status", "fremd", "post"):
+        assert aus[p] is False, ("Service Worker greift ein — landet im Cache", p)
+    assert aus["puts"] == ["https://deck.example/", "https://deck.example/login",
+                           "https://deck.example/pwa-icon-192.png"], \
+        ("Cache-Eintraege", aus["puts"])
+    ok("WEB-3: Service Worker cacht nur die Shell — keine Aufnahmen, kein ?token im Cache")
+
+
+def _web_stats_datenbank(arten):
+    """Temp-SQLite mit genau den Tabellen, die collect_facts/public_stats lesen."""
+    import contextlib as _ctl
+    import os as _os
+    import sqlite3 as _sq
+    from datetime import datetime as _dt, timezone as _tz
+    pfad = _os.path.join(_ph.verzeichnis(), "web.db")
+    c = _sq.connect(pfad)
+    c.execute("CREATE TABLE trackings (id INTEGER)")
+    c.execute("CREATE TABLE recording_attempts (username TEXT, started_at TEXT)")
+    c.execute("CREATE TABLE kick_mod_log (ts TEXT, kind TEXT)")
+    jetzt = _dt.now(_tz.utc).isoformat()
+    c.executemany("INSERT INTO kick_mod_log VALUES (?,?)", [(jetzt, a) for a in arten])
+    c.commit()
+    c.close()
+
+    @_ctl.contextmanager
+    def _db():
+        k = _sq.connect(pfad)
+        k.row_factory = _sq.Row
+        try:
+            yield k
+        finally:
+            k.close()
+    return _db
+
+
+def _web_stats_messen(arten, flotte, fakten_fuer_stats=None):
+    """public_stats() und collect_facts() gegen eine eigene Datenbank und ein
+    Attrappen-Brain — die echten Funktionen, nur die Quellen getauscht.
+    `fakten_fuer_stats` ersetzt die News-Fakten NUR fuer public_stats (der
+    Rueckfall dort muss auch dann halten, wenn die News etwas anderes sagen)."""
+    import logging as _lg
+    import brain as _brain
+    from nc import news as N
+    from nc import oeffentlichestats as O
+    db = _web_stats_datenbank(arten)
+
+    class _Agenten:
+        def status(self):
+            if isinstance(flotte, Exception):
+                raise flotte
+            return flotte
+
+    class _Wissen:
+        def stats(self):
+            return {"triples": 0}
+
+    class _Brain:
+        agents = _Agenten()
+        knowledge = _Wissen()
+    alt = (N.db_conn, O.db_conn, dict(N._conf), dict(O._KONF), _brain.get_brain,
+           N.collect_facts)
+    N.db_conn = O.db_conn = db
+    N._conf.update(bot_version="9.9.9", kick_channel_url="", kick_stream_key="",
+                   twitch_stream_key="", youtube_stream_key="", yt_ingest_cache={},
+                   log=_lg.getLogger("web-stats"))
+    O.configure(version="9.9.9", loop_fehler=lambda n, e: None)
+    _brain.get_brain = lambda: _Brain()
+    try:
+        fakten = N.collect_facts()
+        if fakten_fuer_stats is not None:
+            N.collect_facts = lambda: dict(fakten_fuer_stats)
+        return fakten, O.public_stats()
+    finally:
+        N.collect_facts = alt[5]
+        N.db_conn, O.db_conn = alt[0], alt[1]
+        N._conf.clear()
+        N._conf.update(alt[2])
+        O._KONF.clear()
+        O._KONF.update(alt[3])
+        _brain.get_brain = alt[4]
+
+
+def _test_web4_moderation_zaehlt_nur_durchgreifen():
+    """WEB-4: `moderation_7d` (Kachel) und `mod_actions_7d` (News) zaehlten
+    jede kick_mod_log-Zeile — reply, reaction, send, learn, highlight —,
+    waehrend das Diagramm `mod_7d` richtig filterte. 1 Timeout und 5
+    Bot-Antworten hiessen auf der Seite "6 Moderations-Aktionen" ueber einem
+    Diagramm mit 1. Jetzt eine Quelle: nc.modstats.MOD_ARTEN."""
+    from nc import modstats as MS
+    fakten, st = _web_stats_messen(["timeout"] + ["reply"] * 5 + ["reaction", "send", "learn",
+                                                                 "highlight"], [])
+    assert st["moderation_7d"] == 1, ("Kachel zaehlt Bot-Aktivitaet", st["moderation_7d"])
+    assert fakten["mod_actions_7d"] == 1, ("News zaehlen Bot-Aktivitaet", fakten["mod_actions_7d"])
+    assert sum(t["n"] for t in st["mod_7d"]) == 1, st["mod_7d"]
+    # Die fuenf Arten stehen hier WOERTLICH: eine Liste, die gegen sich selbst
+    # geprueft wird, faengt nicht, wenn jemand "warn" aus MOD_ARTEN streicht
+    # (Mutationsprobe M11b entwischte zuerst genau so).
+    fuenf = ["timeout", "warn", "ban", "delete", "flag"]
+    assert set(MS.MOD_ARTEN) == set(fuenf), MS.MOD_ARTEN
+    fakten, st = _web_stats_messen(fuenf + ["reply"], [])
+    n = len(fuenf)
+    assert st["moderation_7d"] == fakten["mod_actions_7d"] == sum(t["n"] for t in st["mod_7d"]) == n, \
+        (st["moderation_7d"], fakten["mod_actions_7d"], st["mod_7d"])
+    # Keine Stelle fuehrt eine eigene Liste mehr.
+    for datei in ("nc/oeffentlichestats.py", "nc/news.py"):
+        q = open(datei, encoding="utf-8").read()
+        assert "'timeout'" not in q and '"timeout"' not in q, ("eigene Artenliste", datei)
+        assert "_nc_modstats.sql_bedingung()" in q, datei
+    ok("WEB-4: Kachel, News und Diagramm zaehlen dieselben Moderations-Arten")
+
+
+def _test_web5_aktive_agenten_sind_eingeschaltete():
+    """WEB-5: news setzte agents_active = len(status()) — ALLE Agenten —, und
+    public_stats fiel per `or` darauf zurueck, sobald null aktiv waren. Die
+    Seite zeigte "12 von 12 aktiv" bei null eingeschalteten."""
+    flotte = [{"name": "a", "enabled": False}, {"name": "b", "enabled": False},
+              {"name": "c", "enabled": True}]
+    fakten, st = _web_stats_messen([], flotte)
+    assert fakten["agents_active"] == 1, ("News zaehlen alle Agenten", fakten["agents_active"])
+    assert st["agents_total"] == 3 and st["agents_active"] == 1, st
+    aus = [dict(a, enabled=False) for a in flotte]
+    fakten, st = _web_stats_messen([], aus)
+    assert fakten["agents_active"] == 0, fakten["agents_active"]
+    assert st["agents_known"] is True and st["agents_total"] == 3 and st["agents_active"] == 0, \
+        ("0 aktive ist eine Zahl, kein Rueckfall", st["agents_active"], st["agents_total"])
+    # Der Rueckfall selbst: sagen die News (alter Fehler) 12, bleibt es bei 0.
+    _f, st = _web_stats_messen([], aus, fakten_fuer_stats={"agents_active": 12})
+    assert st["agents_active"] == 0, ("`or`-Rueckfall auf die News-Zahl", st["agents_active"])
+    # Brain nicht erreichbar: unbekannt ist etwas anderes als 0 — die Seite
+    # sagt dann "nicht verfuegbar" (agents_known), und es wird nichts erfunden.
+    fakten, st = _web_stats_messen([], RuntimeError("brain weg"))
+    assert st["agents_known"] is False and st["agents_active"] == 0, st
+    ok("WEB-5: aktive Agenten = eingeschaltete, 0 bleibt 0")
+
+
+def _test_ops1_motd_laedt_nichts_aus_bot_dir():
+    """OPS-1: die installierte MOTD-Kopie laeuft bei jedem Login als root und
+    lud bis 3.0 ${BOT_DIR}/tools/lib/i18n.sh — schreibbar fuer den Bot-Nutzer,
+    ueberschrieben von nc/updater.py. Gemessen: „AUSGEFUEHRT als uid=0".
+    Jetzt laedt sie nur aus der root-eigenen Ablage neben CONF, die --install
+    anlegt; der Lauf aus dem Bestand nimmt weiter tools/lib/ neben sich.
+    """
+    import re as _re
+    import shutil as _sh
+    import subprocess as _sp
+
+    motd = os.path.abspath("tools/motd.sh")
+    quelle = open(motd, encoding="utf-8").read()
+    w = _ph.verzeichnis("nc_ops1_")
+    try:
+        bot = os.path.join(w, "bot")
+        os.makedirs(os.path.join(bot, "tools", "lib"))
+        open(os.path.join(bot, "bot.py"), "w").close()
+        marke = os.path.join(w, "marke")
+        with open(os.path.join(bot, "tools", "lib", "i18n.sh"), "w", encoding="utf-8") as f:
+            f.write('echo "AUSGEFUEHRT als uid=$(id -u)" > "%s"\n'
+                    "t(){ printf '%%s' \"$*\"; }\ntf(){ printf '%%s' \"${1:-}\"; }\n" % marke)
+        inst = os.path.join(w, "update-motd.d")
+        os.makedirs(inst)
+        kopie = os.path.join(inst, "99-nightcrawler")
+        _sh.copy(motd, kopie)
+        etc = os.path.join(w, "etc")
+        os.makedirs(etc)
+        conf = os.path.join(etc, "motd.conf")
+        with open(conf, "w", encoding="utf-8") as f:
+            f.write("BOT_DIR='%s'\nSHOW_REC='0'\nCPU_SAMPLE='0'\nSERVICE=''\nDASH_PORT='1'\n" % bot)
+
+        # Attrappen fuer pgrep/systemctl VORN im PATH: die MOTD erkennt einen
+        # laufenden Bot an `pgrep -f "python…bot.py"` — liefen auf derselben
+        # Maschine gerade andere Suiten (test_smoke startet bot.py), galt der
+        # Bot als laufend, und der Vertrag hing vom Systemzustand ab (CLAUDE.md
+        # W210). Mit Attrappen ist „Bot laeuft nicht" der feste Ausgangspunkt.
+        stubs = os.path.join(w, "stubs")
+        os.makedirs(stubs)
+        for name in ("pgrep", "systemctl"):
+            with open(os.path.join(stubs, name), "w") as f:
+                f.write("#!/bin/sh\nexit 1\n")
+            os.chmod(os.path.join(stubs, name), 0o755)
+
+        def lauf(pfad):
+            env = {"PATH": stubs + ":/usr/bin:/bin", "HOME": w, "TMPDIR": w, "CONF": conf,
+                   "NC_LANG": "en"}
+            r = _sp.run(["bash", pfad], cwd=w, env=env, capture_output=True, text=True, timeout=60)
+            return r.stdout
+
+        # (1) Installierte Kopie ohne Ablage: deutsch, und die Datei im
+        # BOT_DIR wird NICHT ausgefuehrt.
+        a = lauf(kopie)
+        assert not os.path.exists(marke), open(marke).read()
+        assert "Bot laeuft nicht" in a, a[:400]
+
+        # (2) --install legt die Ablage an (dieselbe Funktion, gegen den
+        # Attrappen-Ordner statt /etc): jetzt englisch, weiter ohne Marke.
+        m = _re.search(r"^i18n_ablegen\(\)\{.*?^\}", quelle, _re.S | _re.M)
+        assert m, "i18n_ablegen fehlt in motd.sh"
+        prog = "t(){ printf '%s' \"$*\"; }\nOK= WRN= R=\n" + m.group(0) + "\ni18n_ablegen \"$1\" \"$2\"\n"
+        _sp.run(["bash", "-c", prog, "x", os.path.dirname(motd), os.path.join(etc, "motd")],
+                check=True, capture_output=True, timeout=30)
+        ablage = os.path.join(etc, "motd", "tools", "lib", "i18n.sh")
+        assert os.path.isfile(ablage) and oct(os.stat(ablage).st_mode & 0o777) == "0o644"
+        assert os.path.isfile(os.path.join(etc, "motd", "locales", "tools.en.tsv"))
+        a = lauf(kopie)
+        assert not os.path.exists(marke)
+        assert "Bot is not running" in a, a[:400]
+
+        # (3) Eine fuer andere schreibbare Ablage ist derselbe Weg zu root,
+        # nur einen Ordner weiter: als root wird sie nicht geladen.
+        if os.geteuid() == 0:
+            os.chmod(os.path.dirname(ablage), 0o777)
+            assert "Bot laeuft nicht" in lauf(kopie)
+            os.chmod(os.path.dirname(ablage), 0o755)
+
+        # (4) Gegenprobe: der Lauf aus dem Bestand nimmt tools/lib/ neben sich.
+        assert "Bot is not running" in lauf(motd)
+        assert not os.path.exists(marke)
+
+        # (5) Kein Laden aus BOT_DIR, in keiner Form, und python3 nur isoliert
+        # (als root kein json.py aus dem Arbeitsverzeichnis).
+        code = "\n".join(z for z in quelle.splitlines() if not z.lstrip().startswith("#"))
+        assert not _re.search(r'(?:^|[;&|]\s*)(?:\.|source)\s+"?\$\{?BOT_DIR', code, _re.M)
+        assert "python3 -c" not in code, "python3 ohne -I in motd.sh"
+    finally:
+        _sh.rmtree(w, ignore_errors=True)
+    ok("OPS-1: installierte MOTD laedt i18n nur aus der root-eigenen Ablage, nie aus BOT_DIR")
+
+
+def _test_ops2_mysqldump_ohne_passwort_in_argv():
+    """OPS-2: `mysqldump -p<Passwort>` stand in `ps`, und ein Fehlschlag trug
+    die argv per str(CalledProcessError) ins Deck, ins error.log und nach
+    Discord. Dazu fehlte -P (MariaDB auf anderem Port: jede Sicherung tot).
+    Gefahren wird ein ECHTES Programm (Attrappe im Temp-Ordner), damit argv
+    und Umgebung so gemessen werden, wie der Kindprozess sie sieht.
+    """
+    import ast as _ast
+    import shutil as _sh
+    from nc import sicherungspruefung as S
+
+    pw = "PW_GEHEIM_ops2\"\\#x"
+    w = _ph.verzeichnis("nc_ops2_")
+    try:
+        spur = os.path.join(w, "spur")
+        prog = os.path.join(w, "mysqldump")
+        with open(prog, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nprintf '%%s\\n' \"$@\" > '%s.argv'\n"
+                    "printf '%%s' \"$MYSQL_PWD\" > '%s.pwd'\n"
+                    "[ \"$NC_SCHLAF\" = 1 ] && sleep 5\n"
+                    "echo \"Got error: 1045 Access denied (pw=$MYSQL_PWD)\" >&2\nexit 2\n" % (spur, spur))
+        os.chmod(prog, 0o755)
+        ziel = open(os.path.join(w, "dump.sql"), "w", encoding="utf-8")
+        try:
+            S.mysqldump(prog, ziel, "ncdb", "db.intern", 3307, "nc", pw)
+            raise AssertionError("Exitcode 2 galt als Erfolg")
+        except S.DumpFehler as e:
+            meldung = str(e)
+        argv = open(spur + ".argv", encoding="utf-8").read().split("\n")
+        assert pw not in "\n".join(argv) and not any(a.startswith("-p") for a in argv), argv
+        assert argv[argv.index("-P") + 1] == "3307" and "ncdb" in argv, argv
+        assert open(spur + ".pwd", encoding="utf-8").read() == pw, "MYSQL_PWD kam nicht an"
+        assert pw not in meldung and "Exitcode 2" in meldung and "1045" in meldung, meldung
+        assert "***" in meldung, meldung              # stderr mit Passwort: geschwaerzt
+        # Zeitlimit: str(TimeoutExpired) nennt die argv — die Meldung nicht.
+        os.environ["NC_SCHLAF"] = "1"
+        try:
+            S.mysqldump(prog, ziel, "ncdb", "h", 3306, "nc", pw, timeout=1)
+            raise AssertionError("Zeitlimit galt als Erfolg")
+        except S.DumpFehler as e:
+            assert "Zeitlimit" in str(e) and pw not in str(e) and e.__cause__ is None, str(e)
+        finally:
+            os.environ.pop("NC_SCHLAF", None)
+            ziel.close()
+        assert S.schwaerzen("a%sb" % pw, pw) == "a***b" and S.schwaerzen("abc", "") == "abc"
+    finally:
+        _sh.rmtree(w, ignore_errors=True)
+
+    # bot.py: _system_backup ruft den Helfer mit Port und schwaerzt den
+    # Rueckweg jeder anderen Ausnahme. Im Syntaxbaum, nicht im Text (W102).
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == "_system_backup")
+    aufrufe = {(_ast.unparse(c.func), tuple(_ast.unparse(a) for a in c.args))
+               for c in _ast.walk(fn) if isinstance(c, _ast.Call)}
+    assert any(f == "_nc_sicherung.mysqldump" and "MARIADB_PORT" in a and "MARIADB_PASSWORD" in a
+               for f, a in aufrufe), "mysqldump nicht ueber den Helfer"
+    assert not any(isinstance(k, _ast.JoinedStr) and "MARIADB_PASSWORD" in _ast.unparse(k)
+                   for k in _ast.walk(fn)), "Passwort in einem f-String (argv?)"
+    hdl = [h for h in _ast.walk(fn) if isinstance(h, _ast.ExceptHandler)
+           and _ast.unparse(h.type) == "Exception" and h.name == "e"][-1]
+    assert "_nc_sicherung.schwaerzen(str(e), MARIADB_PASSWORD)" in _ast.unparse(hdl), _ast.unparse(hdl)
+    assert "str(e)" not in _ast.unparse(hdl).replace("schwaerzen(str(e)", ""), "ungeschwaerztes str(e)"
+    ok("OPS-2: mysqldump mit MYSQL_PWD und -P; Fehler ohne argv, Passwort geschwaerzt")
+
+
+def _test_upd1_upd2_teilweise_und_rollback():
+    """UPD-1: ein Update mit ENOSPC mitten im Lauf schrieb den NEUEN SHA nach
+    .nc_update.json — check() „Alles aktuell.", /healthz der neue Commit,
+    Laufstand „aktuell", bei gemischtem Bestand. UPD-2: der Rollback liess
+    .nc_update.json auf dem neuen Stand und neu angelegte Dateien liegen.
+    """
+    import errno as _errno
+    import io as _io
+    import shutil as _sh
+    import zipfile as _zf
+    from unittest import mock as _mock
+    from nc import auslieferung as A
+    from nc import laufstand as L
+    from nc import updater as U
+
+    w = _ph.verzeichnis("nc_upd12_")
+    alt_cfg = (U._CFG.root, U._CFG.enabled)
+
+    def lies(n):
+        p = os.path.join(w, n)
+        return open(p, encoding="utf-8").read() if os.path.exists(p) else None
+
+    def zipbytes(dateien):
+        b = _io.BytesIO()
+        with _zf.ZipFile(b, "w") as z:
+            for n, d in dateien.items():
+                z.writestr("repo-sha/" + n, d)
+        return b.getvalue()
+
+    try:
+        for n in ("a.py", "b.py"):
+            with open(os.path.join(w, n), "w", encoding="utf-8") as f:
+                f.write("ALT = 1\n")
+        with open(os.path.join(w, ".nc_update.json"), "w", encoding="utf-8") as f:
+            f.write('{"sha": "ALTSHA", "date": "2026-11-01"}')
+        U.configure(root=w, enabled=True)
+        archiv = zipbytes({"a.py": "NEU = 2\n", "b.py": "NEU = 2\nimport c\n", "c.py": "X = 1\n"})
+        rem = {"sha": "NEUSHA", "date": "2026-11-20", "message": "m", "author": "", "url": ""}
+        echt = U._write_file
+
+        def kaputt(rel, data, ausf=None):
+            if rel == "b.py":
+                raise OSError(_errno.ENOSPC, "No space left on device")
+            return echt(rel, data, ausf)
+
+        # ── UPD-1: Teilfehler
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv), \
+                _mock.patch.object(U, "_write_file", side_effect=kaputt):
+            r = U.run_update()
+        assert not r["ok"] and r["failed"][0]["file"] == "b.py", r
+        st = U.local_state()
+        assert st["sha"] == "ALTSHA" and st["teilweise"] and st["fehlgeschlagen"] == ["b.py"], st
+        assert st["ziel_sha"] == "NEUSHA", st
+        with _mock.patch.object(U, "remote_head", return_value=rem):
+            c = U.check()
+        assert c["update_available"] and c["teilweise"], c
+        assert "Unvollstaendig" in c["summary"] and "b.py" in c["summary"], c["summary"]
+        assert "aktuell" not in c["summary"].lower(), c["summary"]
+        # Laufstand: auch ein NACH dem Fehlschlag gestarteter Prozess (Start ==
+        # Platte) ist nicht „aktuell".
+        kopf = U.local_head()[0]
+        v = L.vergleich(kopf, kopf)
+        assert v["lage"] == L.UNVOLLSTAENDIG and "erneut" in v["abhilfe"], v
+        assert L.vergleich("ALTSHA", kopf)["lage"] == L.UNVOLLSTAENDIG
+        d = A.stand(w, frisch=True)
+        assert d["teilweise"] and d["sauber"] is False and d["ziel"] == "NEUSHA", d
+        assert "UNVOLLSTAENDIG" in A.text(w), A.text(w)
+        # Gegenprobe: derselbe Lauf ohne Fehler hebt die Marke auf.
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv):
+            r2 = U.run_update()
+        assert r2["ok"] and U.local_state().get("sha") == "NEUSHA", r2
+        assert not U.local_state().get("teilweise")
+        assert L.vergleich("ALTSHA", U.local_head()[0])["lage"] == L.VERALTET
+
+        # ── UPD-2: Rollback des ersten Updates (das c.py anlegte und a.py
+        # schrieb). Danach: c.py weg, a.py alt, Stand wieder ALTSHA.
+        with open(os.path.join(w, "a.py"), "w", encoding="utf-8") as f:
+            f.write("ALT = 1\n")
+        with open(os.path.join(w, "b.py"), "w", encoding="utf-8") as f:
+            f.write("ALT = 1\n")
+        os.remove(os.path.join(w, "c.py"))
+        with open(os.path.join(w, ".nc_update.json"), "w", encoding="utf-8") as f:
+            f.write('{"sha": "ALTSHA", "date": "2026-11-01"}')
+        with open(os.path.join(w, "eigen.py"), "w", encoding="utf-8") as f:
+            f.write("# vom Betreiber, steht in keinem Archiv\n")
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv):
+            r3 = U.run_update()
+        assert r3["ok"] and lies("c.py") == "X = 1\n", r3
+        rb = U.rollback(r3["backup"])
+        assert rb["ok"] and rb["removed"] == ["c.py"], rb
+        assert lies("c.py") is None and lies("a.py") == "ALT = 1\n" and lies("b.py") == "ALT = 1\n"
+        assert lies("eigen.py") is not None, "Rollback entfernte eine fremde Datei"
+        assert U.local_state().get("sha") == "ALTSHA", U.local_state()
+        with _mock.patch.object(U, "remote_head", return_value=rem):
+            assert U.check()["update_available"], "nach Rollback hiess es weiter aktuell"
+        # Ohne Vorstand (keine .nc_update.json vor dem Update): nach dem
+        # Rollback gibt es auch keine — sonst meldete sie den neuen Commit.
+        os.remove(os.path.join(w, ".nc_update.json"))
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv):
+            r4 = U.run_update()
+        assert lies(".nc_update.json") is not None
+        U.rollback(r4["backup"])
+        assert lies(".nc_update.json") is None and lies("c.py") is None
+
+        # Das ERSTE Update ueber die Funktion scheitert teilweise: kein
+        # Vorstand, kein git — der alte SHA ist leer. Auch dann nicht
+        # „aktuell": die Mutationsprobe „check ohne teilweise" entwischte, weil
+        # der Vertrag nur den Fall mit bekanntem Vorstand sah (ALTSHA != NEUSHA).
+        with _mock.patch.object(U, "remote_head", return_value=rem), \
+                _mock.patch.object(U, "download_zip", return_value=archiv), \
+                _mock.patch.object(U, "_write_file", side_effect=kaputt):
+            U.run_update()
+        with _mock.patch.object(U, "remote_head", return_value=rem):
+            c = U.check()
+        assert c["update_available"] and "Unvollstaendig" in c["summary"], c
+    finally:
+        U._CFG.root, U._CFG.enabled = alt_cfg
+        A._ZWISCHENSPEICHER.pop(w, None)
+        _sh.rmtree(w, ignore_errors=True)
+    ok("UPD-1/2: Teilfehler behaelt den alten Stand und heisst nie aktuell; Rollback setzt Stand und neue Dateien zurueck")
+
+
+def _test_ops3_deploy_sichert_und_schreibt_nur_code():
+    """OPS-3: tools/deploy.sh sicherte das GANZE BOT_DIR — recordings/, die
+    laufende Datenbank samt -wal/-shm, tiktok_cookies.txt, .nc_update.json —
+    und abbruch() spielte das komplett zurueck. Alles, was der Bot zwischen
+    Backup und Abbruch geschrieben hatte, war danach weg, und ein tar einer
+    SQLite-Datei mitten im Betrieb ist kein konsistenter Stand. Dazu schrieb
+    der Umschwenk das ganze Nebenverzeichnis ueber den Bestand, also auch
+    website/news.json (die der News-Agent im Betrieb schreibt) und alles, was
+    die Vorabpruefung dort angelegt hatte.
+
+    Geprueft wird der echte Python-Block aus deploy.sh gegen einen
+    Attrappen-Bestand — nicht der Wortlaut —, und dass Backup und Umschwenk
+    an genau diesen Listen haengen. Dazu der Installer: das WAL einer fremden
+    Datenbank, Cookies, OAuth-Stores und der Update-Stand bleiben zurueck."""
+    import subprocess as _sp
+    import shutil
+    src = open("tools/deploy.sh", encoding="utf-8").read()
+    kopf = '"$PY" - "$STAGING" "$BOT_DIR" "$LISTE" "$BESTAND_LISTE" <<\'PYEOF\'\n'
+    assert kopf in src, "der Listen-Block in deploy.sh fehlt"
+    i = src.index(kopf) + len(kopf)
+    block = src[i:src.index("\nPYEOF", i)]
+    # Reihenfolge: die Liste entsteht VOR der Vorabpruefung (die Suiten legen
+    # im Nebenverzeichnis eigene Dateien an) und vor dem Backup, das sie braucht.
+    assert src.index(kopf) < src.index('"$PY" test_smoke.py'), \
+        "die Liste muss vor der Vorabpruefung entstehen"
+    assert src.index(kopf) < src.index('tar czf "$BACKUP"')
+    zeilen = [z.strip() for z in src.splitlines() if not z.strip().startswith("#")]
+    assert 'tar czf "$BACKUP" -C "$BOT_DIR" --null -T "$BESTAND_LISTE"' in zeilen, \
+        "das Backup haengt nicht an der Bestandsliste"
+    assert not any(z.startswith('tar czf "$BACKUP" -C "$BOT_DIR" .') for z in zeilen), \
+        "das Backup packt wieder das ganze BOT_DIR"
+    assert 'rsync -a --from0 --files-from="$LISTE" "$STAGING"/ "$BOT_DIR"/' in zeilen
+    assert not any(z == 'rsync -a "$STAGING"/ "$BOT_DIR"/' for z in zeilen), \
+        "der Umschwenk kopiert wieder das ganze Nebenverzeichnis"
+    assert '(cd "$STAGING" && tar cf - --null -T "$LISTE") | (cd "$BOT_DIR" && tar xf -)' in zeilen
+
+    w = _ph.verzeichnis("nc-pruef-ops3-")
+    try:
+        quelle, ziel = os.path.join(w, "staging"), os.path.join(w, "bot")
+        def leg(wurzel, rel, inhalt="x"):
+            pfad = os.path.join(wurzel, rel)
+            os.makedirs(os.path.dirname(pfad), exist_ok=True)
+            with open(pfad, "w", encoding="utf-8") as f:
+                f.write(inhalt)
+        for rel in ("bot.py", "nc/neu.py", "templates/dashboard.html", "website/news.json",
+                    "website/lafap_index.html", "recordings/a.mp4", "tiktok_bot.db",
+                    "tiktok_bot.db-wal", ".env", "tiktok_cookies.txt", ".nc_update.json",
+                    "nc/__pycache__/neu.cpython-312.pyc", "logs/bot.log",
+                    "datei mit leerzeichen.txt"):
+            leg(quelle, rel)
+        for rel in ("bot.py", "website/news.json", "website/lafap_index.html",
+                    "tiktok_bot.db", "datei mit leerzeichen.txt"):
+            leg(ziel, rel, "alt")
+        liste, bestand = os.path.join(w, "liste"), os.path.join(w, "bestand")
+        r = _sp.run([sys.executable, "-", quelle, ziel, liste, bestand], input=block,
+                    capture_output=True, text=True, timeout=60, cwd=os.getcwd())
+        assert r.returncode == 0, r.stderr[-800:]
+        def lies(pfad):
+            roh = open(pfad, "rb").read()
+            assert roh.endswith(b"\0"), "die Liste muss nullgetrennt sein (Leerzeichen im Namen)"
+            return set(roh[:-1].decode("utf-8").split("\0"))
+        alle, vorh = lies(liste), lies(bestand)
+        assert alle == {"bot.py", "nc/neu.py", "templates/dashboard.html",
+                        "website/lafap_index.html", "datei mit leerzeichen.txt"}, alle
+        assert vorh == {"bot.py", "website/lafap_index.html", "datei mit leerzeichen.txt"}, vorh
+    finally:
+        shutil.rmtree(w, ignore_errors=True)
+
+    inst = open("tools/installer.sh", encoding="utf-8").read()
+    i = inst.index("AUS_KOPIE=(")
+    aus = inst[i:inst.index(")", i)]
+    for muster in ("'*.db-wal'", "'*.db-shm'", "'tiktok_cookies.txt'", "'*_oauth.json'",
+                   "'.nc_update.json'"):
+        assert muster in aus, "%s fehlt in der Ausschlussliste des Installers" % muster
+    ok("OPS-3: deploy.sh sichert und schreibt nur Code (Schutzliste der Update-Funktion), "
+       "Installer kopiert keine Betriebsdaten der Quelle")
+
+
+def _w4_fns(datei):
+    import ast as _ast
+    baum = _ast.parse(open(datei, encoding="utf-8").read())
+    return {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+
+def _test_v5114_tg1_telegram_start_wiederholt():
+    """v5.11.4 (TG-1): der Telegram-Start lief genau EINMAL. Nach einem
+    Neustart mit kurz unerreichbarem api.telegram.org blieben die Befehle bis
+    zum naechsten HAENDISCHEN Neustart aus — der Prozess lief weiter, also
+    griffen weder Exitcode 4 (W100) noch OnFailure noch Restart=always.
+    Jetzt: voruebergehendes wiederholen (gedeckelt, gedrosselt laut), nur ein
+    abgelehntes Token ist endgueltig und laesst run_bot sterben."""
+    import ast as _ast
+    import asyncio as _aio
+    import types as _ty
+    import nc.telegramfehler as T
+    import nc.meldetakt as MT
+
+    class TelegramError(Exception):
+        pass
+
+    class NetworkError(TelegramError):
+        pass
+
+    class TimedOut(NetworkError):
+        pass
+
+    class RetryAfter(TelegramError):
+        def __init__(self, s):
+            super().__init__("flood")
+            self.retry_after = s
+
+    class InvalidToken(TelegramError):
+        pass
+
+    class Forbidden(TelegramError):
+        pass
+
+    class EigenesForbidden(Forbidden):
+        pass
+
+    def _lauf(folge):
+        MT.zuruecksetzen(T.START_KANAL)
+        lg, pausen, uhr, folge = _GeldLog(), [], [1000.0], list(folge)
+
+        async def schritt():
+            if folge:
+                e = folge.pop(0)
+                if e is not None:
+                    raise e
+
+        async def schlafen(p):
+            pausen.append(p)
+            uhr[0] += p
+        try:
+            n = _aio.run(T.starten(schritt, lg, schlafen=schlafen, uhr=lambda: uhr[0]))
+        except Exception as e:
+            n = e
+        return n, pausen, lg
+
+    # (1) Netz, Zeitlimit, Unbekanntes: wiederholt, bis es geht
+    n, pausen, lg = _lauf([NetworkError("dns"), TimedOut("t"), ValueError("neu"), None])
+    assert n == 4 and pausen == [5.0, 10.0, 20.0], (n, pausen)
+    assert len(lg.stufe("error")) == 3, "drei verschiedene Gruende, je einer laut: %r" % lg.zeilen
+    assert "4 Versuchen" in lg.stufe("warning")[-1], "der Wiederanlauf sagt nicht, dass er gelang"
+    # (2) Deckel und Drossel: zehnmal dasselbe Netz
+    n, pausen, lg = _lauf([NetworkError("x")] * 10 + [None])
+    assert n == 11 and max(pausen) == T.START_PAUSE_MAX_S == 300.0, pausen
+    fe = lg.stufe("error")
+    assert len(fe) == 2 and "weitere unterdrueckt" in fe[1], \
+        "ungedrosselt oder ohne Zaehler: %r" % fe
+    # (3) ein Flood-Wait gilt, auch als timedelta (PTB >= 21)
+    import datetime as _dt
+    assert _lauf([RetryAfter(42), None])[1] == [42.0]
+    assert _lauf([RetryAfter(_dt.timedelta(seconds=7)), None])[1] == [7.0]
+    # (4) endgueltig: kein Warten, die Ausnahme geht durch (-> run_bot stirbt -> 4)
+    for e in (InvalidToken("401"), EigenesForbidden("403")):
+        n, pausen, lg = _lauf([e])
+        assert n is e and pausen == [], "abgelehntes Token wird wiederholt: %r" % (n,)
+        assert "BOT_TOKEN" in lg.stufe("error")[0]
+
+    # (5) bot.py: ein gescheiterter Schritt wird wiederholt, ohne die
+    # gelungenen zu wiederholen ("already running")
+    fns = _w4_fns("bot.py")
+    aufrufe, polling = [], [NetworkError("weg")]
+
+    class _Upd:
+        running = False
+
+        async def start_polling(self, error_callback=None):
+            assert error_callback is not None
+            aufrufe.append("poll")
+            if polling:
+                raise polling.pop(0)
+            self.running = True
+
+    class _App:
+        running = False
+        updater = _Upd()
+
+        async def initialize(self):
+            aufrufe.append("init")
+
+        async def start(self):
+            if self.running:
+                raise RuntimeError("This Application is already running!")
+            aufrufe.append("start")
+            self.running = True
+
+    async def _schlaf(_p):
+        return None
+
+    async def _menue(_app):
+        aufrufe.append("menue")
+
+    ns = {"_nc_tgfehler": _ty.SimpleNamespace(
+              zuruecksetzen=lambda: None,
+              starten=lambda s, lg: T.starten(s, lg, schlafen=_schlaf)),
+          "_nc_meldetakt": _ty.SimpleNamespace(zuruecksetzen=lambda *a: None),
+          "_telegram_polling_fehler": object(), "log": _GeldLog(),
+          "_telegram_befehlsmenue": _menue}
+    exec(compile(_ast.unparse(fns["_telegram_starten"]), "bot.py:_telegram_starten", "exec"), ns)
+    MT.zuruecksetzen(T.START_KANAL)
+    _aio.run(ns["_telegram_starten"](_App()))
+    assert aufrufe == ["init", "start", "poll", "init", "poll", "menue"], aufrufe
+
+    # (6) run_bot ruft den Helfer OHNE Auffang — sonst erreicht ein
+    # abgelehntes Token den Exitcode-4-Weg (W100) nie
+    rb = fns["run_bot"]
+    assert any("_telegram_starten(app)" in _ast.unparse(n) for n in _ast.walk(rb)
+               if isinstance(n, _ast.Await)), "run_bot startet Telegram nicht ueber den Helfer"
+    for n in _ast.walk(rb):
+        if isinstance(n, _ast.Try) and n.handlers:
+            assert "_telegram_starten(" not in "".join(_ast.unparse(b) for b in n.body), \
+                "der Telegram-Start steckt wieder in einem Auffang"
+    ok("TG-1: Telegram-Start wiederholt Voruebergehendes, endgueltig nur ein abgelehntes Token")
+
+
+def _test_v5114_tg2_untrack_wie_stoppknopf():
+    """v5.11.4 (TG-2): /untrack pruefte nur `_is_authorized` und loeschte
+    sofort — jedes Gruppenmitglied entfernte fremde Trackings, waehrend der
+    Stopp-KNOPF daneben seit F24 `_can_stop_tracking` fragt."""
+    import ast as _ast
+    import asyncio as _aio
+    import contextlib as _cl
+    import types as _ty
+    fns = _w4_fns("bot.py")
+    quelle = _ast.unparse(fns["_can_stop_tracking"]) + "\n\n" + _ast.unparse(fns["untrack"])
+    entfernt, antworten = [], []
+
+    class _Conn:
+        def execute(self, _sql, args):
+            return _ty.SimpleNamespace(fetchone=lambda: {"added_by": 42} if args[1] == "peter" else None)
+
+    @_cl.contextmanager
+    def _db():
+        yield _Conn()
+
+    ns = {"Update": object, "ContextTypes": _ty.SimpleNamespace(DEFAULT_TYPE=object),
+          "ALLOWED_USER_IDS": set(), "db_conn": _db, "log": _GeldLog(),
+          "_is_authorized": lambda u: True, "clean_username": lambda s: s.lstrip("@").lower(),
+          "_nc_trackingdb": _ty.SimpleNamespace(remove_tracking=lambda c, u: entfernt.append((c, u))),
+          "_nc_i18n": _ty.SimpleNamespace(t=lambda s: s), "safe": str,
+          "ParseMode": _ty.SimpleNamespace(HTML="HTML")}
+    exec(compile(quelle, "bot.py:untrack", "exec"), ns)
+
+    async def _antwort(text, **_k):
+        antworten.append(text)
+
+    def _upd(uid, discord=False):
+        return _ty.SimpleNamespace(effective_user=_ty.SimpleNamespace(id=uid),
+                                   effective_chat=_ty.SimpleNamespace(id=-100),
+                                   message=_ty.SimpleNamespace(reply_text=_antwort),
+                                   nc_discord_admin=discord)
+
+    ctx = _ty.SimpleNamespace(args=["@Peter"])
+    _aio.run(ns["untrack"](_upd(7), ctx))
+    assert entfernt == [], "ein Fremder loescht im offenen Modus ein fremdes Tracking"
+    assert "angelegt" in antworten[-1], antworten
+    _aio.run(ns["untrack"](_upd(42), ctx))
+    assert entfernt == [(-100, "peter")], "der Anleger darf sein Tracking nicht stoppen"
+    _aio.run(ns["untrack"](_upd(0, discord=True), ctx))
+    assert len(entfernt) == 2, "der Discord-Shim (prueft selbst auf Admin) wird abgewiesen"
+    ns["ALLOWED_USER_IDS"] = {1}
+    _aio.run(ns["untrack"](_upd(42), ctx))
+    assert len(entfernt) == 2, "mit Admin-Liste darf nur der Admin stoppen (wie der Knopf)"
+    _aio.run(ns["untrack"](_upd(1), ctx))
+    assert len(entfernt) == 3
+    ok("TG-2: /untrack fragt dieselbe Berechtigung wie der Stopp-Knopf")
+
+
+def _test_v5114_dc5_schleifen_ueberleben_neustartfenster():
+    """v5.11.4 (DC-5): `while _dc_offen():` endete im Neustart-Fenster des
+    Supervisors (CLIENT["obj"] = None) STILL, und `_DISCORD_BGTASKS_STARTED`
+    blieb True — Liveboard, Digest, Clip der Woche und Bereichs-Abgleich
+    liefen nach dem ersten Reconnect nie wieder."""
+    import ast as _ast
+    import asyncio as _aio
+    import types as _ty
+    fns = _w4_fns("discordbot.py")
+    for name, fn in fns.items():
+        for w in _ast.walk(fn):
+            if isinstance(w, _ast.While):
+                assert "_dc_offen" not in _ast.unparse(w.test), \
+                    "%s: Hintergrundschleife endet im Neustart-Fenster" % name
+    for name in ("_liveboard_loop", "_weekly_digest_loop", "_clipoftheweek_loop",
+                 "_ziele_sync_loop"):
+        assert "await _dc_warten()" in _ast.unparse(fns[name]), name
+
+    class _Ende(Exception):
+        pass
+
+    class _Cli:
+        def __init__(self, bereit=True):
+            self.bereit = bereit
+
+        def is_closed(self):
+            return False
+
+        def is_ready(self):
+            return self.bereit
+
+        async def wait_until_ready(self):
+            return None
+
+    zustand = {"obj": _Cli()}
+    takte, laeufe = [], []
+
+    async def _schlaf(s):
+        takte.append(s)
+        if s == 60:
+            zustand["obj"] = None                 # das Neustart-Fenster
+        elif zustand["obj"] is None:
+            zustand["obj"] = _Cli(bereit=False)    # neuer Client, noch im Anlauf
+        else:
+            zustand["obj"].bereit = True
+
+    async def _update():
+        laeufe.append(1)
+        if len(laeufe) >= 3:
+            raise _Ende()
+
+    def _fehler(_n, e):
+        if isinstance(e, _Ende):
+            raise e
+
+    quelle = "\n\n".join(_ast.unparse(fns[n]) for n in
+                         ("_dc_client", "_dc_offen", "_dc_bereit", "_dc_warten", "_liveboard_loop"))
+    ns = {"_nc_discordstate": _ty.SimpleNamespace(CLIENT=zustand), "DC_WARTE_TAKT_S": 15,
+          "asyncio": _ty.SimpleNamespace(sleep=_schlaf), "DISCORD_LIVEBOARD": True,
+          "_update_liveboard": _update, "_loop_fehler": _fehler}
+    exec(compile(quelle, "discordbot.py:liveboard", "exec"), ns)
+    try:
+        _aio.run(ns["_liveboard_loop"]())
+    except _Ende:
+        pass
+    assert len(laeufe) == 3, "die Schleife endet im Neustart-Fenster: %r" % takte
+    assert takte.count(15) >= 4, "gearbeitet, bevor der neue Client bereit war: %r" % takte
+    ok("DC-5: Discord-Hintergrundschleifen warten das Neustart-Fenster ab statt zu enden")
+
+
+def _test_v5114_dc4_netzausfall_beendet_discord_nicht():
+    """v5.11.4 (DC-4): fuenf Fehlversuche ohne on_ready beendeten den
+    Supervisor ENDGUELTIG — auch fuer Netzfehler, die `login()` nicht
+    wiederholt. Ein ~155-s-Ausfall von discord.com schaltete Discord bis zum
+    Neustart ab."""
+    import asyncio as _aio
+    import types as _ty
+    import discordbot as DB
+    import nc.meldetakt as MT
+
+    class ClientError(Exception):
+        pass
+
+    class ClientConnectorError(ClientError, OSError):
+        pass
+
+    class ConnectionClosed(Exception):
+        def __init__(self, code):
+            super().__init__("closed %s" % code)
+            self.code = code
+
+    class HTTPException(Exception):
+        def __init__(self, status):
+            super().__init__("http %s" % status)
+            self.status = status
+
+    assert DB._dc_fehlerart(ClientConnectorError("dns")) == "netz"
+    assert DB._dc_fehlerart(TimeoutError()) == "netz"
+    assert DB._dc_fehlerart(HTTPException(503)) == "netz"
+    assert DB._dc_fehlerart(HTTPException(404)) == "unbekannt"
+    assert DB._dc_fehlerart(ConnectionClosed(4004)) == "endgueltig"
+    assert DB._dc_fehlerart(ConnectionClosed(4014)) == "endgueltig"
+    assert DB._dc_fehlerart(ConnectionClosed(1006)) == "netz"
+    assert DB._dc_fehlerart(ValueError("x")) == "unbekannt"
+
+    alt = {k: getattr(DB, k) for k in ("_discord_run_once", "asyncio", "log")}
+    sitzung = dict(DB._DISCORD_SESSION)
+    client = DB._nc_discordstate.CLIENT["obj"]
+
+    def _lauf(folge):
+        MT.zuruecksetzen(DB._DC_SITZUNG_KANAL)
+        folge, aufrufe, pausen, lg = list(folge), [], [], _GeldLog()
+
+        async def _einmal():
+            aufrufe.append(1)
+            raise folge.pop(0) if folge else _aio.CancelledError()
+
+        async def _schlaf(p):
+            pausen.append(p)
+        DB._discord_run_once = _einmal
+        DB.asyncio = _ty.SimpleNamespace(sleep=_schlaf, CancelledError=_aio.CancelledError)
+        DB.log = lg
+        try:
+            _aio.run(DB._discord_start())
+            ende = "aufgegeben"
+        except _aio.CancelledError:
+            ende = "laeuft"
+        return ende, len(aufrufe), pausen, lg
+    try:
+        DB._DISCORD_SESSION.update(attempt=0, reconnects=0, connected_since=None)
+        ende, n, pausen, lg = _lauf([ClientConnectorError("dns")] * 8)
+        assert ende == "laeuft" and n == 9, "Netzausfall beendet Discord nach %d Versuchen" % n
+        assert max(pausen) == 300 and pausen[:3] == [5, 10, 20], pausen
+        assert len(lg.stufe("error")) == 1, "ungedrosselt: %r" % lg.stufe("error")
+        ende, n, pausen, lg = _lauf([ConnectionClosed(4004)])
+        assert ende == "aufgegeben" and n == 1 and pausen == [], (ende, n, pausen)
+        assert "endgueltig" in lg.stufe("error")[0]
+        ende, n, _p, _lg = _lauf([ValueError("kaputt")] * 8)
+        assert ende == "aufgegeben" and n == 5, "Unbekanntes ohne Grenze: %d" % n
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+        DB._DISCORD_SESSION.clear()
+        DB._DISCORD_SESSION.update(sitzung)
+        DB._nc_discordstate.CLIENT["obj"] = client
+        MT.zuruecksetzen(DB._DC_SITZUNG_KANAL)
+    ok("DC-4: Netzausfall laesst Discord wieder anlaufen, endgueltig nur Token/Intents/Close-Code")
+
+
+def _test_v5114_dc7_stern_highlight_genau_einmal():
+    """v5.11.4 (DC-7): Pruefen → fetch_message (Netz) → bedingungsloses
+    UPDATE. Zwei Sterne kurz nacheinander schickten den Clip doppelt an jede
+    Telegram-Gruppe und doppelt als Community-Post. Dazu war der Anspruch
+    vor der Frage verbraucht, ob der Telegram-Bot bereit ist, und ein
+    gescheiterter Versand stand auf debug neben "→ Telegram gepusht"."""
+    import asyncio as _aio
+    import os as _os
+    import sqlite3 as _sq
+    import types as _ty
+    import discordbot as DB
+    import nc.meldetakt as MT
+    d = _ph.verzeichnis("nc-w4-stern-")
+    clip = _os.path.join(d, "clip.mp4")
+    with open(clip, "wb") as f:
+        f.write(b"\0" * 1000)
+    namen = ("_auto_on", "CLIP_HIGHLIGHT_TO_TG", "CLIP_HIGHLIGHT_STARS", "db_async",
+             "_bot_app_holen", "COMMUNITY_HIGHLIGHT_SHARE_ENABLED", "DISCORD_WEBHOOK_URL",
+             "_discord_notify", "_community", "log")
+    alt = {k: getattr(DB, k) for k in namen}
+    conn = _sq.connect(":memory:")
+    conn.row_factory = _sq.Row
+    conn.executescript(
+        "CREATE TABLE discord_clips (id INTEGER PRIMARY KEY, message_id INTEGER, username TEXT,"
+        " filepath TEXT, stars_pushed INTEGER DEFAULT 0);"
+        "CREATE TABLE trackings (group_id INTEGER, username TEXT);"
+        "INSERT INTO trackings VALUES (-1001, 'peter'), (-1002, 'peter');")
+    conn.execute("INSERT INTO discord_clips (id, message_id, username, filepath) VALUES (1, 77, 'peter', ?)",
+                 (clip,))
+    sends, posts, kaputt = [], [], [False]
+
+    async def _db_async(fn):
+        await _aio.sleep(0)            # wie der Thread-Sprung: andere Tasks laufen dazwischen
+        r = fn(conn)
+        conn.commit()
+        return r
+
+    async def _send_video(chat_id, **_k):
+        if kaputt[0]:
+            raise RuntimeError("chat not found")
+        sends.append(chat_id)
+
+    async def _notify(p):
+        posts.append(p)
+
+    async def _fetch(_mid):
+        await _aio.sleep(0)
+        return _ty.SimpleNamespace(reactions=[_ty.SimpleNamespace(emoji="⭐", count=3, me=True)])
+
+    app = [_ty.SimpleNamespace(bot=_ty.SimpleNamespace(send_video=_send_video))]
+    kanal = _ty.SimpleNamespace(fetch_message=_fetch)
+    client = _ty.SimpleNamespace(user=_ty.SimpleNamespace(id=999), get_channel=lambda _c: kanal)
+    p = _ty.SimpleNamespace(emoji="⭐", user_id=5, message_id=77, channel_id=1)
+
+    def _gepusht():
+        return conn.execute("SELECT stars_pushed FROM discord_clips WHERE id=1").fetchone()[0]
+
+    async def _zwei():
+        await _aio.gather(DB._stern_highlight(client, p), DB._stern_highlight(client, p))
+    try:
+        lg = _GeldLog()
+        DB._auto_on, DB.CLIP_HIGHLIGHT_TO_TG, DB.CLIP_HIGHLIGHT_STARS = (lambda _k, v: v), True, 2
+        DB.db_async, DB._bot_app_holen = _db_async, (lambda: app[0])
+        DB.COMMUNITY_HIGHLIGHT_SHARE_ENABLED, DB.DISCORD_WEBHOOK_URL = True, "https://x"
+        DB._discord_notify = _notify
+        DB._community = _ty.SimpleNamespace(highlight_post=lambda u, stars: "post %s" % u)
+        DB.log = lg
+        MT.zuruecksetzen("dc-highlight-tg")
+        # (1) Telegram noch nicht bereit: der Anspruch bleibt frei
+        app[0] = None
+        _aio.run(DB._stern_highlight(client, p))
+        assert _gepusht() == 0 and sends == [], "ein Stern im Telegram-Anlauf verbraucht den Push"
+        # (2) alles scheitert: Anspruch zurueck, laut, keine Erfolgsmeldung
+        app[0] = _ty.SimpleNamespace(bot=_ty.SimpleNamespace(send_video=_send_video))
+        kaputt[0] = True
+        _aio.run(DB._stern_highlight(client, p))
+        assert _gepusht() == 0, "gescheiterter Versand bleibt als gepusht markiert"
+        assert lg.stufe("error") and not any("gepusht" in z for z in lg.stufe("info")), lg.zeilen
+        assert posts == []
+        # (3) zwei Sterne gleichzeitig: genau einmal je Gruppe, ein Post
+        kaputt[0] = False
+        _aio.run(_zwei())
+        assert sorted(sends) == [-1002, -1001], "doppelt gesendet: %r" % sends
+        assert len(posts) == 1 and _gepusht() == 1, posts
+        assert any("gepusht (2 Gruppen)" in z for z in lg.stufe("info")), lg.zeilen
+        # (4) keine Telegram-Gruppe trackt ihn: auch dann kein "gepusht"
+        # (die Mutationsprobe "Erfolgsmeldung bedingungslos" entwischte ohne
+        # diesen Fall — alle anderen enden vorher oder haben Gruppen)
+        conn.execute("INSERT INTO discord_clips (id, message_id, username, filepath) "
+                     "VALUES (2, 78, 'paul', ?)", (clip,))
+        _aio.run(DB._stern_highlight(client, _ty.SimpleNamespace(
+            emoji="⭐", user_id=5, message_id=78, channel_id=1)))
+        assert sum("gepusht" in z for z in lg.stufe("info")) == 1, lg.zeilen
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+        conn.close()
+        MT.zuruecksetzen("dc-highlight-tg")
+    ok("DC-7: Stern-Highlight geht genau einmal raus, Anspruch erst bei bereitem Telegram")
+
+
+def _test_v5114_dc8_sprachnachricht_begrenzt():
+    """v5.11.4 (DC-8): jedes Mitglied (auch per DM) loeste mit jedem
+    Audio-Anhang ffmpeg plus volle Whisper-Transkription aus — ohne
+    Abklingzeit, ohne Laengengrenze, `proc.wait()` ohne Zeitlimit, und auf
+    denselben Whisper-Plaetzen wie die Live-Transkription."""
+    import ast as _ast
+    import asyncio as _aio
+    import types as _ty
+    import discordbot as DB
+    fns = _w4_fns("discordbot.py")
+    assert "create_subprocess_exec" not in _ast.unparse(fns["_handle_voice_ai"]), \
+        "ffmpeg wieder ohne Zeitlimit"
+    alt = {k: getattr(DB, k) for k in ("_nc_kind", "_whisper_transcribe", "azrael_chat", "log")}
+    rufe, antworten, whisper = [], [], []
+
+    async def _aus(cmd, zeitlimit, art="?", **_k):
+        assert zeitlimit and zeitlimit > 0
+        rufe.append(["ffprobe" if "ffprobe" in cmd else "ffmpeg"] + list(cmd))
+        if "ffprobe" in cmd:
+            return 0, dauer[0], b""
+        with open(cmd[-1], "wb") as f:
+            f.write(b"\0" * 200)
+        return 0, b"", b""
+
+    async def _whisper(_p):
+        whisper.append(1)
+        return "hallo"
+
+    async def _ki(*_a, **_k):
+        return "antwort", None
+
+    class _Tippen:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    async def _reply(text, **_k):
+        antworten.append(text)
+
+    async def _reaktion(_e):
+        antworten.append("⏳")
+
+    async def _save(_pfad):
+        return None
+
+    def _msg(uid, gilde=True, mid=1):
+        return _ty.SimpleNamespace(id=mid, author=_ty.SimpleNamespace(id=uid),
+                                   guild=object() if gilde else None, reply=_reply,
+                                   add_reaction=_reaktion,
+                                   channel=_ty.SimpleNamespace(typing=_Tippen))
+    att = _ty.SimpleNamespace(filename="a.ogg", size=1000, save=_save)
+    dauer = [b"10.0\n"]
+    live = DB._nc_rsstate.ACTIVE_ALL
+    try:
+        DB._nc_kind = _ty.SimpleNamespace(ausfuehren=_aus, DEVNULL=None)
+        DB._whisper_transcribe, DB.azrael_chat, DB.log = _whisper, _ki, _GeldLog()
+        DB._voice_zuletzt.clear()
+        DB._VOICE_LAUF["aktiv"] = False
+        # Entscheidung ohne Nebenwirkung
+        assert DB._voice_zulassen(_msg(5, gilde=False), att, 0.0) == "dm"
+        assert DB._voice_zulassen(_msg(5), _ty.SimpleNamespace(size=10 ** 9), 0.0) == "gross"
+        live["w4probe"] = object()
+        assert DB._voice_zulassen(_msg(5), att, 0.0) == "live", "Live hat keinen Vorrang"
+        live.pop("w4probe", None)
+        # (1) erlaubt: ffprobe, dann ffmpeg mit -t (Grenze) und Zeitlimit, dann Whisper
+        _aio.run(DB._handle_voice_ai(_msg(5), att))
+        assert [r[0] for r in rufe] == ["ffprobe", "ffmpeg"], rufe
+        assert rufe[1][rufe[1].index("-t") + 1] == "120" and "-threads" in rufe[1], rufe[1]
+        assert whisper == [1] and DB._VOICE_LAUF["aktiv"] is False
+        # (2) derselbe Nutzer sofort wieder: Abklingzeit, kein ffmpeg, kein Whisper
+        _aio.run(DB._handle_voice_ai(_msg(5, mid=2), att))
+        assert len(rufe) == 2 and whisper == [1] and antworten[-1] == "⏳"
+        # (3) zu lang: abgelehnt nach ffprobe, ohne Wandeln und ohne Whisper
+        dauer[0] = b"600.0\n"
+        _aio.run(DB._handle_voice_ai(_msg(6, mid=3), att))
+        assert [r[0] for r in rufe[2:]] == ["ffprobe"] and whisper == [1], rufe
+        assert "600" in antworten[-1] and "120" in antworten[-1], antworten[-1]
+        # (4) DM: gar nichts
+        _aio.run(DB._handle_voice_ai(_msg(7, gilde=False, mid=4), att))
+        assert len(rufe) == 3 and whisper == [1]
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+        live.pop("w4probe", None)
+        DB._voice_zuletzt.clear()
+        DB._VOICE_LAUF["aktiv"] = False
+    ok("DC-8: Sprachnachrichten mit Abklingzeit, Laengengrenze, Zeitlimit und Live-Vorrang")
+
+
+def _test_live2_proxy_zugang_nie_im_log():
+    """LIVE-2: redact_cmd_for_log schwaerzte nur Cookies. `-http_proxy
+    nutzer:pass@host` (ffmpeg) und `--proxy …` (yt-dlp) gingen bei JEDEM
+    Aufnahmestart mit den Zugangsdaten ins INFO-Log. Geprueft an den ECHTEN
+    Bauern aus nc/reccmd, schemalos wie schemabehaftet (auch socks5 und
+    leerer Nutzer), getrennt und als `--opt=wert` — und der Befehl selbst,
+    der an den Prozess geht, behaelt den echten Proxy."""
+    from nc import reccmd as R
+    from nc.ffdiag import redact_cmd_for_log as X
+    alt = {n: getattr(R, n, None) for n in (
+        "_cookie_header", "_ensure_cookie_file_netscape", "_stream_url_ttl",
+        "COOKIE_FILE", "FFMPEG_NICE_RECORD", "FFMPEG_THREADS_RECORD")}
+    try:
+        R._cookie_header = lambda: "sessionid=GEHEIMCOOKIE"
+        R._ensure_cookie_file_netscape = lambda *a, **k: "/nirgends/c.txt"
+        R._stream_url_ttl = lambda u: None
+        for n, v in (("COOKIE_FILE", "/nirgends/c.txt"), ("FFMPEG_NICE_RECORD", 0),
+                     ("FFMPEG_THREADS_RECORD", 0)):
+            if getattr(R, n, None) is None:
+                setattr(R, n, v)
+        for i, proxy in enumerate(("nutzer:geheim0@h:8118", "http://nutzer:geheim1@h:8118",
+                                   "socks5://n:geheim2@h:1080", "socks5h://:geheim3@h:1080")):
+            for cmd in (R._build_native_cmd("https://cdn/x.flv", "/nirgends/o.mp4", 60,
+                                            pull_proxy=proxy),
+                        R._build_ytdlp_cmd("yt-dlp", "https://www.tiktok.com/@a/live",
+                                           "/nirgends/o.mp4", 60, pull_proxy=proxy)):
+                zeile = " ".join(X(cmd))
+                assert "geheim%d" % i not in zeile, "Proxy-Passwort im Log: %s" % zeile
+                assert "GEHEIMCOOKIE" not in zeile, "Cookie wieder im Log"
+                assert "@h:" in zeile, "der Host gehoert in die Zeile (Diagnose): %s" % zeile
+                assert any("geheim%d" % i in a for a in cmd), "der echte Befehl verlor den Proxy"
+    finally:
+        for n, v in alt.items():
+            setattr(R, n, v)
+    for cmd in (["streamlink", "--http-proxy", "http://u:geheimS@p:3128", "url", "best"],
+                ["streamlink", "--https-proxy=u:geheimT@p:3128", "url"],
+                ["yt-dlp", "--proxy=socks5://u:geheimU@p:1080", "url"],
+                ["yt-dlp", "--geo-verification-proxy", "u:geheimV@p:1", "url"],
+                ["ffmpeg", "-proxy", "u:geheimW@p:1", "-i", "x"]):
+        zeile = " ".join(X(cmd))
+        assert "geheim" not in zeile, zeile
+        assert "@p:" in zeile, zeile
+    ok("LIVE-2: Proxy-Zugangsdaten (alle Optionsformen, mit/ohne Schema) erreichen das Log nicht")
+
+
+def _live1_fmt(fid, q, vc="h264"):
+    art = fid.split("-", 1)[0]
+    f = {"format_id": fid, "quality": q, "vcodec": vc,
+         "url": "https://pull.tiktokcdn.com/stage/%s.%s?expire=9" % (fid, "flv" if art == "flv" else "m3u8"),
+         "ext": "flv" if art == "flv" else "mp4"}
+    if art == "hls":
+        f["protocol"] = "m3u8_native"
+    if vc is None:
+        f.pop("vcodec")
+    return f
+
+
+def _test_live1_ytdlp_bestes_format_zuerst():
+    """LIVE-1: yt-dlp sortiert `formats` AUFSTEIGEND (FormatSorter, TikTokLiveIE
+    `_format_sort_fields ('quality', 'ext')`) — das Beste steht hinten. Wir
+    nahmen das ERSTE FLV und HLS: Aufnahme in hls-SD1, Restream in flv-SD1.
+    Und TikToks „ao" (nur Ton, quality=-1) stand ganz vorn. Die Liste hier
+    steht in der Reihenfolge, in der yt-dlp sie ausgibt; origin ist HEVC
+    (bytevc1, B64) und darf erst nach jedem H.264 kommen."""
+    from nc import ytdlpurl as Y
+    fmts = [_live1_fmt("flv-ao", -1, vc=None), _live1_fmt("hls-ao", -1, vc=None),
+            _live1_fmt("flv-sd1", 0), _live1_fmt("hls-sd1", 0),
+            _live1_fmt("flv-hd1", 4), _live1_fmt("hls-hd1", 4),
+            _live1_fmt("flv-uhd", 7), _live1_fmt("hls-uhd", 7),
+            _live1_fmt("flv-origin", 9, vc="bytevc1"), _live1_fmt("hls-origin", 9, vc="bytevc1")]
+    oben = dict(fmts[-2])                  # yt-dlps eigene Wahl: das Letzte
+    u = Y.urls_aus_json(dict(oben, formats=fmts))
+    assert "flv-uhd.flv" in (u.get("flv_url") or ""), "Restream nicht in bester H.264-Stufe: %r" % u
+    assert "hls-uhd.m3u8" in (u.get("hls_url") or ""), "Aufnahme nicht in bester H.264-Stufe: %r" % u
+    # Nur HEVC und Ton: lieber HEVC als nichts — und nie die Ton-Spur.
+    u = Y.urls_aus_json({"formats": [fmts[0], fmts[1], fmts[8], fmts[9]]})
+    assert "origin" in (u.get("flv_url") or "") and "origin" in (u.get("hls_url") or ""), u
+    # Nur Ton: das ist keine spielbare Quelle.
+    assert Y.urls_aus_json({"formats": fmts[:2]}) == {}, Y.urls_aus_json({"formats": fmts[:2]})
+    # Ohne formats bleibt yt-dlps oberste Adresse der Rueckfall.
+    u = Y.urls_aus_json({"url": fmts[6]["url"], "ext": "flv", "vcodec": "h264"})
+    assert u.get("flv_url") == fmts[6]["url"], u
+    ok("LIVE-1: yt-dlp-Auskunft — bestes H.264-Format zuerst, Ton-Formate nie, HEVC nur als Rueckfall")
+
+
+def _live3_db(name):
+    from nc import dbwrap as W
+    db = os.path.join(_ph.verzeichnis("nc-pruef-live3-"), name)
+    W.configure_db(db_path=db, backend="sqlite")
+    with W.db_conn() as c:
+        c.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, group_id INTEGER, "
+                  "username TEXT, last_live INTEGER DEFAULT 0, recording INTEGER DEFAULT 0, "
+                  "paused INTEGER DEFAULT 0, auto_disabled_at TEXT, auto_disabled_reason TEXT)")
+        c.commit()
+
+
+def _bot_funktion(name, ns):
+    """Eine Top-Level-Funktion aus bot.py im eigenen Namensraum."""
+    import ast as _ast
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+              and n.name == name)
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    return ns[name]
+
+
+def _test_live3_pause_beendet_live():
+    """LIVE-3: ein waehrend des Lives pausiertes Tracking wird nicht mehr
+    gepollt und meldet nie OFFLINE — last_live=1 blieb fuer immer stehen:
+    nach dem Fortsetzen keine LIVE-Meldung, und _live_users() hielt den
+    Live-React-Worker gegen einen beendeten Stream am Laufen. Jetzt setzt die
+    Pause last_live zurueck, und _live_users() zaehlt pausierte nicht (auch
+    nicht den Altbestand, der noch last_live=1 traegt)."""
+    from nc import dbwrap as W
+    from nc import trackingdb as T
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    try:
+        _live3_db("live3.db")
+        with W.db_conn() as c:
+            c.execute("INSERT INTO trackings (id, group_id, username, last_live, paused) VALUES "
+                      "(1, 10, 'pausiert', 1, 0), (2, 10, 'altlast', 1, 1), (3, 10, 'livehier', 1, 0)")
+            c.commit()
+        assert T.set_tracking_paused(1, True) is True
+        with W.db_conn() as c:
+            r = c.execute("SELECT last_live, paused FROM trackings WHERE id=1").fetchone()
+        assert tuple(r) == (0, 1), "Pause liess last_live stehen: %r" % (tuple(r),)
+        live = _bot_funktion("_live_users", {"db_conn": W.db_conn, "log": _GeldLog()})()
+        assert sorted(live) == ["livehier"], "pausierte zaehlen als live: %r" % live
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+    ok("LIVE-3: Pausieren setzt last_live=0, _live_users() zaehlt keine pausierten")
+
+
+class _Live5Gift:
+    def __init__(self, typ=1, dia=1, name="Rose"):
+        self.type, self.diamond_count, self.name = typ, dia, name
+
+    @property
+    def streakable(self):
+        return self.type == 1
+
+
+class _Live5Event:
+    """Nachbau von TikTokLive 6.6.5 GiftEvent: `streaking` ist eine
+    Eigenschaft (not gift.streakable -> False, sonst not repeat_end)."""
+    def __init__(self, gift, repeat_count, repeat_end):
+        self.gift, self.repeat_count, self.repeat_end = gift, repeat_count, repeat_end
+        self.user = type("U", (), {"nickname": "Fan"})()
+
+    @property
+    def streaking(self):
+        if not self.gift.streakable:
+            return False
+        return not bool(self.repeat_end)
+
+
+def _live5_on_gift():
+    """Das ECHTE on_gift aus _start_chat_listener, mit Attrappen statt Closure."""
+    import ast as _ast
+    import asyncio as _aio
+    from nc import revenue as R
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    aussen = next(n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                  and n.name == "_start_chat_listener")
+    fn = next(n for n in _ast.walk(aussen) if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "on_gift")
+    spur = {"overlay": [], "clips": [], "buf": [], "push": []}
+
+    async def _push_async(*a, **_k):
+        spur["push"].append(a)
+
+    def _clip(*a):
+        spur["clips"].append(a)
+
+    ns = {"_nc_revenue": R, "asyncio": _aio, "username": "streamer",
+          "_overlay_src_ok": lambda q: True,
+          "_overlay_push": lambda *a, **k: spur["overlay"].append((a, k)),
+          "CLIP_ENABLED": True, "CLIP_GIFT_MIN": 1, "clip_moment": _clip,
+          "_spawn": lambda coro, name=None: None, "LIVE_REACT_GIFT_THRESHOLD": 0,
+          "flags": {}, "chat_buf": spur["buf"], "_cap": lambda: None,
+          "_restream_chat_push_async": _push_async}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    return ns["on_gift"], spur
+
+
+def _test_live5_combo_geschenk_einmal():
+    """LIVE-5: TikTokLive feuert je Streak-Schritt ein GiftEvent mit
+    wachsendem repeat_count; erst das letzte traegt repeat_end. Wir zaehlten
+    jeden Schritt: 30 Rosen = 465 Diamanten, 30 Clips, 30 Sendebild-Zeilen,
+    30 overlay_events. Jetzt zaehlt nur das Ende — und ein nicht
+    streakbares Geschenk zaehlt sofort."""
+    import asyncio as _aio
+    from nc import revenue as R
+    on_gift, spur = _live5_on_gift()
+    rose = _Live5Gift(typ=1, dia=1)
+
+    async def _lauf():
+        for n in range(1, 31):
+            await on_gift(_Live5Event(rose, n, repeat_end=(n == 30)))
+        await on_gift(_Live5Event(_Live5Gift(typ=2, dia=500, name="Loewe"), 1, repeat_end=False))
+
+    _aio.run(_lauf())
+    werte = [a[2] for a, _k in spur["overlay"]]
+    assert werte == [30, 500], "Combo je Schritt gezaehlt: %r" % werte
+    assert len(spur["clips"]) == 2 and len(spur["buf"]) == 2 and len(spur["push"]) == 2, spur
+    # Ein Ereignis, an dem `streaking` selbst scheitert, wird gewertet, nicht verschluckt.
+    kaputt = type("K", (), {"streaking": property(lambda s: s.gift.streakable),
+                            "gift": None, "repeat_count": 3, "diamond_count": 5})()
+    assert R.tiktok_geschenk(kaputt) == (True, 15), R.tiktok_geschenk(kaputt)
+    ok("LIVE-5: Combo-Geschenk wird einmal am Streak-Ende gewertet, nicht je Schritt")
+
+
+def _test_live6_name_gross_klein_ein_nutzer():
+    """LIVE-6: „MaxMuster" aus Chat A und „maxmuster" aus Chat B sind EIN
+    TikTok-Nutzer. Unter SQLite liess der Lock-Vergleich (`=`, case-
+    sensitiv) zwei Aufnahmen desselben Streams zu, und livemeldung/
+    Live-Cache fuehrten zwei Nutzer — zwei Discord-LIVE-Posts und Threads."""
+    from nc import dbwrap as W
+    from nc import livecache as LC
+    from nc import livemeldung as LM
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    stand = dict(LM.STAND)
+    try:
+        _live3_db("live6.db")
+        with W.db_conn() as c:
+            c.execute("INSERT INTO trackings (id, group_id, username) VALUES "
+                      "(1, 10, 'MaxMuster'), (2, 20, 'maxmuster'), (3, 30, 'andere')")
+            c.commit()
+        lock = _bot_funktion("_lock_update", {"db_conn": W.db_conn})
+        assert lock(1, "MaxMuster") is True
+        assert lock(2, "maxmuster") is False, "zweite Aufnahme desselben Streams erlaubt"
+        assert lock(3, "andere") is True, "fremder Nutzer gesperrt"
+        LM.STAND.clear()
+        assert LM.live_an("MaxMuster") is True
+        assert LM.live_an("maxmuster") is False, "zweiter Discord-LIVE-Post"
+        assert LM.live_aus("MAXMUSTER") is True and LM.live_aus("maxmuster") is False
+        cache = {}
+        LC.setzen(cache, "MaxMuster", "live", {"flv_url": "https://x/a.flv"}, 100.0, 15)
+        assert LC.holen(cache, "maxmuster", 101.0) == ("live", {"flv_url": "https://x/a.flv"}), cache
+    finally:
+        LM.STAND.clear()
+        LM.STAND.update(stand)
+        W.configure_db(db_path=alt[0], backend=alt[1])
+    ok("LIVE-6: Gross-/Kleinschreibung eines Handles ergibt einen Nutzer (Lock, Live-Meldung, Cache)")
+
+
+def _test_live7_lockzeile_gedrosselt():
+    """LIVE-7: „Lock nicht bekommen" stand bei jedem Poll jedes Zusatz-Chats im
+    INFO-Log (~180/h). Geprueft im Syntaxbaum: die Zeile steht unter einem
+    `if`, dessen Bedingung aus nc/meldetakt.melden("rec-lock", …) kommt."""
+    import ast as _ast
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+              and n.name == "_handle_single_tracking")
+    eltern = {}
+    for n in _ast.walk(fn):
+        for k in _ast.iter_child_nodes(n):
+            eltern[k] = n
+    zeilen = [n for n in _ast.walk(fn) if isinstance(n, _ast.Call)
+              and isinstance(n.func, _ast.Attribute) and n.func.attr == "info"
+              and any(isinstance(c, _ast.Constant) and "Lock nicht bekommen" in str(c.value)
+                      for c in _ast.walk(n))]
+    assert len(zeilen) == 1, "Lock-Zeile nicht eindeutig gefunden: %d" % len(zeilen)
+    n, bed = zeilen[0], None
+    while n in eltern:
+        n = eltern[n]
+        if isinstance(n, _ast.If):
+            bed = n.test
+            break
+    assert isinstance(bed, _ast.Name), "Lock-Zeile steht ungedrosselt"
+    quelle = [a for a in _ast.walk(fn) if isinstance(a, _ast.Assign)
+              and any(isinstance(t, _ast.Tuple) and any(isinstance(e, _ast.Name) and e.id == bed.id
+                                                        for e in t.elts) for t in a.targets)]
+    assert any(isinstance(a.value, _ast.Call) and isinstance(a.value.func, _ast.Attribute)
+               and a.value.func.attr == "melden" and a.value.args
+               and isinstance(a.value.args[0], _ast.Constant) and a.value.args[0].value == "rec-lock"
+               for a in quelle), "Bedingung kommt nicht aus meldetakt.melden('rec-lock', …)"
+    ok("LIVE-7: die Zeile Lock-nicht-bekommen geht durch nc/meldetakt (Kanal rec-lock)")
+class _ArcDb:
+    """ARC-Vertraege: Temp-SQLite mit dem ECHTEN Schema (nc.schema) und
+    danach die vorige Datenbank zurueck. Eine handgebaute Tabelle pruefte nur
+    das, was der Vertragsautor fuer die Spalten haelt."""
+
+    def __enter__(self):
+        import logging as _lg
+        from nc import dbwrap as _dbw
+        from nc import schema as S
+        self._alt = (_dbw.DB_PATH, _dbw.DB_BACKEND)
+        self.heim = _ph.verzeichnis()
+        configure_db(db_path=os.path.join(self.heim, "arc.db"), backend="sqlite")
+        lg = _lg.getLogger("arc-vertrag")
+        p = S.parameter("sqlite")
+        with db_conn() as c:
+            S.create_schema(
+                c, pk=p["pk"], txt_idx=p["txt_idx"], txt_long=p["txt_long"],
+                txt_big=p["txt_big"], iv=p["iv"], tbl_opts=p["tbl_opts"], is_my=False,
+                _create_index_safe=lambda conn, a, b=None: S.index_sicher(
+                    conn, a, b, backend="sqlite", log=lg),
+                _migrate_columns=lambda conn, t, e: S.spalten_nachziehen(
+                    conn, t, e, backend="sqlite", mariadb_db="", log=lg),
+                log=lg, ts=p.get("ts"))
+            c.commit()
+        return self
+
+    def __exit__(self, *a):
+        configure_db(db_path=self._alt[0], backend=self._alt[1])
+        return False
+
+
+class _ArcLog:
+    def __init__(self):
+        self.zeilen = []
+
+    def __getattr__(self, stufe):
+        def _f(fmt, *a, **k):
+            self.zeilen.append((stufe, str(fmt) % a if a else str(fmt)))
+        return _f
+
+    def stufe(self, s):
+        return [t for st, t in self.zeilen if st == s]
+
+
+def _test_arc1_arc3_archivkopie_atomar_und_einmal():
+    """ARC-1: copy2 schrieb direkt unter den endgueltigen Namen. Riss die
+    Kopie ab (Platte voll), lag eine abgeschnittene Datei ohne Zeile im
+    Archiv — `os.path.exists` meldete sie danach bei jedem Lauf als „schon
+    da", und „Ordner pruefen" bot sie als gueltig an. ARC-3: „schon
+    archiviert" hing allein am Dateinamen; nach Umbenennen im Deck kopierte
+    der naechste Lauf dieselbe Aufnahme erneut. Lesefehler => abbrechen."""
+    import errno as _errno
+    import shutil as _sh
+    import nc.archive as AR
+    import nc.archiverules as A
+
+    with _ArcDb() as db:
+        archiv = os.path.join(db.heim, "archiv")
+        quelle = os.path.join(db.heim, "rec")
+        os.makedirs(archiv)
+        os.makedirs(quelle)
+        src = _ph.attrappe(os.path.join(quelle, "tiktok_live_1_u_20261120_101010.mp4"), 8192)
+        with db_conn() as c:
+            c.execute("INSERT INTO recordings (username, filepath, created_at, file_size) "
+                      "VALUES (?,?,?,?)", ("u", src, "2026-11-20T10:00:00+00:00", 8192))
+            rid = c.execute("SELECT MAX(id) AS m FROM recordings").fetchone()["m"]
+            c.commit()
+        gesehen = {}
+
+        class _VolleDisk:
+            @staticmethod
+            def copy2(a, b):
+                with open(b, "wb") as f:
+                    f.write(b"\0" * 1000)
+                gesehen["scan"] = AR._scan_kandidaten(archiv, AR.VIDEO_ENDUNGEN)
+                raise OSError(_errno.ENOSPC, "No space left on device")
+
+        alt_sh, alt_log, alt_db = A.shutil, A.log, AR.db_conn
+        lg = _ArcLog()
+        try:
+            A.log, A.shutil = lg, _VolleDisk
+            assert A._archiviere_eine(src, archiv, "R", rid) is False
+            assert gesehen["scan"] == [], \
+                ("der Ordner-Scan sieht die halbe Kopie und boete sie an", gesehen)
+            assert os.listdir(archiv) == [], \
+                ("nach abgerissener Kopie liegt etwas im Archiv — es blockiert "
+                 "jeden weiteren Lauf", os.listdir(archiv))
+            assert lg.stufe("error"), ("abgerissene Kopie nur auf warning", lg.zeilen)
+            A.shutil = _sh
+            assert A._archiviere_eine(src, archiv, "R", rid) is True, \
+                "nach der vollen Platte gelingt der naechste Lauf nicht"
+            ziel = os.path.join(archiv, os.path.basename(src))
+            assert os.listdir(archiv) == [os.path.basename(src)] \
+                and os.path.getsize(ziel) == 8192, os.listdir(archiv)
+
+            # ARC-3: Umbenennen im Deck (Datei + Zeile, source_url bleibt).
+            neu = os.path.join(archiv, "umbenannt.mp4")
+            os.rename(ziel, neu)
+            with db_conn() as c:
+                c.execute("UPDATE archive SET filename=?, filepath=? WHERE filepath=?",
+                          ("umbenannt.mp4", neu, ziel))
+                c.commit()
+            assert A._archiviere_eine(src, archiv, "R", rid) is False
+            assert sorted(os.listdir(archiv)) == ["umbenannt.mp4"], \
+                ("nach Umbenennen kopiert der Regellauf dieselbe Aufnahme erneut",
+                 os.listdir(archiv))
+            with db_conn() as c:
+                n = c.execute("SELECT COUNT(*) AS n FROM archive WHERE source_url=?",
+                              ("recording/%s" % rid,)).fetchone()["n"]
+            assert n == 1, n
+
+            # Lesefehler der Archivliste: abbrechen, nicht raten.
+            os.remove(neu)
+            with db_conn() as c:
+                c.execute("DELETE FROM archive")
+                c.commit()
+            echt = AR.db_conn
+
+            class _Gesperrt:
+                def __init__(self):
+                    self._c = echt()
+
+                def __enter__(self):
+                    self._inner = self._c.__enter__()
+                    return self
+
+                def __exit__(self, *a):
+                    return self._c.__exit__(*a)
+
+                def execute(self, sql, *a):
+                    if "FROM archive WHERE source_url" in sql:
+                        raise RuntimeError("database is locked")
+                    return self._inner.execute(sql, *a)
+
+                def commit(self):
+                    return self._inner.commit()
+
+            AR.db_conn = _Gesperrt
+            try:
+                A._archiviere_eine(src, archiv, "R", rid)
+                raise AssertionError("unlesbare Archivliste gilt als „nicht archiviert“")
+            except AR.BestandUnbekannt:
+                pass
+            assert os.listdir(archiv) == [], os.listdir(archiv)
+            A.add_archive_rule("alle", {}, {"action": "copy_to_archive"})
+            erg = A.run_archive_rules(archive_dir=archiv)
+            assert erg["ok"] is False and os.listdir(archiv) == [], erg
+        finally:
+            A.shutil, A.log, AR.db_conn = alt_sh, alt_log, alt_db
+    ok("ARC-1/ARC-3: Archivkopie erst unter Punktnamen, abgerissene Kopie "
+       "verschwindet; schon archiviert = Zeile mit source_url, Lesefehler bricht ab")
+
+
+def _test_arc2_manuelle_aufnahme_keine_waise():
+    """ARC-2: manuelle Aufnahmen standen nur in manual_recordings und galten
+    nach FRISCH_S als „kein-db-eintrag" — „Reste aufraeumen" loeschte sie.
+    Jetzt (a) kennt _find_orphans manual_recordings.output_file, (b) traegt
+    _wait_and_finish fertige in recordings ein — OHNE Sitzung, weil sie
+    parallel zur Worker-Aufnahme laufen, und (c) die naechste Worker-Zeile
+    setzt die laufende Sitzung trotz dazwischenliegender manueller Zeile fort."""
+    import ast as _ast
+    import time as _t
+    from datetime import datetime, timedelta, timezone
+    from typing import Optional
+    from nc import aufnahmesitzung as AS
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+
+    with _ArcDb() as db:
+        auf = os.path.join(db.heim, "recordings")
+        os.makedirs(auf)
+        vorher = _t.time() - rt.FRISCH_S - 60
+        manuell = os.path.join(auf, "manual_u_20261120_101010.mp4")
+        waise = os.path.join(auf, "tiktok_live_1_u_20261120_090909.mp4")
+        for p in (manuell, waise):
+            _ph.attrappe(p, 4096)
+            os.utime(p, (vorher, vorher))
+        with db_conn() as c:
+            c.execute("INSERT INTO manual_recordings (username, max_duration_secs, "
+                      "started_at, output_file, status) VALUES (?,?,?,?,?)",
+                      ("u", 300, "2026-11-20T10:10:10+00:00",
+                       os.path.relpath(manuell), "completed"))
+            c.commit()
+        alt_ctx = _ncctx._CTX
+        _ncctx.configure(recordings_dir=auf, log=_ArcLog(),
+                         log_event=lambda *a, **k: None, arg_int=lambda *a, **k: 0,
+                         ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+        try:
+            gefunden = {o["name"] for o in rt._find_orphans()}
+        finally:
+            _ncctx._CTX = alt_ctx
+        assert gefunden == {os.path.basename(waise)}, \
+            ("die manuelle Aufnahme steht unter den Waisen und wuerde geloescht",
+             gefunden)
+
+        # (b)+(c): echte Funktionskoerper aus bot.py gegen die Temp-Datenbank.
+        baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+        teile = [k for k in baum.body
+                 if (isinstance(k, _ast.FunctionDef)
+                     and k.name in ("add_recording", "_sitzung_bestimmen"))
+                 or (isinstance(k, _ast.Assign) and any(
+                     getattr(t, "id", "").startswith("_ADD_RECORDING_")
+                     for t in k.targets))]
+        raum = {"db_conn": db_conn, "log": _ArcLog(), "os": os,
+                "datetime": datetime, "timezone": timezone, "timedelta": timedelta,
+                "Optional": Optional, "_iso": lambda d: d.isoformat() if d else None,
+                "_nc_sitzung": AS, "log_event": lambda *a, **k: None,
+                "_time_mod": _t}
+        exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), raum)
+        add = raum["add_recording"]
+        t0 = datetime(2026, 11, 20, 10, 0, 0, tzinfo=timezone.utc)
+        s = timedelta(seconds=1)
+        r1 = add("u", "/r/s1.mp4", started_at=t0, ended_at=t0 + 600 * s)
+        rm = add("u", "/r/manual_u.mp4", started_at=t0 + 300 * s,
+                 ended_at=t0 + 700 * s, sitzung=False)
+        r2 = add("u", "/r/s2.mp4", started_at=t0 + 605 * s, ended_at=t0 + 1200 * s)
+        with db_conn() as c:
+            sid = {r["id"]: r["session_id"] for r in c.execute(
+                "SELECT id, session_id FROM recordings").fetchall()}
+        assert sid[rm] is None, ("die manuelle Aufnahme landet in einer Sitzung — "
+                                 "beim Zusammenfuegen kaemen Minuten doppelt", sid)
+        assert sid[r1] and sid[r2] == sid[r1], \
+            ("die manuelle Zeile reisst die laufende Sitzung durch", sid)
+
+    fn = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "trigger_manual_recording")
+    rufe = [k for k in _ast.walk(fn) if isinstance(k, _ast.Call)
+            and _ast.unparse(k.func) == "asyncio.to_thread"
+            and k.args and _ast.unparse(k.args[0]) == "add_recording"]
+    assert rufe and any(kw.arg == "sitzung" and getattr(kw.value, "value", 1) is False
+                        for kw in rufe[0].keywords), \
+        "_wait_and_finish traegt die fertige manuelle Aufnahme nicht (ohne Sitzung) ein"
+    ok("ARC-2: manuelle Aufnahmen sind keine Waisen, stehen in recordings und "
+       "reissen keine Sitzung durch")
+
+
+def _test_arc5_uploadschlange_streng():
+    """ARC-5: `_upload_queue_load` gab bei jedem Lesefehler `[]` zurueck; der
+    naechste Schreibvorgang (Einreihen, Entfernen, Fortschreiben) loeschte
+    damit ALLE aufgeschobenen Uploads, und `_clip_prune` nahm dieselbe leere
+    Liste als Schutzmenge und loeschte aufgeschobene Meme-Zusammenschnitte.
+    Jetzt: streng lesen, kaputten Inhalt beiseitelegen (nie ueberschreiben),
+    Lesefehler => nichts schreiben, Retention ueberspringt laut. Gemessen an
+    den echten Funktionskoerpern aus bot.py."""
+    import ast as _ast
+    import json as _json
+    import threading as _th
+    import time as _tm
+    from datetime import datetime, timezone
+    from nc import uploadschlange as U
+
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    namen = {"_upload_queue_load", "_upload_queue_schreibbar", "_upload_queue_save",
+             "_upload_queue_add", "_upload_queue_remove", "_clip_prune"}
+    teile = [k for k in baum.body if getattr(k, "name", "") in namen]
+    assert len(teile) == len(namen), [k.name for k in teile]
+    heim = _ph.verzeichnis()
+    clips = os.path.join(heim, "clips")
+    os.makedirs(clips)
+    qpfad = os.path.join(heim, "pending_uploads.json")
+    meme = _ph.attrappe(os.path.join(clips, "memes_u.mp4"), 10)
+    os.utime(meme, (1000, 1000))
+    lg = _ArcLog()
+    fehler = []
+    ns = {"_UPLOAD_QUEUE_LOCK": _th.Lock(), "_upload_queue_path": lambda: qpfad,
+          "json": _json, "os": os, "log": lg, "_nc_uschlange": U,
+          "datetime": datetime, "timezone": timezone, "_time_mod": _tm,
+          "UPLOAD_WINDOW_START": 22, "UPLOAD_WINDOW_END": 6,
+          "CLIP_DIR": clips, "CLIP_MAX_AGE_DAYS": 1, "CLIP_MAX_COUNT": 0,
+          "_loop_fehler": lambda n, e: fehler.append((n, str(e)))}
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
+    alt = [{"chat_id": -1, "file": meme, "username": "u", "queued_at": "q1"}]
+
+    # (1) Kaputtes JSON (abgeschnitten): Einreihen legt es beiseite, statt den
+    # Bestand mit einer Ein-Eintrag-Liste zu ueberschreiben.
+    kaputt = _json.dumps(alt)[:-7]
+    open(qpfad, "w", encoding="utf-8").write(kaputt)
+    try:
+        ns["_upload_queue_load"]()
+        raise AssertionError("kaputte Schlange liest sich als leere Liste")
+    except U.SchlangeUnlesbar:
+        pass
+    # Retention bei unlesbarer Schlange: nichts loeschen, laut melden.
+    ns["_clip_prune"]()
+    assert os.path.isfile(meme), \
+        "die Retention loescht einen aufgeschobenen Zusammenschnitt, weil die Schlange unlesbar war"
+    assert fehler and fehler[0][0] == "clip-prune", fehler
+    ns["_upload_queue_add"](-2, "/rec/b.mp4", "v", None, None)
+    weg = [n for n in os.listdir(heim) if n.startswith("pending_uploads.json.kaputt-")]
+    assert len(weg) == 1 and open(os.path.join(heim, weg[0]), encoding="utf-8").read() \
+        == kaputt, ("der kaputte Bestand ist nicht unverfaelscht beiseitegelegt", weg)
+    neu = ns["_upload_queue_load"]()
+    assert [e["file"] for e in neu] == ["/rec/b.mp4"], neu
+    assert lg.stufe("error") and weg[0] in lg.stufe("error")[0], lg.zeilen
+
+    # (2) Keine Liste: dasselbe, auch beim Entfernen; ein zweiter Ausfall in
+    # derselben Sekunde ueberschreibt den ersten nicht.
+    open(qpfad, "w", encoding="utf-8").write('{"chat_id": -1}')
+    ns["_upload_queue_remove"]({"file": "x"})
+    weg2 = [n for n in os.listdir(heim) if n.startswith("pending_uploads.json.kaputt-")]
+    assert len(weg2) == 2, weg2
+
+    # (3) Lesefehler (E/A, Rechte): nichts schreiben, nichts verschieben.
+    ns["_upload_queue_save"](alt)
+    echt_open = open
+
+    def _io_fehler(p, *a, **k):
+        if p == qpfad:
+            raise PermissionError(13, "Permission denied")
+        return echt_open(p, *a, **k)
+    U.open = _io_fehler   # Modul-Global ueberdeckt das eingebaute open
+    try:
+        for schritt in (lambda: ns["_upload_queue_add"](-3, "/rec/c.mp4", "w", None, None),
+                        lambda: ns["_upload_queue_remove"](alt[0])):
+            try:
+                schritt()
+                raise AssertionError("Schreiben trotz unlesbarer Schlange")
+            except U.SchlangeUnlesbar:
+                pass
+    finally:
+        del U.open
+    assert ns["_upload_queue_load"]() == alt, \
+        "ein Lesefehler hat die Schlange ueberschrieben — alle aufgeschobenen Uploads weg"
+    assert len([n for n in os.listdir(heim) if ".kaputt-" in n]) == 2
+    ok("ARC-5: Upload-Schlange streng gelesen — kaputt wird beiseitegelegt, "
+       "Lesefehler schreibt nichts, Retention ueberspringt laut")
+
+
+def _test_arc4_join_ueber_teildatei():
+    """ARC-4: ein gescheiterter Join liess eine halbe sitzung_*.mp4 liegen —
+    durch AUF-3 (ist_zieldatei) dauerhaft vor dem Aufraeumer geschuetzt, und
+    jeder weitere Join endete auf 409. Nach einem Neustart lagen
+    `.angleich/`-Ordner und Listendateien fuer immer da. Jetzt schreibt
+    ffmpeg in eine Teildatei (Punktname, nicht geschuetzt), os.replace erst
+    nach Erfolg, und vor jedem Join werden Reste eingesammelt — ausser denen
+    eines laufenden Joins. ffmpeg ist eine Attrappe (subprocess.run)."""
+    import types as _ty
+    from nc import aufnahmesitzung as AS
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+
+    auf = _ph.verzeichnis()
+    a = _ph.attrappe(os.path.join(auf, "a.mp4"), 1024)
+    b = _ph.attrappe(os.path.join(auf, "b.mp4"), 1024)
+    sid = "@u_20261120T1000"
+    ziel = AS.zieldatei(auf, sid)
+    teil = AS.teildatei(ziel)
+    assert not AS.ist_zieldatei(os.path.basename(teil)), \
+        "die Teildatei faellt unter den AUF-3-Schutz und bleibt fuer immer liegen"
+    lauf = {"rc": 1, "geschrieben": []}
+
+    def _run(cmd, **kw):
+        if "concat" not in cmd:          # ffprobe/Angleich: nichts zu tun
+            return _ty.SimpleNamespace(returncode=0, stdout="", stderr="")
+        with open(cmd[-1], "wb") as f:   # halb geschrieben, dann Abbruch
+            f.write(b"\0" * (4096 if lauf["rc"] else 8192))
+        lauf["geschrieben"].append(cmd[-1])
+        return _ty.SimpleNamespace(returncode=lauf["rc"], stdout="",
+                                   stderr="No space left on device")
+
+    alt_ctx, alt_sp, alt_le, alt_ang = (_ncctx._CTX, rt.subprocess, rt.log_event,
+                                        rt._tonformat_angleichen)
+    _ncctx.configure(recordings_dir=auf, log=_ArcLog(),
+                     log_event=lambda *x, **k: None, arg_int=lambda *x, **k: 0,
+                     ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    try:
+        rt.subprocess = _ty.SimpleNamespace(run=_run)
+        rt.log_event = lambda *x, **k: None
+        rt._tonformat_angleichen = lambda sid_, pfade, *x: pfade
+        rt._join_lauf(sid, [a, b], ziel, None, None)
+        assert rt._JOIN_LAGE[sid]["status"] == "fehler", rt._JOIN_LAGE[sid]
+        assert lauf["geschrieben"] == [teil], \
+            ("ffmpeg schreibt direkt unter den endgueltigen Namen", lauf["geschrieben"])
+        assert sorted(os.listdir(auf)) == ["a.mp4", "b.mp4"], \
+            ("ein gescheiterter Join hinterlaesst Reste — der naechste endet auf 409",
+             sorted(os.listdir(auf)))
+
+        # Reste eines Neustarts mitten im Lauf; ein laufender Join daneben.
+        ziel2 = AS.zieldatei(auf, "@v_20261120T1100")
+        for z in (ziel, ziel2):
+            os.makedirs(z + ".angleich")
+            _ph.attrappe(os.path.join(z + ".angleich", "000.mp4"), 10)
+            _ph.attrappe(z + ".txt", 10)
+            _ph.attrappe(AS.teildatei(z), 10)
+        rt._JOIN_LAGE["@v_20261120T1100"] = {"status": "laeuft", "ziel": ziel2}
+        rt._join_reste_weg(auf)
+        bleibt = sorted(os.listdir(auf))
+        assert bleibt == sorted(["a.mp4", "b.mp4", os.path.basename(ziel2) + ".angleich",
+                                 os.path.basename(ziel2) + ".txt",
+                                 os.path.basename(AS.teildatei(ziel2))]), \
+            ("Join-Reste falsch eingesammelt (fremde Reste liegen oder der "
+             "laufende Join verliert seine Dateien)", bleibt)
+
+        lauf["rc"] = 0
+        rt._join_lauf(sid, [a, b], ziel, None, None)
+        assert rt._JOIN_LAGE[sid]["status"] == "fertig", rt._JOIN_LAGE[sid]
+        assert os.path.getsize(ziel) == 8192 and not os.path.exists(teil), \
+            "nach Erfolg liegt die Sitzung nicht unter ihrem Namen"
+    finally:
+        rt._JOIN_LAGE.pop(sid, None)
+        rt._JOIN_LAGE.pop("@v_20261120T1100", None)
+        rt.subprocess, rt.log_event, rt._tonformat_angleichen = alt_sp, alt_le, alt_ang
+        _ncctx._CTX = alt_ctx
+    import ast as _ast
+    fn = next(n for n in _ast.parse(open(rt.__file__, encoding="utf-8").read()).body
+              if getattr(n, "name", "") == "api_recording_session_join")
+    assert "_join_reste_weg" in {_ast.unparse(k.func) for k in _ast.walk(fn)
+                                 if isinstance(k, _ast.Call)}, \
+        "die Join-Route sammelt die Reste abgebrochener Laeufe nicht mehr ein"
+    ok("ARC-4: Join ueber Teildatei, gescheiterter Lauf hinterlaesst nichts, "
+       "Reste werden vor dem naechsten Join eingesammelt")
+
+
+def _test_arc6_arc7_arc8_archivrouten():
+    """ARC-6: /api/archive/index/<rid> rief `.get()` auf eine sqlite3.Row
+    (nacktes 500 unter SQLite) und fand nur die juengsten 1000 Aufnahmen.
+    ARC-7: der Ordner-Scan uebernimmt aus MANUAL_ARCHIVE_DIR, Loeschen und
+    Umbenennen prueften nur gegen ARCHIVE_DIR — uebernommene Eintraege waren
+    nie loeschbar. ARC-8: scheiterte beim Upload der Eintrag, lag die Datei
+    ohne Zeile im Archiv (nacktes 500, Wiederholung legte name_2 an).
+    Gemessen ueber die echten Routen gegen Temp-SQLite mit echtem Schema."""
+    import io as _io
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc.routes import archive as rt
+
+    with _ArcDb() as db:
+        arch = os.path.join(db.heim, "archiv")
+        manuell = os.path.join(db.heim, "manuell")
+        # Gleicher Praefix ohne Trenner: „manuell_fremd" liegt NICHT unter „manuell".
+        fremd = manuell + "_fremd"
+        for d in (arch, manuell, fremd):
+            os.makedirs(d)
+        gerufen = []
+        alt_ctx = _ncctx._CTX
+        _ncctx.configure(
+            cfg={"ARCHIVE_DIR": arch, "_MANUAL_ARCHIVE_DIR": manuell,
+                 "ARCHIVE_MAX_UPLOAD_MB": 10, "ARCHIVE_ALLOWED_EXTS": {"mp4"}},
+            log=_ArcLog(), log_event=lambda *a, **k: None,
+            run_async=lambda coro, timeout=None: coro,
+            intel_index_one=lambda rid, pfad, username="": gerufen.append(
+                (rid, pfad, username)) or 3)
+        app = Flask("arc678")
+        app.register_blueprint(rt.bp)
+        cl = app.test_client()
+        alt_add = rt.add_archive_entry
+        try:
+            # ── ARC-6 ─────────────────────────────────────────────────
+            with db_conn() as c:
+                for i in range(1003):
+                    c.execute("INSERT INTO recordings (username, filepath, created_at) "
+                              "VALUES (?,?,?)", ("u%d" % i, "/rec/%d.mp4" % i,
+                                                 "2026-11-20T10:00:00+00:00"))
+                c.commit()
+                alt_rid = c.execute("SELECT MIN(id) AS m FROM recordings").fetchone()["m"]
+            r = cl.post("/api/archive/index/%d" % alt_rid)
+            assert r.status_code == 200 and r.get_json()["segments"] == 3, \
+                ("Index einer Aufnahme ausserhalb der juengsten 1000 / unter SQLite",
+                 r.status_code, r.get_data(as_text=True)[:200])
+            assert gerufen == [(alt_rid, "/rec/0.mp4", "u0")], gerufen
+            assert cl.post("/api/archive/index/999999").status_code == 404
+
+            # ── ARC-7 ─────────────────────────────────────────────────
+            def _eintrag(pfad):
+                _ph.attrappe(pfad, 64)
+                with db_conn() as c:
+                    c.execute("INSERT INTO archive (filename, filepath, created_at) "
+                              "VALUES (?,?,?)", (os.path.basename(pfad), pfad,
+                                                 "2026-11-20T10:00:00+00:00"))
+                    c.commit()
+                    return c.execute("SELECT id FROM archive WHERE filepath=?",
+                                     (pfad,)).fetchone()["id"]
+            eid = _eintrag(os.path.join(manuell, "alt.mp4"))
+            ok_, neu = rt.rename_archive_entry(eid, "neu")
+            assert ok_ and os.path.isfile(os.path.join(manuell, "neu.mp4")), \
+                ("ein aus MANUAL_ARCHIVE_DIR uebernommener Eintrag ist nicht "
+                 "umbenennbar oder wandert dabei in einen anderen Ordner", ok_, neu,
+                 os.listdir(manuell), os.listdir(arch))
+            r = cl.delete("/api/archive/%d" % eid)
+            assert r.status_code == 200 and os.listdir(manuell) == [], \
+                ("ein uebernommener Eintrag ist nicht loeschbar",
+                 r.get_data(as_text=True)[:200], os.listdir(manuell))
+            eid_f = _eintrag(os.path.join(fremd, "x.mp4"))
+            r = cl.delete("/api/archive/%d" % eid_f)
+            assert r.status_code != 200 and os.listdir(fremd) == ["x.mp4"], \
+                "eine Datei ausserhalb beider Wurzeln wurde geloescht"
+            assert rt.rename_archive_entry(eid_f, "y")[0] is False
+
+            # ── ARC-8 ─────────────────────────────────────────────────
+            def _wirft(**kw):
+                raise RuntimeError("database is locked")
+            rt.add_archive_entry = _wirft
+            vorher = sorted(os.listdir(arch))
+            r = cl.post("/api/archive/upload", data={
+                "file": (_io.BytesIO(b"\0" * 2048), "clip.mp4")},
+                content_type="multipart/form-data")
+            assert r.status_code == 503 and r.get_json()["ok"] is False, \
+                (r.status_code, r.get_data(as_text=True)[:200])
+            assert sorted(os.listdir(arch)) == vorher, \
+                ("die Datei liegt nach gescheitertem Eintrag ohne Zeile im Archiv",
+                 os.listdir(arch))
+            rt.add_archive_entry = alt_add
+            r = cl.post("/api/archive/upload", data={
+                "file": (_io.BytesIO(b"\0" * 2048), "clip.mp4")},
+                content_type="multipart/form-data")
+            assert r.status_code == 200 and r.get_json()["filename"] == "clip.mp4", \
+                ("die Wiederholung legt eine Dublette an", r.get_data(as_text=True)[:200])
+            # Die Ruecknahme loescht nur unter ARCHIVE_DIR (CodeQL-Barriere,
+            # PR #232) — auch ein Pfad, der mit dem Wurzelnamen BEGINNT, aber
+            # daneben liegt („archiv" vs. „archiv-x"), ist draussen.
+            _ph.attrappe(os.path.join(fremd, "z.mp4"), 8)
+            daneben = arch.rstrip(os.sep) + "-x"
+            os.makedirs(daneben, exist_ok=True)
+            _ph.attrappe(os.path.join(daneben, "z.mp4"), 8)
+            for draussen in (os.path.join(fremd, "z.mp4"),
+                             os.path.join(arch, "..", os.path.basename(fremd), "z.mp4"),
+                             os.path.join(daneben, "z.mp4")):
+                try:
+                    rt._upload_zuruecknehmen(draussen)
+                    raise AssertionError("Ruecknahme ausserhalb von ARCHIVE_DIR: %s" % draussen)
+                except OSError:
+                    pass
+            assert os.path.isfile(os.path.join(fremd, "z.mp4"))
+            assert os.path.isfile(os.path.join(daneben, "z.mp4"))
+            _ph.attrappe(os.path.join(arch, "drin.mp4"), 8)
+            rt._upload_zuruecknehmen(os.path.join(arch, "drin.mp4"))
+            assert not os.path.exists(os.path.join(arch, "drin.mp4"))
+        finally:
+            rt.add_archive_entry = alt_add
+            _ncctx._CTX = alt_ctx
+    ok("ARC-6/7/8: Index nach Id unter SQLite, Loeschen/Umbenennen in allen "
+       "Archivwurzeln, Upload ohne Zeile wird zurueckgenommen")
+
+
+def _test_arc9_zaehler_und_erfolgsquote():
+    """ARC-9: die Uebersicht zaehlte Lesezeichen, Notizen und Anmerkungen
+    ohne JOIN — auch die geloeschter Aufnahmen; die Streamer-Statistik
+    zaehlte Papierkorb-Aufnahmen mit; und es gab zwei Erfolgsquoten (nur 'ok'
+    gegen 'ok' + 'stall_killed_partial'). Jetzt JOIN mit deleted_at IS NULL
+    und EINE Erfolgsdefinition (nc.stats.ERFOLG_SQL). Temp-SQLite, echtes
+    Schema, Uebersicht ueber die echte Route."""
+    from flask import Flask
+    from nc import stats as ST
+    from nc.routes import recordings as rt
+
+    ts = "2026-11-20T10:00:00+00:00"
+    with _ArcDb():
+        with db_conn() as c:
+            for pfad, geloescht in (("/r/da.mp4", None), ("/r/weg.mp4", ts)):
+                c.execute("INSERT INTO recordings (username, filepath, created_at, "
+                          "deleted_at) VALUES (?,?,?,?)", ("arc9", pfad, ts, geloescht))
+            ids = [r["id"] for r in c.execute("SELECT id FROM recordings ORDER BY id")]
+            for rid in ids + [987654]:            # dazu eine hart geloeschte
+                c.execute("INSERT INTO bookmarks (recording_id, created_at) VALUES (?,?)",
+                          (rid, ts))
+                c.execute("INSERT INTO recording_notes (recording_id, note) VALUES (?,?)",
+                          (rid, "n"))
+                c.execute("INSERT INTO recording_annotations (recording_id, "
+                          "timestamp_secs, created_at) VALUES (?,?,?)", (rid, 5, ts))
+            for o in ("ok", "stall_killed_partial", "failed"):
+                c.execute("INSERT INTO recording_attempts (username, started_at, outcome) "
+                          "VALUES (?,?,?)", ("arc9", ts, o))
+            c.commit()
+        app = Flask("arc9")
+        app.register_blueprint(rt.bp)
+        j = app.test_client().get("/api/recordings/overview").get_json()
+        assert (j["bookmarked"], j["with_notes"], j["annotated"]) == (1, 1, 1), \
+            ("die Uebersicht zaehlt Zeilen geloeschter Aufnahmen mit", j)
+        zeile = next(r for r in ST.get_per_user_stats(limit=50)
+                     if r["username"] == "arc9")
+        assert zeile["rec_count"] == 1, ("Papierkorb zaehlt in der Streamer-Statistik", zeile)
+        tq = ST.trefferquote()
+        assert tq["successful"] == zeile["attempt_ok_count"] == 2, \
+            ("zwei Erfolgsquoten fuer dieselben Versuche", tq, zeile)
+    ok("ARC-9: Zaehler nur zu vorhandenen Aufnahmen, eine Erfolgsdefinition")
+
+
+def _dc_attrappen():
+    """Gemeinsame Attrappen fuer die DC-Vertraege: ein Befehlsbaum, der die
+    echten Befehlsfunktionen einsammelt, und eine Interaction, die mitschreibt.
+    Keine Netzverbindung, kein Gateway — discordbot.py wird nur importiert."""
+    import types as _ty
+
+    class _Baum:
+        def __init__(self):
+            self.f = {}
+
+        def command(self, name=None, description=None, **_kw):
+            def deko(fn):
+                self.f[name] = fn
+                return fn
+            return deko
+
+    class _Antwort:
+        def __init__(self):
+            self.texte = []
+
+        async def send_message(self, text=None, **kw):
+            self.texte.append((text, kw))
+
+        async def defer(self, **_kw):
+            return None
+
+    def rechte(**kw):
+        basis = {n: False for n in ("administrator", "manage_guild", "manage_roles",
+                                    "manage_channels", "ban_members", "kick_members",
+                                    "view_channel")}
+        basis.update(kw)
+        return _ty.SimpleNamespace(**basis)
+
+    def rolle(rid, name, pos, **perms):
+        return _ty.SimpleNamespace(id=rid, name=name, position=pos, permissions=rechte(**perms))
+
+    class _Mitglied:
+        def __init__(self, mid, top, roles=None, **perms):
+            self.id = mid
+            self.top_role = top
+            self.roles = list(roles if roles is not None else [top])
+            self.guild_permissions = rechte(**perms)
+            self.mention = "<@%d>" % mid
+            self.taten = []
+
+        def __str__(self):
+            return "m%d" % self.id
+
+        async def add_roles(self, r, **_kw):
+            self.taten.append(("add", r.name))
+
+        async def remove_roles(self, r, **_kw):
+            self.taten.append(("remove", r.name))
+
+        async def kick(self, **_kw):
+            self.taten.append(("kick",))
+
+        async def ban(self, **_kw):
+            self.taten.append(("ban",))
+
+        async def timeout(self, *_a, **_kw):
+            self.taten.append(("timeout",))
+
+    def inter(user, guild, guild_id=1):
+        return _ty.SimpleNamespace(user=user, guild=guild, guild_id=guild_id,
+                                   command=_ty.SimpleNamespace(name="probe"),
+                                   response=_Antwort(), locale="de")
+
+    return _ty.SimpleNamespace(Baum=_Baum, rechte=rechte, rolle=rolle,
+                               Mitglied=_Mitglied, inter=inter)
+
+
+def _test_dc2_keine_ungewollten_pings():
+    """DC-2: Nutzereingaben pingen den Server nicht mehr — bewusste Pings schon.
+
+    `/stats username:@everyone` antwortete „📊 **@everyone**" und rief den
+    ganzen Server (bei Bot-Recht „@everyone erwaehnen"); ein per /track
+    gespeicherter Name tat das bei jedem /livenow, /recstatus, /tracklist.
+    Nur /leaderboard sendete mit AllowedMentions.none(). Jetzt ist none()
+    die Vorgabe des Clients, und jede GEWOLLTE Erwaehnung nennt ihr Ziel
+    selbst — sonst verstummte sie mit der neuen Vorgabe still.
+    """
+    import ast as _ast
+    import discord as _dc
+    import nc.dcspar as DC
+
+    # (1) Die Client-Vorgabe traegt none(), und ohne sie startet nichts.
+    o = DC.client_optionen(_dc.AllowedMentions.none())
+    assert o["allowed_mentions"].to_dict() == {"parse": []}, o
+    try:
+        DC.client_optionen(None)
+        raise AssertionError("client_optionen ohne allowed_mentions lief durch")
+    except ValueError:
+        pass
+    dbaum = _ast.parse(open("discordbot.py", encoding="utf-8").read())
+    rufe = [c for c in _ast.walk(dbaum) if isinstance(c, _ast.Call)
+            and _ast.unparse(c.func) == "discord.Client"]
+    assert rufe and all("_nc_dcspar.client_optionen(discord.AllowedMentions.none())"
+                        in _ast.unparse(c) for c in rufe), "der Client pingt wieder per Vorgabe"
+    # Die Vorgabe wirkt nur, weil discord.py sie mit dem Einzelwert ZUSAMMENFUEHRT:
+    # ein @here-Ping bleibt @here, ohne dass Rollen oder Nutzer mitkommen.
+    zus = _dc.AllowedMentions.none().merge(_dc.AllowedMentions(everyone=True)).to_dict()
+    assert zus == {"parse": ["everyone"]}, zus
+
+    # (2) Jede bewusste Erwaehnung hat ihr eigenes, ENGES allowed_mentions.
+    def _sendungen(baum):
+        for c in _ast.walk(baum):
+            if (isinstance(c, _ast.Call) and isinstance(c.func, _ast.Attribute)
+                    and c.func.attr in ("send", "send_message")):
+                yield c
+
+    def _am(c):
+        return next((k.value for k in c.keywords if k.arg == "allowed_mentions"), None)
+
+    for c in _sendungen(dbaum):
+        txt = " ".join(_ast.unparse(a) for a in c.args) + " ".join(
+            _ast.unparse(k.value) for k in c.keywords if k.arg == "content")
+        am = _am(c)
+        if "@here" in txt or "@everyone" in txt:
+            assert am is not None and _ast.unparse(am) == "discord.AllowedMentions(everyone=True)", \
+                "Z%d: @here ohne eigenes allowed_mentions — verstummt unter none()" % c.lineno
+        if am is not None:
+            s = _ast.unparse(am)
+            assert ".all()" not in s and "roles=True" not in s and "users=True" not in s, \
+                "Z%d: zu weites allowed_mentions: %s" % (c.lineno, s)
+    # Gewollt: der Verfasser einer entfernten Nachricht, der Aufsteiger, der
+    # Verwarnte, der Neue. (Funktion -> Ziel, Mindestzahl solcher Sendungen.)
+    # Der Eintrag in #mod-log ist KEIN Ping: der Verfasser soll dort nur stehen.
+    gewollt = {"_discord_automod": ("message.author", 1), "_on_level_up": ("message.author", 1),
+               "_c_warn": ("member", 1), "on_member_join": ("member", 2)}
+    gefunden = set()
+    for fn in _ast.walk(dbaum):
+        if not (isinstance(fn, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and fn.name in gewollt):
+            continue
+        gefunden.add(fn.name)
+        ziel, mindest = gewollt[fn.name]
+        erwartet = "discord.AllowedMentions(users=[%s])" % ziel
+        mit = [c for c in _sendungen(fn) if _am(c) is not None and _ast.unparse(_am(c)) == erwartet]
+        assert len(mit) >= mindest, "%s: gewollter Ping ohne eigenes allowed_mentions" % fn.name
+        for c in _sendungen(fn):
+            if _ast.unparse(c.func.value) == "mlog":
+                continue
+            txt = " ".join(_ast.unparse(a) for a in c.args) + " ".join(
+                _ast.unparse(k.value) for k in c.keywords if k.arg == "content")
+            if (ziel + ".mention") in txt or txt in ("_nc_i18n.t(txt)", "_nc_i18n.t(msg)"):
+                assert _am(c) is not None and _ast.unparse(_am(c)) == erwartet, \
+                    "%s Z%d: Ping ohne eigenes allowed_mentions" % (fn.name, c.lineno)
+    assert gefunden == set(gewollt), "Anker verschwunden: %s" % (set(gewollt) - gefunden)
+
+    # (3) bot.py: der /follow-Ping nennt seine Rolle selbst, nichts sonst.
+    bsrc = open("bot.py", encoding="utf-8").read()
+    bbaum = _ast.parse(bsrc)
+    pu = next(n for n in bbaum.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_discord_post_user")
+    rumpf = _ast.unparse(pu)
+    assert "discord.AllowedMentions(roles=[rolle])" in rumpf, "der /follow-Ping verstummt unter none()"
+    sends = list(_sendungen(pu))
+    assert sends and all(_ast.unparse(_am(c) or _ast.Constant(None)) == "am" for c in sends), \
+        "_discord_post_user sendet ohne das Rollen-allowed_mentions"
+    assert "_send(fc, mention, role)" in rumpf
+    ok("DC-2: Client pingt per Vorgabe niemanden, gewollte Pings nennen ihr Ziel selbst")
+
+
+def _test_dc1_rangfolge_vor_botrechten():
+    """DC-1: Server-Befehle pruefen die Rangfolge des AUFRUFERS, nicht des Bots.
+
+    `_is_admin` liess „Server verwalten" oder eine Rolle mit dem NAMEN aus
+    DISCORD_ADMIN_ROLE durch, danach handelte der Bot mit seinen Rechten:
+    `/assign_role @selbst 👑 Owner` (administrator), Bann von Hoeheren,
+    #mod-log per /set_channel_perms oeffnen. Gegen die echten
+    Befehlsfunktionen aus discordbot.py, mit Attrappen statt Gateway.
+    """
+    import asyncio as _aio
+    import logging as _lg
+    import types as _ty
+    import discordbot as DB
+    import nc.discordrang as R
+
+    A = _dc_attrappen()
+    baum = A.Baum()
+    DB._reg_rollen(baum)
+    DB._reg_moderation(baum)
+    DB._reg_streamer(baum)
+    f = baum.f
+    alt = {k: getattr(DB, k) for k in ("log", "DISCORD_ADMIN_ROLE")}
+    DB.log = _lg.getLogger("test.dc1")
+    DB.DISCORD_ADMIN_ROLE = None
+    try:
+        jedermann = A.rolle(1, "@everyone", 0)
+        vip = A.rolle(2, "⭐ VIP", 2)
+        mod = A.rolle(3, "🛡 Moderator", 3, ban_members=True, kick_members=True)
+        verwalter = A.rolle(4, "Verwaltung", 5, manage_guild=True)
+        hoch = A.rolle(5, "Hoch", 10)
+        owner = A.rolle(6, "👑 Owner", 20, administrator=True)
+        guild = _ty.SimpleNamespace(owner_id=999, roles=[jedermann, vip, mod, verwalter, hoch, owner])
+        ich = A.Mitglied(10, verwalter, manage_guild=True)
+        niedrig = A.Mitglied(11, vip)
+        gleich = A.Mitglied(12, verwalter)
+        hoeher = A.Mitglied(13, hoch)
+        eigner = A.Mitglied(999, vip, administrator=True)   # Eigentuemer, niedrige Rolle
+
+        def lauf(name, inter, *a):
+            _aio.run(f[name](inter, *a))
+            return inter.response.texte
+
+        # (1) Der Angriff aus dem Befund: sich selbst die Owner-Rolle geben.
+        i = A.inter(ich, guild)
+        t = lauf("assign_role", i, ich, owner)
+        assert ("add", "👑 Owner") not in ich.taten, "Server verwalten gibt sich administrator"
+        assert t and t[-1] == (DB._rang_satz("rolle_hoeher"), {"ephemeral": True}), t
+        # (2) Eine Rolle UNTER mir, aber mit Bann-Recht: nur fuer Administratoren.
+        lauf("assign_role", A.inter(ich, guild), niedrig, mod)
+        assert ("add", "🛡 Moderator") not in niedrig.taten, "Bann-Recht ohne Administrator vergeben"
+        # (3) Eine harmlose Rolle unter mir — auch an mich selbst — geht weiter.
+        lauf("assign_role", A.inter(ich, guild), ich, vip)
+        assert ("add", "⭐ VIP") in ich.taten, "harmlose Rolle verweigert"
+        lauf("remove_role", A.inter(ich, guild), niedrig, vip)
+        assert ("remove", "⭐ VIP") in niedrig.taten
+        # Gleichrang ist nicht „darunter": die eigene hoechste Rolle vergibt man nicht.
+        chef = A.Mitglied(16, hoch, manage_guild=True)
+        t = lauf("assign_role", A.inter(chef, guild), niedrig, hoch)
+        assert ("add", "Hoch") not in niedrig.taten and t[-1][0] == DB._rang_satz("rolle_hoeher"), t
+        # (4) Kick/Bann/Timeout/Warn: nur wer UNTER mir steht, nie der Eigentuemer.
+        # Die Antwort zaehlt mit: /warn schreibt erst die Verwarnung und
+        # handelt erst ab der dritten — ohne Riegel saehe man an `taten` nichts.
+        nein = (DB._rang_satz("ziel_hoeher"), {"ephemeral": True})
+        for ziel in (hoeher, gleich, eigner):
+            for befehl, extra in (("ban", ()), ("kick", ()), ("timeout", (5,)), ("warn", ())):
+                t = lauf(befehl, A.inter(ich, guild), ziel, *extra)
+                assert t == [nein], "/%s gegen m%d: %s" % (befehl, ziel.id, t)
+            assert ziel.taten == [], "m%d trotz Rangfolge getroffen: %s" % (ziel.id, ziel.taten)
+        lauf("ban", A.inter(ich, guild), niedrig)
+        assert ("ban",) in niedrig.taten, "Bann eines Niedrigeren verweigert"
+        # (5) Administrator ohne Eigentum: Rangfolge gilt trotzdem, Macht-Rollen gehen.
+        admin = A.Mitglied(14, hoch, administrator=True)
+        lauf("assign_role", A.inter(admin, guild), niedrig, mod)
+        assert ("add", "🛡 Moderator") in niedrig.taten
+        lauf("assign_role", A.inter(admin, guild), admin, owner)
+        assert ("add", "👑 Owner") not in admin.taten, "Rolle ueber der eigenen vergeben"
+        # (6) Der Eigentuemer darf alles, auch mit der niedrigsten Rolle.
+        lauf("assign_role", A.inter(eigner, guild), eigner, owner)
+        assert ("add", "👑 Owner") in eigner.taten
+        # (7) Ohne erkennbare Rangfolge: nichts.
+        ohne = A.Mitglied(15, None, manage_guild=True)
+        lauf("ban", A.inter(ohne, guild), niedrig)
+        assert niedrig.taten.count(("ban",)) == 1, "ohne top_role wurde gebannt"
+
+        # (8) Kanalrechte nur fuer Kanaele, die der Aufrufer selbst sieht.
+        class _Kanal:
+            def __init__(self, sicht):
+                self.sicht = sicht
+                self.mention = "#k"
+                self.gesetzt = []
+
+            def permissions_for(self, _m):
+                return A.rechte(view_channel=self.sicht)
+
+            async def set_permissions(self, r, **kw):
+                self.gesetzt.append((r.name, kw))
+
+        modlog = _Kanal(False)
+        lauf("set_channel_perms", A.inter(ich, guild), modlog, jedermann, True, True)
+        assert modlog.gesetzt == [], "#mod-log per /set_channel_perms geoeffnet"
+        offen = _Kanal(True)
+        lauf("set_channel_perms", A.inter(ich, guild), offen, vip, True, False)
+        assert offen.gesetzt == [("⭐ VIP", {"view_channel": True, "send_messages": False})]
+        lauf("set_channel_perms", A.inter(ich, guild), offen, hoch, True, True)
+        assert len(offen.gesetzt) == 1, "Rechte einer hoeheren Rolle gesetzt"
+
+        # (9) DISCORD_ADMIN_ROLE: die hoechste gleichnamige Rolle, oder die ID.
+        echt = A.rolle(30, "Admin", 15)
+        kopie = A.rolle(31, "Admin", 1)     # selbst angelegt, ganz unten
+        g2 = _ty.SimpleNamespace(owner_id=999, roles=[jedermann, kopie, vip, echt])
+        DB.DISCORD_ADMIN_ROLE = "Admin"
+        dieb = A.Mitglied(20, vip, roles=[vip, kopie])
+        treu = A.Mitglied(21, echt, roles=[echt])
+        assert not DB._is_admin(A.inter(dieb, g2)), "Namens-Kopie macht zum Bot-Admin"
+        assert DB._is_admin(A.inter(treu, g2)), "echte Admin-Rolle nicht erkannt"
+        DB.DISCORD_ADMIN_ROLE = "31"
+        assert DB._is_admin(A.inter(dieb, g2)) and not DB._is_admin(A.inter(treu, g2)), \
+            "DISCORD_ADMIN_ROLE als ID nicht ausgewertet"
+        assert R.admin_rolle(g2.roles, "Admin") is echt and R.admin_rolle([], "Admin") is None
+        assert not DB._is_admin(A.inter(dieb, None)), "ohne Gilde zaehlt eine Namens-Rolle"
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+    ok("DC-1: Rollen, Kick/Bann und Kanalrechte nur unter der eigenen hoechsten Rolle")
+
+
+def _test_dc3_track_pruefung_und_grenze():
+    """DC-3: /track prueft den Namen wie Telegram und deckelt je Mitglied;
+    /follow legt Rollen nur fuer getrackte Namen an.
+
+    Vorher: nur strip/lstrip("@"), keine Grenze je Mitglied (je Gilde 0 =
+    unbegrenzt), jedes Tracking bekam Kategorie + drei Kanaele — rund 120×
+    /track fuellten die 500-Kanal-Grenze; ein 2000-Zeichen-Name brach
+    /tracklist; /follow legte je beliebigem Namen eine Rolle an.
+    """
+    import asyncio as _aio
+    import logging as _lg
+    import discordbot as DB
+    import nc.discordlimits as L
+
+    A = _dc_attrappen()
+    baum = A.Baum()
+    DB._reg_tracking(baum)
+    DB._reg_betrieb(baum)
+    f = baum.f
+    GID = 7310001
+    keys = ("log", "DISCORD_ADMIN_ROLE", "DISCORD_TRACK_GROUP_ID", "add_tracking")
+    alt = {k: getattr(DB, k) for k in keys}
+    alt_env = os.environ.pop("DISCORD_TRACK_MAX_JE_MITGLIED", None)
+
+    def _add(gid, u, by):
+        with db_conn() as c:
+            c.execute("INSERT INTO trackings (group_id, username, added_by, created_at) "
+                      "VALUES (?,?,?,?)", (gid, u, by, "2026-11-20T00:00:00"))
+            c.commit()
+        return True
+
+    def _namen():
+        with db_conn() as c:
+            return sorted(r["username"] for r in c.execute(
+                "SELECT username FROM trackings WHERE group_id=?", (GID,)).fetchall())
+
+    # Eigene Datenbank: in der vollen Suite hat ein frueherer Vertrag die
+    # konfigurierte schon umgebogen („no such table: trackings").
+    import nc.dbwrap as W
+    alt_db = (W.DB_PATH, W.DB_BACKEND)
+    W.configure_db(db_path=os.path.join(_ph.verzeichnis(), "dc3.db"), backend="sqlite")
+    with db_conn() as c:
+        c.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, "
+                  "username TEXT, added_by INTEGER, created_at TEXT, last_live INTEGER DEFAULT 0, "
+                  "UNIQUE(group_id, username))")
+        c.commit()
+    DB.log = _lg.getLogger("test.dc3")
+    DB.DISCORD_ADMIN_ROLE = None
+    DB.DISCORD_TRACK_GROUP_ID = 0
+    DB.add_tracking = _add
+    try:
+        assert L.track_grenze_je_mitglied() == 5, "Vorgabe ist nicht 5"
+        os.environ["DISCORD_TRACK_MAX_JE_MITGLIED"] = "abc"
+        assert L.track_grenze_je_mitglied() == 5, "Tippfehler oeffnet den Riegel"
+        os.environ["DISCORD_TRACK_MAX_JE_MITGLIED"] = "0"
+        assert L.track_grenze_je_mitglied() == 0
+        os.environ["DISCORD_TRACK_MAX_JE_MITGLIED"] = "2"
+
+        r = A.rolle(1, "@everyone", 0)
+        wer = A.Mitglied(501, r)
+        admin = A.Mitglied(502, r, manage_guild=True)
+
+        def track(m, name):
+            i = A.inter(m, None, guild_id=GID)
+            _aio.run(f["track"](i, name))
+            return i.response.texte[-1]
+
+        # (1) Namenspruefung wie auf Telegram.
+        t = track(wer, "x" * 2000)
+        assert t[1].get("ephemeral") and _namen() == [], "2000-Zeichen-Name angelegt"
+        track(wer, "a-b")
+        track(wer, "a.")
+        assert _namen() == [], _namen()
+        track(wer, "https://www.tiktok.com/@dc3_eins/live")
+        assert _namen() == ["dc3_eins"], "URL nicht wie auf Telegram zerlegt: %s" % _namen()
+        # (2) Grenze je Mitglied (added_by), Admins zaehlen nicht mit.
+        track(wer, "@dc3_zwei")
+        t = track(wer, "dc3_drei")
+        assert _namen() == ["dc3_eins", "dc3_zwei"], "Grenze je Mitglied wirkt nicht: %s" % _namen()
+        assert t[1].get("ephemeral") and "2" in t[0], t
+        for name in ("dc3_drei", "dc3_vier", "dc3_fuenf"):
+            track(admin, name)
+        assert {"dc3_drei", "dc3_vier", "dc3_fuenf"} <= set(_namen()), \
+            "Admin von der Mitglieder-Grenze getroffen: %s" % _namen()
+
+        # (3) /follow nur fuer getrackte Namen.
+        class _Gilde:
+            def __init__(self):
+                self.roles = []
+                self.angelegt = []
+
+            async def create_role(self, name=None, **_kw):
+                rr = A.rolle(900 + len(self.angelegt), name, 1)
+                self.angelegt.append(name)
+                self.roles.append(rr)
+                return rr
+
+        g = _Gilde()
+        fan = A.Mitglied(503, r)
+        for name in ("nie_getrackt_dc3", "x" * 300, "@everyone!"):
+            i = A.inter(fan, g, guild_id=GID)
+            _aio.run(f["follow"](i, name))
+            assert i.response.texte[-1][1].get("ephemeral")
+        # Altbestand: ein Name, der VOR dieser Pruefung angelegt wurde, ist
+        # getrackt, aber kein TikTok-Name — auch er bekommt keine Rolle.
+        _add(GID, "alt-name", 1)
+        i = A.inter(fan, g, guild_id=GID)
+        _aio.run(f["follow"](i, "alt-name"))
+        assert i.response.texte[-1][1].get("ephemeral")
+        assert g.angelegt == [], "Rolle fuer ungetrackten/ungueltigen Namen angelegt: %s" % g.angelegt
+        i = A.inter(fan, g, guild_id=GID)
+        _aio.run(f["follow"](i, "@DC3_eins"))
+        assert len(g.angelegt) == 1 and ("add", g.angelegt[0]) in fan.taten, \
+            "getrackter Name bekommt keine Rolle: %s" % g.angelegt
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+        if alt_env is None:
+            os.environ.pop("DISCORD_TRACK_MAX_JE_MITGLIED", None)
+        else:
+            os.environ["DISCORD_TRACK_MAX_JE_MITGLIED"] = alt_env
+        with db_conn() as c:
+            for row in c.execute("SELECT id FROM trackings").fetchall():
+                DB._NEXT_CHECK_AT.pop(row["id"], None)
+        W.configure_db(db_path=alt_db[0], backend=alt_db[1])
+    ok("DC-3: /track prueft wie Telegram und deckelt je Mitglied, /follow nur fuer Getrackte")
+
+
+def _test_dc6_shim_dieselbe_liste():
+    """DC-6: Shim-Befehle arbeiten auf derselben Gruppe wie das native /track.
+
+    Der Shim gab die ERSTE ALLOWED_CHAT_ID als Chat aus, /track schreibt nach
+    `DISCORD_TRACK_GROUP_ID or guild_id` — /pause foo fand ein per Discord
+    getracktes foo nicht. Die Freischaltung haengt jetzt am Merkmal
+    `nc_discord_admin` in bot._is_authorized, nicht mehr an der Chat-ID.
+    """
+    import ast as _ast
+    import asyncio as _aio
+    import types as _ty
+    import discordbot as DB
+
+    A = _dc_attrappen()
+    keys = ("ALLOWED_CHAT_IDS", "ALLOWED_USER_IDS", "DISCORD_TRACK_GROUP_ID",
+            "DISCORD_ADMIN_ROLE", "_bot_app_holen")
+    alt = {k: getattr(DB, k) for k in keys}
+    DB.ALLOWED_CHAT_IDS = {-100}
+    DB.ALLOWED_USER_IDS = set()
+    DB.DISCORD_TRACK_GROUP_ID = 0
+    DB.DISCORD_ADMIN_ROLE = None
+    DB._bot_app_holen = None
+    gesehen = []
+
+    async def _handler(upd, ctx):
+        gesehen.append((upd.effective_chat.id, upd.message.chat.id))
+        await upd.message.reply_text("ok")
+
+    def lauf(gid):
+        i = A.inter(A.Mitglied(1, A.rolle(1, "r", 1), manage_guild=True), None, guild_id=gid)
+
+        class _Folge:
+            async def send(self, *_a, **_kw):
+                return None
+        i.followup = _Folge()
+        _aio.run(DB._run_tg_handler(i, _handler))
+        return gesehen[-1]
+
+    try:
+        assert lauf(4242) == (4242, 4242), "Shim arbeitet nicht auf der Gilde: %s" % (gesehen,)
+        DB.DISCORD_TRACK_GROUP_ID = -555
+        assert lauf(4242) == (-555, -555), "DISCORD_TRACK_GROUP_ID im Shim ignoriert"
+        DB.DISCORD_TRACK_GROUP_ID = 0
+        assert lauf(None) == (-100, -100), "DM verliert das alte Ziel"
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+
+    # Die Freischaltung in bot.py: das Merkmal gilt, nur als echtes True.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == "_is_authorized")
+    ns = {"Update": object, "ALLOWED_USER_IDS": set(), "ALLOWED_CHAT_IDS": {-100},
+          "_nc_tgfehler": _ty.SimpleNamespace(migriert_erlaubt=lambda *a: False),
+          "_TG_MIGRIERT": {}}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "x.py", "exec"), ns)
+
+    def upd(**kw):
+        return _ty.SimpleNamespace(effective_user=_ty.SimpleNamespace(id=0),
+                                   effective_chat=_ty.SimpleNamespace(id=4242), **kw)
+    assert ns["_is_authorized"](upd(nc_discord_admin=True)), "Shim auf der Gilde nicht freigeschaltet"
+    assert not ns["_is_authorized"](upd()), "fremde Gilde ohne Merkmal freigeschaltet"
+    assert not ns["_is_authorized"](upd(nc_discord_admin="ja")), "Merkmal als blosser Wahrheitswert"
+    ok("DC-6: Shim-Befehle und /track arbeiten auf derselben Liste")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -44490,6 +47205,38 @@ def main():
     _test_geld1_testereignis_nie_gebucht()
     _test_geld2_reset_laesst_manuelle_spenden()
     _test_geld3_verlorene_spende_laut()
+    _test_web1_login_ziel_ohne_steuerzeichen()
+    _test_web6_obs_stimme_und_uebersetzer_ohne_token()
+    _test_web2_btc_explorer_fehler_gecacht()
+    _test_web3_sw_cacht_nur_die_shell()
+    _test_web4_moderation_zaehlt_nur_durchgreifen()
+    _test_web5_aktive_agenten_sind_eingeschaltete()
+    _test_ops1_motd_laedt_nichts_aus_bot_dir()
+    _test_ops2_mysqldump_ohne_passwort_in_argv()
+    _test_upd1_upd2_teilweise_und_rollback()
+    _test_ops3_deploy_sichert_und_schreibt_nur_code()
+    _test_v5114_tg1_telegram_start_wiederholt()
+    _test_v5114_tg2_untrack_wie_stoppknopf()
+    _test_v5114_dc5_schleifen_ueberleben_neustartfenster()
+    _test_v5114_dc4_netzausfall_beendet_discord_nicht()
+    _test_v5114_dc7_stern_highlight_genau_einmal()
+    _test_v5114_dc8_sprachnachricht_begrenzt()
+    _test_live2_proxy_zugang_nie_im_log()
+    _test_live1_ytdlp_bestes_format_zuerst()
+    _test_live3_pause_beendet_live()
+    _test_live5_combo_geschenk_einmal()
+    _test_live6_name_gross_klein_ein_nutzer()
+    _test_live7_lockzeile_gedrosselt()
+    _test_arc1_arc3_archivkopie_atomar_und_einmal()
+    _test_arc2_manuelle_aufnahme_keine_waise()
+    _test_arc5_uploadschlange_streng()
+    _test_arc4_join_ueber_teildatei()
+    _test_arc6_arc7_arc8_archivrouten()
+    _test_arc9_zaehler_und_erfolgsquote()
+    _test_dc2_keine_ungewollten_pings()
+    _test_dc1_rangfolge_vor_botrechten()
+    _test_dc3_track_pruefung_und_grenze()
+    _test_dc6_shim_dieselbe_liste()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

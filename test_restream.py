@@ -3086,72 +3086,73 @@ def test_v40_version():
        BUILD_STAMP und nc.version NICHT auseinanderlaufen (schon dreimal
        passiert: Modul auf neu, Footer blieb auf alt)."""
     from nc import version as v
-    # ANKER GEWANDERT (v5.11.3, nicht der Vertrag): 5.11.2 -> 5.11.3. Dieser Test
+    # ANKER GEWANDERT (v5.11.4, nicht der Vertrag): 5.11.3 -> 5.11.4. Dieser Test
     # wandert absichtlich mit jeder Fassung mit — er ist die Stelle, an der
     # ein halber Versionssprung auffliegt (Modul hochgezaehlt, Footer nicht).
-    assert v.VERSION == "5.11.3" and v.current()["version"] == "5.11.3"
-    assert v.summary_line().startswith("NIGHTCRAWLER v5.11.3")
+    assert v.VERSION == "5.11.4" and v.current()["version"] == "5.11.4"
+    assert v.summary_line().startswith("NIGHTCRAWLER v5.11.4")
     top = v.latest()
-    assert top["version"] == "5.11.3" and len(top["highlights"]) >= 3
-    assert [c["version"] for c in v.changelog()][:5] == ["5.11.3", "5.11.2", "5.11.1", "5.11.0", "5.10.0"]
+    assert top["version"] == "5.11.4" and len(top["highlights"]) >= 3
+    assert [c["version"] for c in v.changelog()][:5] == ["5.11.4", "5.11.3", "5.11.2", "5.11.1", "5.11.0"]
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
     # Der Sprung darf die Vorgaengerfassung nicht ausraeumen. Beim
     # Umhaengen der Highlights ist genau das die Gefahr — man verschiebt
     # versehentlich ALLE statt der neuen, und 4.4 steht danach leer im
     # "Was ist neu"-Panel.
     vor = v.changelog()[1]
-    assert vor["version"] == "5.11.2" and len(vor["highlights"]) >= 5, \
-        f"5.11.2 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
-        f"auf 5.11.3 ist die Vorgaengerfassung ausgeraeumt worden"
-    assert len(v.changelog()[2]["highlights"]) >= 5, "5.11.1 ausgeraeumt"
-    assert len(v.changelog()[3]["highlights"]) >= 5, "5.11.0 ausgeraeumt"
-    assert len(v.changelog()[4]["highlights"]) >= 5, "5.10.0 ausgeraeumt"
-    assert len(v.changelog()[5]["highlights"]) >= 5, "5.9.0 ausgeraeumt"
-    assert len(v.changelog()[6]["highlights"]) >= 5, "5.8.0 ausgeraeumt"
-    assert len(v.changelog()[7]["highlights"]) >= 5, "5.7.0 ausgeraeumt"
-    assert len(v.changelog()[8]["highlights"]) >= 5, "5.6.0 ausgeraeumt"
-    assert len(v.changelog()[9]["highlights"]) >= 5, "5.5.0 ausgeraeumt"
-    assert len(v.changelog()[10]["highlights"]) >= 5, "5.4.0 ausgeraeumt"
-    assert len(v.changelog()[11]["highlights"]) >= 5, "5.3.1 ausgeraeumt"
-    assert len(v.changelog()[12]["highlights"]) >= 5, "5.3.0 ausgeraeumt"
-    assert len(v.changelog()[13]["highlights"]) >= 5, "5.2.1 ausgeraeumt"
-    assert len(v.changelog()[14]["highlights"]) >= 5, "5.2.0 ausgeraeumt"
-    assert len(v.changelog()[15]["highlights"]) >= 5, "5.1.1 ausgeraeumt"
-    assert len(v.changelog()[16]["highlights"]) >= 5, "5.1.0 ausgeraeumt"
-    assert len(v.changelog()[17]["highlights"]) >= 5, "5.0.0 ausgeraeumt"
-    assert len(v.changelog()[18]["highlights"]) >= 5, "4.6.23 ausgeraeumt"
-    assert len(v.changelog()[19]["highlights"]) >= 5, "4.6.22 ausgeraeumt"
-    assert len(v.changelog()[20]["highlights"]) >= 5, "4.6.21 ausgeraeumt"
-    assert len(v.changelog()[21]["highlights"]) >= 4, "4.6.20 ausgeraeumt"
-    assert len(v.changelog()[22]["highlights"]) >= 5, "4.6.19 ausgeraeumt"
-    assert len(v.changelog()[23]["highlights"]) >= 5, "4.6.18 ausgeraeumt"
-    assert len(v.changelog()[24]["highlights"]) >= 5, "4.6.17 ausgeraeumt"
-    assert len(v.changelog()[25]["highlights"]) >= 5, "4.6.16 ausgeraeumt"
-    assert len(v.changelog()[26]["highlights"]) >= 5, "4.6.15 ausgeraeumt"
-    assert len(v.changelog()[27]["highlights"]) >= 5, "4.6.14 ausgeraeumt"
-    assert len(v.changelog()[28]["highlights"]) >= 5, "4.6.13 ausgeraeumt"
-    assert len(v.changelog()[29]["highlights"]) >= 5, "4.6.12 ausgeraeumt"
-    assert len(v.changelog()[30]["highlights"]) >= 5, "4.6.11 ausgeraeumt"
-    assert len(v.changelog()[31]["highlights"]) >= 5, "4.6.10 ausgeraeumt"
-    assert len(v.changelog()[32]["highlights"]) >= 5, "4.6.9 ausgeraeumt"
-    assert len(v.changelog()[33]["highlights"]) >= 5, "4.6.8 ausgeraeumt"
-    assert len(v.changelog()[34]["highlights"]) >= 5, "4.6.7 ausgeraeumt"
-    assert len(v.changelog()[35]["highlights"]) >= 5, "4.6.6 ausgeraeumt"
-    assert len(v.changelog()[36]["highlights"]) >= 5, "4.6.5 ausgeraeumt"
-    assert len(v.changelog()[37]["highlights"]) >= 5, "4.6.4 ausgeraeumt"
-    assert len(v.changelog()[38]["highlights"]) >= 5, "4.6.3 ausgeraeumt"
-    assert len(v.changelog()[39]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
-    assert len(v.changelog()[40]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
-    assert len(v.changelog()[41]["highlights"]) >= 5, "4.6 ausgeraeumt"
-    assert len(v.changelog()[42]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
-    assert len(v.changelog()[43]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
-    assert len(v.changelog()[44]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
-    assert len(v.changelog()[45]["highlights"]) >= 5, "4.5 ausgeraeumt"
-    assert len(v.changelog()[47]["highlights"]) >= 10, "4.4 ausgeraeumt"
+    assert vor["version"] == "5.11.3" and len(vor["highlights"]) >= 5, \
+        f"5.11.3 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
+        f"auf 5.11.4 ist die Vorgaengerfassung ausgeraeumt worden"
+    assert len(v.changelog()[2]["highlights"]) >= 5, "5.11.2 ausgeraeumt"
+    assert len(v.changelog()[3]["highlights"]) >= 5, "5.11.1 ausgeraeumt"
+    assert len(v.changelog()[4]["highlights"]) >= 5, "5.11.0 ausgeraeumt"
+    assert len(v.changelog()[5]["highlights"]) >= 5, "5.10.0 ausgeraeumt"
+    assert len(v.changelog()[6]["highlights"]) >= 5, "5.9.0 ausgeraeumt"
+    assert len(v.changelog()[7]["highlights"]) >= 5, "5.8.0 ausgeraeumt"
+    assert len(v.changelog()[8]["highlights"]) >= 5, "5.7.0 ausgeraeumt"
+    assert len(v.changelog()[9]["highlights"]) >= 5, "5.6.0 ausgeraeumt"
+    assert len(v.changelog()[10]["highlights"]) >= 5, "5.5.0 ausgeraeumt"
+    assert len(v.changelog()[11]["highlights"]) >= 5, "5.4.0 ausgeraeumt"
+    assert len(v.changelog()[12]["highlights"]) >= 5, "5.3.1 ausgeraeumt"
+    assert len(v.changelog()[13]["highlights"]) >= 5, "5.3.0 ausgeraeumt"
+    assert len(v.changelog()[14]["highlights"]) >= 5, "5.2.1 ausgeraeumt"
+    assert len(v.changelog()[15]["highlights"]) >= 5, "5.2.0 ausgeraeumt"
+    assert len(v.changelog()[16]["highlights"]) >= 5, "5.1.1 ausgeraeumt"
+    assert len(v.changelog()[17]["highlights"]) >= 5, "5.1.0 ausgeraeumt"
+    assert len(v.changelog()[18]["highlights"]) >= 5, "5.0.0 ausgeraeumt"
+    assert len(v.changelog()[19]["highlights"]) >= 5, "4.6.23 ausgeraeumt"
+    assert len(v.changelog()[20]["highlights"]) >= 5, "4.6.22 ausgeraeumt"
+    assert len(v.changelog()[21]["highlights"]) >= 5, "4.6.21 ausgeraeumt"
+    assert len(v.changelog()[22]["highlights"]) >= 4, "4.6.20 ausgeraeumt"
+    assert len(v.changelog()[23]["highlights"]) >= 5, "4.6.19 ausgeraeumt"
+    assert len(v.changelog()[24]["highlights"]) >= 5, "4.6.18 ausgeraeumt"
+    assert len(v.changelog()[25]["highlights"]) >= 5, "4.6.17 ausgeraeumt"
+    assert len(v.changelog()[26]["highlights"]) >= 5, "4.6.16 ausgeraeumt"
+    assert len(v.changelog()[27]["highlights"]) >= 5, "4.6.15 ausgeraeumt"
+    assert len(v.changelog()[28]["highlights"]) >= 5, "4.6.14 ausgeraeumt"
+    assert len(v.changelog()[29]["highlights"]) >= 5, "4.6.13 ausgeraeumt"
+    assert len(v.changelog()[30]["highlights"]) >= 5, "4.6.12 ausgeraeumt"
+    assert len(v.changelog()[31]["highlights"]) >= 5, "4.6.11 ausgeraeumt"
+    assert len(v.changelog()[32]["highlights"]) >= 5, "4.6.10 ausgeraeumt"
+    assert len(v.changelog()[33]["highlights"]) >= 5, "4.6.9 ausgeraeumt"
+    assert len(v.changelog()[34]["highlights"]) >= 5, "4.6.8 ausgeraeumt"
+    assert len(v.changelog()[35]["highlights"]) >= 5, "4.6.7 ausgeraeumt"
+    assert len(v.changelog()[36]["highlights"]) >= 5, "4.6.6 ausgeraeumt"
+    assert len(v.changelog()[37]["highlights"]) >= 5, "4.6.5 ausgeraeumt"
+    assert len(v.changelog()[38]["highlights"]) >= 5, "4.6.4 ausgeraeumt"
+    assert len(v.changelog()[39]["highlights"]) >= 5, "4.6.3 ausgeraeumt"
+    assert len(v.changelog()[40]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
+    assert len(v.changelog()[41]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
+    assert len(v.changelog()[42]["highlights"]) >= 5, "4.6 ausgeraeumt"
+    assert len(v.changelog()[43]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
+    assert len(v.changelog()[44]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
+    assert len(v.changelog()[45]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
+    assert len(v.changelog()[46]["highlights"]) >= 5, "4.5 ausgeraeumt"
+    assert len(v.changelog()[48]["highlights"]) >= 10, "4.4 ausgeraeumt"
     # Und keine Zeile darf in ZWEI Fassungen stehen.
     doppelt = set(top["highlights"]) & set(vor["highlights"])
-    assert not doppelt, f"in 5.11.3 und 5.11.2 gleichzeitig: {list(doppelt)[:1]}"
-    ok("v5.11.3: nc.version — 5.11.3 + Changelog mit Historie, 5.11.2 bis 4.5 und 4.4 unversehrt")
+    assert not doppelt, f"in 5.11.4 und 5.11.3 gleichzeitig: {list(doppelt)[:1]}"
+    ok("v5.11.4: nc.version — 5.11.4 + Changelog mit Historie, 5.11.3 bis 4.5 und 4.4 unversehrt")
 
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
@@ -3163,7 +3164,7 @@ def test_v40_version():
         "BUILD_STAMP haengt nicht an nc.version"
     # ANKER GEWANDERT (v4.3, nicht der Vertrag): der Stempel folgt RELEASE
     # und VERSION, beide aus nc/version.py.
-    assert v.build_stamp() == "2026.11 · v5.11.3", v.build_stamp()
+    assert v.build_stamp() == "2026.11 · v5.11.4", v.build_stamp()
     # v4.1-W26: Anker mitgewandert. Die Route liegt jetzt in
     # nc/routes/auskunft.py — der VERTRAG ist unveraendert (es gibt sie, und
     # sie meldet die Version), nur ihre Fundstelle nicht.
@@ -4022,7 +4023,10 @@ def test_v40_w19_warn_first():
     assert '_modlog("warn", "auto-mod-twitch"' in src
     # Verwarnungen tauchen im Moderations-Feed auf.
     # ANKER GEWANDERT (v5.6-W197): die Feed-Serie rechnet nc/oeffentlichestats.py.
-    assert "'timeout','ban','flag','delete','warn'" in open(
+    # ANKER GEWANDERT (v5.11.3-WEB-4): die Arten stehen jetzt EINMAL in
+    # nc/modstats.MOD_ARTEN, die Serie fragt ueber sql_bedingung().
+    from nc import modstats as _ms
+    assert "warn" in _ms.MOD_ARTEN and "_nc_modstats.sql_bedingung()" in open(
         "nc/oeffentlichestats.py", encoding="utf-8").read(), "Feed zeigt Verwarnungen nicht"
     dash = open("templates/dashboard.html").read()
     assert "'Verwarnung'" in dash, "Feed beschriftet Verwarnungen nicht"
@@ -5900,10 +5904,14 @@ def test_v40_w46_json_and_telegram_launch():
     src = open("bot.py").read()
     assert "opt = orjson.OPT_NON_STR_KEYS" in src, "JSON-Provider coerct int-Keys nicht"
     # Telegram-Start gekapselt + laut.
-    assert "Telegram-Polling FEHLGESCHLAGEN" in src, "Telegram-Start nicht gekapselt/geloggt"
-    i = src.find("await app.updater.start_polling()")
-    pre = src[max(0, i - 400):i]
-    assert "try:" in pre, "start_polling nicht in einem try"
+    # ANKER GEWANDERT (v5.11.4 TG-1, nicht der Vertrag): der Start steht in
+    # _telegram_starten, gekapselt und laut in nc.telegramfehler.starten —
+    # dort mit Wiederanlauf statt einmaligem Versuch.
+    tgf = open("nc/telegramfehler.py", encoding="utf-8").read()
+    assert "Telegram-Start fehlgeschlagen" in tgf, "Telegram-Start nicht gekapselt/geloggt"
+    assert "except Exception as e:" in tgf[tgf.find("async def starten("):], \
+        "Telegram-Start nicht in einem try"
+    assert "await _telegram_starten(app)" in src, "run_bot startet Telegram nicht ueber den Helfer"
     ok("v4.0-w46: orjson int-Keys gefixt, Telegram-Start gekapselt+diagnostizierbar")
 
 
@@ -6169,7 +6177,10 @@ def test_v40_w53_pwa_audit():
     assert h.count("_viewFromHash()") >= 2, "Hash wird beim Start nicht bevorzugt"
 
     sw = open("templates/sw.js").read()
-    assert "nightcrawler-shell-v3" in sw and "shell-v2" not in sw, "SW-Cache nicht gebumpt (PWA-Update)"
+    # ANKER GEWANDERT (v5.11.3-WEB-3): v4 raeumt die Downloads aus dem Cache.
+    # Die Aussage bleibt: mindestens v3, die v2 ist weg.
+    _swv = re.search(r'"nightcrawler-shell-v(\d+)"', sw)
+    assert _swv and int(_swv.group(1)) >= 3 and "shell-v2" not in sw, "SW-Cache nicht gebumpt (PWA-Update)"
     assert '"/brain"' not in sw, "/brain (404) noch in der SW-Shell"
     assert "pwa-icon-maskable-512.png" in sw, "maskable-Icon nicht in der Shell"
 
