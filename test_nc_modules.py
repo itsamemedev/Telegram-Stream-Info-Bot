@@ -34048,13 +34048,14 @@ def _test_v42_w175_kleinbefunde():
     gepostet = []
 
     class _Kanal:
-        async def send(self, t):
+        async def send(self, t, **_kw):      # DC-2: allowed_mentions kommt mit
             gepostet.append(t)
     M.zuruecksetzen()
     nsl = _exec(dbaum, ["_on_level_up"], {
         "_nc_rang": _ty.SimpleNamespace(rang_fuer_level=lambda l: None, RANG_STUFEN=()),
         "DISCORD_LEVELUP_CHANNEL": "", "_nc_i18n": _ty.SimpleNamespace(t=lambda t: t),
-        "discord": _ty.SimpleNamespace(utils=_ty.SimpleNamespace(get=lambda *a, **k: None)),
+        "discord": _ty.SimpleNamespace(utils=_ty.SimpleNamespace(get=lambda *a, **k: None),
+                                       AllowedMentions=lambda **k: k),
         "log": lg, "_nc_meldetakt": M, "_time_mod": __import__("time")})
     nutzer = _ty.SimpleNamespace(mention="<@1>")
     _aio.run(nsl["_on_level_up"](_ty.SimpleNamespace(author=nutzer, guild=None,
@@ -40033,10 +40034,13 @@ def _test_v52_w193_sparen():
     # ── (3) Discord
     alt = {k: _os.environ.pop(k, None) for k in ("DISCORD_MITGLIEDER_LADEN", "DISCORD_NACHRICHTEN_PUFFER")}
     try:
-        assert DC.client_optionen() == {"chunk_guilds_at_startup": False, "max_messages": 100}
+        # DC-2: allowed_mentions ist Pflicht und wird durchgereicht (eigener Vertrag).
+        assert DC.client_optionen("AM") == {"chunk_guilds_at_startup": False, "max_messages": 100,
+                                            "allowed_mentions": "AM"}
         _os.environ["DISCORD_NACHRICHTEN_PUFFER"] = "0"
         _os.environ["DISCORD_MITGLIEDER_LADEN"] = "1"
-        assert DC.client_optionen() == {"chunk_guilds_at_startup": True, "max_messages": None}
+        assert DC.client_optionen("AM") == {"chunk_guilds_at_startup": True, "max_messages": None,
+                                            "allowed_mentions": "AM"}
     finally:
         for k, v in alt.items():
             if v is not None:
@@ -40049,7 +40053,7 @@ def _test_v52_w193_sparen():
     dbaum = _ast.parse(dsrc)
     rufe = [c for c in _ast.walk(dbaum) if isinstance(c, _ast.Call)
             and _ast.unparse(c.func) == "discord.Client"]
-    assert rufe and all("_nc_dcspar.client_optionen()" in _ast.unparse(c) for c in rufe)
+    assert rufe and all("_nc_dcspar.client_optionen(" in _ast.unparse(c) for c in rufe)
     lb = next(n for n in _ast.walk(dbaum) if isinstance(n, _ast.AsyncFunctionDef)
               and n.name == "_c_leaderboard")
     assert "discord.AllowedMentions.none()" in _ast.unparse(lb), "die Rangliste pingt zehn Leute an"
@@ -46198,6 +46202,488 @@ def _test_arc9_zaehler_und_erfolgsquote():
     ok("ARC-9: Zaehler nur zu vorhandenen Aufnahmen, eine Erfolgsdefinition")
 
 
+def _dc_attrappen():
+    """Gemeinsame Attrappen fuer die DC-Vertraege: ein Befehlsbaum, der die
+    echten Befehlsfunktionen einsammelt, und eine Interaction, die mitschreibt.
+    Keine Netzverbindung, kein Gateway — discordbot.py wird nur importiert."""
+    import types as _ty
+
+    class _Baum:
+        def __init__(self):
+            self.f = {}
+
+        def command(self, name=None, description=None, **_kw):
+            def deko(fn):
+                self.f[name] = fn
+                return fn
+            return deko
+
+    class _Antwort:
+        def __init__(self):
+            self.texte = []
+
+        async def send_message(self, text=None, **kw):
+            self.texte.append((text, kw))
+
+        async def defer(self, **_kw):
+            return None
+
+    def rechte(**kw):
+        basis = {n: False for n in ("administrator", "manage_guild", "manage_roles",
+                                    "manage_channels", "ban_members", "kick_members",
+                                    "view_channel")}
+        basis.update(kw)
+        return _ty.SimpleNamespace(**basis)
+
+    def rolle(rid, name, pos, **perms):
+        return _ty.SimpleNamespace(id=rid, name=name, position=pos, permissions=rechte(**perms))
+
+    class _Mitglied:
+        def __init__(self, mid, top, roles=None, **perms):
+            self.id = mid
+            self.top_role = top
+            self.roles = list(roles if roles is not None else [top])
+            self.guild_permissions = rechte(**perms)
+            self.mention = "<@%d>" % mid
+            self.taten = []
+
+        def __str__(self):
+            return "m%d" % self.id
+
+        async def add_roles(self, r, **_kw):
+            self.taten.append(("add", r.name))
+
+        async def remove_roles(self, r, **_kw):
+            self.taten.append(("remove", r.name))
+
+        async def kick(self, **_kw):
+            self.taten.append(("kick",))
+
+        async def ban(self, **_kw):
+            self.taten.append(("ban",))
+
+        async def timeout(self, *_a, **_kw):
+            self.taten.append(("timeout",))
+
+    def inter(user, guild, guild_id=1):
+        return _ty.SimpleNamespace(user=user, guild=guild, guild_id=guild_id,
+                                   command=_ty.SimpleNamespace(name="probe"),
+                                   response=_Antwort(), locale="de")
+
+    return _ty.SimpleNamespace(Baum=_Baum, rechte=rechte, rolle=rolle,
+                               Mitglied=_Mitglied, inter=inter)
+
+
+def _test_dc2_keine_ungewollten_pings():
+    """DC-2: Nutzereingaben pingen den Server nicht mehr — bewusste Pings schon.
+
+    `/stats username:@everyone` antwortete „📊 **@everyone**" und rief den
+    ganzen Server (bei Bot-Recht „@everyone erwaehnen"); ein per /track
+    gespeicherter Name tat das bei jedem /livenow, /recstatus, /tracklist.
+    Nur /leaderboard sendete mit AllowedMentions.none(). Jetzt ist none()
+    die Vorgabe des Clients, und jede GEWOLLTE Erwaehnung nennt ihr Ziel
+    selbst — sonst verstummte sie mit der neuen Vorgabe still.
+    """
+    import ast as _ast
+    import discord as _dc
+    import nc.dcspar as DC
+
+    # (1) Die Client-Vorgabe traegt none(), und ohne sie startet nichts.
+    o = DC.client_optionen(_dc.AllowedMentions.none())
+    assert o["allowed_mentions"].to_dict() == {"parse": []}, o
+    try:
+        DC.client_optionen(None)
+        raise AssertionError("client_optionen ohne allowed_mentions lief durch")
+    except ValueError:
+        pass
+    dbaum = _ast.parse(open("discordbot.py", encoding="utf-8").read())
+    rufe = [c for c in _ast.walk(dbaum) if isinstance(c, _ast.Call)
+            and _ast.unparse(c.func) == "discord.Client"]
+    assert rufe and all("_nc_dcspar.client_optionen(discord.AllowedMentions.none())"
+                        in _ast.unparse(c) for c in rufe), "der Client pingt wieder per Vorgabe"
+    # Die Vorgabe wirkt nur, weil discord.py sie mit dem Einzelwert ZUSAMMENFUEHRT:
+    # ein @here-Ping bleibt @here, ohne dass Rollen oder Nutzer mitkommen.
+    zus = _dc.AllowedMentions.none().merge(_dc.AllowedMentions(everyone=True)).to_dict()
+    assert zus == {"parse": ["everyone"]}, zus
+
+    # (2) Jede bewusste Erwaehnung hat ihr eigenes, ENGES allowed_mentions.
+    def _sendungen(baum):
+        for c in _ast.walk(baum):
+            if (isinstance(c, _ast.Call) and isinstance(c.func, _ast.Attribute)
+                    and c.func.attr in ("send", "send_message")):
+                yield c
+
+    def _am(c):
+        return next((k.value for k in c.keywords if k.arg == "allowed_mentions"), None)
+
+    for c in _sendungen(dbaum):
+        txt = " ".join(_ast.unparse(a) for a in c.args) + " ".join(
+            _ast.unparse(k.value) for k in c.keywords if k.arg == "content")
+        am = _am(c)
+        if "@here" in txt or "@everyone" in txt:
+            assert am is not None and _ast.unparse(am) == "discord.AllowedMentions(everyone=True)", \
+                "Z%d: @here ohne eigenes allowed_mentions — verstummt unter none()" % c.lineno
+        if am is not None:
+            s = _ast.unparse(am)
+            assert ".all()" not in s and "roles=True" not in s and "users=True" not in s, \
+                "Z%d: zu weites allowed_mentions: %s" % (c.lineno, s)
+    # Gewollt: der Verfasser einer entfernten Nachricht, der Aufsteiger, der
+    # Verwarnte, der Neue. (Funktion -> Ziel, Mindestzahl solcher Sendungen.)
+    # Der Eintrag in #mod-log ist KEIN Ping: der Verfasser soll dort nur stehen.
+    gewollt = {"_discord_automod": ("message.author", 1), "_on_level_up": ("message.author", 1),
+               "_c_warn": ("member", 1), "on_member_join": ("member", 2)}
+    gefunden = set()
+    for fn in _ast.walk(dbaum):
+        if not (isinstance(fn, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and fn.name in gewollt):
+            continue
+        gefunden.add(fn.name)
+        ziel, mindest = gewollt[fn.name]
+        erwartet = "discord.AllowedMentions(users=[%s])" % ziel
+        mit = [c for c in _sendungen(fn) if _am(c) is not None and _ast.unparse(_am(c)) == erwartet]
+        assert len(mit) >= mindest, "%s: gewollter Ping ohne eigenes allowed_mentions" % fn.name
+        for c in _sendungen(fn):
+            if _ast.unparse(c.func.value) == "mlog":
+                continue
+            txt = " ".join(_ast.unparse(a) for a in c.args) + " ".join(
+                _ast.unparse(k.value) for k in c.keywords if k.arg == "content")
+            if (ziel + ".mention") in txt or txt in ("_nc_i18n.t(txt)", "_nc_i18n.t(msg)"):
+                assert _am(c) is not None and _ast.unparse(_am(c)) == erwartet, \
+                    "%s Z%d: Ping ohne eigenes allowed_mentions" % (fn.name, c.lineno)
+    assert gefunden == set(gewollt), "Anker verschwunden: %s" % (set(gewollt) - gefunden)
+
+    # (3) bot.py: der /follow-Ping nennt seine Rolle selbst, nichts sonst.
+    bsrc = open("bot.py", encoding="utf-8").read()
+    bbaum = _ast.parse(bsrc)
+    pu = next(n for n in bbaum.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_discord_post_user")
+    rumpf = _ast.unparse(pu)
+    assert "discord.AllowedMentions(roles=[rolle])" in rumpf, "der /follow-Ping verstummt unter none()"
+    sends = list(_sendungen(pu))
+    assert sends and all(_ast.unparse(_am(c) or _ast.Constant(None)) == "am" for c in sends), \
+        "_discord_post_user sendet ohne das Rollen-allowed_mentions"
+    assert "_send(fc, mention, role)" in rumpf
+    ok("DC-2: Client pingt per Vorgabe niemanden, gewollte Pings nennen ihr Ziel selbst")
+
+
+def _test_dc1_rangfolge_vor_botrechten():
+    """DC-1: Server-Befehle pruefen die Rangfolge des AUFRUFERS, nicht des Bots.
+
+    `_is_admin` liess „Server verwalten" oder eine Rolle mit dem NAMEN aus
+    DISCORD_ADMIN_ROLE durch, danach handelte der Bot mit seinen Rechten:
+    `/assign_role @selbst 👑 Owner` (administrator), Bann von Hoeheren,
+    #mod-log per /set_channel_perms oeffnen. Gegen die echten
+    Befehlsfunktionen aus discordbot.py, mit Attrappen statt Gateway.
+    """
+    import asyncio as _aio
+    import logging as _lg
+    import types as _ty
+    import discordbot as DB
+    import nc.discordrang as R
+
+    A = _dc_attrappen()
+    baum = A.Baum()
+    DB._reg_rollen(baum)
+    DB._reg_moderation(baum)
+    DB._reg_streamer(baum)
+    f = baum.f
+    alt = {k: getattr(DB, k) for k in ("log", "DISCORD_ADMIN_ROLE")}
+    DB.log = _lg.getLogger("test.dc1")
+    DB.DISCORD_ADMIN_ROLE = None
+    try:
+        jedermann = A.rolle(1, "@everyone", 0)
+        vip = A.rolle(2, "⭐ VIP", 2)
+        mod = A.rolle(3, "🛡 Moderator", 3, ban_members=True, kick_members=True)
+        verwalter = A.rolle(4, "Verwaltung", 5, manage_guild=True)
+        hoch = A.rolle(5, "Hoch", 10)
+        owner = A.rolle(6, "👑 Owner", 20, administrator=True)
+        guild = _ty.SimpleNamespace(owner_id=999, roles=[jedermann, vip, mod, verwalter, hoch, owner])
+        ich = A.Mitglied(10, verwalter, manage_guild=True)
+        niedrig = A.Mitglied(11, vip)
+        gleich = A.Mitglied(12, verwalter)
+        hoeher = A.Mitglied(13, hoch)
+        eigner = A.Mitglied(999, vip, administrator=True)   # Eigentuemer, niedrige Rolle
+
+        def lauf(name, inter, *a):
+            _aio.run(f[name](inter, *a))
+            return inter.response.texte
+
+        # (1) Der Angriff aus dem Befund: sich selbst die Owner-Rolle geben.
+        i = A.inter(ich, guild)
+        t = lauf("assign_role", i, ich, owner)
+        assert ("add", "👑 Owner") not in ich.taten, "Server verwalten gibt sich administrator"
+        assert t and t[-1] == (DB._rang_satz("rolle_hoeher"), {"ephemeral": True}), t
+        # (2) Eine Rolle UNTER mir, aber mit Bann-Recht: nur fuer Administratoren.
+        lauf("assign_role", A.inter(ich, guild), niedrig, mod)
+        assert ("add", "🛡 Moderator") not in niedrig.taten, "Bann-Recht ohne Administrator vergeben"
+        # (3) Eine harmlose Rolle unter mir — auch an mich selbst — geht weiter.
+        lauf("assign_role", A.inter(ich, guild), ich, vip)
+        assert ("add", "⭐ VIP") in ich.taten, "harmlose Rolle verweigert"
+        lauf("remove_role", A.inter(ich, guild), niedrig, vip)
+        assert ("remove", "⭐ VIP") in niedrig.taten
+        # Gleichrang ist nicht „darunter": die eigene hoechste Rolle vergibt man nicht.
+        chef = A.Mitglied(16, hoch, manage_guild=True)
+        t = lauf("assign_role", A.inter(chef, guild), niedrig, hoch)
+        assert ("add", "Hoch") not in niedrig.taten and t[-1][0] == DB._rang_satz("rolle_hoeher"), t
+        # (4) Kick/Bann/Timeout/Warn: nur wer UNTER mir steht, nie der Eigentuemer.
+        # Die Antwort zaehlt mit: /warn schreibt erst die Verwarnung und
+        # handelt erst ab der dritten — ohne Riegel saehe man an `taten` nichts.
+        nein = (DB._rang_satz("ziel_hoeher"), {"ephemeral": True})
+        for ziel in (hoeher, gleich, eigner):
+            for befehl, extra in (("ban", ()), ("kick", ()), ("timeout", (5,)), ("warn", ())):
+                t = lauf(befehl, A.inter(ich, guild), ziel, *extra)
+                assert t == [nein], "/%s gegen m%d: %s" % (befehl, ziel.id, t)
+            assert ziel.taten == [], "m%d trotz Rangfolge getroffen: %s" % (ziel.id, ziel.taten)
+        lauf("ban", A.inter(ich, guild), niedrig)
+        assert ("ban",) in niedrig.taten, "Bann eines Niedrigeren verweigert"
+        # (5) Administrator ohne Eigentum: Rangfolge gilt trotzdem, Macht-Rollen gehen.
+        admin = A.Mitglied(14, hoch, administrator=True)
+        lauf("assign_role", A.inter(admin, guild), niedrig, mod)
+        assert ("add", "🛡 Moderator") in niedrig.taten
+        lauf("assign_role", A.inter(admin, guild), admin, owner)
+        assert ("add", "👑 Owner") not in admin.taten, "Rolle ueber der eigenen vergeben"
+        # (6) Der Eigentuemer darf alles, auch mit der niedrigsten Rolle.
+        lauf("assign_role", A.inter(eigner, guild), eigner, owner)
+        assert ("add", "👑 Owner") in eigner.taten
+        # (7) Ohne erkennbare Rangfolge: nichts.
+        ohne = A.Mitglied(15, None, manage_guild=True)
+        lauf("ban", A.inter(ohne, guild), niedrig)
+        assert niedrig.taten.count(("ban",)) == 1, "ohne top_role wurde gebannt"
+
+        # (8) Kanalrechte nur fuer Kanaele, die der Aufrufer selbst sieht.
+        class _Kanal:
+            def __init__(self, sicht):
+                self.sicht = sicht
+                self.mention = "#k"
+                self.gesetzt = []
+
+            def permissions_for(self, _m):
+                return A.rechte(view_channel=self.sicht)
+
+            async def set_permissions(self, r, **kw):
+                self.gesetzt.append((r.name, kw))
+
+        modlog = _Kanal(False)
+        lauf("set_channel_perms", A.inter(ich, guild), modlog, jedermann, True, True)
+        assert modlog.gesetzt == [], "#mod-log per /set_channel_perms geoeffnet"
+        offen = _Kanal(True)
+        lauf("set_channel_perms", A.inter(ich, guild), offen, vip, True, False)
+        assert offen.gesetzt == [("⭐ VIP", {"view_channel": True, "send_messages": False})]
+        lauf("set_channel_perms", A.inter(ich, guild), offen, hoch, True, True)
+        assert len(offen.gesetzt) == 1, "Rechte einer hoeheren Rolle gesetzt"
+
+        # (9) DISCORD_ADMIN_ROLE: die hoechste gleichnamige Rolle, oder die ID.
+        echt = A.rolle(30, "Admin", 15)
+        kopie = A.rolle(31, "Admin", 1)     # selbst angelegt, ganz unten
+        g2 = _ty.SimpleNamespace(owner_id=999, roles=[jedermann, kopie, vip, echt])
+        DB.DISCORD_ADMIN_ROLE = "Admin"
+        dieb = A.Mitglied(20, vip, roles=[vip, kopie])
+        treu = A.Mitglied(21, echt, roles=[echt])
+        assert not DB._is_admin(A.inter(dieb, g2)), "Namens-Kopie macht zum Bot-Admin"
+        assert DB._is_admin(A.inter(treu, g2)), "echte Admin-Rolle nicht erkannt"
+        DB.DISCORD_ADMIN_ROLE = "31"
+        assert DB._is_admin(A.inter(dieb, g2)) and not DB._is_admin(A.inter(treu, g2)), \
+            "DISCORD_ADMIN_ROLE als ID nicht ausgewertet"
+        assert R.admin_rolle(g2.roles, "Admin") is echt and R.admin_rolle([], "Admin") is None
+        assert not DB._is_admin(A.inter(dieb, None)), "ohne Gilde zaehlt eine Namens-Rolle"
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+    ok("DC-1: Rollen, Kick/Bann und Kanalrechte nur unter der eigenen hoechsten Rolle")
+
+
+def _test_dc3_track_pruefung_und_grenze():
+    """DC-3: /track prueft den Namen wie Telegram und deckelt je Mitglied;
+    /follow legt Rollen nur fuer getrackte Namen an.
+
+    Vorher: nur strip/lstrip("@"), keine Grenze je Mitglied (je Gilde 0 =
+    unbegrenzt), jedes Tracking bekam Kategorie + drei Kanaele — rund 120×
+    /track fuellten die 500-Kanal-Grenze; ein 2000-Zeichen-Name brach
+    /tracklist; /follow legte je beliebigem Namen eine Rolle an.
+    """
+    import asyncio as _aio
+    import logging as _lg
+    import discordbot as DB
+    import nc.discordlimits as L
+
+    A = _dc_attrappen()
+    baum = A.Baum()
+    DB._reg_tracking(baum)
+    DB._reg_betrieb(baum)
+    f = baum.f
+    GID = 7310001
+    keys = ("log", "DISCORD_ADMIN_ROLE", "DISCORD_TRACK_GROUP_ID", "add_tracking")
+    alt = {k: getattr(DB, k) for k in keys}
+    alt_env = os.environ.pop("DISCORD_TRACK_MAX_JE_MITGLIED", None)
+
+    def _add(gid, u, by):
+        with db_conn() as c:
+            c.execute("INSERT INTO trackings (group_id, username, added_by, created_at) "
+                      "VALUES (?,?,?,?)", (gid, u, by, "2026-11-20T00:00:00"))
+            c.commit()
+        return True
+
+    def _namen():
+        with db_conn() as c:
+            return sorted(r["username"] for r in c.execute(
+                "SELECT username FROM trackings WHERE group_id=?", (GID,)).fetchall())
+
+    # Eigene Datenbank: in der vollen Suite hat ein frueherer Vertrag die
+    # konfigurierte schon umgebogen („no such table: trackings").
+    import nc.dbwrap as W
+    alt_db = (W.DB_PATH, W.DB_BACKEND)
+    W.configure_db(db_path=os.path.join(_ph.verzeichnis(), "dc3.db"), backend="sqlite")
+    with db_conn() as c:
+        c.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, "
+                  "username TEXT, added_by INTEGER, created_at TEXT, last_live INTEGER DEFAULT 0, "
+                  "UNIQUE(group_id, username))")
+        c.commit()
+    DB.log = _lg.getLogger("test.dc3")
+    DB.DISCORD_ADMIN_ROLE = None
+    DB.DISCORD_TRACK_GROUP_ID = 0
+    DB.add_tracking = _add
+    try:
+        assert L.track_grenze_je_mitglied() == 5, "Vorgabe ist nicht 5"
+        os.environ["DISCORD_TRACK_MAX_JE_MITGLIED"] = "abc"
+        assert L.track_grenze_je_mitglied() == 5, "Tippfehler oeffnet den Riegel"
+        os.environ["DISCORD_TRACK_MAX_JE_MITGLIED"] = "0"
+        assert L.track_grenze_je_mitglied() == 0
+        os.environ["DISCORD_TRACK_MAX_JE_MITGLIED"] = "2"
+
+        r = A.rolle(1, "@everyone", 0)
+        wer = A.Mitglied(501, r)
+        admin = A.Mitglied(502, r, manage_guild=True)
+
+        def track(m, name):
+            i = A.inter(m, None, guild_id=GID)
+            _aio.run(f["track"](i, name))
+            return i.response.texte[-1]
+
+        # (1) Namenspruefung wie auf Telegram.
+        t = track(wer, "x" * 2000)
+        assert t[1].get("ephemeral") and _namen() == [], "2000-Zeichen-Name angelegt"
+        track(wer, "a-b")
+        track(wer, "a.")
+        assert _namen() == [], _namen()
+        track(wer, "https://www.tiktok.com/@dc3_eins/live")
+        assert _namen() == ["dc3_eins"], "URL nicht wie auf Telegram zerlegt: %s" % _namen()
+        # (2) Grenze je Mitglied (added_by), Admins zaehlen nicht mit.
+        track(wer, "@dc3_zwei")
+        t = track(wer, "dc3_drei")
+        assert _namen() == ["dc3_eins", "dc3_zwei"], "Grenze je Mitglied wirkt nicht: %s" % _namen()
+        assert t[1].get("ephemeral") and "2" in t[0], t
+        for name in ("dc3_drei", "dc3_vier", "dc3_fuenf"):
+            track(admin, name)
+        assert {"dc3_drei", "dc3_vier", "dc3_fuenf"} <= set(_namen()), \
+            "Admin von der Mitglieder-Grenze getroffen: %s" % _namen()
+
+        # (3) /follow nur fuer getrackte Namen.
+        class _Gilde:
+            def __init__(self):
+                self.roles = []
+                self.angelegt = []
+
+            async def create_role(self, name=None, **_kw):
+                rr = A.rolle(900 + len(self.angelegt), name, 1)
+                self.angelegt.append(name)
+                self.roles.append(rr)
+                return rr
+
+        g = _Gilde()
+        fan = A.Mitglied(503, r)
+        for name in ("nie_getrackt_dc3", "x" * 300, "@everyone!"):
+            i = A.inter(fan, g, guild_id=GID)
+            _aio.run(f["follow"](i, name))
+            assert i.response.texte[-1][1].get("ephemeral")
+        # Altbestand: ein Name, der VOR dieser Pruefung angelegt wurde, ist
+        # getrackt, aber kein TikTok-Name — auch er bekommt keine Rolle.
+        _add(GID, "alt-name", 1)
+        i = A.inter(fan, g, guild_id=GID)
+        _aio.run(f["follow"](i, "alt-name"))
+        assert i.response.texte[-1][1].get("ephemeral")
+        assert g.angelegt == [], "Rolle fuer ungetrackten/ungueltigen Namen angelegt: %s" % g.angelegt
+        i = A.inter(fan, g, guild_id=GID)
+        _aio.run(f["follow"](i, "@DC3_eins"))
+        assert len(g.angelegt) == 1 and ("add", g.angelegt[0]) in fan.taten, \
+            "getrackter Name bekommt keine Rolle: %s" % g.angelegt
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+        if alt_env is None:
+            os.environ.pop("DISCORD_TRACK_MAX_JE_MITGLIED", None)
+        else:
+            os.environ["DISCORD_TRACK_MAX_JE_MITGLIED"] = alt_env
+        with db_conn() as c:
+            for row in c.execute("SELECT id FROM trackings").fetchall():
+                DB._NEXT_CHECK_AT.pop(row["id"], None)
+        W.configure_db(db_path=alt_db[0], backend=alt_db[1])
+    ok("DC-3: /track prueft wie Telegram und deckelt je Mitglied, /follow nur fuer Getrackte")
+
+
+def _test_dc6_shim_dieselbe_liste():
+    """DC-6: Shim-Befehle arbeiten auf derselben Gruppe wie das native /track.
+
+    Der Shim gab die ERSTE ALLOWED_CHAT_ID als Chat aus, /track schreibt nach
+    `DISCORD_TRACK_GROUP_ID or guild_id` — /pause foo fand ein per Discord
+    getracktes foo nicht. Die Freischaltung haengt jetzt am Merkmal
+    `nc_discord_admin` in bot._is_authorized, nicht mehr an der Chat-ID.
+    """
+    import ast as _ast
+    import asyncio as _aio
+    import types as _ty
+    import discordbot as DB
+
+    A = _dc_attrappen()
+    keys = ("ALLOWED_CHAT_IDS", "ALLOWED_USER_IDS", "DISCORD_TRACK_GROUP_ID",
+            "DISCORD_ADMIN_ROLE", "_bot_app_holen")
+    alt = {k: getattr(DB, k) for k in keys}
+    DB.ALLOWED_CHAT_IDS = {-100}
+    DB.ALLOWED_USER_IDS = set()
+    DB.DISCORD_TRACK_GROUP_ID = 0
+    DB.DISCORD_ADMIN_ROLE = None
+    DB._bot_app_holen = None
+    gesehen = []
+
+    async def _handler(upd, ctx):
+        gesehen.append((upd.effective_chat.id, upd.message.chat.id))
+        await upd.message.reply_text("ok")
+
+    def lauf(gid):
+        i = A.inter(A.Mitglied(1, A.rolle(1, "r", 1), manage_guild=True), None, guild_id=gid)
+
+        class _Folge:
+            async def send(self, *_a, **_kw):
+                return None
+        i.followup = _Folge()
+        _aio.run(DB._run_tg_handler(i, _handler))
+        return gesehen[-1]
+
+    try:
+        assert lauf(4242) == (4242, 4242), "Shim arbeitet nicht auf der Gilde: %s" % (gesehen,)
+        DB.DISCORD_TRACK_GROUP_ID = -555
+        assert lauf(4242) == (-555, -555), "DISCORD_TRACK_GROUP_ID im Shim ignoriert"
+        DB.DISCORD_TRACK_GROUP_ID = 0
+        assert lauf(None) == (-100, -100), "DM verliert das alte Ziel"
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+
+    # Die Freischaltung in bot.py: das Merkmal gilt, nur als echtes True.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == "_is_authorized")
+    ns = {"Update": object, "ALLOWED_USER_IDS": set(), "ALLOWED_CHAT_IDS": {-100},
+          "_nc_tgfehler": _ty.SimpleNamespace(migriert_erlaubt=lambda *a: False),
+          "_TG_MIGRIERT": {}}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "x.py", "exec"), ns)
+
+    def upd(**kw):
+        return _ty.SimpleNamespace(effective_user=_ty.SimpleNamespace(id=0),
+                                   effective_chat=_ty.SimpleNamespace(id=4242), **kw)
+    assert ns["_is_authorized"](upd(nc_discord_admin=True)), "Shim auf der Gilde nicht freigeschaltet"
+    assert not ns["_is_authorized"](upd()), "fremde Gilde ohne Merkmal freigeschaltet"
+    assert not ns["_is_authorized"](upd(nc_discord_admin="ja")), "Merkmal als blosser Wahrheitswert"
+    ok("DC-6: Shim-Befehle und /track arbeiten auf derselben Liste")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -46715,6 +47201,10 @@ def main():
     _test_arc4_join_ueber_teildatei()
     _test_arc6_arc7_arc8_archivrouten()
     _test_arc9_zaehler_und_erfolgsquote()
+    _test_dc2_keine_ungewollten_pings()
+    _test_dc1_rangfolge_vor_botrechten()
+    _test_dc3_track_pruefung_und_grenze()
+    _test_dc6_shim_dieselbe_liste()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

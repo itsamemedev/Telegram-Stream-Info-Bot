@@ -27,11 +27,25 @@ def puffer() -> int:
     return max(0, min(5000, int(roh))) if roh.isdigit() else 100
 
 
-def client_optionen() -> dict:
-    """Schluesselwoerter fuer discord.Client(...)."""
+def client_optionen(erwaehnungen) -> dict:
+    """Schluesselwoerter fuer discord.Client(...).
+
+    DC-2: `erwaehnungen` ist `discord.AllowedMentions.none()` des Aufrufers
+    (dieses Modul importiert discord nicht) und wird die Vorgabe JEDER
+    Nachricht des Clients. Ohne sie pingte jede Antwort, die Nutzereingabe
+    wiedergibt: `/stats username:@everyone` -> „📊 **@everyone**" rief den
+    ganzen Server, und ein per /track gespeicherter Name tat das bei jedem
+    /livenow, /recstatus und /tracklist erneut. Wer bewusst pingt, gibt sein
+    eigenes allowed_mentions mit — discord.py fuehrt es mit dieser Vorgabe
+    zusammen. Pflicht statt Vorgabe-None: ein Aufrufer, der es vergisst,
+    faellt beim Start auf, nicht erst am ersten @everyone.
+    """
+    if erwaehnungen is None:
+        raise ValueError("client_optionen: allowed_mentions fehlt (DC-2)")
     n = puffer()
     return {"chunk_guilds_at_startup": _an("DISCORD_MITGLIEDER_LADEN", "0"),
-            "max_messages": n if n > 0 else None}
+            "max_messages": n if n > 0 else None,
+            "allowed_mentions": erwaehnungen}
 
 
 def anzeige(mitglied, user_id) -> str:

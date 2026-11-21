@@ -58,6 +58,7 @@ from nc import tgmarkdown as _nc_tgmd   # v4.2-W138: HTML -> Discord-Markdown
 from nc import sqldialekt as _nc_sqldialekt   # v4.2-W143: Upsert in beiden Dialekten
 from nc import modheuristics as _nc_mod
 from nc import trackingdb as _nc_trackingdb
+from nc import textutil as _nc_textutil       # DC-3: dieselbe Namenspruefung wie Telegram
 from nc.dbwrap import db_async, db_conn
 from nc.logfilters import _DiscordErrorHandler
 from nc.shield import _sentinel_screen
@@ -480,13 +481,21 @@ async def _disc_sprache_setzen(inter):
 
 
 def _is_admin(inter) -> bool:
-    """Guild-Admin/Manage-Guild ODER konfigurierte DISCORD_ADMIN_ROLE."""
+    """Guild-Admin/Manage-Guild ODER konfigurierte DISCORD_ADMIN_ROLE.
+
+    DC-1: DISCORD_ADMIN_ROLE darf eine Rollen-ID sein, und beim Namen zaehlt
+    nur die hoechste gleichnamige Rolle (nc.discordrang.admin_rolle). Vorher
+    machte der blosse Namensvergleich jeden mit „Rollen verwalten" zum
+    Bot-Admin: gleichnamige Rolle anlegen, sich geben, fertig.
+    """
     try:
         perms = getattr(inter.user, "guild_permissions", None)
         if perms and (perms.administrator or perms.manage_guild):
             return True
         if DISCORD_ADMIN_ROLE and getattr(inter.user, "roles", None):
-            return any(r.name == DISCORD_ADMIN_ROLE for r in inter.user.roles)
+            return _nc_rang.admin_rolle_traegt(
+                inter.user.roles, getattr(getattr(inter, "guild", None), "roles", None),
+                DISCORD_ADMIN_ROLE)
     except Exception:
         pass
     return False
@@ -800,6 +809,20 @@ async def _voice_dauer(pfad):
     return float(txt)
 
 
+def _shim_chat_id(inter):
+    """DC-6: die Gruppe, auf der ein Shim-Befehl arbeitet — dieselbe wie /track.
+
+    Der Shim gab den Telegram-Handlern die ERSTE ALLOWED_CHAT_ID mit, das
+    native /track schreibt dagegen nach `DISCORD_TRACK_GROUP_ID or guild_id`.
+    Zwei Listen also: /pause foo fand ein per Discord getracktes foo nicht,
+    /bulkadd und /track_exact legten in der Telegram-Gruppe an, /stoprec und
+    /quota sahen die falsche. Die Freischaltung haengt seither an
+    `nc_discord_admin` (bot._is_authorized), nicht mehr an dieser ID.
+    Ausserhalb einer Gilde (DM) bleibt es beim alten Ziel.
+    """
+    return DISCORD_TRACK_GROUP_ID or getattr(inter, "guild_id", None) or _par_chat_id()
+
+
 async def _handle_voice_ai(message, att):
     """Sprachnachricht → ffmpeg→16k-WAV → Whisper → ai_chat → Antwort."""
     import tempfile
@@ -901,7 +924,10 @@ async def _discord_automod(message):
     if DISCORD_AUTOMOD_ACTION == "delete":
         try:
             await message.delete()
-            w = await message.channel.send(_nc_i18n.t(f"{message.author.mention} Nachricht entfernt — {reason}."))
+            # DC-2: der Client pingt per Vorgabe niemanden; hier soll der
+            # Verfasser es merken — nur er, nicht was in `reason` steht.
+            w = await message.channel.send(_nc_i18n.t(f"{message.author.mention} Nachricht entfernt — {reason}."),
+                                           allowed_mentions=discord.AllowedMentions(users=[message.author]))
             await w.delete(delay=6)
             return True
         except Exception:
@@ -920,6 +946,61 @@ async def _guard(inter) -> bool:
     if _is_admin(inter):
         return True
     await inter.response.send_message(_nc_i18n.t("⛔ Nur Admins (oder konfigurierte Admin-Rolle)."), ephemeral=True)
+    return False
+
+
+async def _follow_erlaubt(inter, u) -> bool:
+    """DC-3: /follow legte je BELIEBIGEM Namen eine Rolle an — bis zur Grenze
+    von 250 Rollen je Gilde, danach scheiterte jedes Rollen-Anlegen des
+    Servers. Gepingt wird ohnehin nur fuer getrackte Namen."""
+    if not _nc_textutil.is_valid_tiktok_username(u):
+        await inter.response.send_message(_name_ungueltig(), ephemeral=True)
+        return False
+    getrackt = await db_async(lambda c: c.execute(
+        "SELECT 1 FROM trackings WHERE LOWER(username)=LOWER(?) LIMIT 1", (u,)).fetchone())
+    if getrackt is None:
+        await inter.response.send_message(_nc_i18n.t(
+            "ℹ @{u} wird nicht getrackt — /follow gibt es nur für getrackte Streamer."
+        ).format(u=u), ephemeral=True)
+        return False
+    return True
+
+
+def _name_ungueltig():
+    return _nc_i18n.t("⚠️ Das kann kein TikTok-Name sein: 2–24 Zeichen, nur Buchstaben, "
+                      "Ziffern, Punkt und Unterstrich; kein Punkt am Ende.")
+
+
+def _rang_satz(grund):
+    if grund == "rolle_hoeher":
+        return _nc_i18n.t("⛔ Diese Rolle steht nicht unter deiner höchsten Rolle.")
+    if grund == "rolle_macht":
+        return _nc_i18n.t("⛔ Rollen mit Verwaltungs-, Kick- oder Bann-Rechten vergibt nur ein Administrator.")
+    if grund == "ziel_hoeher":
+        return _nc_i18n.t("⛔ Dieses Mitglied steht nicht unter deiner höchsten Rolle.")
+    return _nc_i18n.t("⛔ Diesen Kanal darfst du selbst nicht sehen.")
+
+
+async def _rang_pruefen(inter, rolle=None, ziel=None, kanal=None, selbst_ok=False) -> bool:
+    """DC-1: darf der AUFRUFER das — nicht nur der Bot?
+
+    `_guard` fragt nur, ob jemand Bot-Admin ist; gehandelt wird danach mit
+    den Rechten des Bots. Ohne diese Pruefung gab sich ein Mitglied mit nur
+    „Server verwalten" per /assign_role die Owner-Rolle (administrator),
+    bannte Hoehergestellte und oeffnete #mod-log per /set_channel_perms.
+    Die Regeln stehen bot-frei in nc.discordrang.
+    """
+    grund = _nc_rang.rang_einwand(inter.user, inter.guild, rolle=rolle, ziel=ziel,
+                                  selbst_ok=selbst_ok)
+    if grund == "frei" and kanal is not None:
+        grund = _nc_rang.kanal_einwand(kanal, inter.user, inter.guild)
+    if grund == "frei":
+        return True
+    # Ein abgewiesener Griff nach fremden Rechten ist eine Nachricht an den
+    # Betreiber, kein Rauschen — einmal je Versuch, er kommt von Hand.
+    log.warning("Discord: %s von %s abgewiesen (%s)", getattr(getattr(inter, "command", None),
+                "name", "?"), getattr(inter.user, "id", "?"), grund)
+    await inter.response.send_message(_rang_satz(grund), ephemeral=True)
     return False
 
 
@@ -947,7 +1028,8 @@ async def _on_level_up(message, newlvl):
                                   "Rang-Rollen?%s", rkname, e, _nc_meldetakt.zusatz(weg))
         txt = f"🎉 {message.author.mention} ist jetzt **Level {newlvl}**" + (f" — Rang **{rkname}**!" if rkname else "!")
         ch = discord.utils.get(message.guild.text_channels, name=DISCORD_LEVELUP_CHANNEL) if DISCORD_LEVELUP_CHANNEL else None
-        await (ch or message.channel).send(_nc_i18n.t(txt))
+        await (ch or message.channel).send(_nc_i18n.t(txt),   # DC-2: bewusster Ping, nur der Aufsteiger
+                                           allowed_mentions=discord.AllowedMentions(users=[message.author]))
     except Exception as e:
         # v4.2-W175: stand auf debug. /daily reichte hier eine Interaction
         # herein, die kein `.author` hat — jeder Level-Aufstieg ueber /daily
@@ -976,11 +1058,11 @@ class _ParBot:
 # Interaction-Followup. Eine Logik, null Code-Duplikate — Fixes an den
 # TG-Handlern wirken automatisch auch in Discord.
 class _ParMsg:
-    def __init__(self, sink):
+    def __init__(self, sink, chat_id=None):
         self._sink = sink
         self.text = ""
         self.message_id = 0
-        self.chat = types.SimpleNamespace(id=_par_chat_id())
+        self.chat = types.SimpleNamespace(id=_par_chat_id() if chat_id is None else chat_id)
     async def reply_text(self, text, **kw):
         await self._sink(str(text)); return self
     reply_html = reply_markdown = reply_markdown_v2 = reply_text
@@ -998,12 +1080,13 @@ async def _run_tg_handler(inter, fn, args_str=""):
     chunks = []
     async def _sink(t):
         chunks.append(t)
-    msg = _ParMsg(_sink)
+    cid = _shim_chat_id(inter)          # DC-6: dieselbe Liste wie /track
+    msg = _ParMsg(_sink, cid)
     uid = next(iter(ALLOWED_USER_IDS), 0)
     upd = types.SimpleNamespace(
         effective_user=types.SimpleNamespace(id=uid, first_name="discord",
                                              username="discord"),
-        effective_chat=types.SimpleNamespace(id=_par_chat_id()),
+        effective_chat=types.SimpleNamespace(id=cid),
         effective_message=msg, message=msg, callback_query=None,
         # v5.2-W190: _is_admin ist oben schon geprueft; bot._betreiber_pruefen
         # erkennt daran den Shim (die uid ist im offenen Modus 0).
@@ -1066,11 +1149,32 @@ def _reg_tracking(tree):
     @app_commands.describe(username="TikTok-Username (ohne @)")
     async def _c_track(inter, username: str):
         gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
-        u = username.strip().lstrip("@")
+        # DC-3: hier stand nur strip/lstrip("@"). Ein 2000-Zeichen-Name brach
+        # /tracklist, „@everyone" landete in der Liste, und jeder Name bekam
+        # binnen DISCORD_ZIELE_SYNC_MIN eine Kategorie und drei Kanaele.
+        # Dieselbe Pruefung wie auf Telegram, bot-frei aus nc.textutil.
+        u = _nc_textutil.clean_username(username)
         if not u:
             await inter.response.send_message(_nc_i18n.t("Username fehlt."), ephemeral=True)
             return
+        if not _nc_textutil.is_valid_tiktok_username(u):
+            await inter.response.send_message(_name_ungueltig(), ephemeral=True)
+            return
         try:
+            # DC-3: /track ist fuer jedes Mitglied offen, MAX_TRACKINGS_PER_CHAT
+            # zaehlt je Gilde und ist per Vorgabe 0 — rund 120 Aufrufe EINES
+            # Kontos fuellten die 500-Kanal-Grenze. Admins zaehlen nicht mit.
+            grenze = _nc_dclimits.track_grenze_je_mitglied()
+            if grenze and not _is_admin(inter):
+                row = await db_async(lambda c: c.execute(
+                    "SELECT COUNT(*) AS n FROM trackings WHERE group_id=? AND added_by=?",
+                    (gid, inter.user.id)).fetchone())
+                if row is not None and row["n"] >= grenze:
+                    await inter.response.send_message(_nc_i18n.t(
+                        "⛔ Du hast hier schon {n} Trackings angelegt — mehr erlaubt "
+                        "DISCORD_TRACK_MAX_JE_MITGLIED nicht. /untrack gibt einen Platz frei."
+                    ).format(n=row["n"]), ephemeral=True)
+                    return
             ok = await asyncio.to_thread(add_tracking, gid, u, inter.user.id)
             if ok:
                 with db_conn() as conn:
@@ -1267,6 +1371,8 @@ def _reg_rollen(tree):
         if not await _guard(inter):
             return
         try:
+            if not await _rang_pruefen(inter, rolle=role, ziel=member, selbst_ok=True):
+                return
             await member.add_roles(role)
             await inter.response.send_message(_nc_i18n.t(f"✅ {member.mention} → {role.mention}"))
         except Exception as e:
@@ -1277,6 +1383,8 @@ def _reg_rollen(tree):
         if not await _guard(inter):
             return
         try:
+            if not await _rang_pruefen(inter, rolle=role, ziel=member, selbst_ok=True):
+                return
             await member.remove_roles(role)
             await inter.response.send_message(_nc_i18n.t(f"✅ {role.mention} von {member.mention} entfernt"))
         except Exception as e:
@@ -1288,6 +1396,8 @@ def _reg_rollen(tree):
         if not await _guard(inter):
             return
         try:
+            if not await _rang_pruefen(inter, rolle=role, kanal=channel):
+                return
             await channel.set_permissions(role, view_channel=view, send_messages=send)
             await inter.response.send_message(
                 _nc_i18n.t(f"✅ {role.mention} in {channel.mention}: ansehen={view}, schreiben={send}"))
@@ -1307,6 +1417,8 @@ def _reg_moderation(tree):
         if not await _guard(inter):
             return
         try:
+            if not await _rang_pruefen(inter, ziel=member):
+                return
             await member.kick(reason=reason)
             await inter.response.send_message(_nc_i18n.t(f"👢 {member} gekickt" + (f" — {reason}" if reason else "")))
         except Exception as e:
@@ -1317,6 +1429,8 @@ def _reg_moderation(tree):
         if not await _guard(inter):
             return
         try:
+            if not await _rang_pruefen(inter, ziel=member):
+                return
             await member.ban(reason=reason, delete_message_days=0)
             await inter.response.send_message(_nc_i18n.t(f"🔨 {member} gebannt" + (f" — {reason}" if reason else "")))
         except Exception as e:
@@ -1327,6 +1441,8 @@ def _reg_moderation(tree):
         if not await _guard(inter):
             return
         try:
+            if not await _rang_pruefen(inter, ziel=member):
+                return
             import datetime as _dt
             until = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=max(1, minutes))
             await member.timeout(until, reason=reason)
@@ -1659,7 +1775,7 @@ def _reg_frage_events(tree):
             emb.set_footer(text=f"angekündigt von {inter.user.display_name}")
             ev_ch = discord.utils.get(inter.guild.text_channels, name=DISCORD_EVENTS_CHANNEL)
             if ev_ch:
-                await ev_ch.send(content="@here 📢 Neues Event!", embed=emb)
+                await ev_ch.send(content="@here 📢 Neues Event!", embed=emb, allowed_mentions=discord.AllowedMentions(everyone=True))   # DC-2: gewollt
                 await inter.response.send_message(_nc_i18n.t(f"✅ Event in #{DISCORD_EVENTS_CHANNEL} angekündigt."), ephemeral=True)
             else:
                 await inter.response.send_message(embed=emb)
@@ -1772,9 +1888,11 @@ def _reg_betrieb(tree):
     @tree.command(name="follow", description=_nc_i18n.t("Bei Live-Gang eines Streamers gepingt werden"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_follow(inter, username: str):
-        u = username.lstrip("@")
+        u = _nc_textutil.clean_username(username)
         rname = f"🔔 {_nc_rang.slug(u)}"
         try:
+            if not await _follow_erlaubt(inter, u):     # DC-3
+                return
             role = discord.utils.get(inter.guild.roles, name=rname)
             if role is None:
                 role = await inter.guild.create_role(name=rname, mentionable=True,
@@ -1828,6 +1946,9 @@ def _reg_streamer(tree):
         if not await _guard(inter):
             return
         try:
+            # DC-1: ab der 3. Verwarnung folgt ein Timeout mit Bot-Rechten.
+            if not await _rang_pruefen(inter, ziel=member):
+                return
             with db_conn() as conn:
                 conn.execute("INSERT INTO discord_warns (guild_id, user_id, moderator, reason, created_at) "
                              "VALUES (?,?,?,?,?)",
@@ -1842,7 +1963,9 @@ def _reg_streamer(tree):
                     msg += f"\n⏳ Timeout {DISCORD_WARN_TIMEOUT_MIN}min (ab 3. Verwarnung)."
                 except Exception:
                     pass
-            await inter.response.send_message(_nc_i18n.t(msg))
+            # DC-2: der Verwarnte soll es sehen — nur er, nicht was im Grund steht.
+            await inter.response.send_message(_nc_i18n.t(msg),
+                                              allowed_mentions=discord.AllowedMentions(users=[member]))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
     @tree.command(name="warnings", description=_nc_i18n.t("Verwarnungen eines Mitglieds anzeigen"))
@@ -2456,7 +2579,8 @@ async def _discord_run_once():
     # Gilde vollstaendig in den RAM (chunk_guilds_at_startup) und haelt 1000
     # Nachrichten vor — gelesen werden Mitglieder an genau einer Stelle (der
     # Rangliste, die ohne Liste auskommt), Nachrichten nur ueber raw-Ereignisse.
-    client = discord.Client(intents=intents, **_nc_dcspar.client_optionen())
+    client = discord.Client(intents=intents,
+                            **_nc_dcspar.client_optionen(discord.AllowedMentions.none()))
     tree = app_commands.CommandTree(client)
     # v4.2-W77: Sitzungs-Zwischenspeicher zuruecksetzen. Vorher entstanden sie
     # hier neu, weil sie Closure-Variablen waren; die Wirkung ist dieselbe.
@@ -2725,10 +2849,12 @@ async def _discord_run_once():
                     except Exception:
                         pass
                     emb.set_footer(text="Azrael Sentinel Community")
-                    await ch.send(content=member.mention, embed=emb)
+                    await ch.send(content=member.mention, embed=emb,   # DC-2: bewusster Ping
+                                  allowed_mentions=discord.AllowedMentions(users=[member]))
                 except Exception:
                     try:
-                        await ch.send(_nc_i18n.t(f"👋 Willkommen {member.mention} in der Community!"))
+                        await ch.send(_nc_i18n.t(f"👋 Willkommen {member.mention} in der Community!"),
+                                      allowed_mentions=discord.AllowedMentions(users=[member]))
                     except Exception:
                         pass
         except Exception as e:
@@ -2836,7 +2962,9 @@ async def _ensure_error_channel(guild):
             if DISCORD_ADMIN_ROLE:
                 roles.append(DISCORD_ADMIN_ROLE)
             for rn in roles:
-                rr = discord.utils.get(guild.roles, name=rn)
+                # DC-1: ID oder hoechste gleichnamige Rolle — utils.get nahm die
+                # NIEDRIGSTE, also eine frisch angelegte Namens-Kopie.
+                rr = _nc_rang.admin_rolle(guild.roles, rn)
                 if rr:
                     ovw[rr] = discord.PermissionOverwrite(view_channel=True)
             ch = await guild.create_text_channel(
@@ -2886,7 +3014,8 @@ async def _community_events_loop():
                     if ch and not r["announced"] and 0 < mins <= 10:
                         ts = int(when.timestamp())
                         await ch.send(f"@here ⏰ **{r['title']}** startet <t:{ts}:R>!"
-                                      + (f"\n{r['description']}" if r["description"] else ""))
+                                      + (f"\n{r['description']}" if r["description"] else ""),
+                                      allowed_mentions=discord.AllowedMentions(everyone=True))   # DC-2
                         angekuendigt.append(r["id"])
                     # Start erreicht → Go + erledigt
                     elif ch and mins <= 0:
@@ -2895,7 +3024,8 @@ async def _community_events_loop():
                         # "@here 🔴 **Filmabend** geht JETZT los!" — mit dem
                         # Titel drin, und traf im Katalog nie.
                         await ch.send("@here 🔴 **%s** %s"
-                                      % (r["title"], _nc_i18n.t("geht JETZT los!")))
+                                      % (r["title"], _nc_i18n.t("geht JETZT los!")),
+                                      allowed_mentions=discord.AllowedMentions(everyone=True))   # DC-2
                         erledigt.append(r["id"])
                     elif mins < -120:      # alte Leichen aufräumen
                         erledigt.append(r["id"])

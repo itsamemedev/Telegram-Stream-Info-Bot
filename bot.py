@@ -5568,6 +5568,13 @@ def profile_keyboard(handle: str, is_live: bool) -> InlineKeyboardMarkup:
 def _is_authorized(update: Update) -> bool:
     if not ALLOWED_USER_IDS and not ALLOWED_CHAT_IDS:
         return True   # open mode
+    # DC-6: der Discord-Shim (discordbot._run_tg_handler) hat _is_admin schon
+    # geprueft und setzt dieses Merkmal. Bis dahin bestand er die Pruefung nur,
+    # weil er die erste ALLOWED_CHAT_ID als Chat ausgab — und arbeitete damit
+    # auf der Telegram-Liste statt auf der, in die /track auf Discord schreibt.
+    # Ein echtes telegram.Update traegt das Merkmal nie.
+    if getattr(update, "nc_discord_admin", False) is True:
+        return True
     uid = update.effective_user.id if update.effective_user else None
     cid = update.effective_chat.id if update.effective_chat else None
     if ALLOWED_USER_IDS and uid in ALLOWED_USER_IDS:
@@ -21925,7 +21932,7 @@ _nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _nc_abwehrlage.ssh_angriffe
 # + volle Server-Verwaltung (Channels, Kategorien, Rollen/Nutzergruppen, Rechte, Bans/Timeouts).
 DISCORD_BOT_TOKEN      = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 DISCORD_GUILD_ID       = _env_int("DISCORD_GUILD_ID", 0)         # optional: 1 Guild → sofortiger Slash-Sync (sonst global, ~1h)
-DISCORD_ADMIN_ROLE     = os.getenv("DISCORD_ADMIN_ROLE", "").strip()    # optional: Rollenname für Admin-/Server-Commands
+DISCORD_ADMIN_ROLE     = os.getenv("DISCORD_ADMIN_ROLE", "").strip()    # optional: Rollen-ID (DC-1, eindeutig) oder -name für Admin-/Server-Commands
 DISCORD_LOG_CHANNEL_ID = _env_int("DISCORD_LOG_CHANNEL_ID", 0)   # optional: Channel-ID für Bot-Benachrichtigungen
 DISCORD_LEVELING       = os.getenv("DISCORD_LEVELING", "1").strip().lower() in ("1","true","yes","on","y")  # XP/Level-Ranking an/aus
 DISCORD_LEVELUP_CHANNEL= os.getenv("DISCORD_LEVELUP_CHANNEL", "").strip()   # optional: Channel-Name für Level-Up-Ansagen (sonst im selben Channel)
@@ -23137,13 +23144,15 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
             emb.timestamp = datetime.now(timezone.utc)
         except Exception:
             emb = view = None   # Fallback: Plaintext
-    async def _send(ch, mention=None):
+    async def _send(ch, mention=None, rolle=None):
+        # DC-2: der Client pingt per Vorgabe niemanden; /follow nennt seine Rolle selbst.
+        am = discord.AllowedMentions(roles=[rolle]) if rolle is not None else None
         try:
             if emb is not None:
-                await ch.send(content=mention, embed=emb, view=view)
+                await ch.send(content=mention, embed=emb, view=view, allowed_mentions=am)
             else:
                 body = f"{mention} {text}" if mention else text
-                await ch.send(_nc_i18n.t(body[:1950]))
+                await ch.send(_nc_i18n.t(body[:1950]), allowed_mentions=am)
         except Exception:
             pass
     try:
@@ -23153,12 +23162,12 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
             if feed and not posted_feed:
                 fc = discord.utils.get(g.text_channels, name=feed)
                 if fc:
-                    mention = None
+                    mention = role = None
                     if ping_notify:
                         role = discord.utils.get(g.roles, name=f"🔔 {slug}")
                         if role:
                             mention = role.mention
-                    await _send(fc, mention)
+                    await _send(fc, mention, role)
                     posted_feed = True
     except Exception as e:
         log.debug("Discord user-post: %s", e)

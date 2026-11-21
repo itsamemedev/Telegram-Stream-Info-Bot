@@ -118,3 +118,22 @@ def aktuell_mb():
 def aktuell_label():
     """Kurzlabel fürs Dashboard, z. B. '50 MB (Server-Level)'."""
     return describe(guild_filesize_bytes(), _KONF["override_mb"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DC-3: Trackings je Discord-Mitglied.
+#
+# /track steht auf Discord jedem Mitglied offen, MAX_TRACKINGS_PER_CHAT zaehlt
+# je GILDE und ist per Vorgabe 0 (unbegrenzt). Jedes Tracking bekommt binnen
+# DISCORD_ZIELE_SYNC_MIN eine Kategorie und drei Kanaele, und der Abgleich
+# (W209) loescht nichts: rund 120× /track von EINEM Konto fuellten die
+# 500-Kanal-Grenze der Gilde. Diese Grenze gilt fuer Nicht-Admins und zaehlt
+# trackings.added_by. Als Funktion gelesen: .env laedt teils erst nach den
+# ersten Imports (CLAUDE.md).
+def track_grenze_je_mitglied() -> int:
+    """DISCORD_TRACK_MAX_JE_MITGLIED, Vorgabe 5; 0 = unbegrenzt."""
+    import os
+    roh = (os.getenv("DISCORD_TRACK_MAX_JE_MITGLIED", "5") or "").strip()
+    # Unlesbar heisst Vorgabe, nicht „unbegrenzt": ein Tippfehler in der
+    # .env darf den Riegel nicht still oeffnen.
+    return max(0, int(roh)) if roh.isdigit() else 5
