@@ -46164,6 +46164,26 @@ def _test_arc6_arc7_arc8_archivrouten():
                 content_type="multipart/form-data")
             assert r.status_code == 200 and r.get_json()["filename"] == "clip.mp4", \
                 ("die Wiederholung legt eine Dublette an", r.get_data(as_text=True)[:200])
+            # Die Ruecknahme loescht nur unter ARCHIVE_DIR (CodeQL-Barriere,
+            # PR #232) — auch ein Pfad, der mit dem Wurzelnamen BEGINNT, aber
+            # daneben liegt („archiv" vs. „archiv-x"), ist draussen.
+            _ph.attrappe(os.path.join(fremd, "z.mp4"), 8)
+            daneben = arch.rstrip(os.sep) + "-x"
+            os.makedirs(daneben, exist_ok=True)
+            _ph.attrappe(os.path.join(daneben, "z.mp4"), 8)
+            for draussen in (os.path.join(fremd, "z.mp4"),
+                             os.path.join(arch, "..", os.path.basename(fremd), "z.mp4"),
+                             os.path.join(daneben, "z.mp4")):
+                try:
+                    rt._upload_zuruecknehmen(draussen)
+                    raise AssertionError("Ruecknahme ausserhalb von ARCHIVE_DIR: %s" % draussen)
+                except OSError:
+                    pass
+            assert os.path.isfile(os.path.join(fremd, "z.mp4"))
+            assert os.path.isfile(os.path.join(daneben, "z.mp4"))
+            _ph.attrappe(os.path.join(arch, "drin.mp4"), 8)
+            rt._upload_zuruecknehmen(os.path.join(arch, "drin.mp4"))
+            assert not os.path.exists(os.path.join(arch, "drin.mp4"))
         finally:
             rt.add_archive_entry = alt_add
             _ncctx._CTX = alt_ctx

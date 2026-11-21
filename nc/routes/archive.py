@@ -102,6 +102,22 @@ def _archive_open_unique(filename: str) -> tuple:
         _c().cfg["ARCHIVE_DIR"], filename, lambda full: os.open(full, flags, 0o644))
 
 
+def _upload_zuruecknehmen(target: str) -> None:
+    """Nimmt eine gerade angelegte Upload-Datei wieder weg — nur unter ARCHIVE_DIR.
+
+    target kommt aus _archive_open_unique, liegt also unter ARCHIVE_DIR. Der
+    Abgleich hier ist trotzdem kein Ornament: der Name stammt aus dem Upload,
+    CodeQL verfolgt ihn bis in os.remove (py/path-injection, PR #232) und
+    erkennt eine Barriere nur in DIESER Form — normalisieren, dann startswith
+    gegen die Wurzel. nc.sicherpfad sieht es nicht (CLAUDE.md W98). Wirft
+    OSError wie os.remove, damit der Aufrufer den Fall mit Pfad meldet."""
+    weg = os.path.realpath(target)
+    wurzel = os.path.realpath(_c().cfg["ARCHIVE_DIR"])
+    if not weg.startswith(wurzel + os.sep):
+        raise OSError("liegt nicht unter ARCHIVE_DIR (%s): %s" % (wurzel, weg))
+    os.remove(weg)
+
+
 def get_archive_aggregate_stats(*, kind='all', query=None, date_from=None, date_to=None):
     """F38: Aggregierte Stats ÜBER ALLE gefilterten Rows (nicht nur Seite)."""
     where_sql, params = _archive_where_clause(kind=kind, query=query, date_from=date_from, date_to=date_to)
@@ -796,7 +812,7 @@ def api_archive_upload():
         log.error("archive upload: Eintrag fuer %s fehlgeschlagen (%s: %s) — die "
                   "Datei wird zurueckgenommen.", target, type(e).__name__, e)
         try:
-            os.remove(target)
+            _upload_zuruecknehmen(target)
         except OSError as e2:
             log.error("archive upload: %s liess sich nicht zuruecknehmen (%s) — "
                       "liegt ohne Zeile im Archiv, „Ordner pruefen“ nimmt sie auf.",
