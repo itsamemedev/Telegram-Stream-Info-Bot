@@ -65,3 +65,37 @@ def normalisieren(platform) -> str:
 def sql_in() -> str:
     """Die IN-Liste fuer SQL. Funktion statt Konstante — siehe Modul-Kopf."""
     return "('" + "','".join(PLATFORMS) + "')"
+
+
+def tiktok_geschenk(ev) -> tuple:
+    """LIVE-5: (fertig, diamanten) eines TikTokLive-GiftEvent.
+
+    Ein Combo-Geschenk (Rose x 30) kommt NICHT als ein Ereignis. TikTokLive 6.x
+    feuert je Streak-Schritt ein GiftEvent mit wachsendem `repeat_count`, und
+    erst das letzte traegt `repeat_end` — die Bibliothek fasst das als
+    Eigenschaft `streaking` zusammen (TikTokLive/events/proto_events.py,
+    6.6.5: `not gift.streakable -> False`, sonst `not repeat_end`) und rechnet
+    ihren eigenen `value` aus genau diesem Grund nur am Ende („Prevent
+    double-count"). Wir zaehlten jeden Schritt: aus 30 Rosen wurden
+    1+2+…+30 = 465 Diamanten, je Schritt ein clip_moment, eine
+    Sendebild-Zeile und (bei OVERLAY_GIFT_SOURCE=tiktok) eine overlay_events-
+    Zeile.
+
+    `fertig` ist False fuer einen Zwischenschritt — der Aufrufer wertet ihn
+    gar nicht. Defensiv ueber getattr: eine Fassung ohne `streaking` gilt als
+    fertig — lieber einmal zu viel gezaehlt als ein Geschenk verschluckt.
+    Das gilt auch fuer ein GiftEvent ohne Gift-Objekt: dort scheitert die
+    Eigenschaft selbst an `None.streakable`, und das ist ein AttributeError,
+    den getattr mit Vorgabe schon abfaengt. Ein eigenes try/except darum war
+    in der ersten Fassung ein zweiter Riegel, den die Mutationsprobe als
+    wirkungslos entlarvt hat (dieselbe Lehre wie W98/W105).
+    Der Wert bleibt fremdes Geld (Modulkopf): er landet nie in einer Summe."""
+    laeuft = bool(getattr(ev, "streaking", False))
+    gift = getattr(ev, "gift", None)
+    dia = getattr(gift, "diamond_count", None) or getattr(ev, "diamond_count", None) or 0
+    cnt = getattr(ev, "repeat_count", None) or getattr(ev, "combo_count", None) or 1
+    # Ziffern statt int()-Versuch: protobuf liefert int, eine kaputte Angabe
+    # ist 0 Diamanten — ohne except, das hier nur einen Grund verschluckte.
+    wert = (int(dia) * int(cnt)
+            if str(dia).isdigit() and str(cnt).isdigit() else 0)
+    return (not laeuft, wert)

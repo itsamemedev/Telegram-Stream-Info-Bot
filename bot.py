@@ -3532,8 +3532,8 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
     # einer 20-s-Aufloesung ankommt.
     if force_fresh:
         return await _gemessen()
-    return await _nc_livecache.einflug(_LIVE_EINFLUG, username, _gemessen,
-                                       ("unknown", None))
+    return await _nc_livecache.einflug(_LIVE_EINFLUG, _nc_livecache.schluessel(username),
+                                       _gemessen, ("unknown", None))
 
 
 # v4.2-W119: username -> Future des laufenden Aufloesungslaufs (nc/livecache.einflug)
@@ -4914,13 +4914,19 @@ def _lock_update(tracking_id: int, username: str = None) -> bool:
             # Single atomic statement: claim nur wenn weder dieses noch ein
             # username-gleiches Tracking gerade recording=1 hat, und dieses
             # hier nicht pausiert ist (B10).
+            # LIVE-6: LOWER() auf beiden Seiten. Gespeichert wird der Name wie
+            # eingegeben; unter SQLite ist `=` case-sensitiv, also durfte
+            # „maxmuster" aus Chat B neben „MaxMuster" aus Chat A eine ZWEITE
+            # Aufnahme desselben Streams starten. MariaDB vergleicht unter
+            # einer _ci-Kollation ohnehin so — LOWER() macht beide gleich,
+            # statt sich auf die Kollation der Tabelle zu verlassen.
             cur = conn.execute(
                 "UPDATE trackings SET recording=1 "
                 "WHERE id=? AND recording=0 "
                 "AND COALESCE(paused, 0) = 0 "
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM trackings t2 "
-                "  WHERE t2.username=? AND t2.recording=1 AND t2.id != trackings.id"
+                "  WHERE LOWER(t2.username)=LOWER(?) AND t2.recording=1 AND t2.id != trackings.id"
                 ")",
                 (tracking_id, username))
         else:
@@ -8717,7 +8723,7 @@ async def _handle_single_tracking(t, bot_app):
     # einen zweiten Check ohne Cache. Bestätigt der den OFFLINE, glauben
     # wir es. Sonst: ignorieren.
     if not is_live and old_last_live:
-        _LIVE_STATUS_CACHE.pop(username, None)   # cache bypass
+        _LIVE_STATUS_CACHE.pop(_nc_livecache.schluessel(username), None)   # cache bypass (LIVE-6: Schluessel klein)
         await asyncio.sleep(2)                    # kurz warten dann nochmal
         verify_resp = await _get_live_info(username, session=session)
         if verify_resp["is_live"] is True:
@@ -8852,7 +8858,12 @@ async def _handle_single_tracking(t, bot_app):
             # v4.2-W176: einmal je NUTZER — der zweite Chat bekam sonst ein
             # zweites Embed mit leerer Bilanz (der Start war schon weg).
             if _nc_livemeldung.live_aus(username):
+                # LIVE-6: den Start hat vielleicht der Chat mit der ANDEREN
+                # Schreibweise gesetzt (live_an zaehlt klein) — sonst blieb
+                # die Bilanz leer und der fremde Eintrag fuer immer stehen.
                 _sess_start = _LIVE_SESSION_START.pop(username, None)
+                for _k in [k for k in list(_LIVE_SESSION_START) if k.lower() == username.lower()]:
+                    _sess_start = _LIVE_SESSION_START.pop(_k, None) or _sess_start
                 _ACTIVE_TIER.pop(username, None)   # v37 W3: Tier-Sichtbarkeit aufräumen
                 _nc_geschuetzt.zuruecksetzen(username, laut=False)   # v4.2-W161: neues Live, neuer Raum
                 _nc_raumsperre.vergessen(username)                   # v5.4-W195: dito
@@ -8945,8 +8956,17 @@ async def _handle_single_tracking(t, bot_app):
             # F41: INFO statt DEBUG damit der User in Multi-User-Setups
             # SIEHT warum eine Aufnahme nicht startet (z.B. wenn derselbe
             # User aus zwei Chats getrackt wird — nur ein Recording).
-            log.info(f"@{username}: Lock nicht bekommen — anderer Tracking-"
-                     f"Eintrag für selben User nimmt bereits auf. Skip.")
+            # LIVE-7: gedrosselt ueber nc/meldetakt, Kanal „rec-lock", Grund =
+            # Nutzer. Ungedrosselt stand die Zeile bei JEDEM Poll jedes
+            # weiteren Chats (~180/h je Zusatz-Chat) im Log — dieselbe Flut wie
+            # W97/W103. Ein neuer Nutzer meldet sofort, derselbe erst nach der
+            # Ruhezeit, mit der Zahl der verschluckten Faelle.
+            _laut, _weg = _nc_meldetakt.melden("rec-lock", (username or "?").lower(),
+                                               _time_mod.monotonic())
+            if _laut:
+                log.info(f"@{username}: Lock nicht bekommen — anderer Tracking-"
+                         f"Eintrag für selben User nimmt bereits auf. Skip."
+                         f"{_nc_meldetakt.zusatz(_weg)}")
             _nc_gegendruck.freigeben()
             return
 
@@ -9287,7 +9307,10 @@ def _pruef_runde(trackings, now, _pflege_runde):
             _LAST_CHECK_RESULT.pop(k, None)
             _nc_prueflage.vergessen(k)
         # Rate-limit-Maps sind per-username — schon mit list() geschützt
-        valid_users = {t["username"] for t in trackings}
+        # LIVE-6: der Live-Cache fuehrt kleingeschriebene Schluessel — ohne die
+        # zweite Haelfte flog jeder Eintrag eines „MaxMuster" hier als Rest raus.
+        valid_users = ({t["username"] for t in trackings}
+                       | {_nc_livecache.schluessel(t["username"]) for t in trackings})
         for m in (_RATE_LIMIT_BACKOFF, _RATE_LIMIT_PENALTY, _LIVE_STATUS_CACHE, _ABO_LIVE):
             stale = [u for u in list(m.keys()) if u not in valid_users]
             for u in stale: m.pop(u, None)
@@ -19026,19 +19049,19 @@ async def _start_chat_listener(username, chat_buf, flags=None):
             who = (getattr(getattr(ev, "user", None), "nickname", None)
                    or getattr(getattr(ev, "from_user", None), "nickname", None) or "?")
             gname = getattr(getattr(ev, "gift", None), "name", None) or "Geschenk"
-            # UPGRADE: Gift-Wert (Diamanten × Anzahl) defensiv ermitteln
-            dia = (getattr(getattr(ev, "gift", None), "diamond_count", None)
-                   or getattr(ev, "diamond_count", None) or 0)
-            cnt = (getattr(ev, "repeat_count", None) or getattr(ev, "combo_count", None) or 1)
-            try: value = int(dia) * int(cnt)
-            except Exception: value = 0
+            # LIVE-5: Combo-Geschenke feuern je Streak-Schritt; nur das Ende zaehlt
+            # (sonst 30 Rosen = 465 Diamanten, 30 Clips, 30 Sendebild-Zeilen).
+            fertig, value = _nc_revenue.tiktok_geschenk(ev)
+            if not fertig:
+                return
             if value > 0:
                 if _overlay_src_ok("tiktok"):
                     # B120: TikTok-Gifts gehen an den GETRACKTEN Streamer, nicht
                     # an uns — sie sind keine Einnahme und werden nicht mehr als
                     # 'donation' gebucht. Als 'gift' bleiben sie fuer Overlay/
                     # Statistik erhalten, ohne je in eine Geldsumme zu laufen.
-                    _overlay_push("gift", who, value, gname, platform="tiktok", origin=username)
+                    # LIVE-5: neben dem Loop — der synchrone INSERT haelt sonst den Bot an (W176)
+                    await asyncio.to_thread(_overlay_push, "gift", who, value, gname, platform="tiktok", origin=username)
                 if CLIP_ENABLED and value >= CLIP_GIFT_MIN:
                     _spawn(clip_moment(username, f"Gift {value} von {who}", f"{who} -> {gname}"), name="clip-gift")
             if LIVE_REACT_GIFT_THRESHOLD and value >= LIVE_REACT_GIFT_THRESHOLD:
@@ -20249,7 +20272,10 @@ def _live_users():
     """Usernamen aktuell live gehender, getrackter Accounts (last_live=1)."""
     try:
         with db_conn() as conn:
-            rows = conn.execute("SELECT DISTINCT username FROM trackings WHERE last_live=1").fetchall()
+            # LIVE-3: pausierte nicht mitzaehlen — fuer sie ist last_live kein
+            # beobachteter Zustand mehr (Altbestand vor dem Fix trug dort 1).
+            rows = conn.execute("SELECT DISTINCT username FROM trackings "
+                                "WHERE last_live=1 AND COALESCE(paused, 0) = 0").fetchall()
         return [r["username"] for r in rows if r and r["username"]]
     except Exception as e:
         log.debug("live_users query: %s", e); return []

@@ -12338,7 +12338,13 @@ def _test_v42_w102_ytdlp_traegt_die_stream_url():
         {"url": "https://pull-flv/z?e=1", "ext": "flv",
          "format_id": "flv-origion"}]})
     assert echt.get("hls_url", "").startswith("https://pull-hls/"), echt
-    assert echt.get("flv_url", "").startswith("https://pull-rtmp/"), echt
+    # LIVE-1: yt-dlp gibt `formats` aufsteigend aus, gelesen wird von hinten —
+    # bei gleicher Stufe gewinnt das zuletzt angehaengte Format. Die rtmp-Form
+    # steht deshalb einzeln, wie die beiden anderen unten.
+    assert echt.get("flv_url", "").startswith("https://pull-flv/"), echt
+    assert Y.urls_aus_json({"formats": [
+        {"url": "https://pull-rtmp/y?e=1", "ext": "flv", "protocol": "https",
+         "format_id": "rtmp-pull"}]}).get("flv_url"), "rtmp-pull (protocol=https) nicht als FLV erkannt"
     # Und jede der drei Formen einzeln, damit nicht eine die andere traegt.
     assert Y.urls_aus_json({"formats": [
         {"url": "https://p/z?e=1", "ext": "flv", "format_id": "flv-sd"}]}
@@ -32140,7 +32146,10 @@ def _test_v42_w176_live_einmal_je_nutzer():
                and _ast.unparse(n.value) == "_LIVE_SESSION_START"] + \
               [n for n in _ast.walk(h) if isinstance(n, _ast.Call)
                and _ast.unparse(n.func) == "_LIVE_SESSION_START.pop"]
-    assert len(sitzung) == 2 and all(_bedingt(n) for n in sitzung), \
+    # LIVE-6: der Offline-Zweig raeumt auch die andere Schreibweise desselben
+    # Nutzers ab (eine zweite pop-Stelle) — die Aussage bleibt: jede haengt
+    # an der Nutzer-Bedingung.
+    assert len(sitzung) >= 2 and all(_bedingt(n) for n in sitzung), \
         "der Sitzungsstart haengt am Chat, nicht am Nutzer"
     ok("W176: Discord-Embed, Live-Thread, Oracle, Director und Sitzungsstart "
        "einmal je Nutzer")
@@ -41789,8 +41798,11 @@ def _test_v511_bh_sendebild_je_restream():
     assert ns_p["_RESTREAM_LAST_EVENT"]["origin"] == "anna", "Herkunft des Gifts verloren"
     ns_p["_overlay_push"]("follow", "f", platform="kick")
     assert ns_p["_RESTREAM_LAST_EVENT"]["origin"] == "", "eigener Kanal muss kanalweit sein"
+    # LIVE-5: das Gift-Ereignis laeuft seither ueber asyncio.to_thread(_overlay_push, …)
     tiktok = [c for c in _ast.walk(_fn("_start_chat_listener")) if isinstance(c, _ast.Call)
-              and getattr(c.func, "id", "") == "_overlay_push"
+              and (getattr(c.func, "id", "") == "_overlay_push"
+                   or (_ast.unparse(c.func) == "asyncio.to_thread" and c.args
+                       and getattr(c.args[0], "id", "") == "_overlay_push"))
               and any(k.arg == "platform" and getattr(k.value, "value", "") == "tiktok"
                       for k in c.keywords)]
     assert len(tiktok) == 2 and all(any(k.arg == "origin" for k in c.keywords)
@@ -45347,6 +45359,286 @@ def _test_v5114_dc8_sprachnachricht_begrenzt():
     ok("DC-8: Sprachnachrichten mit Abklingzeit, Laengengrenze, Zeitlimit und Live-Vorrang")
 
 
+def _test_live2_proxy_zugang_nie_im_log():
+    """LIVE-2: redact_cmd_for_log schwaerzte nur Cookies. `-http_proxy
+    nutzer:pass@host` (ffmpeg) und `--proxy …` (yt-dlp) gingen bei JEDEM
+    Aufnahmestart mit den Zugangsdaten ins INFO-Log. Geprueft an den ECHTEN
+    Bauern aus nc/reccmd, schemalos wie schemabehaftet (auch socks5 und
+    leerer Nutzer), getrennt und als `--opt=wert` — und der Befehl selbst,
+    der an den Prozess geht, behaelt den echten Proxy."""
+    from nc import reccmd as R
+    from nc.ffdiag import redact_cmd_for_log as X
+    alt = {n: getattr(R, n, None) for n in (
+        "_cookie_header", "_ensure_cookie_file_netscape", "_stream_url_ttl",
+        "COOKIE_FILE", "FFMPEG_NICE_RECORD", "FFMPEG_THREADS_RECORD")}
+    try:
+        R._cookie_header = lambda: "sessionid=GEHEIMCOOKIE"
+        R._ensure_cookie_file_netscape = lambda *a, **k: "/nirgends/c.txt"
+        R._stream_url_ttl = lambda u: None
+        for n, v in (("COOKIE_FILE", "/nirgends/c.txt"), ("FFMPEG_NICE_RECORD", 0),
+                     ("FFMPEG_THREADS_RECORD", 0)):
+            if getattr(R, n, None) is None:
+                setattr(R, n, v)
+        for i, proxy in enumerate(("nutzer:geheim0@h:8118", "http://nutzer:geheim1@h:8118",
+                                   "socks5://n:geheim2@h:1080", "socks5h://:geheim3@h:1080")):
+            for cmd in (R._build_native_cmd("https://cdn/x.flv", "/nirgends/o.mp4", 60,
+                                            pull_proxy=proxy),
+                        R._build_ytdlp_cmd("yt-dlp", "https://www.tiktok.com/@a/live",
+                                           "/nirgends/o.mp4", 60, pull_proxy=proxy)):
+                zeile = " ".join(X(cmd))
+                assert "geheim%d" % i not in zeile, "Proxy-Passwort im Log: %s" % zeile
+                assert "GEHEIMCOOKIE" not in zeile, "Cookie wieder im Log"
+                assert "@h:" in zeile, "der Host gehoert in die Zeile (Diagnose): %s" % zeile
+                assert any("geheim%d" % i in a for a in cmd), "der echte Befehl verlor den Proxy"
+    finally:
+        for n, v in alt.items():
+            setattr(R, n, v)
+    for cmd in (["streamlink", "--http-proxy", "http://u:geheimS@p:3128", "url", "best"],
+                ["streamlink", "--https-proxy=u:geheimT@p:3128", "url"],
+                ["yt-dlp", "--proxy=socks5://u:geheimU@p:1080", "url"],
+                ["yt-dlp", "--geo-verification-proxy", "u:geheimV@p:1", "url"],
+                ["ffmpeg", "-proxy", "u:geheimW@p:1", "-i", "x"]):
+        zeile = " ".join(X(cmd))
+        assert "geheim" not in zeile, zeile
+        assert "@p:" in zeile, zeile
+    ok("LIVE-2: Proxy-Zugangsdaten (alle Optionsformen, mit/ohne Schema) erreichen das Log nicht")
+
+
+def _live1_fmt(fid, q, vc="h264"):
+    art = fid.split("-", 1)[0]
+    f = {"format_id": fid, "quality": q, "vcodec": vc,
+         "url": "https://pull.tiktokcdn.com/stage/%s.%s?expire=9" % (fid, "flv" if art == "flv" else "m3u8"),
+         "ext": "flv" if art == "flv" else "mp4"}
+    if art == "hls":
+        f["protocol"] = "m3u8_native"
+    if vc is None:
+        f.pop("vcodec")
+    return f
+
+
+def _test_live1_ytdlp_bestes_format_zuerst():
+    """LIVE-1: yt-dlp sortiert `formats` AUFSTEIGEND (FormatSorter, TikTokLiveIE
+    `_format_sort_fields ('quality', 'ext')`) — das Beste steht hinten. Wir
+    nahmen das ERSTE FLV und HLS: Aufnahme in hls-SD1, Restream in flv-SD1.
+    Und TikToks „ao" (nur Ton, quality=-1) stand ganz vorn. Die Liste hier
+    steht in der Reihenfolge, in der yt-dlp sie ausgibt; origin ist HEVC
+    (bytevc1, B64) und darf erst nach jedem H.264 kommen."""
+    from nc import ytdlpurl as Y
+    fmts = [_live1_fmt("flv-ao", -1, vc=None), _live1_fmt("hls-ao", -1, vc=None),
+            _live1_fmt("flv-sd1", 0), _live1_fmt("hls-sd1", 0),
+            _live1_fmt("flv-hd1", 4), _live1_fmt("hls-hd1", 4),
+            _live1_fmt("flv-uhd", 7), _live1_fmt("hls-uhd", 7),
+            _live1_fmt("flv-origin", 9, vc="bytevc1"), _live1_fmt("hls-origin", 9, vc="bytevc1")]
+    oben = dict(fmts[-2])                  # yt-dlps eigene Wahl: das Letzte
+    u = Y.urls_aus_json(dict(oben, formats=fmts))
+    assert "flv-uhd.flv" in (u.get("flv_url") or ""), "Restream nicht in bester H.264-Stufe: %r" % u
+    assert "hls-uhd.m3u8" in (u.get("hls_url") or ""), "Aufnahme nicht in bester H.264-Stufe: %r" % u
+    # Nur HEVC und Ton: lieber HEVC als nichts — und nie die Ton-Spur.
+    u = Y.urls_aus_json({"formats": [fmts[0], fmts[1], fmts[8], fmts[9]]})
+    assert "origin" in (u.get("flv_url") or "") and "origin" in (u.get("hls_url") or ""), u
+    # Nur Ton: das ist keine spielbare Quelle.
+    assert Y.urls_aus_json({"formats": fmts[:2]}) == {}, Y.urls_aus_json({"formats": fmts[:2]})
+    # Ohne formats bleibt yt-dlps oberste Adresse der Rueckfall.
+    u = Y.urls_aus_json({"url": fmts[6]["url"], "ext": "flv", "vcodec": "h264"})
+    assert u.get("flv_url") == fmts[6]["url"], u
+    ok("LIVE-1: yt-dlp-Auskunft — bestes H.264-Format zuerst, Ton-Formate nie, HEVC nur als Rueckfall")
+
+
+def _live3_db(name):
+    from nc import dbwrap as W
+    db = os.path.join(_ph.verzeichnis("nc-pruef-live3-"), name)
+    W.configure_db(db_path=db, backend="sqlite")
+    with W.db_conn() as c:
+        c.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, group_id INTEGER, "
+                  "username TEXT, last_live INTEGER DEFAULT 0, recording INTEGER DEFAULT 0, "
+                  "paused INTEGER DEFAULT 0, auto_disabled_at TEXT, auto_disabled_reason TEXT)")
+        c.commit()
+
+
+def _bot_funktion(name, ns):
+    """Eine Top-Level-Funktion aus bot.py im eigenen Namensraum."""
+    import ast as _ast
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+              and n.name == name)
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    return ns[name]
+
+
+def _test_live3_pause_beendet_live():
+    """LIVE-3: ein waehrend des Lives pausiertes Tracking wird nicht mehr
+    gepollt und meldet nie OFFLINE — last_live=1 blieb fuer immer stehen:
+    nach dem Fortsetzen keine LIVE-Meldung, und _live_users() hielt den
+    Live-React-Worker gegen einen beendeten Stream am Laufen. Jetzt setzt die
+    Pause last_live zurueck, und _live_users() zaehlt pausierte nicht (auch
+    nicht den Altbestand, der noch last_live=1 traegt)."""
+    from nc import dbwrap as W
+    from nc import trackingdb as T
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    try:
+        _live3_db("live3.db")
+        with W.db_conn() as c:
+            c.execute("INSERT INTO trackings (id, group_id, username, last_live, paused) VALUES "
+                      "(1, 10, 'pausiert', 1, 0), (2, 10, 'altlast', 1, 1), (3, 10, 'livehier', 1, 0)")
+            c.commit()
+        assert T.set_tracking_paused(1, True) is True
+        with W.db_conn() as c:
+            r = c.execute("SELECT last_live, paused FROM trackings WHERE id=1").fetchone()
+        assert tuple(r) == (0, 1), "Pause liess last_live stehen: %r" % (tuple(r),)
+        live = _bot_funktion("_live_users", {"db_conn": W.db_conn, "log": _GeldLog()})()
+        assert sorted(live) == ["livehier"], "pausierte zaehlen als live: %r" % live
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+    ok("LIVE-3: Pausieren setzt last_live=0, _live_users() zaehlt keine pausierten")
+
+
+class _Live5Gift:
+    def __init__(self, typ=1, dia=1, name="Rose"):
+        self.type, self.diamond_count, self.name = typ, dia, name
+
+    @property
+    def streakable(self):
+        return self.type == 1
+
+
+class _Live5Event:
+    """Nachbau von TikTokLive 6.6.5 GiftEvent: `streaking` ist eine
+    Eigenschaft (not gift.streakable -> False, sonst not repeat_end)."""
+    def __init__(self, gift, repeat_count, repeat_end):
+        self.gift, self.repeat_count, self.repeat_end = gift, repeat_count, repeat_end
+        self.user = type("U", (), {"nickname": "Fan"})()
+
+    @property
+    def streaking(self):
+        if not self.gift.streakable:
+            return False
+        return not bool(self.repeat_end)
+
+
+def _live5_on_gift():
+    """Das ECHTE on_gift aus _start_chat_listener, mit Attrappen statt Closure."""
+    import ast as _ast
+    import asyncio as _aio
+    from nc import revenue as R
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    aussen = next(n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                  and n.name == "_start_chat_listener")
+    fn = next(n for n in _ast.walk(aussen) if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "on_gift")
+    spur = {"overlay": [], "clips": [], "buf": [], "push": []}
+
+    async def _push_async(*a, **_k):
+        spur["push"].append(a)
+
+    def _clip(*a):
+        spur["clips"].append(a)
+
+    ns = {"_nc_revenue": R, "asyncio": _aio, "username": "streamer",
+          "_overlay_src_ok": lambda q: True,
+          "_overlay_push": lambda *a, **k: spur["overlay"].append((a, k)),
+          "CLIP_ENABLED": True, "CLIP_GIFT_MIN": 1, "clip_moment": _clip,
+          "_spawn": lambda coro, name=None: None, "LIVE_REACT_GIFT_THRESHOLD": 0,
+          "flags": {}, "chat_buf": spur["buf"], "_cap": lambda: None,
+          "_restream_chat_push_async": _push_async}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    return ns["on_gift"], spur
+
+
+def _test_live5_combo_geschenk_einmal():
+    """LIVE-5: TikTokLive feuert je Streak-Schritt ein GiftEvent mit
+    wachsendem repeat_count; erst das letzte traegt repeat_end. Wir zaehlten
+    jeden Schritt: 30 Rosen = 465 Diamanten, 30 Clips, 30 Sendebild-Zeilen,
+    30 overlay_events. Jetzt zaehlt nur das Ende — und ein nicht
+    streakbares Geschenk zaehlt sofort."""
+    import asyncio as _aio
+    from nc import revenue as R
+    on_gift, spur = _live5_on_gift()
+    rose = _Live5Gift(typ=1, dia=1)
+
+    async def _lauf():
+        for n in range(1, 31):
+            await on_gift(_Live5Event(rose, n, repeat_end=(n == 30)))
+        await on_gift(_Live5Event(_Live5Gift(typ=2, dia=500, name="Loewe"), 1, repeat_end=False))
+
+    _aio.run(_lauf())
+    werte = [a[2] for a, _k in spur["overlay"]]
+    assert werte == [30, 500], "Combo je Schritt gezaehlt: %r" % werte
+    assert len(spur["clips"]) == 2 and len(spur["buf"]) == 2 and len(spur["push"]) == 2, spur
+    # Ein Ereignis, an dem `streaking` selbst scheitert, wird gewertet, nicht verschluckt.
+    kaputt = type("K", (), {"streaking": property(lambda s: s.gift.streakable),
+                            "gift": None, "repeat_count": 3, "diamond_count": 5})()
+    assert R.tiktok_geschenk(kaputt) == (True, 15), R.tiktok_geschenk(kaputt)
+    ok("LIVE-5: Combo-Geschenk wird einmal am Streak-Ende gewertet, nicht je Schritt")
+
+
+def _test_live6_name_gross_klein_ein_nutzer():
+    """LIVE-6: „MaxMuster" aus Chat A und „maxmuster" aus Chat B sind EIN
+    TikTok-Nutzer. Unter SQLite liess der Lock-Vergleich (`=`, case-
+    sensitiv) zwei Aufnahmen desselben Streams zu, und livemeldung/
+    Live-Cache fuehrten zwei Nutzer — zwei Discord-LIVE-Posts und Threads."""
+    from nc import dbwrap as W
+    from nc import livecache as LC
+    from nc import livemeldung as LM
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    stand = dict(LM.STAND)
+    try:
+        _live3_db("live6.db")
+        with W.db_conn() as c:
+            c.execute("INSERT INTO trackings (id, group_id, username) VALUES "
+                      "(1, 10, 'MaxMuster'), (2, 20, 'maxmuster'), (3, 30, 'andere')")
+            c.commit()
+        lock = _bot_funktion("_lock_update", {"db_conn": W.db_conn})
+        assert lock(1, "MaxMuster") is True
+        assert lock(2, "maxmuster") is False, "zweite Aufnahme desselben Streams erlaubt"
+        assert lock(3, "andere") is True, "fremder Nutzer gesperrt"
+        LM.STAND.clear()
+        assert LM.live_an("MaxMuster") is True
+        assert LM.live_an("maxmuster") is False, "zweiter Discord-LIVE-Post"
+        assert LM.live_aus("MAXMUSTER") is True and LM.live_aus("maxmuster") is False
+        cache = {}
+        LC.setzen(cache, "MaxMuster", "live", {"flv_url": "https://x/a.flv"}, 100.0, 15)
+        assert LC.holen(cache, "maxmuster", 101.0) == ("live", {"flv_url": "https://x/a.flv"}), cache
+    finally:
+        LM.STAND.clear()
+        LM.STAND.update(stand)
+        W.configure_db(db_path=alt[0], backend=alt[1])
+    ok("LIVE-6: Gross-/Kleinschreibung eines Handles ergibt einen Nutzer (Lock, Live-Meldung, Cache)")
+
+
+def _test_live7_lockzeile_gedrosselt():
+    """LIVE-7: „Lock nicht bekommen" stand bei jedem Poll jedes Zusatz-Chats im
+    INFO-Log (~180/h). Geprueft im Syntaxbaum: die Zeile steht unter einem
+    `if`, dessen Bedingung aus nc/meldetakt.melden("rec-lock", …) kommt."""
+    import ast as _ast
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+              and n.name == "_handle_single_tracking")
+    eltern = {}
+    for n in _ast.walk(fn):
+        for k in _ast.iter_child_nodes(n):
+            eltern[k] = n
+    zeilen = [n for n in _ast.walk(fn) if isinstance(n, _ast.Call)
+              and isinstance(n.func, _ast.Attribute) and n.func.attr == "info"
+              and any(isinstance(c, _ast.Constant) and "Lock nicht bekommen" in str(c.value)
+                      for c in _ast.walk(n))]
+    assert len(zeilen) == 1, "Lock-Zeile nicht eindeutig gefunden: %d" % len(zeilen)
+    n, bed = zeilen[0], None
+    while n in eltern:
+        n = eltern[n]
+        if isinstance(n, _ast.If):
+            bed = n.test
+            break
+    assert isinstance(bed, _ast.Name), "Lock-Zeile steht ungedrosselt"
+    quelle = [a for a in _ast.walk(fn) if isinstance(a, _ast.Assign)
+              and any(isinstance(t, _ast.Tuple) and any(isinstance(e, _ast.Name) and e.id == bed.id
+                                                        for e in t.elts) for t in a.targets)]
+    assert any(isinstance(a.value, _ast.Call) and isinstance(a.value.func, _ast.Attribute)
+               and a.value.func.attr == "melden" and a.value.args
+               and isinstance(a.value.args[0], _ast.Constant) and a.value.args[0].value == "rec-lock"
+               for a in quelle), "Bedingung kommt nicht aus meldetakt.melden('rec-lock', …)"
+    ok("LIVE-7: die Zeile Lock-nicht-bekommen geht durch nc/meldetakt (Kanal rec-lock)")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -45852,6 +46144,12 @@ def main():
     _test_v5114_dc4_netzausfall_beendet_discord_nicht()
     _test_v5114_dc7_stern_highlight_genau_einmal()
     _test_v5114_dc8_sprachnachricht_begrenzt()
+    _test_live2_proxy_zugang_nie_im_log()
+    _test_live1_ytdlp_bestes_format_zuerst()
+    _test_live3_pause_beendet_live()
+    _test_live5_combo_geschenk_einmal()
+    _test_live6_name_gross_klein_ein_nutzer()
+    _test_live7_lockzeile_gedrosselt()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
