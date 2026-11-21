@@ -11833,10 +11833,16 @@ def _test_v42_w89_kopie_wird_zurueckgenommen():
     with open(src_datei, "wb") as f:
         f.write(b"0" * 4096)
 
-    alt_add, alt_log = A.add_archive_entry, A.log
+    alt_add, alt_log, alt_quelle = A.add_archive_entry, A.log, A.hat_quelle
     schrift = _Log()
     try:
         A.log = schrift
+        # Seit v5.11.4 (ARC-3) fragt _archiviere_eine vorher die Datenbank, ob
+        # die Aufnahme schon archiviert ist. Der Eintrag ist hier eine
+        # Attrappe, die nichts speichert — also auch die Frage: sonst haengt
+        # der Vertrag an der Datenbank, die ein frueherer Vertrag der Suite
+        # gerade konfiguriert hat („no such table: archive" nur im Gesamtlauf).
+        A.hat_quelle = lambda quelle: False
 
         # --- 1) DER GUTE FALL: KOPIE UND EINTRAG ---------------------
         gesehen = []
@@ -11970,6 +11976,7 @@ def _test_v42_w89_kopie_wird_zurueckgenommen():
     finally:
         A.add_archive_entry = alt_add
         A.log = alt_log
+        A.hat_quelle = alt_quelle
         _sh.rmtree(heim, ignore_errors=True)
 
 
@@ -16533,6 +16540,11 @@ def richte_testdatenbank_ein():
         cur = c.cursor()
         for stmt in [s.strip() for s in _extract_schema().split(";") if s.strip()]:
             cur.execute(stmt)
+        # deleted_at kommt in nc/schema.py per _migrate_columns, nicht aus dem
+        # CREATE TABLE — der Auszug oben kennt sie also nicht. Seit v5.11.4
+        # (ARC-9) zaehlen die Statistiken den Papierkorb nicht mehr mit und
+        # fragen die Spalte; jede Produktionsdatenbank hat sie.
+        cur.execute("ALTER TABLE recordings ADD COLUMN deleted_at TEXT")
         cur.execute("INSERT INTO recordings (username, filepath, created_at) "
                     "VALUES (?,?,?)",
                     ("helge_72", os.path.join(tmp, "x.mp4"),

@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **27.822 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
+`bot.py` hat **27.998 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 391 Routen (34 in `bot.py`, 357 in
-`nc/routes/`), 67 Slash-Commands, 646 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 67 Slash-Commands, 663 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -276,9 +276,10 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **502** (v5.6-W197: drei
+`tools/blindstellen.py` misst diese Klasse, Bestand **501** (v5.6-W197: drei
 verschwanden mit totem Code; v5.8-W200: sechs begründet dazu; v5.9-W202: vier;
-v5.11-W209: eine, s. u.), und wie bei
+v5.11-W209: eine, s. u.; v5.11.4: eine weniger — die Upload-Schlange liest
+streng statt still `[]` zu liefern), und wie bei
 W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
 Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
 „dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
@@ -1020,7 +1021,7 @@ Die größte Funktion steht ohnehin nicht in `bot.py`:
 Problem. Die Masse zog um, statt zu schrumpfen. `tools/monolith.py` misst deshalb den **ganzen**
 Produktionscode und zählt, wie viele Funktionen über einer Stufe liegen —
 seit v5.11.2 sind das 60 über 100, 15 über 200, 8 über 300 und 1 über 500
-Zeilen, dazu 19 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
+Zeilen, dazu 19 über 50, 1 über 100 und keine über 150 Verzweigungen. Gezählt
 wird die Anzahl, nicht die Länge: eine Sperre, die jede zusätzliche
 Zeile meldet, fällt bei jeder Fehlerbehebung und ist in einer Woche
 abgeschaltet.
@@ -1353,7 +1354,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 624 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 626 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das
