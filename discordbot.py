@@ -50,6 +50,9 @@ from nc import telegramfehler as _nc_tgfehler  # v5.1-W182: Discord-ID ist kein 
 from nc import befehle as _nc_befehle
 from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden
 from nc import discordstate as _nc_discordstate
+from nc import ffbuild as _nc_ffbuild       # v5.11.4 (DC-8): Thread-Deckel fuer ffmpeg
+from nc import kindprozess as _nc_kind     # v5.11.4 (DC-8): ffmpeg/ffprobe mit Zeitlimit
+from nc import restreamstate as _nc_rsstate  # v5.11.4 (DC-8): Live-Vorrang vor Sprachnachrichten
 from nc import i18n as _nc_i18n
 from nc import tgmarkdown as _nc_tgmd   # v4.2-W138: HTML -> Discord-Markdown
 from nc import sqldialekt as _nc_sqldialekt   # v4.2-W143: Upsert in beiden Dialekten
@@ -264,7 +267,7 @@ async def _discord_start():
     never_connected = 0      # Fehlversuche, die on_ready NIE erreicht haben
     while True:
         _DISCORD_SESSION["attempt"] += 1
-        _reached_ready = False
+        fehler, art = None, "ende"
         try:
             fatal = await _discord_run_once()
             if fatal:
@@ -273,34 +276,95 @@ async def _discord_start():
         except asyncio.CancelledError:
             raise                           # Shutdown: nicht abfangen
         except Exception as e:
+            fehler, art = e, _dc_fehlerart(e)
             reason = f"{type(e).__name__}: {e}"
-            log.error("Discord-Session abgebrochen (%s) — Neuversuch in %ss",
-                      reason, delay, exc_info=True)
-        else:
-            log.warning("Discord-Session beendet (%s) — Neuversuch in %ss",
-                        reason, delay)
+            if art != "endgueltig":
+                if _DISCORD_SESSION.get("connected_since"):
+                    # Nach einer echten Sitzung ist das ein neuer Ausfall —
+                    # er meldet sofort, nicht erst nach der Drossel-Ruhezeit.
+                    _nc_meldetakt.zuruecksetzen(_DC_SITZUNG_KANAL)
+                _dc_abbruch_melden(e, reason, 5 if _DISCORD_SESSION.get("connected_since") else delay)
         _reached_ready = bool(_DISCORD_SESSION.get("connected_since"))
         _DISCORD_SESSION.update(last_error=reason,
                                 last_disconnect=_time_mod.time(),
                                 connected_since=None)
         _DISCORD_SESSION["reconnects"] += 1
         _nc_discordstate.CLIENT["obj"] = None
-        # Kam die Session nie bis on_ready, ist der Fehler deterministisch
-        # (kaputte Command-Registrierung, Netzsperre, falsche Guild-ID).
-        # Endlos dagegen zu laufen verschleiert das Problem nur, deshalb
-        # nach 5 solchen Versuchen laut aufgeben statt leise weiterloopen.
+        if art == "endgueltig":
+            # v5.11.4 (DC-4): ein Close-Code, den discord.py selbst nicht
+            # wiederaufnimmt (4004 Token, 4010–4013 Shard/Version/Intents,
+            # 4014 privilegierte Intents) — kein Warten heilt das.
+            log.error("Discord: Gateway lehnt die Sitzung endgueltig ab (%s) — "
+                      "kein Neuversuch. DISCORD_BOT_TOKEN und die Intents im "
+                      "Developer Portal pruefen, danach Bot neu starten.", reason)
+            return
         if _reached_ready:
             never_connected = 0
             delay = 5                       # nach echter Session neu starten
-        else:
+        elif art != "netz":
+            # Kam die Session nie bis on_ready und ist der Grund KEIN
+            # Netzfehler, ist er vermutlich deterministisch (kaputte
+            # Command-Registrierung, falsche Guild-ID). Dann nach 5 solchen
+            # Versuchen laut aufgeben statt leise weiterloopen.
+            #
+            # v5.11.4 (DC-4): Netzfehler zaehlen hier NICHT mehr. `login()`
+            # wiederholt weder DNS-Aussetzer noch HTTP 5xx; fuenf davon in
+            # Folge (5+10+20+40 s ≈ 75 s plus Zeitlimits, gemessen rund
+            # 155 s) schalteten Discord bis zum naechsten Neustart ab —
+            # obwohl der Docstring oben genau diese Faelle heilbar nennt.
             never_connected += 1
             if never_connected >= 5:
                 log.error("Discord: 5 Startversuche ohne eine einzige "
                           "erfolgreiche Verbindung — aufgegeben. Letzter "
                           "Grund: %s. Nach Behebung Bot neu starten.", reason)
                 return
+        if fehler is None:
+            log.warning("Discord-Session beendet (%s) — Neuversuch in %ss",
+                        reason, delay)
         await asyncio.sleep(delay)
         delay = min(delay * 2, 300)
+
+
+# v5.11.4 (DC-4): Gateway-Close-Codes, die discord.py nicht selbst
+# wiederaufnimmt (DiscordWebSocket._can_handle_close) und die kein Warten
+# heilt. Alle anderen Codes behandelt discord.py intern oder sie sind
+# voruebergehend.
+DC_CLOSE_ENDGUELTIG = frozenset({4004, 4010, 4011, 4012, 4013, 4014})
+# Klassennamen statt isinstance: discord.py und aiohttp sind optional, und
+# der Vertrag faehrt das ohne beide. `ClientError` ist aiohttps Basis,
+# `TimeoutError`/`OSError` decken DNS, Verbindungsabbau und Zeitlimits.
+_DC_NETZ_NAMEN = frozenset({"OSError", "TimeoutError", "ClientError",
+                            "GatewayNotFound", "DiscordServerError"})
+_DC_SITZUNG_KANAL = "discord-sitzung"
+
+
+def _dc_fehlerart(exc) -> str:
+    """Warum ist die Sitzung abgebrochen? -> "endgueltig" | "netz" | "unbekannt"
+
+    Nur "unbekannt" zaehlt auf die Fuenf-Versuche-Grenze; "netz" wird
+    unbegrenzt mit gedeckelter Pause wiederholt, "endgueltig" beendet den
+    Supervisor sofort."""
+    namen = {k.__name__ for k in type(exc).__mro__}
+    if namen & {"LoginFailure", "PrivilegedIntentsRequired"}:
+        return "endgueltig"
+    if "ConnectionClosed" in namen:
+        return "endgueltig" if getattr(exc, "code", None) in DC_CLOSE_ENDGUELTIG else "netz"
+    if "HTTPException" in namen:
+        status = getattr(exc, "status", 0) or 0
+        return "netz" if status >= 500 or status == 429 else "unbekannt"
+    return "netz" if namen & _DC_NETZ_NAMEN else "unbekannt"
+
+
+def _dc_abbruch_melden(fehler, reason, delay):
+    """ERROR je Abbruch, gedrosselt je Fehlerklasse (nc/meldetakt): ein
+       Discord-Ausfall von einer Stunde waere bei 300 s Pause sonst zwoelfmal
+       derselbe Traceback. Nach einer echten Sitzung setzt der Supervisor die
+       Drossel zurueck — der naechste Abbruch meldet wieder sofort."""
+    laut, weg = _nc_meldetakt.melden(_DC_SITZUNG_KANAL, type(fehler).__name__,
+                                     _time_mod.monotonic())
+    if laut:
+        log.error("Discord-Session abgebrochen (%s) — Neuversuch in %ss%s",
+                  reason, delay, _nc_meldetakt.zusatz(weg), exc_info=fehler)
 
 
 async def _ensure_discord_invite(client):
@@ -658,11 +722,8 @@ async def _ziele_sync_loop():
     """v4.2-W153: der Abgleich laeuft von selbst — vorher nur per /setup_targets.
     v5.11-W209: er legt an und ergaenzt (neue Trackings bekommen ihren
     Bereich binnen DISCORD_ZIELE_SYNC_MIN), er loescht nichts."""
-    _c = _dc_client()
-    if _c is None:
-        return
-    await _c.wait_until_ready()
-    while _dc_offen():
+    while True:                      # v5.11.4 (DC-5): siehe _dc_warten
+        await _dc_warten()
         takt = _ziele_takt_min()
         if takt <= 0:
             log.info("Discord-Bereiche: automatischer Abgleich aus (DISCORD_ZIELE_SYNC_MIN=0)")
@@ -680,18 +741,110 @@ def _par_chat_id():
     return next(iter(ALLOWED_CHAT_IDS), next(iter(ALLOWED_USER_IDS), 0))
 
 
+# v5.11.4 (DC-8): Sprachnachrichten kosten Whisper — und Whisper teilt sich
+# _whisper_sem/_whisper_live_gate mit der Live-Transkription. Bis hierher
+# loeste JEDES Mitglied (auch per DM) mit JEDEM Audio-Anhang ffmpeg plus eine
+# volle Transkription aus: ohne Abklingzeit, ohne Laengengrenze, und
+# `proc.wait()` ohne Zeitlimit. Zehn Minuten Audio im Sekundentakt genuegten,
+# um die Live-Transkription zu verdraengen.
+DC_VOICE_ABKLING_S = 60                 # je Nutzer
+DC_VOICE_MAX_BYTES = 25 * 1024 * 1024   # vor dem Herunterladen
+DC_VOICE_PROBE_S = 15                   # Zeitlimit ffprobe
+DC_VOICE_WANDEL_S = 60                  # Zeitlimit ffmpeg (hoechstens MAX_S Audio)
+_voice_zuletzt = {}                     # user_id -> monotonic
+# Modul-global, nicht am Client (CLAUDE.md: Guards als Objekt-Attribut
+# brechen beim Reconnect): hoechstens EINE Discord-Sprachnachricht zugleich.
+_VOICE_LAUF = {"aktiv": False}
+
+
+def _voice_max_s() -> float:
+    """DISCORD_VOICE_MAX_S — als Funktion gelesen (.env kommt spaeter)."""
+    roh = (os.getenv("DISCORD_VOICE_MAX_S", "120") or "").strip()
+    try:
+        return max(1.0, float(roh))
+    except ValueError:
+        log.warning("DISCORD_VOICE_MAX_S=%r ist keine Zahl — es gilt 120 s.", roh)
+        return 120.0
+
+
+def _voice_zulassen(message, att, jetzt) -> str:
+    """Darf diese Sprachnachricht jetzt transkribiert werden? -> "ok" oder Grund.
+
+    "live" ist der Vorrang des Sendebilds (B98): laeuft ein Restream, hat die
+    Live-Transkription jeden Whisper-Platz, und eine Sprachnachricht wartete
+    sonst in derselben Schlange mit."""
+    if getattr(message, "guild", None) is None:
+        return "dm"                     # DMs: kein Whisper fuer Unbekannte
+    if (getattr(att, "size", 0) or 0) > DC_VOICE_MAX_BYTES:
+        return "gross"
+    if _nc_rsstate.ACTIVE_ALL:
+        return "live"
+    if _VOICE_LAUF["aktiv"]:
+        return "belegt"
+    if jetzt - _voice_zuletzt.get(message.author.id, float("-inf")) < DC_VOICE_ABKLING_S:
+        return "abklingzeit"
+    return "ok"
+
+
+async def _voice_dauer(pfad):
+    """Dauer per ffprobe in Sekunden, oder None (unbekannt — Browser-WebM
+       traegt oft keine; dann begrenzt `-t` beim Wandeln)."""
+    rc, out, _err = await _nc_kind.ausfuehren(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", pfad], DC_VOICE_PROBE_S, art="dc-voice-probe")
+    txt = (out or b"").decode("ascii", "replace").strip()
+    if rc != 0 or not re.fullmatch(r"\d+(\.\d+)?", txt):
+        log.info("Discord Voice-AI: Dauer unbekannt (ffprobe rc=%s, %r) — "
+                 "es begrenzt -t beim Wandeln.", rc, txt[:40])
+        return None
+    return float(txt)
+
+
 async def _handle_voice_ai(message, att):
     """Sprachnachricht → ffmpeg→16k-WAV → Whisper → ai_chat → Antwort."""
     import tempfile
+    jetzt = _time_mod.monotonic()
+    grund = _voice_zulassen(message, att, jetzt)
+    if grund != "ok":
+        log.info("Discord Voice-AI: Sprachnachricht von %s uebersprungen (%s).",
+                 message.author.id, grund)
+        try:
+            if grund == "live":
+                await message.reply(_nc_i18n.t(
+                    "🎤 Gerade läuft ein Livestream — Sprachnachrichten beantworte "
+                    "ich danach wieder."), mention_author=False)
+            elif grund in ("abklingzeit", "belegt"):
+                await message.add_reaction("⏳")
+        except Exception as e:
+            log.info("Discord Voice-AI: Hinweis nicht zustellbar: %s", e)
+        return
+    if len(_voice_zuletzt) > 500:       # Register begrenzt halten
+        for k in [k for k, t in _voice_zuletzt.items() if jetzt - t >= DC_VOICE_ABKLING_S]:
+            _voice_zuletzt.pop(k, None)
+    _voice_zuletzt[message.author.id] = jetzt
+    _VOICE_LAUF["aktiv"] = True
+    max_s = _voice_max_s()
     tmp_in = os.path.join(tempfile.gettempdir(), f"disc_voice_{message.id}_{_nc_rang.slug(att.filename)}")
     tmp_wav = tmp_in + ".wav"
     try:
         await att.save(tmp_in)
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", tmp_in,
-            "-ar", "16000", "-ac", "1", tmp_wav,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-        await proc.wait()
+        dauer = await _voice_dauer(tmp_in)
+        if dauer is not None and dauer > max_s:
+            await message.reply(_nc_i18n.t(
+                "🎤 Sprachnachricht zu lang ({dauer} s) — höchstens {max} s.",
+                dauer=int(dauer), max=int(max_s)), mention_author=False)
+            return
+        # `-t`: auch eine WebM ohne Dauerangabe wird nach max_s abgeschnitten.
+        # Ueber nc.kindprozess, damit ein haengendes ffmpeg nach Zeitlimit
+        # abgeraeumt wird (vorher `proc.wait()` ohne Zeitlimit).
+        # Thread-Deckel und nice wie jeder ffmpeg-Bauer (nc.ffbuild): eine
+        # Sprachnachricht darf dem Sendebild keine Kerne nehmen.
+        await _nc_kind.ausfuehren(_nc_ffbuild.ff_cmd(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", tmp_in,
+             "-t", str(int(max_s)), "-ar", "16000", "-ac", "1", tmp_wav],
+            threads=1, nice=10),
+            DC_VOICE_WANDEL_S, art="dc-voice-wandel",
+            stdout=_nc_kind.DEVNULL, stderr=_nc_kind.DEVNULL)
         if not os.path.exists(tmp_wav) or os.path.getsize(tmp_wav) < 100:
             return
         async with message.channel.typing():
@@ -702,8 +855,11 @@ async def _handle_voice_ai(message, att):
             txt, err = await azrael_chat("Telegram Voice", text, timeout=30)   # F90: eine KI-Identität
         await message.reply(_nc_i18n.t(f"🎤 **Du:** {text[:300]}\n\n🤖 {(txt or err or '—')[:1700]}"), mention_author=False)
     except Exception as e:
-        log.debug("Discord Voice-AI: %s", e)
+        # War log.debug — ein Fehler hier (ffmpeg-Zeitlimit, Download) ist fuer
+        # den Betreiber sonst dasselbe wie `pass`.
+        log.warning("Discord Voice-AI: %s: %s", type(e).__name__, e)
     finally:
+        _VOICE_LAUF["aktiv"] = False
         for f in (tmp_in, tmp_wav):
             try:
                 if os.path.exists(f): os.remove(f)
@@ -1814,6 +1970,36 @@ def _dc_offen() -> bool:
     return c is not None and not c.is_closed()
 
 
+# v5.11.4 (DC-5): so oft schaut eine wartende Hintergrundschleife nach, ob
+# wieder ein Client verbunden ist. Kurz gegen das Neustart-Fenster des
+# Supervisors (5–300 s), lang genug, um nicht zu kreiseln.
+DC_WARTE_TAKT_S = 15
+
+
+def _dc_bereit() -> bool:
+    """Verbunden UND bereit (on_ready durch)? Vorher liefern get_channel und
+       guilds leere Ergebnisse, und eine Schleife, die dann arbeitet, haelt
+       "keinen Kanal" fuer den Zustand statt fuer den Anlauf."""
+    # Kein await dazwischen: der Supervisor kann CLIENT["obj"] nicht zwischen
+    # den beiden Aufrufen auf None setzen.
+    return _dc_offen() and bool(_dc_client().is_ready())
+
+
+async def _dc_warten():
+    """v5.11.4 (DC-5): warten, bis wieder ein bereiter Client da ist.
+
+    Die Dauerlaeufer hatten `while _dc_offen():` als Schleifenkopf. Im
+    Neustart-Fenster des Supervisors (CLIENT["obj"] = None, 5–300 s) war die
+    Bedingung falsch, die Schleife endete STILL — und weil
+    `_DISCORD_BGTASKS_STARTED` gesetzt bleibt (B120: sonst liefen nach n
+    Reconnects n Schleifen), startete sie nie wieder. Liveboard, Wochen-
+    Digest, Clip der Woche und Bereichs-Abgleich hoerten nach dem ersten
+    Reconnect einfach auf. Warten statt Enden; `_error_channel_loop` und
+    `_community_events_loop` machten es mit `while True` schon richtig."""
+    while not _dc_bereit():
+        await asyncio.sleep(DC_WARTE_TAKT_S)
+
+
 # ---------------------------------------------------------------------------
 # v4.2-W77: Diese drei brauchten von _discord_run_once nur noch die
 # Sitzungs-Zwischenspeicher — und die stehen seit dieser Welle oben.
@@ -1991,11 +2177,8 @@ async def _update_liveboard():
 
 
 async def _liveboard_loop():
-    _c = _dc_client()
-    if _c is None:
-        return
-    await _c.wait_until_ready()
-    while _dc_offen():
+    while True:                      # v5.11.4 (DC-5): siehe _dc_warten
+        await _dc_warten()
         try:
             if DISCORD_LIVEBOARD:
                 await _update_liveboard()
@@ -2026,11 +2209,8 @@ async def _post_weekly_digest():
 
 
 async def _weekly_digest_loop():
-    _c = _dc_client()
-    if _c is None:
-        return
-    await _c.wait_until_ready()
-    while _dc_offen():
+    while True:                      # v5.11.4 (DC-5): siehe _dc_warten
+        await _dc_warten()
         try:
             now = datetime.now(timezone.utc)
             wk = now.strftime("%Y-W%W")
@@ -2096,11 +2276,8 @@ async def _post_clip_of_week():
 
 
 async def _clipoftheweek_loop():
-    _c = _dc_client()
-    if _c is None:
-        return
-    await _c.wait_until_ready()
-    while _dc_offen():
+    while True:                      # v5.11.4 (DC-5): siehe _dc_warten
+        await _dc_warten()
         try:
             now = datetime.now(timezone.utc)
             wk = now.strftime("%Y-CW%W")
@@ -2110,6 +2287,138 @@ async def _clipoftheweek_loop():
         except Exception as e:
             _loop_fehler("_clipoftheweek_loop", e)
         await asyncio.sleep(1800)
+
+
+async def _stern_highlight(client, payload):
+    """F84: Community-kuratierte Highlights — erreicht ein Clip
+       CLIP_HIGHLIGHT_STARS echte ⭐, wird er EINMAL automatisch an die
+       Telegram-Gruppen gepusht, die den Streamer tracken.
+
+    v5.11.4 (DC-7). Bis hierher: pruefen (stars_pushed=0) → fetch_message
+    (Netz) → bedingungsloses `UPDATE stars_pushed=1`. Zwei Sterne kurz
+    nacheinander liefen beide durch die Pruefung, bevor einer schrieb — der
+    Clip ging doppelt an jede Telegram-Gruppe und doppelt als Community-Post.
+    Dieselbe Klasse wie der Live-Cache aus W103: EINMAL geprueft, VOR dem
+    Warten. Jetzt ist das UPDATE selbst der Anspruch (`WHERE stars_pushed=0`,
+    rowcount 1 — in SQLite und MariaDB gleich), und nur wer ihn bekommt,
+    sendet.
+
+    Dazu stand stars_pushed=1 VOR der Frage, ob der Telegram-Bot bereit ist:
+    ein Stern waehrend des Telegram-Anlaufs verbrauchte den Push fuer immer.
+    Und ein gescheiterter send_video ging auf `log.debug`, waehrend danach
+    "→ Telegram gepusht" im Log stand. Ging KEIN Versand durch, wird der
+    Anspruch zurueckgegeben (der naechste Stern versucht es erneut); ging
+    ein Teil durch, bleibt er — sonst bekaemen die erfolgreichen Gruppen den
+    Clip beim naechsten Stern ein zweites Mal.
+    """
+    if not _auto_on("highlight_tg", CLIP_HIGHLIGHT_TO_TG) or str(payload.emoji) != "⭐":
+        return
+    if client.user and payload.user_id == client.user.id:
+        return
+    # v4.1-W29: NEBEN dem Loop. Laeuft bei JEDER Discord-Reaktion.
+    row = await db_async(lambda c: c.execute(
+        "SELECT id, username, filepath, stars_pushed FROM discord_clips "
+        "WHERE message_id=?", (payload.message_id,)).fetchone())
+    if not row or row["stars_pushed"] or not row["filepath"]:
+        return
+    ch = client.get_channel(payload.channel_id)
+    if not ch:
+        return
+    msg = await ch.fetch_message(payload.message_id)
+    votes = 0
+    for rc in msg.reactions:
+        if str(rc.emoji) == "⭐":
+            votes = max(0, rc.count - (1 if rc.me else 0))
+            break
+    if votes < max(1, CLIP_HIGHLIGHT_STARS):
+        return
+    fp = row["filepath"]
+    if not (os.path.exists(fp) and os.path.getsize(fp) < 48 * 1024 * 1024):
+        return
+    # v4.2-W109: war globals().get("bot_app") — im Namensraum DIESES
+    # Moduls, wo es bot_app nie gab. Der Push endete deshalb immer
+    # hier, still, seit der Discord-Teil in W15 ausgelagert wurde.
+    app = _bot_app_holen() if _bot_app_holen else None
+    if not app:
+        log.warning("⭐ Highlight @%s (%d Votes): Telegram-Bot nicht "
+                    "bereit — kein Push nach Telegram, der naechste Stern "
+                    "versucht es erneut.", row["username"], votes)
+        return
+    rid = row["id"]
+    if await db_async(lambda c: c.execute(
+            "UPDATE discord_clips SET stars_pushed=1 WHERE id=? AND stars_pushed=0",
+            (rid,)).rowcount) != 1:
+        return          # ein zweiter Stern war schneller — er sendet
+    try:
+        gesendet, fehler = await _stern_an_telegram(app, row["username"], fp, votes)
+    except BaseException:
+        # Auch ein Abbruch gibt den Anspruch zurueck: sonst bleibt ein nie
+        # gesendeter Clip fuer immer als "gepusht" markiert.
+        await _stern_anspruch_zurueck(rid)
+        raise
+    if fehler:
+        laut, weg = _nc_meldetakt.melden("dc-highlight-tg", "versand", _time_mod.monotonic())
+        if laut:
+            log.error("⭐ Highlight @%s: send_video an %d von %d Telegram-Gruppen "
+                      "gescheitert (%s)%s%s", row["username"], len(fehler),
+                      len(fehler) + gesendet, "; ".join(fehler[:3]),
+                      _nc_meldetakt.zusatz(weg),
+                      "" if gesendet else " — Anspruch zurueckgegeben, der naechste "
+                      "Stern versucht es erneut")
+        if not gesendet:
+            await _stern_anspruch_zurueck(rid)
+            return
+    if gesendet:
+        _nc_meldetakt.zuruecksetzen("dc-highlight-tg")
+        log.info("⭐ Highlight-Clip @%s (%d Votes) → Telegram gepusht (%d Gruppen).",
+                 row["username"], votes, gesendet)
+    # V37-COMMUNITY: denselben Highlight als teilbaren Discord-Post — der
+    # Reichweiten-Motor. Aufruf zum Teilen + Sterne-Zahl. Der Clip liegt
+    # schon im Discord (dort wurde er ja gevotet), daher kein Re-Upload —
+    # nur die Ansage, die zum Teilen anregt.
+    if COMMUNITY_HIGHLIGHT_SHARE_ENABLED and DISCORD_WEBHOOK_URL:
+        try:
+            _post = _community.highlight_post(row["username"], stars=votes)
+            await _discord_notify(_post)
+        except Exception as _e:
+            log.debug("community highlight-share: %s", _e)
+
+
+async def _stern_an_telegram(app, username, fp, votes):
+    """Den Clip an jede Telegram-Gruppe, die @username trackt. -> (gesendet, fehler)"""
+    gids = await db_async(lambda c: [r["group_id"] for r in c.execute(
+        "SELECT DISTINCT group_id FROM trackings WHERE username=?",
+        (username,)).fetchall()])
+    cap = f"⭐ Community-Highlight: @{username} — {votes}× gevotet im Discord"
+    gesendet, fehler = 0, []
+    for gid in gids:
+        # v5.1-W182: nicht nur DIESE Guild — jede Discord-ID (ueber 52 Bit,
+        # nc/telegramfehler) ist kein Telegram-Ziel. Der Vergleich mit
+        # DISCORD_GUILD_ID liess die Trackings einer zweiten Guild durch,
+        # und send_video lief gegen „chat not found" (still auf debug).
+        if not _nc_tgfehler.ist_telegram_chat(gid):
+            continue    # Discord-eigene Liste → kein Telegram-Ziel
+        try:
+            with open(fp, "rb") as f:
+                await app.bot.send_video(chat_id=gid, video=f, caption=cap,
+                                         read_timeout=120, write_timeout=120)
+            gesendet += 1
+        except Exception as e:
+            # Je Gruppe laut (ein Highlight ist selten, die Zahl der Gruppen
+            # klein); die Summe meldet der Aufrufer gedrosselt.
+            log.warning("⭐ Highlight @%s → Telegram %s gescheitert: %s", username, gid, e)
+            fehler.append("%s: %s" % (gid, e))
+    return gesendet, fehler
+
+
+async def _stern_anspruch_zurueck(rid):
+    try:
+        await db_async(lambda c: c.execute(
+            "UPDATE discord_clips SET stars_pushed=0 WHERE id=?", (rid,)))
+    except Exception as e:
+        # Laut: ohne Zuruecksetzen bleibt der Clip fuer immer "gepusht".
+        log.error("⭐ Highlight-Anspruch %s nicht zurueckgegeben: %s — der Clip "
+                  "gilt als gepusht, obwohl er nicht ankam.", rid, e)
 
 
 async def _discord_run_once():
@@ -2309,73 +2618,10 @@ async def _discord_run_once():
 
     @client.event
     async def on_raw_reaction_add(payload):
-        """F84: Community-kuratierte Highlights — erreicht ein Clip
-           CLIP_HIGHLIGHT_STARS echte ⭐, wird er EINMAL automatisch an die
-           Telegram-Gruppen gepusht, die den Streamer tracken."""
+        """F84: Community-kuratierte Highlights — v5.11.4 (DC-7) auf
+           Modulebene, siehe `_stern_highlight`."""
         try:
-            if not _auto_on("highlight_tg", CLIP_HIGHLIGHT_TO_TG) or str(payload.emoji) != "⭐":
-                return
-            if client.user and payload.user_id == client.user.id:
-                return
-            # v4.1-W29: NEBEN dem Loop. Laeuft bei JEDER Discord-Reaktion.
-            row = await db_async(lambda c: c.execute(
-                "SELECT id, username, filepath, stars_pushed FROM discord_clips "
-                "WHERE message_id=?", (payload.message_id,)).fetchone())
-            if not row or row["stars_pushed"] or not row["filepath"]:
-                return
-            ch = client.get_channel(payload.channel_id)
-            if not ch:
-                return
-            msg = await ch.fetch_message(payload.message_id)
-            votes = 0
-            for rc in msg.reactions:
-                if str(rc.emoji) == "⭐":
-                    votes = max(0, rc.count - (1 if rc.me else 0))
-                    break
-            if votes < max(1, CLIP_HIGHLIGHT_STARS):
-                return
-            fp = row["filepath"]
-            if not (os.path.exists(fp) and os.path.getsize(fp) < 48 * 1024 * 1024):
-                return
-            await db_async(lambda c: c.execute(
-                "UPDATE discord_clips SET stars_pushed=1 WHERE id=?", (row["id"],)))
-            # v4.2-W109: war globals().get("bot_app") — im Namensraum DIESES
-            # Moduls, wo es bot_app nie gab. Der Push endete deshalb immer
-            # hier, still, seit der Discord-Teil in W15 ausgelagert wurde.
-            app = _bot_app_holen() if _bot_app_holen else None
-            if not app:
-                log.warning("⭐ Highlight @%s (%d Votes): Telegram-Bot nicht "
-                            "bereit — kein Push nach Telegram.",
-                            row["username"], votes)
-                return
-            gids = await db_async(lambda c: [r["group_id"] for r in c.execute(
-                "SELECT DISTINCT group_id FROM trackings WHERE username=?",
-                (row["username"],)).fetchall()])
-            cap = f"⭐ Community-Highlight: @{row['username']} — {votes}× gevotet im Discord"
-            for gid in gids:
-                # v5.1-W182: nicht nur DIESE Guild — jede Discord-ID (ueber 52 Bit,
-                # nc/telegramfehler) ist kein Telegram-Ziel. Der Vergleich mit
-                # DISCORD_GUILD_ID liess die Trackings einer zweiten Guild durch,
-                # und send_video lief gegen „chat not found" (still auf debug).
-                if not _nc_tgfehler.ist_telegram_chat(gid):
-                    continue    # Discord-eigene Liste → kein Telegram-Ziel
-                try:
-                    with open(fp, "rb") as f:
-                        await app.bot.send_video(chat_id=gid, video=f, caption=cap,
-                                                 read_timeout=120, write_timeout=120)
-                except Exception as e:
-                    log.debug("highlight→TG %s: %s", gid, e)
-            log.info("⭐ Highlight-Clip @%s (%d Votes) → Telegram gepusht.", row["username"], votes)
-            # V37-COMMUNITY: denselben Highlight als teilbaren Discord-Post — der
-            # Reichweiten-Motor. Aufruf zum Teilen + Sterne-Zahl. Der Clip liegt
-            # schon im Discord (dort wurde er ja gevotet), daher kein Re-Upload —
-            # nur die Ansage, die zum Teilen anregt.
-            if COMMUNITY_HIGHLIGHT_SHARE_ENABLED and DISCORD_WEBHOOK_URL:
-                try:
-                    _post = _community.highlight_post(row["username"], stars=votes)
-                    await _discord_notify(_post)
-                except Exception as _e:
-                    log.debug("community highlight-share: %s", _e)
+            await _stern_highlight(client, payload)
         except Exception as e:
             log.debug("raw-reaction: %s", e)
 

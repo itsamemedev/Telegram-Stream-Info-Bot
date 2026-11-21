@@ -10013,7 +10013,8 @@ def _test_v42_w77_schleifen_folgen_dem_aktuellen_client():
     for n in LAEUFER:
         assert n in oben, "%s steht nicht mehr auf Modulebene" % n
         rumpf = _ast.unparse(oben[n])
-        assert "_dc_client()" in rumpf or "_dc_offen()" in rumpf, \
+        assert ("_dc_client()" in rumpf or "_dc_offen()" in rumpf
+                or "_dc_warten()" in rumpf), \
             "%s holt den Client nicht mehr ueber das Register — nach einem " \
             "Reconnect spricht es dann wieder den toten Client der ersten " \
             "Sitzung an" % n
@@ -10058,9 +10059,20 @@ def _test_v42_w77_schleifen_folgen_dem_aktuellen_client():
         assert DB._dc_offen() is True, "ein offener Client gilt als geschlossen"
     finally:
         DS.CLIENT["obj"] = _alt
-    assert "while _dc_offen():" in src, \
-        "die Dauerschleifen pruefen nicht mehr ueber _dc_offen() — dann " \
-        "steht dort wieder ein Aufruf, der auf None knallt"
+    # VERTRAG KORRIGIERT (v5.11.4 DC-5): hier stand `"while _dc_offen():" in
+    # src` — die Zusicherung hielt genau den Schleifenkopf fest, der im
+    # Neustart-Fenster des Supervisors STILL endete und nie wieder startete.
+    # Die Aussage "haelt None aus" gilt jetzt fuer das Warten: _dc_bereit()
+    # ist bei None False, und die Schleifen warten auf ihn statt zu enden
+    # (Verhalten im DC-5-Vertrag).
+    try:
+        DS.CLIENT["obj"] = None
+        assert DB._dc_bereit() is False, "_dc_bereit() knallt oder meldet None als bereit"
+    finally:
+        DS.CLIENT["obj"] = _alt
+    assert "await _dc_warten()" in src, \
+        "die Dauerschleifen warten nicht mehr ueber _dc_warten() — dann " \
+        "steht dort wieder ein Aufruf, der auf None knallt oder endet"
     ok("W77: die Dauerlaeufer folgen dem aktuellen Client und ueberleben None")
 
     # --- 4) Der Sitzungszustand behaelt seine Lebensdauer ----------------
@@ -17527,7 +17539,8 @@ def _test_v42_w93_telegram_konflikt_wird_unterschieden():
     assert "error_callback=_telegram_polling_fehler" in ruf[:400], \
         "start_polling ohne error_callback — PTB schreibt dann weiter seinen " \
         "eigenen Traceback je Vorkommen"
-    anlauf = rumpf_ab(b, b.find("async def run_bot("))
+    # ANKER GEWANDERT (v5.11.4 TG-1): der Start steht in _telegram_starten.
+    anlauf = rumpf_ab(b, b.find("async def _telegram_starten("))
     assert "_nc_tgfehler.zuruecksetzen()" in anlauf, \
         "die Konflikt-Straehne wird beim Start nicht geleert — ein alter " \
         "Zaehlerstand meldet den ersten Konflikt sofort als 'seit Stunden'"
@@ -20713,7 +20726,10 @@ def _test_v42_w109_ein_befehlsverzeichnis():
     menue = {_ast.unparse(c.func) for c in _ast.walk(oben["_telegram_befehlsmenue"])
              if isinstance(c, _ast.Call)}
     assert "app.bot.set_my_commands" in menue and "_nc_befehle.fuer" in menue
-    assert "_telegram_befehlsmenue" in {_ast.unparse(c.func) for c in _ast.walk(oben["run_bot"])
+    # ANKER GEWANDERT (v5.11.4 TG-1): run_bot -> _telegram_starten -> Menue.
+    assert "_telegram_starten" in {_ast.unparse(c.func) for c in _ast.walk(oben["run_bot"])
+                                   if isinstance(c, _ast.Call)}
+    assert "_telegram_befehlsmenue" in {_ast.unparse(c.func) for c in _ast.walk(oben["_telegram_starten"])
                                          if isinstance(c, _ast.Call)}
     for b in B.fuer(B.TG):
         assert 3 <= len(B.beschreibung(b)) <= 100, b.name   # Telegram: 3..256, Discord: <=100
@@ -44797,6 +44813,540 @@ def _test_ops3_deploy_sichert_und_schreibt_nur_code():
        "Installer kopiert keine Betriebsdaten der Quelle")
 
 
+def _w4_fns(datei):
+    import ast as _ast
+    baum = _ast.parse(open(datei, encoding="utf-8").read())
+    return {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+
+def _test_v5114_tg1_telegram_start_wiederholt():
+    """v5.11.4 (TG-1): der Telegram-Start lief genau EINMAL. Nach einem
+    Neustart mit kurz unerreichbarem api.telegram.org blieben die Befehle bis
+    zum naechsten HAENDISCHEN Neustart aus — der Prozess lief weiter, also
+    griffen weder Exitcode 4 (W100) noch OnFailure noch Restart=always.
+    Jetzt: voruebergehendes wiederholen (gedeckelt, gedrosselt laut), nur ein
+    abgelehntes Token ist endgueltig und laesst run_bot sterben."""
+    import ast as _ast
+    import asyncio as _aio
+    import types as _ty
+    import nc.telegramfehler as T
+    import nc.meldetakt as MT
+
+    class TelegramError(Exception):
+        pass
+
+    class NetworkError(TelegramError):
+        pass
+
+    class TimedOut(NetworkError):
+        pass
+
+    class RetryAfter(TelegramError):
+        def __init__(self, s):
+            super().__init__("flood")
+            self.retry_after = s
+
+    class InvalidToken(TelegramError):
+        pass
+
+    class Forbidden(TelegramError):
+        pass
+
+    class EigenesForbidden(Forbidden):
+        pass
+
+    def _lauf(folge):
+        MT.zuruecksetzen(T.START_KANAL)
+        lg, pausen, uhr, folge = _GeldLog(), [], [1000.0], list(folge)
+
+        async def schritt():
+            if folge:
+                e = folge.pop(0)
+                if e is not None:
+                    raise e
+
+        async def schlafen(p):
+            pausen.append(p)
+            uhr[0] += p
+        try:
+            n = _aio.run(T.starten(schritt, lg, schlafen=schlafen, uhr=lambda: uhr[0]))
+        except Exception as e:
+            n = e
+        return n, pausen, lg
+
+    # (1) Netz, Zeitlimit, Unbekanntes: wiederholt, bis es geht
+    n, pausen, lg = _lauf([NetworkError("dns"), TimedOut("t"), ValueError("neu"), None])
+    assert n == 4 and pausen == [5.0, 10.0, 20.0], (n, pausen)
+    assert len(lg.stufe("error")) == 3, "drei verschiedene Gruende, je einer laut: %r" % lg.zeilen
+    assert "4 Versuchen" in lg.stufe("warning")[-1], "der Wiederanlauf sagt nicht, dass er gelang"
+    # (2) Deckel und Drossel: zehnmal dasselbe Netz
+    n, pausen, lg = _lauf([NetworkError("x")] * 10 + [None])
+    assert n == 11 and max(pausen) == T.START_PAUSE_MAX_S == 300.0, pausen
+    fe = lg.stufe("error")
+    assert len(fe) == 2 and "weitere unterdrueckt" in fe[1], \
+        "ungedrosselt oder ohne Zaehler: %r" % fe
+    # (3) ein Flood-Wait gilt, auch als timedelta (PTB >= 21)
+    import datetime as _dt
+    assert _lauf([RetryAfter(42), None])[1] == [42.0]
+    assert _lauf([RetryAfter(_dt.timedelta(seconds=7)), None])[1] == [7.0]
+    # (4) endgueltig: kein Warten, die Ausnahme geht durch (-> run_bot stirbt -> 4)
+    for e in (InvalidToken("401"), EigenesForbidden("403")):
+        n, pausen, lg = _lauf([e])
+        assert n is e and pausen == [], "abgelehntes Token wird wiederholt: %r" % (n,)
+        assert "BOT_TOKEN" in lg.stufe("error")[0]
+
+    # (5) bot.py: ein gescheiterter Schritt wird wiederholt, ohne die
+    # gelungenen zu wiederholen ("already running")
+    fns = _w4_fns("bot.py")
+    aufrufe, polling = [], [NetworkError("weg")]
+
+    class _Upd:
+        running = False
+
+        async def start_polling(self, error_callback=None):
+            assert error_callback is not None
+            aufrufe.append("poll")
+            if polling:
+                raise polling.pop(0)
+            self.running = True
+
+    class _App:
+        running = False
+        updater = _Upd()
+
+        async def initialize(self):
+            aufrufe.append("init")
+
+        async def start(self):
+            if self.running:
+                raise RuntimeError("This Application is already running!")
+            aufrufe.append("start")
+            self.running = True
+
+    async def _schlaf(_p):
+        return None
+
+    async def _menue(_app):
+        aufrufe.append("menue")
+
+    ns = {"_nc_tgfehler": _ty.SimpleNamespace(
+              zuruecksetzen=lambda: None,
+              starten=lambda s, lg: T.starten(s, lg, schlafen=_schlaf)),
+          "_nc_meldetakt": _ty.SimpleNamespace(zuruecksetzen=lambda *a: None),
+          "_telegram_polling_fehler": object(), "log": _GeldLog(),
+          "_telegram_befehlsmenue": _menue}
+    exec(compile(_ast.unparse(fns["_telegram_starten"]), "bot.py:_telegram_starten", "exec"), ns)
+    MT.zuruecksetzen(T.START_KANAL)
+    _aio.run(ns["_telegram_starten"](_App()))
+    assert aufrufe == ["init", "start", "poll", "init", "poll", "menue"], aufrufe
+
+    # (6) run_bot ruft den Helfer OHNE Auffang — sonst erreicht ein
+    # abgelehntes Token den Exitcode-4-Weg (W100) nie
+    rb = fns["run_bot"]
+    assert any("_telegram_starten(app)" in _ast.unparse(n) for n in _ast.walk(rb)
+               if isinstance(n, _ast.Await)), "run_bot startet Telegram nicht ueber den Helfer"
+    for n in _ast.walk(rb):
+        if isinstance(n, _ast.Try) and n.handlers:
+            assert "_telegram_starten(" not in "".join(_ast.unparse(b) for b in n.body), \
+                "der Telegram-Start steckt wieder in einem Auffang"
+    ok("TG-1: Telegram-Start wiederholt Voruebergehendes, endgueltig nur ein abgelehntes Token")
+
+
+def _test_v5114_tg2_untrack_wie_stoppknopf():
+    """v5.11.4 (TG-2): /untrack pruefte nur `_is_authorized` und loeschte
+    sofort — jedes Gruppenmitglied entfernte fremde Trackings, waehrend der
+    Stopp-KNOPF daneben seit F24 `_can_stop_tracking` fragt."""
+    import ast as _ast
+    import asyncio as _aio
+    import contextlib as _cl
+    import types as _ty
+    fns = _w4_fns("bot.py")
+    quelle = _ast.unparse(fns["_can_stop_tracking"]) + "\n\n" + _ast.unparse(fns["untrack"])
+    entfernt, antworten = [], []
+
+    class _Conn:
+        def execute(self, _sql, args):
+            return _ty.SimpleNamespace(fetchone=lambda: {"added_by": 42} if args[1] == "peter" else None)
+
+    @_cl.contextmanager
+    def _db():
+        yield _Conn()
+
+    ns = {"Update": object, "ContextTypes": _ty.SimpleNamespace(DEFAULT_TYPE=object),
+          "ALLOWED_USER_IDS": set(), "db_conn": _db, "log": _GeldLog(),
+          "_is_authorized": lambda u: True, "clean_username": lambda s: s.lstrip("@").lower(),
+          "_nc_trackingdb": _ty.SimpleNamespace(remove_tracking=lambda c, u: entfernt.append((c, u))),
+          "_nc_i18n": _ty.SimpleNamespace(t=lambda s: s), "safe": str,
+          "ParseMode": _ty.SimpleNamespace(HTML="HTML")}
+    exec(compile(quelle, "bot.py:untrack", "exec"), ns)
+
+    async def _antwort(text, **_k):
+        antworten.append(text)
+
+    def _upd(uid, discord=False):
+        return _ty.SimpleNamespace(effective_user=_ty.SimpleNamespace(id=uid),
+                                   effective_chat=_ty.SimpleNamespace(id=-100),
+                                   message=_ty.SimpleNamespace(reply_text=_antwort),
+                                   nc_discord_admin=discord)
+
+    ctx = _ty.SimpleNamespace(args=["@Peter"])
+    _aio.run(ns["untrack"](_upd(7), ctx))
+    assert entfernt == [], "ein Fremder loescht im offenen Modus ein fremdes Tracking"
+    assert "angelegt" in antworten[-1], antworten
+    _aio.run(ns["untrack"](_upd(42), ctx))
+    assert entfernt == [(-100, "peter")], "der Anleger darf sein Tracking nicht stoppen"
+    _aio.run(ns["untrack"](_upd(0, discord=True), ctx))
+    assert len(entfernt) == 2, "der Discord-Shim (prueft selbst auf Admin) wird abgewiesen"
+    ns["ALLOWED_USER_IDS"] = {1}
+    _aio.run(ns["untrack"](_upd(42), ctx))
+    assert len(entfernt) == 2, "mit Admin-Liste darf nur der Admin stoppen (wie der Knopf)"
+    _aio.run(ns["untrack"](_upd(1), ctx))
+    assert len(entfernt) == 3
+    ok("TG-2: /untrack fragt dieselbe Berechtigung wie der Stopp-Knopf")
+
+
+def _test_v5114_dc5_schleifen_ueberleben_neustartfenster():
+    """v5.11.4 (DC-5): `while _dc_offen():` endete im Neustart-Fenster des
+    Supervisors (CLIENT["obj"] = None) STILL, und `_DISCORD_BGTASKS_STARTED`
+    blieb True — Liveboard, Digest, Clip der Woche und Bereichs-Abgleich
+    liefen nach dem ersten Reconnect nie wieder."""
+    import ast as _ast
+    import asyncio as _aio
+    import types as _ty
+    fns = _w4_fns("discordbot.py")
+    for name, fn in fns.items():
+        for w in _ast.walk(fn):
+            if isinstance(w, _ast.While):
+                assert "_dc_offen" not in _ast.unparse(w.test), \
+                    "%s: Hintergrundschleife endet im Neustart-Fenster" % name
+    for name in ("_liveboard_loop", "_weekly_digest_loop", "_clipoftheweek_loop",
+                 "_ziele_sync_loop"):
+        assert "await _dc_warten()" in _ast.unparse(fns[name]), name
+
+    class _Ende(Exception):
+        pass
+
+    class _Cli:
+        def __init__(self, bereit=True):
+            self.bereit = bereit
+
+        def is_closed(self):
+            return False
+
+        def is_ready(self):
+            return self.bereit
+
+        async def wait_until_ready(self):
+            return None
+
+    zustand = {"obj": _Cli()}
+    takte, laeufe = [], []
+
+    async def _schlaf(s):
+        takte.append(s)
+        if s == 60:
+            zustand["obj"] = None                 # das Neustart-Fenster
+        elif zustand["obj"] is None:
+            zustand["obj"] = _Cli(bereit=False)    # neuer Client, noch im Anlauf
+        else:
+            zustand["obj"].bereit = True
+
+    async def _update():
+        laeufe.append(1)
+        if len(laeufe) >= 3:
+            raise _Ende()
+
+    def _fehler(_n, e):
+        if isinstance(e, _Ende):
+            raise e
+
+    quelle = "\n\n".join(_ast.unparse(fns[n]) for n in
+                         ("_dc_client", "_dc_offen", "_dc_bereit", "_dc_warten", "_liveboard_loop"))
+    ns = {"_nc_discordstate": _ty.SimpleNamespace(CLIENT=zustand), "DC_WARTE_TAKT_S": 15,
+          "asyncio": _ty.SimpleNamespace(sleep=_schlaf), "DISCORD_LIVEBOARD": True,
+          "_update_liveboard": _update, "_loop_fehler": _fehler}
+    exec(compile(quelle, "discordbot.py:liveboard", "exec"), ns)
+    try:
+        _aio.run(ns["_liveboard_loop"]())
+    except _Ende:
+        pass
+    assert len(laeufe) == 3, "die Schleife endet im Neustart-Fenster: %r" % takte
+    assert takte.count(15) >= 4, "gearbeitet, bevor der neue Client bereit war: %r" % takte
+    ok("DC-5: Discord-Hintergrundschleifen warten das Neustart-Fenster ab statt zu enden")
+
+
+def _test_v5114_dc4_netzausfall_beendet_discord_nicht():
+    """v5.11.4 (DC-4): fuenf Fehlversuche ohne on_ready beendeten den
+    Supervisor ENDGUELTIG — auch fuer Netzfehler, die `login()` nicht
+    wiederholt. Ein ~155-s-Ausfall von discord.com schaltete Discord bis zum
+    Neustart ab."""
+    import asyncio as _aio
+    import types as _ty
+    import discordbot as DB
+    import nc.meldetakt as MT
+
+    class ClientError(Exception):
+        pass
+
+    class ClientConnectorError(ClientError, OSError):
+        pass
+
+    class ConnectionClosed(Exception):
+        def __init__(self, code):
+            super().__init__("closed %s" % code)
+            self.code = code
+
+    class HTTPException(Exception):
+        def __init__(self, status):
+            super().__init__("http %s" % status)
+            self.status = status
+
+    assert DB._dc_fehlerart(ClientConnectorError("dns")) == "netz"
+    assert DB._dc_fehlerart(TimeoutError()) == "netz"
+    assert DB._dc_fehlerart(HTTPException(503)) == "netz"
+    assert DB._dc_fehlerart(HTTPException(404)) == "unbekannt"
+    assert DB._dc_fehlerart(ConnectionClosed(4004)) == "endgueltig"
+    assert DB._dc_fehlerart(ConnectionClosed(4014)) == "endgueltig"
+    assert DB._dc_fehlerart(ConnectionClosed(1006)) == "netz"
+    assert DB._dc_fehlerart(ValueError("x")) == "unbekannt"
+
+    alt = {k: getattr(DB, k) for k in ("_discord_run_once", "asyncio", "log")}
+    sitzung = dict(DB._DISCORD_SESSION)
+    client = DB._nc_discordstate.CLIENT["obj"]
+
+    def _lauf(folge):
+        MT.zuruecksetzen(DB._DC_SITZUNG_KANAL)
+        folge, aufrufe, pausen, lg = list(folge), [], [], _GeldLog()
+
+        async def _einmal():
+            aufrufe.append(1)
+            raise folge.pop(0) if folge else _aio.CancelledError()
+
+        async def _schlaf(p):
+            pausen.append(p)
+        DB._discord_run_once = _einmal
+        DB.asyncio = _ty.SimpleNamespace(sleep=_schlaf, CancelledError=_aio.CancelledError)
+        DB.log = lg
+        try:
+            _aio.run(DB._discord_start())
+            ende = "aufgegeben"
+        except _aio.CancelledError:
+            ende = "laeuft"
+        return ende, len(aufrufe), pausen, lg
+    try:
+        DB._DISCORD_SESSION.update(attempt=0, reconnects=0, connected_since=None)
+        ende, n, pausen, lg = _lauf([ClientConnectorError("dns")] * 8)
+        assert ende == "laeuft" and n == 9, "Netzausfall beendet Discord nach %d Versuchen" % n
+        assert max(pausen) == 300 and pausen[:3] == [5, 10, 20], pausen
+        assert len(lg.stufe("error")) == 1, "ungedrosselt: %r" % lg.stufe("error")
+        ende, n, pausen, lg = _lauf([ConnectionClosed(4004)])
+        assert ende == "aufgegeben" and n == 1 and pausen == [], (ende, n, pausen)
+        assert "endgueltig" in lg.stufe("error")[0]
+        ende, n, _p, _lg = _lauf([ValueError("kaputt")] * 8)
+        assert ende == "aufgegeben" and n == 5, "Unbekanntes ohne Grenze: %d" % n
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+        DB._DISCORD_SESSION.clear()
+        DB._DISCORD_SESSION.update(sitzung)
+        DB._nc_discordstate.CLIENT["obj"] = client
+        MT.zuruecksetzen(DB._DC_SITZUNG_KANAL)
+    ok("DC-4: Netzausfall laesst Discord wieder anlaufen, endgueltig nur Token/Intents/Close-Code")
+
+
+def _test_v5114_dc7_stern_highlight_genau_einmal():
+    """v5.11.4 (DC-7): Pruefen → fetch_message (Netz) → bedingungsloses
+    UPDATE. Zwei Sterne kurz nacheinander schickten den Clip doppelt an jede
+    Telegram-Gruppe und doppelt als Community-Post. Dazu war der Anspruch
+    vor der Frage verbraucht, ob der Telegram-Bot bereit ist, und ein
+    gescheiterter Versand stand auf debug neben "→ Telegram gepusht"."""
+    import asyncio as _aio
+    import os as _os
+    import sqlite3 as _sq
+    import types as _ty
+    import discordbot as DB
+    import nc.meldetakt as MT
+    d = _ph.verzeichnis("nc-w4-stern-")
+    clip = _os.path.join(d, "clip.mp4")
+    with open(clip, "wb") as f:
+        f.write(b"\0" * 1000)
+    namen = ("_auto_on", "CLIP_HIGHLIGHT_TO_TG", "CLIP_HIGHLIGHT_STARS", "db_async",
+             "_bot_app_holen", "COMMUNITY_HIGHLIGHT_SHARE_ENABLED", "DISCORD_WEBHOOK_URL",
+             "_discord_notify", "_community", "log")
+    alt = {k: getattr(DB, k) for k in namen}
+    conn = _sq.connect(":memory:")
+    conn.row_factory = _sq.Row
+    conn.executescript(
+        "CREATE TABLE discord_clips (id INTEGER PRIMARY KEY, message_id INTEGER, username TEXT,"
+        " filepath TEXT, stars_pushed INTEGER DEFAULT 0);"
+        "CREATE TABLE trackings (group_id INTEGER, username TEXT);"
+        "INSERT INTO trackings VALUES (-1001, 'peter'), (-1002, 'peter');")
+    conn.execute("INSERT INTO discord_clips (id, message_id, username, filepath) VALUES (1, 77, 'peter', ?)",
+                 (clip,))
+    sends, posts, kaputt = [], [], [False]
+
+    async def _db_async(fn):
+        await _aio.sleep(0)            # wie der Thread-Sprung: andere Tasks laufen dazwischen
+        r = fn(conn)
+        conn.commit()
+        return r
+
+    async def _send_video(chat_id, **_k):
+        if kaputt[0]:
+            raise RuntimeError("chat not found")
+        sends.append(chat_id)
+
+    async def _notify(p):
+        posts.append(p)
+
+    async def _fetch(_mid):
+        await _aio.sleep(0)
+        return _ty.SimpleNamespace(reactions=[_ty.SimpleNamespace(emoji="⭐", count=3, me=True)])
+
+    app = [_ty.SimpleNamespace(bot=_ty.SimpleNamespace(send_video=_send_video))]
+    kanal = _ty.SimpleNamespace(fetch_message=_fetch)
+    client = _ty.SimpleNamespace(user=_ty.SimpleNamespace(id=999), get_channel=lambda _c: kanal)
+    p = _ty.SimpleNamespace(emoji="⭐", user_id=5, message_id=77, channel_id=1)
+
+    def _gepusht():
+        return conn.execute("SELECT stars_pushed FROM discord_clips WHERE id=1").fetchone()[0]
+
+    async def _zwei():
+        await _aio.gather(DB._stern_highlight(client, p), DB._stern_highlight(client, p))
+    try:
+        lg = _GeldLog()
+        DB._auto_on, DB.CLIP_HIGHLIGHT_TO_TG, DB.CLIP_HIGHLIGHT_STARS = (lambda _k, v: v), True, 2
+        DB.db_async, DB._bot_app_holen = _db_async, (lambda: app[0])
+        DB.COMMUNITY_HIGHLIGHT_SHARE_ENABLED, DB.DISCORD_WEBHOOK_URL = True, "https://x"
+        DB._discord_notify = _notify
+        DB._community = _ty.SimpleNamespace(highlight_post=lambda u, stars: "post %s" % u)
+        DB.log = lg
+        MT.zuruecksetzen("dc-highlight-tg")
+        # (1) Telegram noch nicht bereit: der Anspruch bleibt frei
+        app[0] = None
+        _aio.run(DB._stern_highlight(client, p))
+        assert _gepusht() == 0 and sends == [], "ein Stern im Telegram-Anlauf verbraucht den Push"
+        # (2) alles scheitert: Anspruch zurueck, laut, keine Erfolgsmeldung
+        app[0] = _ty.SimpleNamespace(bot=_ty.SimpleNamespace(send_video=_send_video))
+        kaputt[0] = True
+        _aio.run(DB._stern_highlight(client, p))
+        assert _gepusht() == 0, "gescheiterter Versand bleibt als gepusht markiert"
+        assert lg.stufe("error") and not any("gepusht" in z for z in lg.stufe("info")), lg.zeilen
+        assert posts == []
+        # (3) zwei Sterne gleichzeitig: genau einmal je Gruppe, ein Post
+        kaputt[0] = False
+        _aio.run(_zwei())
+        assert sorted(sends) == [-1002, -1001], "doppelt gesendet: %r" % sends
+        assert len(posts) == 1 and _gepusht() == 1, posts
+        assert any("gepusht (2 Gruppen)" in z for z in lg.stufe("info")), lg.zeilen
+        # (4) keine Telegram-Gruppe trackt ihn: auch dann kein "gepusht"
+        # (die Mutationsprobe "Erfolgsmeldung bedingungslos" entwischte ohne
+        # diesen Fall — alle anderen enden vorher oder haben Gruppen)
+        conn.execute("INSERT INTO discord_clips (id, message_id, username, filepath) "
+                     "VALUES (2, 78, 'paul', ?)", (clip,))
+        _aio.run(DB._stern_highlight(client, _ty.SimpleNamespace(
+            emoji="⭐", user_id=5, message_id=78, channel_id=1)))
+        assert sum("gepusht" in z for z in lg.stufe("info")) == 1, lg.zeilen
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+        conn.close()
+        MT.zuruecksetzen("dc-highlight-tg")
+    ok("DC-7: Stern-Highlight geht genau einmal raus, Anspruch erst bei bereitem Telegram")
+
+
+def _test_v5114_dc8_sprachnachricht_begrenzt():
+    """v5.11.4 (DC-8): jedes Mitglied (auch per DM) loeste mit jedem
+    Audio-Anhang ffmpeg plus volle Whisper-Transkription aus — ohne
+    Abklingzeit, ohne Laengengrenze, `proc.wait()` ohne Zeitlimit, und auf
+    denselben Whisper-Plaetzen wie die Live-Transkription."""
+    import ast as _ast
+    import asyncio as _aio
+    import types as _ty
+    import discordbot as DB
+    fns = _w4_fns("discordbot.py")
+    assert "create_subprocess_exec" not in _ast.unparse(fns["_handle_voice_ai"]), \
+        "ffmpeg wieder ohne Zeitlimit"
+    alt = {k: getattr(DB, k) for k in ("_nc_kind", "_whisper_transcribe", "azrael_chat", "log")}
+    rufe, antworten, whisper = [], [], []
+
+    async def _aus(cmd, zeitlimit, art="?", **_k):
+        assert zeitlimit and zeitlimit > 0
+        rufe.append(["ffprobe" if "ffprobe" in cmd else "ffmpeg"] + list(cmd))
+        if "ffprobe" in cmd:
+            return 0, dauer[0], b""
+        with open(cmd[-1], "wb") as f:
+            f.write(b"\0" * 200)
+        return 0, b"", b""
+
+    async def _whisper(_p):
+        whisper.append(1)
+        return "hallo"
+
+    async def _ki(*_a, **_k):
+        return "antwort", None
+
+    class _Tippen:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    async def _reply(text, **_k):
+        antworten.append(text)
+
+    async def _reaktion(_e):
+        antworten.append("⏳")
+
+    async def _save(_pfad):
+        return None
+
+    def _msg(uid, gilde=True, mid=1):
+        return _ty.SimpleNamespace(id=mid, author=_ty.SimpleNamespace(id=uid),
+                                   guild=object() if gilde else None, reply=_reply,
+                                   add_reaction=_reaktion,
+                                   channel=_ty.SimpleNamespace(typing=_Tippen))
+    att = _ty.SimpleNamespace(filename="a.ogg", size=1000, save=_save)
+    dauer = [b"10.0\n"]
+    live = DB._nc_rsstate.ACTIVE_ALL
+    try:
+        DB._nc_kind = _ty.SimpleNamespace(ausfuehren=_aus, DEVNULL=None)
+        DB._whisper_transcribe, DB.azrael_chat, DB.log = _whisper, _ki, _GeldLog()
+        DB._voice_zuletzt.clear()
+        DB._VOICE_LAUF["aktiv"] = False
+        # Entscheidung ohne Nebenwirkung
+        assert DB._voice_zulassen(_msg(5, gilde=False), att, 0.0) == "dm"
+        assert DB._voice_zulassen(_msg(5), _ty.SimpleNamespace(size=10 ** 9), 0.0) == "gross"
+        live["w4probe"] = object()
+        assert DB._voice_zulassen(_msg(5), att, 0.0) == "live", "Live hat keinen Vorrang"
+        live.pop("w4probe", None)
+        # (1) erlaubt: ffprobe, dann ffmpeg mit -t (Grenze) und Zeitlimit, dann Whisper
+        _aio.run(DB._handle_voice_ai(_msg(5), att))
+        assert [r[0] for r in rufe] == ["ffprobe", "ffmpeg"], rufe
+        assert rufe[1][rufe[1].index("-t") + 1] == "120" and "-threads" in rufe[1], rufe[1]
+        assert whisper == [1] and DB._VOICE_LAUF["aktiv"] is False
+        # (2) derselbe Nutzer sofort wieder: Abklingzeit, kein ffmpeg, kein Whisper
+        _aio.run(DB._handle_voice_ai(_msg(5, mid=2), att))
+        assert len(rufe) == 2 and whisper == [1] and antworten[-1] == "⏳"
+        # (3) zu lang: abgelehnt nach ffprobe, ohne Wandeln und ohne Whisper
+        dauer[0] = b"600.0\n"
+        _aio.run(DB._handle_voice_ai(_msg(6, mid=3), att))
+        assert [r[0] for r in rufe[2:]] == ["ffprobe"] and whisper == [1], rufe
+        assert "600" in antworten[-1] and "120" in antworten[-1], antworten[-1]
+        # (4) DM: gar nichts
+        _aio.run(DB._handle_voice_ai(_msg(7, gilde=False, mid=4), att))
+        assert len(rufe) == 3 and whisper == [1]
+    finally:
+        for k, v in alt.items():
+            setattr(DB, k, v)
+        live.pop("w4probe", None)
+        DB._voice_zuletzt.clear()
+        DB._VOICE_LAUF["aktiv"] = False
+    ok("DC-8: Sprachnachrichten mit Abklingzeit, Laengengrenze, Zeitlimit und Live-Vorrang")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -45296,6 +45846,12 @@ def main():
     _test_ops2_mysqldump_ohne_passwort_in_argv()
     _test_upd1_upd2_teilweise_und_rollback()
     _test_ops3_deploy_sichert_und_schreibt_nur_code()
+    _test_v5114_tg1_telegram_start_wiederholt()
+    _test_v5114_tg2_untrack_wie_stoppknopf()
+    _test_v5114_dc5_schleifen_ueberleben_neustartfenster()
+    _test_v5114_dc4_netzausfall_beendet_discord_nicht()
+    _test_v5114_dc7_stern_highlight_genau_einmal()
+    _test_v5114_dc8_sprachnachricht_begrenzt()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

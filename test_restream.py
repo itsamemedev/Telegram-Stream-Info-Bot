@@ -5903,10 +5903,14 @@ def test_v40_w46_json_and_telegram_launch():
     src = open("bot.py").read()
     assert "opt = orjson.OPT_NON_STR_KEYS" in src, "JSON-Provider coerct int-Keys nicht"
     # Telegram-Start gekapselt + laut.
-    assert "Telegram-Polling FEHLGESCHLAGEN" in src, "Telegram-Start nicht gekapselt/geloggt"
-    i = src.find("await app.updater.start_polling()")
-    pre = src[max(0, i - 400):i]
-    assert "try:" in pre, "start_polling nicht in einem try"
+    # ANKER GEWANDERT (v5.11.4 TG-1, nicht der Vertrag): der Start steht in
+    # _telegram_starten, gekapselt und laut in nc.telegramfehler.starten —
+    # dort mit Wiederanlauf statt einmaligem Versuch.
+    tgf = open("nc/telegramfehler.py", encoding="utf-8").read()
+    assert "Telegram-Start fehlgeschlagen" in tgf, "Telegram-Start nicht gekapselt/geloggt"
+    assert "except Exception as e:" in tgf[tgf.find("async def starten("):], \
+        "Telegram-Start nicht in einem try"
+    assert "await _telegram_starten(app)" in src, "run_bot startet Telegram nicht ueber den Helfer"
     ok("v4.0-w46: orjson int-Keys gefixt, Telegram-Start gekapselt+diagnostizierbar")
 
 

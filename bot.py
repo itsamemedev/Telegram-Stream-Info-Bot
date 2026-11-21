@@ -5866,7 +5866,18 @@ async def untrack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(_nc_i18n.t("Benutzung: <code>/untrack @username</code>"),
                                         parse_mode=ParseMode.HTML); return
     username = clean_username(context.args[0])
-    _nc_trackingdb.remove_tracking(update.effective_chat.id, username)
+    chat_id = update.effective_chat.id
+    # v5.11.4 (TG-2): dieselbe Pruefung wie der Stopp-KNOPF (F24). Hier stand
+    # nur `_is_authorized` — im offenen Modus und in jeder freigeschalteten
+    # Gruppe durfte damit jedes Mitglied fremde Trackings per /untrack
+    # loeschen, waehrend der Knopf daneben genau das verweigerte. Der
+    # Discord-Shim prueft selbst auf Admin (nc_discord_admin, W190); seine uid
+    # ist im offenen Modus 0 und waere sonst nie der Anleger.
+    if not getattr(update, "nc_discord_admin", False):
+        erlaubt, grund = _can_stop_tracking(update, chat_id, username)
+        if not erlaubt:
+            await update.message.reply_text(_nc_i18n.t(grund)); return
+    _nc_trackingdb.remove_tracking(chat_id, username)
     await update.message.reply_text(
         f"🗑 <b>TRACKING BEENDET · @{safe(username)}</b>\n"
         f"<i>Keine Benachrichtigungen mehr für diesen Nutzer.</i>",
@@ -24953,6 +24964,44 @@ async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(_nc_i18n.t(f"❌ Report fehlgeschlagen: {e}"))
 
 
+async def _telegram_starten(app):
+    """v5.11.4 (TG-1): initialize/start/start_polling bis zum Erfolg.
+
+    Bis dahin lief die Folge genau EINMAL. Jede Ausnahme wurde ein ERROR —
+    und dann nichts mehr (PTB: `bootstrap_retries` Vorgabe 0). War
+    api.telegram.org beim Neustart kurz weg, blieben die Telegram-Befehle bis
+    zum naechsten HAENDISCHEN Neustart aus, waehrend der Prozess weiterlief:
+    Exitcode 4, OnFailure und Restart=always griffen damit alle nicht.
+
+    Jeder Schritt ist wiederholbar gebaut, weil ein Versuch mittendrin
+    scheitern kann: `initialize()` ist in PTB idempotent, `start()` und
+    `start_polling()` werfen dagegen "already running", wenn sie im vorigen
+    Versuch schon durch waren — deshalb die beiden Abfragen davor.
+    Klassierung, Pause und Drossel stehen bot-frei in nc/telegramfehler.py.
+    """
+    async def _schritt():
+        await app.initialize()
+        if not app.running:
+            await app.start()
+        if not app.updater.running:
+            # v4.2-W93: die Straehne gehoert beim Start geleert. Ein Prozess,
+            # der sich einen alten Zaehlerstand aus einer frueheren
+            # Polling-Phase mitnimmt, meldete den ersten Konflikt sofort als
+            # "haelt seit Stunden an" — die Eskalation, die den Betreiber eine
+            # zweite Instanz suchen laesst, die es nicht gibt.
+            _nc_tgfehler.zuruecksetzen()
+            _nc_meldetakt.zuruecksetzen("telegram-polling")
+            # error_callback: sonst greift PTBs default_error_callback und
+            # schreibt je Vorkommen zwoelf Zeilen fremden Traceback (18.09.).
+            # add_error_handler taugt hier NICHT — der faengt Fehler beim
+            # VERARBEITEN eines Updates, nicht beim Abholen.
+            await app.updater.start_polling(error_callback=_telegram_polling_fehler)
+
+    await _nc_tgfehler.starten(_schritt, log)
+    log.info("Bot läuft — Telegram-Polling AKTIV, Befehle empfangsbereit.")
+    await _telegram_befehlsmenue(app)
+
+
 async def run_bot():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN fehlt in .env")
@@ -25151,32 +25200,12 @@ async def run_bot():
     _spawn(_marketing_loop(), name="marketing")           # B162: Cross-Promo (self-gated, Default aus)
     _spawn(_news_loop(), name="news")                     # B163: oeffentliche Website-News (self-gated, Default aus)
     _spawn(_stats_loop(), name="public-stats")            # v4.0: stats.json fuer Website (immer an, aufnahmefrei)
-    # v4.0-W46: Telegram-Start gekapselt. Vorher war initialize/start/polling
-    # NACKT — wirft eines davon (ungültiges Token, Netz/Proxy, Bibliotheks-/
-    # Python-Version), bricht run_bot() ab und reißt ALLES danach mit, ohne klare
-    # Meldung. Jetzt eigener try mit lauter Diagnose; der Rest läuft weiter.
-    try:
-        await app.initialize()
-        await app.start()
-        # v4.2-W93: die Straehne gehoert beim Start geleert. Ein Prozess, der
-        # sich einen alten Zaehlerstand aus einer frueheren Polling-Phase
-        # mitnimmt, meldete den ersten Konflikt sofort als "haelt seit Stunden
-        # an" — also genau die Eskalation, die dem Betreiber sagt, er solle
-        # eine zweite Instanz suchen, die es nicht gibt.
-        _nc_tgfehler.zuruecksetzen()
-        _nc_meldetakt.zuruecksetzen("telegram-polling")
-        # error_callback: sonst greift PTBs default_error_callback und schreibt
-        # je Vorkommen zwoelf Zeilen fremden Traceback (18.09., sechsmal
-        # hintereinander). add_error_handler taugt hier NICHT — der faengt
-        # Fehler beim VERARBEITEN eines Updates, nicht beim Abholen.
-        await app.updater.start_polling(error_callback=_telegram_polling_fehler)
-        log.info("Bot läuft — Telegram-Polling AKTIV, Befehle empfangsbereit.")
-        await _telegram_befehlsmenue(app)
-    except Exception as e:
-        log.error("Telegram-Polling FEHLGESCHLAGEN: %s — Telegram-Befehle sind AUS. "
-                  "Häufigste Ursachen: ungültiges/leeres BOT_TOKEN, Netz/Proxy, oder "
-                  "eine inkompatible python-telegram-bot-/Python-Version. Der übrige "
-                  "Bot (Dashboard, Restream, Discord) läuft weiter.", e, exc_info=True)
+    # v4.0-W46: Telegram-Start gekapselt — ein Fehler dort reisst den Rest
+    # nicht mehr mit. v5.11.4 (TG-1): und er wird WIEDERHOLT, statt nach dem
+    # ersten Netzaussetzer fuer immer aufzugeben. Wirft nur noch, wenn Warten
+    # nichts heilt (Token abgelehnt) — dann stirbt run_bot, und main() macht
+    # daraus Exitcode 4 (W100). Begruendung bei `_telegram_starten`.
+    await _telegram_starten(app)
     # F67: Startup-Notification posten (wenn konfiguriert)
     notify_chat = STARTUP_NOTIFY_CHAT_ID or DAILY_SUMMARY_CHAT_ID
     if notify_chat:
@@ -26736,7 +26765,9 @@ def _fatal_vom_botteil(fertig, botteil):
     Was hier NICHT hereinfaellt: ein unerreichbares Telegram. `run_bot` faengt
     das selbst und laeuft weiter (gemessen: httpx.ProxyError 403, Bot lief
     volle 110 s weiter). Der Exitcode 4 ist fuer den Fall, in dem der
-    Telegram-Teil WIRKLICH tot ist.
+    Telegram-Teil WIRKLICH tot ist. Seit v5.11.4 (TG-1) wiederholt
+    `_telegram_starten` den Start; hier landet nur noch ein Token, das
+    Telegram ablehnt (nc.telegramfehler.start_endgueltig).
 
     Erwartet wird `asyncio.wait(..., FIRST_COMPLETED)`: `fertig` ist die Menge
     der abgeschlossenen Tasks. Ist `botteil` nicht darunter, endete die
