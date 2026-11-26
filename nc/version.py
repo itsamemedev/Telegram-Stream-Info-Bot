@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.11.4"
-CODENAME = "Rangordnung"
+VERSION = "5.12.0"
+CODENAME = "Gleichstart"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.12.0",
+        "date": "2026-11",
+        "title": "Gleichstart",
+        # Minor-Fassung: Aufnahme-Uploads an alle Ziele gleichzeitig.
+        "highlights": [
+            "Aufnahme-Uploads starten auf allen Telegram-Gruppen und allen Discord-Servern gleichzeitig — bisher nacheinander, die letzte Gruppe wartete, bis jede vorige alle Teile hatte, und Discord kam zuletzt",
+            "Discord: jeder Server, in dem der Bot ist, bekommt die Aufnahme — bisher nur DISCORD_GUILD_ID bzw. der erste; jeder Server in Teilen nach der Grenze seiner Boost-Stufe",
+            "Telegram: die Aufnahme wird einmal geteilt (Teile bis 45 MB, Bot-Limit 50 MB) und von allen Gruppen gemeinsam genutzt — bisher teilte jede Gruppe neu",
+            "Pause zwischen zwei Teilen an dieselbe Gruppe 3 statt 5 s, einstellbar ueber UPLOAD_TEIL_PAUSE_S (mindestens 1 s)",
+            "Aufgeschobene Uploads (Upload-Fenster, Neustart) gehen je Aufnahme ebenfalls gleichzeitig raus; ein Discord-Eintrag wiederholt nur die Server, auf denen es scheiterte",
+        ],
+    },
     {
         "version": "5.11.4",
         "date": "2026-11",

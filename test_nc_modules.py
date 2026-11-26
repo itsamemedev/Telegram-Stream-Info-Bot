@@ -30604,8 +30604,9 @@ def _test_v42_w168_ein_thema_ein_kanal():
     hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
     assert "for ftid, fchat in target_paare:" in hrf and "zip(target_tids" not in hrf
     assert "fchat is not None" in hrf, "die Offline-Meldung geht an die Guild"
-    # ANKER GEWANDERT (v4.2-W175): der Durchgang steht in _upload_queue_abarbeiten.
-    uw = rumpf_ab(src, src.index("async def _upload_queue_abarbeiten("))
+    # ANKER GEWANDERT (v4.2-W175): der Durchgang steht in _upload_queue_abarbeiten;
+    # (v5.12) der einzelne Eintrag in _upload_queue_eintrag.
+    uw = rumpf_ab(src, src.index("async def _upload_queue_eintrag("))
     assert "if not chat_id or not fpath" in uw, \
         "ein aufgeschobener Discord-Eintrag wirft IndexError statt verworfen zu werden"
 
@@ -33497,7 +33498,9 @@ def _test_v42_w175_discord_ganze_aufnahme():
         # danach aufgeraeumt; die Aufnahme selbst bleibt.
         del gesendet[:]
         e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
-        assert aufrufe == [("kopier", gross + "_dcpart", 9)], aufrufe
+        # ANKER GEWANDERT (v5.12): die Grenze steht im Praefix — Server
+        # verschiedener Boost-Stufen teilen gleichzeitig.
+        assert aufrufe == [("kopier", gross + "_dcpart9", 9)], aufrufe
         assert [g for _t, g, _x in gesendet] == [9, 9, 9] and U.angekommen(e), (gesendet, e)
         assert "Teil 2/3" in gesendet[1][2]
         assert not [f for f in _os.listdir(d) if "_dcpart" in f], "Teile bleiben liegen"
@@ -33557,11 +33560,12 @@ def _test_v42_w175_discord_ganze_aufnahme():
             self.posts.append((content, file))
     gemerkt = {}
 
-    async def _hoch(pfad, grenze, senden, nutzer, beginn=None, ergebnis=None):
-        gemerkt["grenze"] = grenze
-        await senden(pfad, "t")
-        ergebnis.update(gesendet=1, fehler=0)
-        return ergebnis
+    # ANKER GEWANDERT (v5.12): je Server ein Ziel, alle ueber an_alle.
+    async def _hoch(pfad, ziele, nutzer, beginn=None):
+        for grenze, senden, ergebnis in ziele:
+            gemerkt["grenze"] = grenze
+            await senden(pfad, "t")
+            ergebnis.update(gesendet=1, fehler=0)
     kanal = [_Kanal(50)]
 
     async def _holen(gilden, bevorzugt=0, name=None, anlegen=True):
@@ -33572,7 +33576,7 @@ def _test_v42_w175_discord_ganze_aufnahme():
     async def _ziel(gilden, bevorzugt, nutzer, art):
         assert art == "aufnahmen", art
         return kanal[0], ""
-    client = _ty.SimpleNamespace(guilds=[1])
+    client = _ty.SimpleNamespace(guilds=[_ty.SimpleNamespace(id=1, name="g1")])
     fake_dc = _ty.ModuleType("discord")
     fake_dc.File = lambda p: ("datei", p)
     import sys as _sys
@@ -33580,9 +33584,9 @@ def _test_v42_w175_discord_ganze_aufnahme():
     _sys.modules["discord"] = fake_dc
     M.zuruecksetzen()
     try:
-        ns = _exec(baum, ["_aufnahme_nach_discord"], {
+        ns = _exec(baum, ["_aufnahme_nach_discord", "_aufnahme_an_server"], {
             "_nc_dcaufnahme": _ty.SimpleNamespace(an=lambda: True, SCHALTER=DA.SCHALTER,
-                                                  hochladen=_hoch),
+                                                  an_alle=_hoch),
             "os": _ty.SimpleNamespace(getenv=lambda k, v="": "tok", path=_os.path),
             "_nc_discordstate": _ty.SimpleNamespace(CLIENT={"obj": client}),
             "_nc_discordziele": _ty.SimpleNamespace(clip_kanal_holen=_holen, ziel_kanal=_ziel,
@@ -33596,9 +33600,9 @@ def _test_v42_w175_discord_ganze_aufnahme():
         kanal[0] = _Kanal(10, kaputt=True)
         del zeilen[:]
 
-        async def _hoch2(pfad, grenze, senden, nutzer, beginn=None, ergebnis=None):
-            return await DA.hochladen(pfad, grenze, senden, nutzer, beginn, ergebnis, pause_s=0)
-        ns["_nc_dcaufnahme"].hochladen = _hoch2
+        async def _hoch2(pfad, ziele, nutzer, beginn=None):
+            return await DA.an_alle(pfad, ziele, nutzer, beginn, pause_s=0)
+        ns["_nc_dcaufnahme"].an_alle = _hoch2
         d2 = P.verzeichnis()
         try:
             f = _os.path.join(d2, "a.mp4")
@@ -33630,7 +33634,8 @@ def _test_v42_w175_discord_ganze_aufnahme():
     async def _schlaf(_s):
         return None
     nsv = _exec(baum, ["_aufnahme_verteilen"], {
-        "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
+        "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread,
+                                       gather=_aio.gather),   # v5.12: gleichzeitig
         "split_and_send_video": _split, "_aufnahme_nach_discord": _nach_dc,
         "_upload_queue_add": lambda *a, **k: schlange.append((a, k))})
     offen = ["discord"]
@@ -33695,7 +33700,7 @@ def _test_v42_w175_upload_schlange():
             gesendet.append(("tg", chat))
             ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
 
-        async def _nach_dc(nutzer, f, beginn=None, ergebnis=None):
+        async def _nach_dc(nutzer, f, beginn=None, ergebnis=None, gilden=None):
             gesendet.append(("dc", f))
             ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
 
@@ -33707,12 +33712,14 @@ def _test_v42_w175_upload_schlange():
               "_time_mod": _ty.SimpleNamespace(time=lambda: jetzt[0], monotonic=_tm.monotonic),
               "_is_upload_window": lambda _d: True, "split_and_send_video": _split,
               "_aufnahme_nach_discord": _nach_dc, "_parse_iso": lambda s: None,
-              "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
+              "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread,
+                                       gather=_aio.gather),   # v5.12: gleichzeitig
               "_nc_tgfehler": T, "_nc_meldetakt": M, "_nc_discordziele": Z,
               "_nc_dcaufnahme": DA}
         _exec(baum, ["_upload_queue_load", "_upload_queue_save", "_upload_queue_remove",
                      "_upload_queue_schreibbar",   # ARC-5: neuer Helfer, Anker gewandert
                      "_upload_queue_update", "_upload_queue_abarbeiten", "_upload_queue_nachher",
+                     "_upload_queue_eintrag",   # v5.12: ein Eintrag je Ziel, gleichzeitig
                      "_telegram_ziele"], ns)
 
         def _stand():
@@ -33758,23 +33765,38 @@ def _test_v42_w175_upload_schlange():
         assert _stand() == []
 
         # (3) Neustart mitten im Upload: der Rest landet in der Schlange.
+        # v5.12: die Ziele laufen gleichzeitig — der Neustart bricht den
+        # ganzen Verteiler ab (_aufnahmen_abschliessen), und `offen` traegt
+        # danach genau die, die nicht fertig wurden. -1 ist schon durch.
         schlange = []
 
-        async def _split_bricht(chat, f, app, nutzer, started_at=None, ended_at=None):
-            if chat == -2:
-                raise _aio.CancelledError()
-            gesendet.append(("tg", chat))
+        async def _split_haengt(chat, f, app, nutzer, started_at=None, ended_at=None):
+            if chat == -1:
+                gesendet.append(("tg", chat))
+                return
+            await _aio.sleep(3600)          # laeuft noch, als der Neustart kommt
+
+        async def _dc_haengt(nutzer, f, beginn=None):
+            await _aio.sleep(3600)
         nsv = _exec(baum, ["_aufnahme_verteilen", "_upload_rest_sichern"], {
-            "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
-            "split_and_send_video": _split_bricht, "_aufnahme_nach_discord": _nach_dc,
+            "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread,
+                                       gather=_aio.gather),   # v5.12: gleichzeitig
+            "split_and_send_video": _split_haengt, "_aufnahme_nach_discord": _dc_haengt,
             "_upload_queue_add": lambda *a, **k: schlange.append((a, k)), "log": lg})
         nachlauf = {"eingetragen": True, "offen": [-1, -2, -3, "discord"], "ende": "E"}
-        try:
-            _aio.run(nsv["_aufnahme_verteilen"](None, nachlauf["offen"], datei, "anna",
-                                                None, "E", False))
-            raise AssertionError("der Abbruch kam nicht an")
-        except _aio.CancelledError:
-            pass
+
+        async def _neustart():
+            t = _aio.ensure_future(nsv["_aufnahme_verteilen"](
+                None, nachlauf["offen"], datei, "anna", None, "E", False))
+            for _ in range(5):
+                await _aio.sleep(0)
+            t.cancel()
+            try:
+                await t
+            except _aio.CancelledError:
+                return True
+            return False
+        assert _aio.run(_neustart()), "der Abbruch kam nicht an"
         assert nachlauf["offen"] == [-2, -3, "discord"], \
             ("was noch fehlt, ist nicht mehr bekannt", nachlauf["offen"])
         _aio.run(nsv["_upload_rest_sichern"](nachlauf, datei, "anna", None))
@@ -38666,7 +38688,8 @@ def _test_v511_w209_bereiche_je_nutzer():
 
     # (7) Verdrahtung: Aufnahme und Clip gehen ueber ziel_kanal, /setup legt an.
     src = open("bot.py", encoding="utf-8").read()
-    au = rumpf_ab(src, src.index("async def _aufnahme_nach_discord("))
+    # ANKER GEWANDERT (v5.12): je Server in _aufnahme_an_server.
+    au = rumpf_ab(src, src.index("async def _aufnahme_an_server("))
     assert '"aufnahmen")' in au and "ziel_kanal(" in au
     cd = rumpf_ab(src, src.index("async def _clip_to_discord("))
     assert 'username, "hype")' in cd and "ziel_kanal(" in cd
@@ -46927,6 +46950,226 @@ def _test_v5114_host_statt_teilstring():
     ok("v5.11.4: LLM-Schluessel und IVS-Pfad haengen am Host, nicht an einem Teilstring")
 
 
+def _test_v512_upload_ueberall_gleichzeitig():
+    """v5.12: Aufnahme-Uploads starten auf allen Telegram-Gruppen und allen
+    Discord-Servern GLEICHZEITIG, und jede Grenze bleibt gewahrt.
+
+    Gemeldet vom Betreiber: „Sie starten nicht puenktlich auf allen Discord-
+    Servern und Telegram-Gruppen." Bis hierher lief _aufnahme_verteilen die
+    Ziele nacheinander ab (jede Gruppe alle Teile, 5 s je Teil, 3 s zwischen
+    den Gruppen, Discord zuletzt), Discord ging nur an EINEN Server, und jede
+    Telegram-Gruppe teilte die Aufnahme neu — unter demselben Praefix, was
+    gleichzeitig gar nicht gegangen waere. Telegram: hoechstens 50 MB je Video
+    (Teile <= 45 MB); Discord: je Server die Grenze seiner Boost-Stufe."""
+    import asyncio as _aio
+    import os as _os
+    import types as _ty
+    from nc import discordaufnahme as DA
+    from nc import uploadschlange as U
+    from nc import videoteil as V
+
+    MB = 1024 * 1024
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+
+    # ── (1) Der Verteiler startet alle Ziele, bevor eines fertig ist.
+    gestartet = []
+
+    async def _alle_da():
+        while len(gestartet) < 3:
+            await _aio.sleep(0)
+
+    async def _split(chat, f, app, nutzer, started_at=None, ended_at=None):
+        gestartet.append(chat)
+        await _alle_da()       # nacheinander kaeme das zweite Ziel nie hierher
+
+    async def _nach_dc(nutzer, f, beginn=None):
+        gestartet.append("discord")
+        await _alle_da()
+    nsv = _exec(baum, ["_aufnahme_verteilen"], {
+        "asyncio": _aio, "split_and_send_video": _split, "_aufnahme_nach_discord": _nach_dc,
+        "_upload_queue_add": None, "log": lg})
+    offen = [-1, -2, "discord"]
+    _aio.run(_aio.wait_for(nsv["_aufnahme_verteilen"](None, offen, "/r/a.mp4", "anna",
+                                                      None, None, False), 5))
+    assert sorted(map(str, gestartet)) == ["-1", "-2", "discord"] and offen == [], \
+        (gestartet, offen)
+
+    # ── (2) Telegram: EIN Split fuer alle Gruppen, gleichzeitig gesendet,
+    # Teile <= 45 MB, 3 s Pause je Gruppe, aufgeraeumt nach dem letzten Chat.
+    _tv = _w175_telegram_stub()
+
+    async def _safe(*a, **k):
+        return None
+
+    async def _topic(c, u, b):
+        return None
+
+    async def _mig(a, n):
+        return None
+    _tv.konfiguriere(chat_migriert=_mig, ensure_topic=_topic, is_dead=lambda c: False,
+                     mark_dead=lambda c: None, safe_send=_safe, topic_forget=lambda c, u: None)
+    d = _ph.verzeichnis("nc-pruef-v512-")
+    quelle = _os.path.join(d, "rec.mp4")
+    _ph.attrappe(quelle, 120 * MB)
+    praefix = quelle + "_part"
+    teilungen, sends, pausen = [], [], []
+
+    async def _kopier(pfad, p, ziel):
+        teilungen.append((p, ziel))
+        aus = []
+        for i in range(3):
+            t = "%s_%03d.mp4" % (p, i)
+            _ph.attrappe(t, 40 * MB)
+            aus.append(t)
+        return aus, None
+
+    class _Bot:
+        async def send_video(self, chat, fh, **k):
+            sends.append((chat, _os.path.basename(fh.name)))
+            await _echt_schlaf(0)       # andere Chats kommen dazwischen
+
+    _echt_schlaf = _aio.sleep
+
+    async def _pause(s):
+        pausen.append(s)
+        await _echt_schlaf(0)
+    alt = (V.kopier_teilen, V.platz_reicht, _tv.asyncio.sleep)
+    V.kopier_teilen, V.platz_reicht = _kopier, (lambda p, faktor=1.2: (True, ""))
+    _tv.asyncio.sleep = _pause
+    alt_env = _os.environ.pop("UPLOAD_TEIL_PAUSE_S", None)
+    try:
+        app = _ty.SimpleNamespace(bot=_Bot())
+        erg = {c: {} for c in (-1, -2, -3)}
+
+        async def _drei():
+            await _aio.gather(*(_tv.split_and_send_video(c, quelle, app, "anna", ergebnis=erg[c])
+                                for c in (-1, -2, -3)))
+        _aio.run(_drei())
+        assert teilungen == [(praefix, V.ZIEL_TEIL_MB)], \
+            ("die Aufnahme wird je Gruppe neu geteilt", teilungen)
+        assert all(erg[c] == {"gesendet": 3, "fehler": 0} for c in erg), erg
+        je_chat = {c: [n for k, n in sends if k == c] for c in (-1, -2, -3)}
+        assert all(len(v) == 3 for v in je_chat.values()), je_chat
+        erste = [i for i, (k, _n) in enumerate(sends) if k == -3][0]
+        letzte = max(i for i, (k, _n) in enumerate(sends) if k == -1)
+        assert erste < letzte, ("die Gruppen laden nacheinander statt gleichzeitig", sends)
+        assert pausen == [3.0] * 6, ("Pause zwischen den Teilen nicht 3 s", pausen)
+        assert V.teile(praefix) == [], ("Teile bleiben nach dem letzten Chat liegen",
+                                        V.teile(praefix))
+        assert _tv._GEMEINSAM == {}, _tv._GEMEINSAM
+        assert _tv.teil_pause_s("5") == 5.0 and _tv.teil_pause_s("abc") == 3.0
+        assert _tv.teil_pause_s("0.2") == 1.0, "unter 1 s kaeme FloodWait"
+        assert V.TELEGRAM_HARD_MB == 50 and V.ZIEL_TEIL_MB <= 45
+    finally:
+        V.kopier_teilen, V.platz_reicht, _tv.asyncio.sleep = alt
+        if alt_env is not None:
+            _os.environ["UPLOAD_TEIL_PAUSE_S"] = alt_env
+
+    # ── (3) Discord: ein Split je Server-GRENZE, alle Server gleichzeitig.
+    dc_teilungen, posts = [], []
+    alt_k = V.kopier_teilen
+
+    async def _kopier_dc(pfad, p, ziel):
+        dc_teilungen.append((_os.path.basename(p), ziel))
+        aus = []
+        for i in range(2):
+            t = "%s_%03d.mp4" % (p, i)
+            _ph.attrappe(t, (ziel - 1) * MB)
+            aus.append(t)
+        return aus, None
+    V.kopier_teilen = _kopier_dc
+    alt_platz = V.platz_reicht
+    V.platz_reicht = lambda p, faktor=1.2: (True, "")
+    try:
+        def _sender(name):
+            async def _s(teil, text):
+                posts.append((name, _os.path.basename(teil)))
+                await _aio.sleep(0)
+            return _s
+        ziele = [(9, _sender("a"), {}), (49, _sender("b"), {}), (9, _sender("c"), {})]
+        _aio.run(DA.an_alle(quelle, ziele, "anna", pause_s=0))
+        assert sorted(dc_teilungen) == [("rec.mp4_dcpart49", 49), ("rec.mp4_dcpart9", 9)], \
+            ("nicht ein Split je Grenze", dc_teilungen)
+        assert all(U.angekommen(e) and e["teile"] == 2 for _g, _s, e in ziele), ziele
+        assert {n for n, _t in posts} == {"a", "b", "c"}
+        assert not [f for f in _os.listdir(d) if "_dcpart" in f], "Discord-Teile bleiben liegen"
+        for n in ("rec.mp4_dcpart49_000.mp4", "rec.mp4_dcpart9_re_001.mp4"):
+            assert V.ist_rest(n), n
+        assert not V.ist_rest("rec.mp4_part49_000.mp4")
+    finally:
+        V.kopier_teilen, V.platz_reicht = alt_k, alt_platz
+
+    # ── (4) Jeder Server, in dem der Bot ist; die Warteschlange wiederholt
+    # nur die gescheiterten (sonst stuende die Aufnahme dort doppelt).
+    class _Kanal:
+        def __init__(self, gid, mb, kaputt=False):
+            self.name = "anna-aufnahmen"
+            self.guild = _ty.SimpleNamespace(id=gid, filesize_limit=mb * MB)
+            self.kaputt = kaputt
+
+        async def send(self, content=None, file=None):
+            if self.kaputt:
+                raise RuntimeError("Missing Access")
+            posts.append((self.guild.id, file))
+    kanaele = {1: _Kanal(1, 10), 2: _Kanal(2, 50, kaputt=True), 3: _Kanal(3, 100)}
+
+    async def _ziel(gilden, bevorzugt, nutzer, art):
+        return kanaele[gilden[0].id], ""
+    import sys as _sys
+    fake_dc = _ty.ModuleType("discord")
+    fake_dc.File = lambda p: p
+    alt_dc = _sys.modules.get("discord")
+    _sys.modules["discord"] = fake_dc
+    from nc import discordlimits as DL
+    from nc import discordziele as Z
+    from nc import meldetakt as M
+    grenzen = []
+
+    async def _alle(pfad, ziele, nutzer, beginn=None):
+        grenzen.extend(sorted(g for g, _s, _e in ziele))
+        await DA.an_alle(pfad, ziele, nutzer, beginn, pause_s=0)
+    try:
+        ns = _exec(baum, ["_aufnahme_nach_discord", "_aufnahme_an_server",
+                          "_upload_queue_nachher"], {
+            "_nc_dcaufnahme": _ty.SimpleNamespace(an=lambda: True, SCHALTER=DA.SCHALTER,
+                                                  an_alle=_alle),
+            "os": _ty.SimpleNamespace(getenv=lambda k, v="": "tok", path=_os.path),
+            "_nc_discordstate": _ty.SimpleNamespace(CLIENT={"obj": _ty.SimpleNamespace(
+                guilds=[_ty.SimpleNamespace(id=i, name="g%d" % i) for i in (1, 2, 3)])}),
+            "_nc_discordziele": _ty.SimpleNamespace(ziel_kanal=_ziel, clip_kanal=Z.clip_kanal),
+            "_nc_dclimits": DL, "_DISCORD_UPLOAD_OVERRIDE": None, "_nc_uschlange": U,
+            "_nc_meldetakt": M, "_time_mod": __import__("time"), "log": lg, "asyncio": _aio,
+            "_upload_queue_remove": lambda e: None})
+        klein = _os.path.join(d, "klein.mp4")
+        _ph.attrappe(klein, 5 * MB)
+        del posts[:]
+        M.zuruecksetzen()
+        e = _aio.run(ns["_aufnahme_nach_discord"]("anna", klein))
+        assert grenzen == [DL.gate_mb(10), DL.gate_mb(50), DL.gate_mb(100)], \
+            ("nicht jeder Server mit seiner eigenen Grenze", grenzen)
+        assert sorted(g for g, _f in posts) == [1, 3] and e["fehl_gilden"] == [2], (posts, e)
+        assert not U.angekommen(e) and "g2" in e["grund"], e
+        geschrieben = []
+        ns["_upload_queue_update"] = lambda alt, neu: geschrieben.append(neu)
+        ns["_upload_queue_nachher"]({"file": klein, "ziel": "discord", "queued_at": "q"},
+                                    e, "anna", "discord")
+        assert geschrieben and geschrieben[0]["gilden"] == [2], geschrieben
+        del posts[:], grenzen[:]
+        kanaele[2].kaputt = False
+        e = _aio.run(ns["_aufnahme_nach_discord"]("anna", klein, gilden=[2]))
+        assert [g for g, _f in posts] == [2] and U.angekommen(e) and e["fehl_gilden"] == [], \
+            ("die Wiederholung trifft wieder alle Server", posts, e)
+    finally:
+        if alt_dc is None:
+            _sys.modules.pop("discord", None)
+        else:
+            _sys.modules["discord"] = alt_dc
+    q = rumpf_ab(src, src.index("async def _upload_queue_eintrag("))
+    assert 'gilden=entry.get("gilden")' in q, "die Warteschlange beschraenkt die Server nicht"
+    ok("v5.12: Uploads starten ueberall gleichzeitig — Telegram ein Split fuer alle Gruppen "
+       "(<= 45 MB, 3 s je Teil), Discord jeder Server mit seiner Grenze")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -47427,6 +47670,7 @@ def main():
     _test_upd1_upd2_teilweise_und_rollback()
     _test_ops3_deploy_sichert_und_schreibt_nur_code()
     _test_v5114_host_statt_teilstring()
+    _test_v512_upload_ueberall_gleichzeitig()
     _test_v5114_tg1_telegram_start_wiederholt()
     _test_v5114_tg2_untrack_wie_stoppknopf()
     _test_v5114_dc5_schleifen_ueberleben_neustartfenster()

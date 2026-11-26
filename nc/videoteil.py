@@ -63,14 +63,15 @@ _cfg = {"threads_bg": None, "nice_bg": None}
 # stehen hier bzw. rufen hier her:
 #   <aufnahme>_part_000.mp4      kopier_teilen   (telegramversand: praefix "_part")
 #   <aufnahme>_part_re_000.mp4   neu_kodieren
-#   <aufnahme>_dcpart_000.mp4    nc/discordaufnahme (praefix "_dcpart")
+#   <aufnahme>_dcpart25_000.mp4  nc/discordaufnahme (praefix "_dcpart<Grenze>",
+#                                seit v5.12 je Server-Grenze; davor "_dcpart")
 #   <aufnahme>.repaired.mp4      reparieren      (telegramversand, B47)
 #   <aufnahme>.remux.mp4         zeitstempel_richten (telegramversand, B70+)
 # <aufnahme> traegt dabei SEINE Endung (praefix = f"{filepath}_part"). Eine
 # Videoendung MITTEN im Namen kommt in keinem Aufnahmenamen vor — genau daran
 # unterscheidet sich ein Teil von einer Aufnahme, deren Nutzer „part" heisst.
 _REST = re.compile(r"^.+\.(?:mp4|flv|ts|mkv|webm|m4v|mov)"
-                   r"(?:_(?:dc)?part(?:_re)?_\d{3,}\.mp4|\.repaired\.mp4|\.remux\.mp4)$")
+                   r"(?:_(?:dcpart\d*|part)(?:_re)?_\d{3,}\.mp4|\.repaired\.mp4|\.remux\.mp4)$")
 
 # Wie lange eine angemeldete Zerlegung als laufend gilt. Der Versand loescht
 # jeden Teil erst NACH seinem Upload; bei 45-MB-Teilen und FloodWait dauert

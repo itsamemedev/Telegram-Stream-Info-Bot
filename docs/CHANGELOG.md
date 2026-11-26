@@ -9,6 +9,38 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.12.0] — 2026-11-26 · „Gleichstart" (Uploads an alle Ziele gleichzeitig)
+
+Gemeldet vom Betreiber: „Aufnahme-Uploads starten nicht pünktlich auf allen
+Discord-Servern und Telegram-Gruppen. Die Uploads können überall gleichzeitig
+starten, wenn man sich an die Limitierungen hält."
+
+### Geändert
+
+- **Alle Ziele gleichzeitig.** `_aufnahme_verteilen` arbeitete die Ziele
+  nacheinander ab: jede Telegram-Gruppe lud alle Teile hoch (5 s je Teil),
+  dann 3 s Pause, dann die nächste Gruppe, Discord zuletzt. Bei einer langen
+  Aufnahme und drei Gruppen wartete die letzte gut eine Stunde. Jetzt starten
+  alle Ziele zugleich; Telegram zählt seine Grenze je Gruppe (rund 20
+  Nachrichten je Minute), Discord je Kanal — gleichzeitig überschreitet
+  keine davon. Ein Neustart mitten im Upload reiht genau die unfertigen
+  Ziele ein (W175 unverändert).
+- **Discord auf jedem Server.** Bisher ging die Aufnahme nur an
+  `DISCORD_GUILD_ID` (sonst den ersten Server). Jetzt an jeden Server, in dem
+  der Bot ist, in Teilen nach der Grenze seiner Boost-Stufe
+  (`filesize_limit`); Server mit derselben Grenze teilen sich einen Split.
+- **Telegram teilt einmal.** Jede Gruppe teilte die Aufnahme bisher neu,
+  unter demselben Präfix — gleichzeitig hätte das die Teile gegenseitig
+  überschrieben. Jetzt bereitet der erste Chat vor (Teile bis 45 MB, Bot-Limit
+  50 MB), alle anderen nutzen dieselben Teile, der letzte räumt auf.
+- **Pause 3 statt 5 Sekunden** zwischen zwei Teilen an dieselbe Gruppe,
+  einstellbar über `UPLOAD_TEIL_PAUSE_S` (mindestens 1 s, sonst FloodWait).
+- **Warteschlange.** Aufgeschobene Uploads einer Aufnahme gehen ebenfalls
+  gleichzeitig raus; ein Discord-Eintrag wiederholt nur die Server, auf denen
+  es scheiterte — die anderen hätten die Aufnahme sonst doppelt.
+
+---
+
 ## [5.11.4] — 2026-11-21 · „Rangordnung" (Bughunt Welle 4)
 
 Vierter Durchgang mit eigenen Jägern (nur lesend) und sechs Fixern: Discord-
