@@ -45804,6 +45804,29 @@ def _test_arc1_arc3_archivkopie_atomar_und_einmal():
             A.add_archive_rule("alle", {}, {"action": "copy_to_archive"})
             erg = A.run_archive_rules(archive_dir=archiv)
             assert erg["ok"] is False and os.listdir(archiv) == [], erg
+            # Das Ergebnis geht ueber /api/auto-archive-rules/run nach aussen:
+            # der Wortlaut des Datenbankfehlers gehoert ins Log, nicht dorthin
+            # (CodeQL stack-trace-exposure, PR #232).
+            assert erg["error"] == A.FEHLER_ARCHIV and "locked" not in str(erg), erg
+            assert any("database is locked" in z for _s, z in lg.zeilen), \
+                "der Wortlaut fehlt im Log — dann steht er nirgends"
+            # Dasselbe fuer die Aufnahmeliste, die der Lauf vorher liest.
+            alt_rules_db = A.db_conn
+
+            class _ListeWeg(_Gesperrt):
+                def execute(self, sql, *a):
+                    if "FROM recordings WHERE deleted_at" in sql:
+                        raise RuntimeError("disk I/O error: /var/lib/geheim.db")
+                    return self._inner.execute(sql, *a)
+
+            A.db_conn = _ListeWeg
+            try:
+                del lg.zeilen[:]
+                erg = A.run_archive_rules(archive_dir=archiv)
+            finally:
+                A.db_conn = alt_rules_db
+            assert erg == {"ok": False, "error": A.FEHLER_LISTE}, erg
+            assert any("geheim.db" in z for z in lg.stufe("error")), lg.zeilen
         finally:
             A.shutil, A.log, AR.db_conn = alt_sh, alt_log, alt_db
     ok("ARC-1/ARC-3: Archivkopie erst unter Punktnamen, abgerissene Kopie "
@@ -46234,6 +46257,55 @@ def _test_arc9_zaehler_und_erfolgsquote():
     ok("ARC-9: Zaehler nur zu vorhandenen Aufnahmen, eine Erfolgsdefinition")
 
 
+class _DcBibliothek:
+    """discord.py-Attrappe fuer die DC-Vertraege — nur, wo es fehlt.
+
+    Die schlanken CI-Jobs („Vertraege & Module") installieren nur orjson,
+    flask, waitress, aiohttp und pyyaml; discordbot.py setzt dann `discord`
+    und `app_commands` auf None, und schon die Annotationen der
+    Befehlsfunktionen (`member: discord.Member`) fallen beim Registrieren.
+    Gegen das ECHTE discord.py laufen dieselben Vertraege im Job
+    „Produktionsstand" (requirements.lock.txt) — dort greift diese Attrappe
+    nicht. Sie traegt nur, was die Befehle beim Definieren und Antworten
+    anfassen; was discord.py SELBST tut (merge, to_dict), prueft nur der
+    echte Lauf."""
+
+    def __init__(self, DB):
+        self.DB = DB
+
+    def __enter__(self):
+        import types as _ty
+        self.alt = (self.DB.discord, self.DB.app_commands)
+        if self.DB.discord is not None:
+            return self.DB.discord
+
+        class AllowedMentions:
+            def __init__(self, **kw):
+                self.kw = kw
+
+            @classmethod
+            def none(cls):
+                return cls(everyone=False, users=False, roles=False, replied_user=False)
+
+        def _get(folge, **merkmale):
+            return next((x for x in folge if all(getattr(x, k, None) == v
+                                                  for k, v in merkmale.items())), None)
+
+        dc = _ty.ModuleType("discord")
+        for name in ("Member", "Role", "TextChannel"):
+            setattr(dc, name, type(name, (), {}))
+        dc.AllowedMentions = AllowedMentions
+        dc.Colour = lambda wert=0: ("farbe", wert)
+        dc.utils = _ty.SimpleNamespace(get=_get)
+        ac = _ty.SimpleNamespace(describe=lambda **_kw: (lambda fn: fn))
+        self.DB.discord, self.DB.app_commands = dc, ac
+        return dc
+
+    def __exit__(self, *_a):
+        self.DB.discord, self.DB.app_commands = self.alt
+        return False
+
+
 def _dc_attrappen():
     """Gemeinsame Attrappen fuer die DC-Vertraege: ein Befehlsbaum, der die
     echten Befehlsfunktionen einsammelt, und eine Interaction, die mitschreibt.
@@ -46317,12 +46389,18 @@ def _test_dc2_keine_ungewollten_pings():
     selbst — sonst verstummte sie mit der neuen Vorgabe still.
     """
     import ast as _ast
-    import discord as _dc
     import nc.dcspar as DC
+    try:
+        import discord as _dc
+    except ImportError:
+        # Die schlanken CI-Jobs haben kein discord.py (s. _DcBibliothek); was
+        # discord.py SELBST tut, prueft der Job „Produktionsstand".
+        _dc = None
 
     # (1) Die Client-Vorgabe traegt none(), und ohne sie startet nichts.
-    o = DC.client_optionen(_dc.AllowedMentions.none())
-    assert o["allowed_mentions"].to_dict() == {"parse": []}, o
+    marke = _dc.AllowedMentions.none() if _dc is not None else object()
+    o = DC.client_optionen(marke)
+    assert o["allowed_mentions"] is marke, o
     try:
         DC.client_optionen(None)
         raise AssertionError("client_optionen ohne allowed_mentions lief durch")
@@ -46335,8 +46413,10 @@ def _test_dc2_keine_ungewollten_pings():
                         in _ast.unparse(c) for c in rufe), "der Client pingt wieder per Vorgabe"
     # Die Vorgabe wirkt nur, weil discord.py sie mit dem Einzelwert ZUSAMMENFUEHRT:
     # ein @here-Ping bleibt @here, ohne dass Rollen oder Nutzer mitkommen.
-    zus = _dc.AllowedMentions.none().merge(_dc.AllowedMentions(everyone=True)).to_dict()
-    assert zus == {"parse": ["everyone"]}, zus
+    if _dc is not None:
+        assert o["allowed_mentions"].to_dict() == {"parse": []}, o
+        zus = _dc.AllowedMentions.none().merge(_dc.AllowedMentions(everyone=True)).to_dict()
+        assert zus == {"parse": ["everyone"]}, zus
 
     # (2) Jede bewusste Erwaehnung hat ihr eigenes, ENGES allowed_mentions.
     def _sendungen(baum):
@@ -46398,6 +46478,13 @@ def _test_dc2_keine_ungewollten_pings():
 
 
 def _test_dc1_rangfolge_vor_botrechten():
+    """DC-1 mit discord.py-Attrappe, wo die Bibliothek fehlt (_DcBibliothek)."""
+    import discordbot as DB
+    with _DcBibliothek(DB):
+        _dc1_ablauf()
+
+
+def _dc1_ablauf():
     """DC-1: Server-Befehle pruefen die Rangfolge des AUFRUFERS, nicht des Bots.
 
     `_is_admin` liess „Server verwalten" oder eine Rolle mit dem NAMEN aus
@@ -46524,6 +46611,13 @@ def _test_dc1_rangfolge_vor_botrechten():
 
 
 def _test_dc3_track_pruefung_und_grenze():
+    """DC-3 mit discord.py-Attrappe, wo die Bibliothek fehlt (_DcBibliothek)."""
+    import discordbot as DB
+    with _DcBibliothek(DB):
+        _dc3_ablauf()
+
+
+def _dc3_ablauf():
     """DC-3: /track prueft den Namen wie Telegram und deckelt je Mitglied;
     /follow legt Rollen nur fuer getrackte Namen an.
 

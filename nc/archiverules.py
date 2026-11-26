@@ -193,6 +193,12 @@ def _archiviere_eine(src: str, archive_dir: str, rule_name: str,
         return False
 
 
+# Die Saetze, die ein gescheiterter Lauf nach aussen meldet. Bewusst ohne den
+# Wortlaut der Ausnahme (s. run_archive_rules) — der steht im Log.
+FEHLER_LISTE = "Aufnahmeliste nicht lesbar — kein Lauf, Einzelheiten im Log"
+FEHLER_ARCHIV = "Archivliste nicht lesbar — Lauf abgebrochen, Einzelheiten im Log"
+
+
 def run_archive_rules(rule_id: Optional[int] = None, archive_dir: str = "",
                       log_event=None) -> dict:
     """Wendet eine oder alle aktiven Regeln an. Action: 'copy_to_archive'
@@ -211,7 +217,13 @@ def run_archive_rules(rule_id: Optional[int] = None, archive_dir: str = "",
                 "FROM recordings WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 5000"
             ).fetchall()
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        # Nach aussen nur der Satz, nicht der Wortlaut der Ausnahme: das
+        # Ergebnis geht ueber /api/auto-archive-rules/run zurueck, und ein
+        # Datenbankfehler traegt Pfade und Tabellen (CodeQL
+        # stack-trace-exposure, PR #232). Der Wortlaut steht im Log.
+        log.error("archive rules: Aufnahmeliste nicht lesbar (%s: %s) — kein Lauf.",
+                  type(e).__name__, e)
+        return {"ok": False, "error": FEHLER_LISTE}
 
     results = []
     for rule in rules:
@@ -245,7 +257,7 @@ def run_archive_rules(rule_id: Optional[int] = None, archive_dir: str = "",
                 # Kopie eine moegliche Dublette (ARC-3).
                 log.error("archive rule '%s': Lauf abgebrochen — %s",
                           rule["name"], e)
-                return {"ok": False, "error": str(e), "results": results}
+                return {"ok": False, "error": FEHLER_ARCHIV, "results": results}
             if erfolg:
                 archived += 1
             else:
