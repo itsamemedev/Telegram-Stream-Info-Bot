@@ -5302,15 +5302,22 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
        zur normalen Worker-Pipeline. Wird in eigener Tabelle gespeichert.
        Triggered from /api/recordings/manual/start."""
     username = clean_username(username)
-    if not username:
+    # Die Handle-Regel wie bei /track (DC-3): der Name kommt aus der Anfrage
+    # (/api/recordings/manual/start) und steht gleich im Dateinamen.
+    if not username or not is_valid_tiktok_username(username):
         return {"ok": False, "error": "ungültiger username"}
     duration_secs = max(10, min(int(duration_secs or 300), 3600))
 
-    # File-Path
+    # File-Path. Normalisiert und gegen die Wurzel geprueft, und ab hier NUR
+    # dieser Pfad: seit ARC-2 geht er auch in add_recording (os.path.exists/
+    # getsize), und CodeQL erkennt eine Barriere nur in dieser Form
+    # (py/path-injection, PR #232) — die Handle-Regel oben sieht es nicht.
     start_dt = datetime.now(timezone.utc)
     ts = start_dt.strftime("%Y%m%d_%H%M%S")
-    output_file = os.path.join(
-        RECORDINGS_DIR, f"manual_{username}_{ts}.mp4")
+    _wurzel = os.path.abspath(RECORDINGS_DIR)
+    output_file = os.path.abspath(os.path.join(_wurzel, f"manual_{username}_{ts}.mp4"))
+    if not output_file.startswith(_wurzel + os.sep):
+        return {"ok": False, "error": "ungültiger username"}
 
     # DB-Entry anlegen
     try:
@@ -5421,7 +5428,8 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
 
     _spawn(_wait_and_finish(), name=f"manual-rec-{manual_id}")
 
-    return {"ok": True, "manual_id": manual_id, "output_file": output_file,
+    # Nach aussen relativ wie bisher — der absolute Pfad nennt den Serverordner.
+    return {"ok": True, "manual_id": manual_id, "output_file": os.path.relpath(output_file),
             "recorder": recorder, "duration_secs": duration_secs}
 
 def stop_manual_recording(manual_id: int) -> dict:

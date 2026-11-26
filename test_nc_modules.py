@@ -45912,6 +45912,40 @@ def _test_arc2_manuelle_aufnahme_keine_waise():
     assert rufe and any(kw.arg == "sitzung" and getattr(kw.value, "value", 1) is False
                         for kw in rufe[0].keywords), \
         "_wait_and_finish traegt die fertige manuelle Aufnahme nicht (ohne Sitzung) ein"
+    # Seit ARC-2 geht der Pfad, der den Nutzernamen der Anfrage traegt, auch in
+    # add_recording (os.path.exists/getsize) — CodeQL py/path-injection, PR #232.
+    # (a) Ein Name ausserhalb der Handle-Regel kommt gar nicht bis zum Pfad.
+    import asyncio as _aio
+    import nc.textutil as _tu
+    angefasst = []
+
+    async def _db_async(*_a, **_k):
+        angefasst.append("db")
+        raise AssertionError("ungueltiger Name erreicht die Datenbank")
+
+    ns = {"clean_username": _tu.clean_username,
+          "is_valid_tiktok_username": _tu.is_valid_tiktok_username,
+          "os": os, "RECORDINGS_DIR": "recordings", "db_async": _db_async}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    # clean_username wirft Fremdzeichen schon weg („x y" -> „xy"); was danach
+    # die Handle-Regel verletzt, muss hier enden.
+    for name in ("a", "a" * 25, "name.", "@", "https://www.tiktok.com/"):
+        erg = _aio.run(ns["trigger_manual_recording"](name))
+        assert erg == {"ok": False, "error": "ungültiger username"}, (name, erg)
+    assert angefasst == [], angefasst
+    # (b) Der Pfad wird normalisiert, gegen die Wurzel geprueft, und ab dort
+    # traegt NUR die normalisierte Fassung den Namen output_file — die Form,
+    # die CodeQL als Barriere erkennt (sonst gilt die Pruefung fuer die
+    # Analyse nicht, und die Handle-Regel sieht sie ohnehin nicht).
+    zuw = [k for k in fn.body if isinstance(k, _ast.Assign)
+           and [_ast.unparse(t) for t in k.targets] == ["output_file"]]
+    assert len(zuw) == 1 and _ast.unparse(zuw[0].value).startswith("os.path.abspath("), \
+        [_ast.unparse(z) for z in zuw]
+    i = fn.body.index(zuw[0])
+    riegel = fn.body[i + 1]
+    assert (isinstance(riegel, _ast.If)
+            and _ast.unparse(riegel.test) == "not output_file.startswith(_wurzel + os.sep)"
+            and isinstance(riegel.body[0], _ast.Return)), _ast.unparse(riegel)
     ok("ARC-2: manuelle Aufnahmen sind keine Waisen, stehen in recordings und "
        "reissen keine Sitzung durch")
 
