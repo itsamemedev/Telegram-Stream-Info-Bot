@@ -1528,9 +1528,13 @@ def _fanout_ziele(fan_rows, tid, chat_id, username):
     Tracking. Ein Discord-Tracking behaelt sein Paar (der Live-Uebergang wird
     weiter beansprucht, sonst meldet der Live-Check-Worker ihn ein zweites
     Mal), bekommt aber keinen Telegram-Chat."""
-    zeilen = [(r["id"], r["group_id"]) for r in fan_rows] or [(tid, chat_id)]
-    paare = [(t, g if _nc_tgfehler.ist_telegram_chat(g) else None) for t, g in zeilen]
-    return paare, _telegram_ziele([g for _t, g in zeilen], username)
+    zeilen = ([(r["id"], r["group_id"], bool(r.get("paused"))) for r in fan_rows]
+              or [(tid, chat_id, False)])
+    paare = [(t, g if _nc_tgfehler.ist_telegram_chat(g) else None) for t, g, _p in zeilen]
+    # v5.12: hochgeladen wird nur in Gruppen, die den Nutzer AKTIV tracken —
+    # eine pausierte Gruppe bekommt weiter ihren Zustand (Paar oben), aber
+    # kein Video, das eine andere Gruppe ausgeloest hat.
+    return paare, _telegram_ziele([g for _t, g, p in zeilen if not p], username)
 
 
 def _dashboard_trackings_umziehen():
@@ -1626,34 +1630,63 @@ async def _upload_queue_abarbeiten(bot_app):
     if faellig:
         log.info(f"Upload-Warteschlange: {len(faellig)} aufgeschobene "
                  f"Upload(s) werden jetzt gesendet.")
+    # v5.12: alle Ziele EINER Aufnahme gleichzeitig (wie _aufnahme_verteilen),
+    # die Aufnahmen nacheinander — sonst teilte die Box mehrere grosse Dateien
+    # zugleich. Die Reihenfolge der Aufnahmen bleibt die der Schlange.
+    nach_datei = {}
     for entry in faellig:
+        nach_datei.setdefault(entry.get("file"), []).append(entry)
+    for eintraege in nach_datei.values():
         if not _is_upload_window(datetime.now()):
             break                   # Fenster zu → Rest beim nächsten Lauf
-        fpath = entry.get("file")
-        username = entry.get("username") or "?"
-        ergebnis = {}
-        if entry.get("ziel") == "discord":
-            chat_id = "discord"
-        else:
-            # v4.2-W168: ein Discord-Ziel (Guild) ist kein Telegram-Ziel
-            # mehr — der Eintrag wird verworfen statt umgeleitet.
-            _tg = _telegram_ziele([entry.get("chat_id")], entry.get("username"))
-            chat_id = _tg[0] if _tg else None
-        if not chat_id or not fpath or not os.path.exists(fpath):
+        await asyncio.gather(*(_upload_queue_eintrag(bot_app, e) for e in eintraege))
+        await asyncio.sleep(3)        # sanft zu Telegram, zwischen den Aufnahmen
+
+
+async def _upload_queue_eintrag(bot_app, entry):
+    """Ein Eintrag der Warteschlange: senden, dann behalten oder entfernen."""
+    fpath = entry.get("file")
+    username = entry.get("username") or "?"
+    ergebnis = {}
+    if entry.get("ziel") == "discord":
+        chat_id = "discord"
+    else:
+        # v4.2-W168: ein Discord-Ziel (Guild) ist kein Telegram-Ziel
+        # mehr — der Eintrag wird verworfen statt umgeleitet.
+        _tg = _telegram_ziele([entry.get("chat_id")], entry.get("username"))
+        chat_id = _tg[0] if _tg else None
+    if not chat_id or not fpath or not os.path.exists(fpath):
+        _upload_queue_remove(entry)
+        if fpath and not os.path.exists(fpath):
+            log.error("Upload-Warteschlange @%s: %s liegt nicht mehr auf der Platte "
+                      "(Retention?) — Eintrag verworfen, der Upload entfaellt.",
+                      username, fpath)
+        return
+    if chat_id != "discord":
+        # v5.12: zwischen Einreihen und Senden koennen Stunden liegen (Upload-
+        # Fenster). Trackt die Gruppe den Nutzer nicht mehr — entfernt oder
+        # pausiert —, bekommt sie auch die aufgeschobene Aufnahme nicht.
+        try:
+            zeilen = await db_async(lambda c: _nc_trackingdb.empfaenger(c, username))
+        except Exception as e:
+            # Nicht raten: ohne Trackings ist nicht zu entscheiden — der
+            # Eintrag bleibt fuer den naechsten Lauf.
+            log.error("Upload-Warteschlange @%s → %s: Trackings nicht lesbar (%s) — "
+                      "Eintrag bleibt, naechster Lauf.", username, chat_id, e)
+            return
+        if chat_id not in {z["group_id"] for z in zeilen if not z["paused"]}:
             _upload_queue_remove(entry)
-            if fpath and not os.path.exists(fpath):
-                log.error("Upload-Warteschlange @%s: %s liegt nicht mehr auf der Platte "
-                          "(Retention?) — Eintrag verworfen, der Upload entfaellt.",
-                          username, fpath)
-            continue
-        beginn, ende = _parse_iso(entry.get("started_at")), _parse_iso(entry.get("ended_at"))
-        if chat_id == "discord":
-            await _aufnahme_nach_discord(username, fpath, beginn, ergebnis=ergebnis)
-        else:
-            await split_and_send_video(chat_id, fpath, bot_app, username, started_at=beginn,
-                                       ended_at=ende, ergebnis=ergebnis)
-        _upload_queue_nachher(entry, ergebnis, username, chat_id)
-        await asyncio.sleep(3)        # sanft zu Telegram
+            log.info("Upload-Warteschlange @%s: Gruppe %s trackt den Nutzer nicht mehr "
+                     "(entfernt oder pausiert) — Eintrag verworfen.", username, chat_id)
+            return
+    beginn, ende = _parse_iso(entry.get("started_at")), _parse_iso(entry.get("ended_at"))
+    if chat_id == "discord":
+        await _aufnahme_nach_discord(username, fpath, beginn, ergebnis=ergebnis,
+                                     gilden=entry.get("gilden"))
+    else:
+        await split_and_send_video(chat_id, fpath, bot_app, username, started_at=beginn,
+                                   ended_at=ende, ergebnis=ergebnis)
+    _upload_queue_nachher(entry, ergebnis, username, chat_id)
 
 
 def _upload_queue_nachher(entry, ergebnis, username, chat_id):
@@ -1669,6 +1702,10 @@ def _upload_queue_nachher(entry, ergebnis, username, chat_id):
     if lage == "fertig":
         _upload_queue_remove(entry)
     elif lage == "wieder":
+        if ergebnis.get("fehl_gilden"):
+            # v5.12: nur die Server wiederholen, auf denen es scheiterte — die
+            # anderen haben die Aufnahme schon (sonst stuende sie dort doppelt).
+            neu["gilden"] = list(ergebnis["fehl_gilden"])
         _upload_queue_update(entry, neu)
         log.error("Aufgeschobener Upload @%s → %s gescheitert (Versuch %d von %d: %s) — "
                   "naechster Versuch in %.0f min.", username, chat_id, neu["versuche"],
@@ -10063,27 +10100,45 @@ async def _aufnahme_verteilen(bot_app, offen, output_file, username, started_at,
     `offen` gehoert dem Aufrufer: ein Ziel verlaesst die Liste erst, wenn es
     erledigt (oder eingereiht) ist. Wird der Task dazwischen abgebrochen
     (Neustart), steht in `offen` genau, was noch fehlt — v4.2-W175.
-    Sequenziell mit 3 s Pause zwischen Chats, damit Telegram nicht ueber
-    mehrere Uploads gleichzeitig stolpert. Ausserhalb des Upload-Fensters →
-    persistente Queue, der _upload_window_loop sendet, wenn es offen ist."""
-    erster = True
-    while offen:
-        ziel = offen[0]
-        dc = ziel == "discord"
-        if defer:
+    Ausserhalb des Upload-Fensters → persistente Queue, der
+    _upload_window_loop sendet, wenn es offen ist.
+
+    v5.12: alle Ziele GLEICHZEITIG. Bisher nacheinander mit 3 s Pause — die
+    letzte Gruppe wartete, bis jede vorige alle Teile hatte, bei einer langen
+    Aufnahme und drei Chats eine gute Stunde. Telegram zaehlt seine Grenzen je
+    Chat (rund 20 Nachrichten je Minute in einer Gruppe), Discord je Kanal;
+    gleichzeitig ueberschreitet keines davon. Geteilt wird die Aufnahme
+    trotzdem nur einmal (telegramversand._teile_holen)."""
+    if defer:
+        while offen:
+            ziel = offen[0]
+            dc = ziel == "discord"
             # v4.2-W133: Datei-Schreiben neben dem Loop (stand dort).
             await asyncio.to_thread(_upload_queue_add, None if dc else ziel, output_file,
                                     username, started_at, ended_at,
                                     ziel="discord" if dc else None)
-        elif dc:
+            offen.pop(0)
+        return
+
+    async def _ein_ziel(ziel):
+        if ziel == "discord":
             await _aufnahme_nach_discord(username, output_file, started_at)
         else:
-            if not erster:
-                await asyncio.sleep(3)
             await split_and_send_video(ziel, output_file, bot_app, username,
                                        started_at=started_at, ended_at=ended_at)
-        erster = False
-        offen.pop(0)
+        offen.remove(ziel)      # erst nach dem Versand: ein Abbruch laesst es stehen
+
+    # return_exceptions: ein Ziel, das wider Erwarten wirft, reisst die anderen
+    # nicht mit (beide Versandwege werfen nach Vertrag nicht). Ein Abbruch von
+    # aussen (Neustart) bricht dagegen alle ab — und `offen` traegt dann genau
+    # die, die nicht fertig wurden.
+    ziele = list(offen)
+    ergebnisse = await asyncio.gather(*(_ein_ziel(z) for z in ziele), return_exceptions=True)
+    for ziel, erg in zip(ziele, ergebnisse):
+        if not isinstance(erg, BaseException):
+            continue
+        log.error("Upload @%s → %s abgebrochen (%s: %s) — die Aufnahme bleibt auf dem "
+                  "Server: %s", username, ziel, type(erg).__name__, erg, output_file)
 
 
 async def _upload_rest_sichern(nachlauf, output_file, username, started_at):
@@ -10457,9 +10512,8 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # chat_id (die Tracking-ID die zuerst den Lock kriegte) — die anderen
             # User waren ausgeschlossen.
             # v4.1-W29: NEBEN dem Loop. Laeuft nach JEDER Aufnahme.
-            fan_rows = await db_async(lambda c: c.execute(
-                "SELECT id, group_id FROM trackings WHERE username=?",
-                (username,)).fetchall())
+            # v5.12: gross/klein-unabhaengig, mit Pausenstand (nc.trackingdb.empfaenger).
+            fan_rows = await db_async(lambda c: _nc_trackingdb.empfaenger(c, username))
             target_paare, target_chats = _fanout_ziele(fan_rows, tid, chat_id, username)  # W168
             log.info(f"@{username} fan-out: {len(target_chats)} chat(s) bekommen Upload")
 
@@ -19651,15 +19705,16 @@ async def _meme_zusammenschnitt(username, output_file):
     # geht, hat niemand verlangt, und der Betreiber wollte es nicht.
     if (os.getenv("MEME_REEL_TELEGRAM", "0") or "0").strip().lower() in ("1", "true", "yes", "on"):
         app = globals().get("bot_app")
-        rows = await db_async(lambda c: c.execute(
-            "SELECT DISTINCT group_id FROM trackings WHERE username=?", (username,)).fetchall())
+        # v5.12: dieselbe Empfaengerregel wie die Aufnahme (aktiv, gross/klein egal).
+        rows = await db_async(lambda c: _nc_trackingdb.empfaenger(c, username))
         # v4.2-W162: das Upload-Fenster gilt auch hier. Die Aufnahme derselben
         # Sitzung wird ausserhalb des Fensters aufgeschoben (UPLOAD_WINDOW_*,
         # „ohne dass grosse Videos den Chat fluten") — der Zusammenschnitt ging
         # sofort hinaus, oft mitten in der Nacht und vor der Aufnahme selbst.
         _spaeter = _should_defer_upload()
         # v4.2-W168: Discord-/track-Ziele sind nur Discord (oben _clip_to_discord).
-        for gid in _telegram_ziele([r["group_id"] for r in rows if r["group_id"]], username):
+        for gid in _telegram_ziele(list(dict.fromkeys(
+                r["group_id"] for r in rows if r["group_id"] and not r["paused"])), username):
             if app is None:
                 continue
             if _spaeter:
@@ -22919,7 +22974,7 @@ async def _shrink_for_discord(path, limit_mb):
     return None
 
 
-async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None):
+async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None, gilden=None):
     """v4.2-W175: die GANZE Aufnahme nach Discord, in Teilen <= Guild-Limit.
     v5.11-W209: in `<nutzer>-aufnahmen` im Bereich des Nutzers, #clips nur als
     Rueckfall (und dann laut, warum).
@@ -22928,7 +22983,15 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None)
     Rechnung steht in nc/discordaufnahme, hier nur Kanal, Limit und Versand.
     -> ergebnis wie split_and_send_video ({"gesendet", "fehler"}, dazu
     "aus" wenn Schalter oder Discord fehlen) — die Warteschlange entscheidet
-    daran, ob sie es noch einmal versucht."""
+    daran, ob sie es noch einmal versucht.
+
+    v5.12: an den Hauptserver (DISCORD_GUILD_ID, sonst der erste — wie bisher
+    fuer jede Aufnahme) UND an jeden weiteren Server, auf dem der Nutzer
+    getrackt wird, gleichzeitig; nie an einen Server, der ihn nicht trackt.
+    Jeder Server bekommt Teile nach SEINER Grenze (Boost-Stufe). `gilden`
+    beschraenkt auf bestimmte Server: die Warteschlange wiederholt nur, wo es
+    scheiterte, sonst stuende die Aufnahme auf den anderen doppelt. Im
+    Ergebnis stehen die Summen und `fehl_gilden`."""
     ergebnis = {} if ergebnis is None else ergebnis
     if not _nc_dcaufnahme.an():
         ergebnis.update(aus=True, grund="%s=0" % _nc_dcaufnahme.SCHALTER)
@@ -22939,33 +23002,24 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None)
         ergebnis.update(aus=True, grund="kein DISCORD_BOT_TOKEN")
         return ergebnis
     try:
-        import discord
         client = _nc_discordstate.CLIENT["obj"]
-        # Ein Rueckfall nach #clips meldet nc.discordziele.ziel_kanal selbst.
-        ch, _rueckfall = ((await _nc_discordziele.ziel_kanal(client.guilds, DISCORD_GUILD_ID,
-                                                              username, "aufnahmen"))
-                          if client else (None, ""))
-        if ch is None:
+        alle = list(client.guilds if client else ())
+        if gilden is None:
+            gilden = await _discord_aufnahme_gilden(alle, username)
+        server = [g for g in alle if getattr(g, "id", None) in gilden]
+        if not server:
             ergebnis.update(fehler=ergebnis.get("fehler", 0) + 1,
                             grund="Discord nicht verbunden oder in keiner Guild" if client
                             else "Discord-Client nicht verbunden")
         else:
-            _lim = _nc_dclimits.effective_upload_mb(getattr(ch.guild, "filesize_limit", 0),
-                                                    _DISCORD_UPLOAD_OVERRIDE)
-
-            ergebnis["kanal"] = ch.name
-
-            async def _senden(teil, text):
-                await ch.send(content=text[:1900], file=discord.File(teil))
-            await _nc_dcaufnahme.hochladen(path, _nc_dclimits.gate_mb(_lim), _senden,
-                                           username, started_at, ergebnis)
+            await _aufnahme_an_server(server, username, path, started_at, ergebnis)
     except asyncio.CancelledError:
         raise
     except Exception as e:
         ergebnis.update(fehler=ergebnis.get("fehler", 0) + 1,
                         grund="%s: %s" % (type(e).__name__, e))
     if _nc_uschlange.angekommen(ergebnis):
-        log.info("Aufnahme @%s → Discord (#%s): %d Teil(e), %s", username,
+        log.info("Aufnahme @%s → Discord (#%s): %d Teil(e) gesendet, %s", username,
                  ergebnis.get("kanal") or _nc_discordziele.clip_kanal(), ergebnis["gesendet"],
                  os.path.basename(path))
         _nc_meldetakt.zuruecksetzen("discord-aufnahme")
@@ -22981,6 +23035,58 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None)
                       ergebnis.get("kanal") or _nc_discordziele.clip_kanal(), path,
                       _nc_meldetakt.zusatz(weg))
     return ergebnis
+
+
+async def _discord_aufnahme_gilden(alle, username):
+    """v5.12: welche Server eine Aufnahme bekommen. -> [Guild-ID]
+
+    Der Hauptserver immer (seit W175 geht jede fertige Aufnahme dorthin, auch
+    fuer Nutzer, die nur in Telegram getrackt werden), dazu jeder weitere
+    Server, auf dem der Nutzer aktiv getrackt wird (Discord-/track schreibt
+    die Guild als group_id). Ein Server, der ihn nicht trackt, bekommt nichts —
+    sonst legte jede Aufnahme dort einen Bereich fuer einen fremden Nutzer an."""
+    haupt = _nc_discordziele.gilde_waehlen(alle, DISCORD_GUILD_ID)
+    zeilen = await db_async(lambda c: _nc_trackingdb.empfaenger(c, username))
+    getrackt = {z["group_id"] for z in zeilen if not z["paused"]}
+    return [g.id for g in alle if g is haupt or g.id in getrackt]
+
+
+async def _aufnahme_an_server(server, username, path, started_at, ergebnis):
+    """v5.12: je Server Kanal und Grenze, dann alle gleichzeitig hochladen.
+
+    Ein Server ohne Kanal (keine Rechte, kein Platz) zaehlt als Fehler und
+    steht in `fehl_gilden`; die anderen laden trotzdem. Die Summen stehen in
+    `ergebnis` wie bisher, damit die Warteschlange daran entscheiden kann."""
+    import discord
+    ziele, kanaele, je_server = [], [], []
+    for g in server:
+        erg = {"gesendet": 0, "fehler": 0}
+        # Ein Rueckfall nach #clips meldet nc.discordziele.ziel_kanal selbst.
+        ch, _rueckfall = await _nc_discordziele.ziel_kanal([g], g.id, username, "aufnahmen")
+        je_server.append((g, erg))
+        if ch is None:
+            erg.update(fehler=1, grund="kein Kanal in %s" % getattr(g, "name", g.id))
+            continue
+        _lim = _nc_dclimits.effective_upload_mb(getattr(ch.guild, "filesize_limit", 0),
+                                                _DISCORD_UPLOAD_OVERRIDE)
+        kanaele.append(ch.name)
+
+        def _senden_an(kanal):
+            async def _senden(teil, text):
+                await kanal.send(content=text[:1900], file=discord.File(teil))
+            return _senden
+        ziele.append((_nc_dclimits.gate_mb(_lim), _senden_an(ch), erg))
+    if ziele:
+        await _nc_dcaufnahme.an_alle(path, ziele, username, started_at)
+    ergebnis["kanal"] = ", ".join(dict.fromkeys(kanaele))
+    ergebnis["gesendet"] = ergebnis.get("gesendet", 0) + sum(e["gesendet"] for _g, e in je_server)
+    ergebnis["fehler"] = ergebnis.get("fehler", 0) + sum(e["fehler"] for _g, e in je_server)
+    ergebnis["teile"] = max((e.get("teile", 0) for _g, e in je_server), default=0)
+    ergebnis["fehl_gilden"] = [g.id for g, e in je_server if not _nc_uschlange.angekommen(e)]
+    gruende = ["%s: %s" % (getattr(g, "name", g.id), e.get("grund") or "?")
+               for g, e in je_server if not _nc_uschlange.angekommen(e)]
+    if gruende:
+        ergebnis["grund"] = "; ".join(gruende)
 
 
 async def _clip_to_discord(username, path, caption=""):

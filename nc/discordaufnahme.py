@@ -64,7 +64,11 @@ async def teilen(pfad, grenze_mb):
     `_part_dc` laege in genau diesem Glob, und Telegram bekaeme die
     Discord-Teile mitgesendet. `_dcpart` erkennt die Waisen-Suche trotzdem
     als Split-Rest (sie sucht „_part“ im Namen)."""
-    praefix = pfad + "_dcpart"
+    # v5.12: die Grenze steht im Praefix. Mehrere Server laden gleichzeitig,
+    # und Server verschiedener Boost-Stufen brauchen verschieden grosse Teile —
+    # unter EINEM Praefix haette der zweite Split die Teile des ersten
+    # ueberschrieben. nc/videoteil._REST kennt die Form `_dcpart<N>_000.mp4`.
+    praefix = "%s_dcpart%d" % (pfad, int(grenze_mb))
     teile, fehler = await _videoteil.kopier_teilen(pfad, praefix, grenze_mb)
     if teile and _videoteil.zu_gross(teile, grenze_mb):
         # Lange GOPs: der Segment-Muxer schneidet nur an Keyframes. Einmal mit
@@ -85,70 +89,102 @@ async def teilen(pfad, grenze_mb):
 
 async def hochladen(pfad, grenze_mb, senden, nutzer, beginn=None, ergebnis=None,
                     pause_s=PAUSE_S):
-    """Die Aufnahme in Teilen <= grenze_mb hochladen.
+    """Die Aufnahme in Teilen <= grenze_mb an EIN Ziel hochladen.
 
     -> ergebnis {"gesendet": n, "fehler": n, "teile": n, "grund": text}.
     Wirft nicht (bis auf CancelledError): ein Fehler wird gezaehlt und im
-    Grund benannt, der Aufrufer meldet ihn laut."""
+    Grund benannt, der Aufrufer meldet ihn laut. Seit v5.12 ein Sonderfall von
+    an_alle (ein Ziel)."""
     ergebnis = {} if ergebnis is None else ergebnis
-    ergebnis.setdefault("gesendet", 0)
-    ergebnis.setdefault("fehler", 0)
+    await an_alle(pfad, [(grenze_mb, senden, ergebnis)], nutzer, beginn, pause_s)
+    return ergebnis
+
+
+async def an_alle(pfad, ziele, nutzer, beginn=None, pause_s=PAUSE_S):
+    """Die Aufnahme an MEHRERE Server gleichzeitig. ziele = [(grenze_mb, senden, ergebnis)].
+
+    v5.12, gewuenscht vom Betreiber: die Uploads starten ueberall zugleich,
+    jeder Server in Teilen nach SEINER Grenze (Boost-Stufe, nc/discordlimits).
+    Server mit derselben Grenze teilen sich EINEN Split — die Teile liegen
+    einmal auf der Platte, und ffmpeg laeuft nicht je Server. Jedes `ergebnis`
+    wird gefuellt wie bei hochladen; wirft nicht (bis auf CancelledError)."""
+    nach_grenze = {}
+    for grenze, senden, ergebnis in ziele:
+        ergebnis.setdefault("gesendet", 0)
+        ergebnis.setdefault("fehler", 0)
+        nach_grenze.setdefault(int(grenze), []).append((senden, ergebnis))
+    await asyncio.gather(*(_gruppe(pfad, grenze, empfaenger, nutzer, beginn, pause_s)
+                           for grenze, empfaenger in nach_grenze.items()))
+
+
+def _alle_fehler(empfaenger, grund):
+    for _senden, ergebnis in empfaenger:
+        ergebnis["fehler"] += 1
+        ergebnis["grund"] = grund
+
+
+async def _gruppe(pfad, grenze_mb, empfaenger, nutzer, beginn, pause_s):
+    """Ein Split fuer alle Server dieser Grenze, dann alle gleichzeitig senden."""
     try:
         groesse = os.path.getsize(pfad)
     except OSError as e:
         log.error("Discord-Aufnahme: %s nicht lesbar: %s", pfad, e)
-        ergebnis["fehler"] += 1
-        ergebnis["grund"] = "Datei nicht lesbar: %s" % e
-        return ergebnis
+        _alle_fehler(empfaenger, "Datei nicht lesbar: %s" % e)
+        return
     eigene = False
     if groesse <= grenze_mb * _MB:
         teile = [pfad]
     else:
         ok, info = _videoteil.platz_reicht(pfad)
         if not ok:
-            ergebnis["fehler"] += 1
-            ergebnis["grund"] = "zu wenig Platz zum Teilen: %s" % info
-            return ergebnis
+            _alle_fehler(empfaenger, "zu wenig Platz zum Teilen: %s" % info)
+            return
         teile, grund = await teilen(pfad, grenze_mb)
         if not teile:
-            ergebnis["fehler"] += 1
-            ergebnis["grund"] = grund
-            return ergebnis
+            _alle_fehler(empfaenger, grund)
+            return
         eigene = True
+    try:
+        await asyncio.gather(*(_senden_alle(teile, grenze_mb, senden, ergebnis, nutzer,
+                                            beginn, pause_s)
+                               for senden, ergebnis in empfaenger))
+    finally:
+        # Erst wenn ALLE Server dieser Grenze fertig sind (oder abgebrochen).
+        if eigene:
+            _videoteil.wegwerfen(teile)
+
+
+async def _senden_alle(teile, grenze_mb, senden, ergebnis, nutzer, beginn, pause_s):
+    """Die Teile nacheinander an EINEN Server (Pause gegen die Kanal-Drossel)."""
     n = len(teile)
     ergebnis["teile"] = n
     in_folge = 0
-    try:
-        for i, teil in enumerate(teile, 1):
-            mb = os.path.getsize(teil) / _MB
-            if mb > grenze_mb:
-                # Auch nach dem Neukodieren zu gross: Discord antwortete mit
-                # 413. Gezaehlt, damit die Aufnahme nicht als angekommen gilt.
-                ergebnis["fehler"] += 1
-                ergebnis["grund"] = "Teil %d/%d bleibt %.1f MB > %d MB" % (i, n, mb, grenze_mb)
-                continue
-            try:
-                await senden(teil, beschriftung(nutzer, i, n, mb, beginn))
-                ergebnis["gesendet"] += 1
-                in_folge = 0
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                # Je Teil eine Zeile; die Zusammenfassung meldet der Aufrufer
-                # gedrosselt auf error (bot._aufnahme_nach_discord).
-                log.warning("Discord-Aufnahme @%s Teil %d/%d gescheitert: %s", nutzer, i, n, e)
-                ergebnis["fehler"] += 1
-                ergebnis["grund"] = "Teil %d/%d: %s: %s" % (i, n, type(e).__name__, e)
-                in_folge += 1
-                if in_folge >= ABBRUCH_IN_FOLGE:
-                    # Fehlendes Recht oder geloeschter Kanal: jeder weitere Teil
-                    # scheitert genauso, und bei 100 Teilen waeren das 100 Fehler.
-                    ergebnis["fehler"] += n - i
-                    ergebnis["grund"] += " — Rest (%d Teile) nicht versucht" % (n - i)
-                    break
-            if i < n:
-                await asyncio.sleep(pause_s)
-    finally:
-        if eigene:
-            _videoteil.wegwerfen(teile)
-    return ergebnis
+    for i, teil in enumerate(teile, 1):
+        mb = os.path.getsize(teil) / _MB
+        if mb > grenze_mb:
+            # Auch nach dem Neukodieren zu gross: Discord antwortete mit
+            # 413. Gezaehlt, damit die Aufnahme nicht als angekommen gilt.
+            ergebnis["fehler"] += 1
+            ergebnis["grund"] = "Teil %d/%d bleibt %.1f MB > %d MB" % (i, n, mb, grenze_mb)
+            continue
+        try:
+            await senden(teil, beschriftung(nutzer, i, n, mb, beginn))
+            ergebnis["gesendet"] += 1
+            in_folge = 0
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # Je Teil eine Zeile; die Zusammenfassung meldet der Aufrufer
+            # gedrosselt auf error (bot._aufnahme_nach_discord).
+            log.warning("Discord-Aufnahme @%s Teil %d/%d gescheitert: %s", nutzer, i, n, e)
+            ergebnis["fehler"] += 1
+            ergebnis["grund"] = "Teil %d/%d: %s: %s" % (i, n, type(e).__name__, e)
+            in_folge += 1
+            if in_folge >= ABBRUCH_IN_FOLGE:
+                # Fehlendes Recht oder geloeschter Kanal: jeder weitere Teil
+                # scheitert genauso, und bei 100 Teilen waeren das 100 Fehler.
+                ergebnis["fehler"] += n - i
+                ergebnis["grund"] += " — Rest (%d Teile) nicht versucht" % (n - i)
+                break
+        if i < n:
+            await asyncio.sleep(pause_s)

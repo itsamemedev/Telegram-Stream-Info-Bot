@@ -24,6 +24,23 @@ def claim_transition(conn, tracking_id, going_live):
     return cur.rowcount == 1
 
 
+def empfaenger(conn, username):
+    """v5.12: die Trackings, deren Gruppen eine Aufnahme von `username` bekommen.
+    -> [{"id", "group_id", "paused"}]
+
+    Gewuenscht vom Betreiber: „in den Telegram-Gruppen nur die Aufnahmen, wo
+    auch die entsprechenden User getrackt werden". Die EINE Abfrage dafuer —
+    Fan-out, Warteschlange, Meme-Zusammenschnitt und Discord lasen bisher je
+    `WHERE username=?`, und das ist unter SQLite gross/klein-genau: eine
+    Gruppe, die „Anna" trackt, bekam die Aufnahme von „anna" nie (dieselbe
+    Klasse wie LIVE-6). `paused` traegt der Aufrufer weiter — eine Gruppe, die
+    den Nutzer pausiert hat, will gerade keine Aufnahme von ihm."""
+    return [{"id": r["id"], "group_id": r["group_id"], "paused": bool(r["paused"])}
+            for r in conn.execute(
+                "SELECT id, group_id, paused FROM trackings WHERE LOWER(username)=LOWER(?)",
+                (username or "",)).fetchall()]
+
+
 def get_state(conn, tracking_id):
     """F27: Frische Werte aus DB statt der stale Row aus der Queue.
        Returns (last_live, recording, paused) oder (None, None, None) wenn nicht
