@@ -44749,6 +44749,42 @@ def _test_upd1_upd2_teilweise_und_rollback():
         U.rollback(r4["backup"])
         assert lies(".nc_update.json") is None and lies("c.py") is None
 
+        # Der Rollback-Pfad entsteht aus dem Backup-Verzeichnis, nicht aus dem
+        # Namen der Anfrage (CodeQL py/path-injection, PR #232): ein Name, der
+        # dort nicht steht, ist nicht zu finden — auch nicht, wenn er sich als
+        # Backup ausgibt —, und ein Symlink nach draussen bleibt draussen.
+        for name in ("nc_update_gibtsnicht.zip", "../nc_update_x.zip",
+                     "nc_update_../../etc.zip"):
+            rb = U.rollback(name)
+            assert rb["ok"] is False and not rb.get("restored"), (name, rb)
+        bverz = os.path.join(w, U.BACKUP_DIR)
+        draussen = os.path.join(_ph.verzeichnis("nc-pruef-upd-"), "fremd.zip")
+        with open(draussen, "wb") as f:
+            f.write(open(os.path.join(bverz, r4["backup"]), "rb").read())
+        os.symlink(draussen, os.path.join(bverz, "nc_update_symlink.zip"))
+        rb = U.rollback("nc_update_symlink.zip")
+        assert rb["ok"] is False and rb["error"] == "Unbekanntes Backup.", rb
+        # Ohne Backup-Verzeichnis: nicht gefunden, und laut statt still.
+        os.rename(bverz, bverz + ".weg")
+        try:
+            with _mock.patch.object(U, "_log") as protokoll:
+                rb = U.rollback("nc_update_symlink.zip")
+        finally:
+            os.rename(bverz + ".weg", bverz)
+        assert rb["ok"] is False and "nicht gefunden" in rb["error"], rb
+        assert any(c.args[0] == "error" for c in protokoll.call_args_list), \
+            protokoll.call_args_list
+        import ast as _ast
+        fn = next(n for n in _ast.parse(open("nc/updater.py", encoding="utf-8").read()).body
+                  if isinstance(n, _ast.FunctionDef) and n.name == "_zurueckspielen")
+        joins = [_ast.unparse(c) for c in _ast.walk(fn) if isinstance(c, _ast.Call)
+                 and _ast.unparse(c.func).endswith("sicher_join")]
+        assert joins == ["_nc_sicherpfad.sicher_join(verz, eintrag)"], joins
+        quelle = next(c for c in _ast.walk(fn) if isinstance(c, _ast.Assign)
+                      and [_ast.unparse(t) for t in c.targets] == ["eintrag"])
+        assert "for e in vorhanden if e == safe" in _ast.unparse(quelle.value), \
+            _ast.unparse(quelle.value)
+
         # Das ERSTE Update ueber die Funktion scheitert teilweise: kein
         # Vorstand, kein git — der alte SHA ist leer. Auch dann nicht
         # „aktuell": die Mutationsprobe „check ohne teilweise" entwischte, weil

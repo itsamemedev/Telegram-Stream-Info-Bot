@@ -837,8 +837,23 @@ def _zurueckspielen(name: str) -> dict:
     safe = _nc_sicherpfad.sicherer_name(name or "", vorgabe="")
     if not (safe.startswith("nc_update_") and safe.endswith(".zip")):
         return {"ok": False, "error": "Unbekanntes Backup."}
+    # v5.11.4: der Pfad entsteht aus dem VERZEICHNIS, nicht aus der Anfrage —
+    # der Name aus /api/update/rollback waehlt nur per Zeichenketten-Vergleich
+    # einen vorhandenen Eintrag aus. Die Pruefung oben war dicht, aber CodeQL
+    # sieht sie nicht (py/path-injection auf isfile/ZipFile, PR #232); dieselbe
+    # Antwort wie beim Ordner-Scan in W98: den Pfad gar nicht erst aus
+    # Fremdeingabe bauen. sicher_join bleibt fuer den Symlink-Fall.
+    verz = os.path.join(_root(), BACKUP_DIR)
     try:
-        path = _nc_sicherpfad.sicher_join(os.path.join(_root(), BACKUP_DIR), safe)
+        vorhanden = os.listdir(verz)
+    except OSError as e:
+        _log("error", "Rollback %s: Backup-Verzeichnis %s nicht lesbar (%s)", safe, verz, e)
+        return {"ok": False, "error": f"Backup {safe} nicht gefunden."}
+    eintrag = next((e for e in vorhanden if e == safe), None)
+    if eintrag is None:
+        return {"ok": False, "error": f"Backup {safe} nicht gefunden."}
+    try:
+        path = _nc_sicherpfad.sicher_join(verz, eintrag)
     except ValueError:
         return {"ok": False, "error": "Unbekanntes Backup."}
     if not os.path.isfile(path):
