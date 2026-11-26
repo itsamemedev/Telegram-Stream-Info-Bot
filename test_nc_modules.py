@@ -45287,8 +45287,13 @@ def _test_v5114_dc7_stern_highlight_genau_einmal():
     conn.executescript(
         "CREATE TABLE discord_clips (id INTEGER PRIMARY KEY, message_id INTEGER, username TEXT,"
         " filepath TEXT, stars_pushed INTEGER DEFAULT 0);"
-        "CREATE TABLE trackings (group_id INTEGER, username TEXT);"
-        "INSERT INTO trackings VALUES (-1001, 'peter'), (-1002, 'peter');")
+        # ANKER GEWANDERT v5.12: _stern_an_telegram liest ueber
+        # trackingdb.empfaenger() (id, group_id, paused). Dazu die Regel selbst:
+        # „Peter" ist derselbe Nutzer, die pausierte Gruppe -1003 bekommt nichts.
+        "CREATE TABLE trackings (id INTEGER PRIMARY KEY, group_id INTEGER, username TEXT,"
+        " paused INTEGER DEFAULT 0);"
+        "INSERT INTO trackings (group_id, username, paused) VALUES (-1001, 'peter', 0),"
+        " (-1002, 'Peter', 0), (-1003, 'peter', 1), (-1001, 'PETER', 0);")
     conn.execute("INSERT INTO discord_clips (id, message_id, username, filepath) VALUES (1, 77, 'peter', ?)",
                  (clip,))
     sends, posts, kaputt = [], [], [False]

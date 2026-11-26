@@ -34,7 +34,7 @@ CHANGELOG = [
             "Telegram: die Aufnahme wird einmal geteilt (Teile bis 45 MB, Bot-Limit 50 MB) und von allen Gruppen gemeinsam genutzt — bisher teilte jede Gruppe neu",
             "Pause zwischen zwei Teilen an dieselbe Gruppe 3 statt 5 s, einstellbar ueber UPLOAD_TEIL_PAUSE_S (mindestens 1 s)",
             "Aufgeschobene Uploads (Upload-Fenster, Neustart) gehen je Aufnahme ebenfalls gleichzeitig raus; ein Discord-Eintrag wiederholt nur die Server, auf denen es scheiterte",
-            "Hochgeladen wird nur, wo der Nutzer getrackt wird: Telegram-Gruppen mit aktivem Tracking (Gross-/Kleinschreibung egal, pausiert bekommt kein Video), Discord der Hauptserver und jeder Server, der den Nutzer trackt",
+            "Hochgeladen wird nur, wo der Nutzer getrackt wird: Telegram-Gruppen mit aktivem Tracking (Gross-/Kleinschreibung egal, pausiert bekommt kein Video), Discord der Hauptserver und jeder Server, der den Nutzer trackt; dieselbe Regel fuer Meme-Zusammenschnitt und Stern-Highlight",
         ],
     },
     {

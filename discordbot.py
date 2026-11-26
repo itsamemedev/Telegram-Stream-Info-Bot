@@ -2508,10 +2508,15 @@ async def _stern_highlight(client, payload):
 
 
 async def _stern_an_telegram(app, username, fp, votes):
-    """Den Clip an jede Telegram-Gruppe, die @username trackt. -> (gesendet, fehler)"""
-    gids = await db_async(lambda c: [r["group_id"] for r in c.execute(
-        "SELECT DISTINCT group_id FROM trackings WHERE username=?",
-        (username,)).fetchall()])
+    """Den Clip an jede Telegram-Gruppe, die @username aktiv trackt. -> (gesendet, fehler)
+
+    v5.12: dieselbe Empfaengerregel wie die Aufnahme (nc.trackingdb.empfaenger).
+    Bis dahin `WHERE username=?` — unter SQLite gross/klein-genau, also bekam
+    eine Gruppe, die „Peter" trackt, den Highlight von „peter" nie, und eine
+    Gruppe, die den Nutzer pausiert hat, bekam ihn trotzdem."""
+    zeilen = await db_async(lambda c: _nc_trackingdb.empfaenger(c, username))
+    gids = list(dict.fromkeys(z["group_id"] for z in zeilen
+                              if z["group_id"] and not z["paused"]))
     cap = f"⭐ Community-Highlight: @{username} — {votes}× gevotet im Discord"
     gesendet, fehler = 0, []
     for gid in gids:

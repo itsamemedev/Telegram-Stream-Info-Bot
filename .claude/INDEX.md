@@ -408,70 +408,70 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Discord-Slash-Commands in discordbot.py (67)
 
 ```
-  2723  /about                  Ueber diesen Bot
+  2728  /about                  Ueber diesen Bot
   1269  /ai                     
-  2723  /aireset                KI-Kontext zuruecksetzen
+  2728  /aireset                KI-Kontext zuruecksetzen
   1714  /ask                    
   1370  /assign_role            
   1428  /ban                    
-  2679  /botstats               
-  2723  /brain                  Brain-Lage: Regeln, Agenten, Empfehlungen
-  2723  /bulkadd                Mehrere User auf einmal tracken · a b c
-  2723  /cleanup                Alte Aufnahmen aufraeumen
+  2684  /botstats               
+  2728  /brain                  Brain-Lage: Regeln, Agenten, Empfehlungen
+  2728  /bulkadd                Mehrere User auf einmal tracken · a b c
+  2728  /cleanup                Alte Aufnahmen aufraeumen
   1987  /clearwarns             
-  2643  /clip                   
-  2628  /clipoftheweek          
+  2648  /clip                   
+  2633  /clipoftheweek          
   1850  /clips                  
-  2723  /cookies                Cookie-Status — mit 'holen' selbst beziehen · [holen]
+  2728  /cookies                Cookie-Status — mit 'holen' selbst beziehen · [holen]
   1325  /create_category        
   1296  /create_channel         
   1360  /create_group           
   1335  /create_role            
   1311  /create_voice           
   1591  /daily                  
-  2723  /diag                   Vollstaendige Diagnose
-  2723  /einnahmen              Einnahmen und Spenden
+  2728  /diag                   Vollstaendige Diagnose
+  2728  /einnahmen              Einnahmen und Spenden
   1743  /event                  
   1785  /events                 
   1890  /follow                 
   1879  /help                   
   1416  /kick                   
   1563  /leaderboard            
-  2723  /live                   Live-Status sofort pruefen · @user
+  2728  /live                   Live-Status sofort pruefen · @user
   1837  /livenow                
-  2723  /logs                   Letzte Fehler aus dem Log
-  2723  /pause                  Tracking pausieren · @user
+  2728  /logs                   Letzte Fehler aus dem Log
+  2728  /pause                  Tracking pausieren · @user
   1865  /post_test              
   1675  /profile                
   1454  /purge                  
-  2723  /quelle                 Stream-Quellen eines Live-Nutzers messen (alle Wege, ffprobe
-  2723  /quota                  Speicher-Quota
+  2728  /quelle                 Stream-Quellen eines Live-Nutzers messen (alle Wege, ffprobe
+  2728  /quota                  Speicher-Quota
   1550  /rank                   
   1825  /recstatus              
   1382  /remove_role            
-  2723  /report                 Azrael-Sentinel-Wochenreport
+  2728  /report                 Azrael-Sentinel-Wochenreport
   1282  /restream_status        
-  2723  /resume                 Tracking fortsetzen · @user
+  2728  /resume                 Tracking fortsetzen · @user
   1394  /set_channel_perms      
   1514  /setup_community        
   1531  /setup_targets          
   1811  /spenden                
   1924  /stats                  
   1241  /status                 
-  2723  /stoprec                Laufende Aufnahme sauber beenden · @user
+  2728  /stoprec                Laufende Aufnahme sauber beenden · @user
   2025  /streaminfo             
-  2723  /summary                Tageszusammenfassung
-  2723  /sysres                 System-Ressourcen
-  2723  /teststream             Recorder-Selbsttest · @user
-  2723  /tiktok                 Profil-Analyse eines TikTok-Accounts · ‹name›
+  2728  /summary                Tageszusammenfassung
+  2728  /sysres                 System-Ressourcen
+  2728  /teststream             Recorder-Selbsttest · @user
+  2728  /tiktok                 Profil-Analyse eines TikTok-Accounts · ‹name›
   1440  /timeout                
   1997  /topstreamers           
-  2723  /topusers               Top-Streamer nach Aufnahmen
+  2728  /topusers               Top-Streamer nach Aufnahmen
   1150  /track                  
-  2723  /track_exact            Exakten Usernamen tracken (ohne Korrektur) · ‹name›
+  2728  /track_exact            Exakten Usernamen tracken (ohne Korrektur) · ‹name›
   1254  /tracklist              
   1906  /unfollow               
-  2723  /unpause                Auto-pausierte Quelle wieder aktivieren · @user
+  2728  /unpause                Auto-pausierte Quelle wieder aktivieren · @user
   1203  /untrack                
   1945  /warn                   
   1973  /warnings               
@@ -480,10 +480,10 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Discord-Events in discordbot.py (4)
 
 ```
-  2827  on_member_join
-  2784  on_message
-  2744  on_raw_reaction_add
-  2864  on_ready
+  2832  on_member_join
+  2789  on_message
+  2749  on_raw_reaction_add
+  2869  on_ready
 ```
 
 ## Top-Level-Symbole in telegramversand.py (10 Funktionen)
@@ -510,25 +510,25 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   2348-2377   _clip_week_leader
   2401-2412   _clipoftheweek_loop
    668-721    _clips_einsortieren
-  2983-3047   _community_events_loop
+  2988-3052   _community_events_loop
    359-368    _dc_abbruch_melden
   2102-2108   _dc_bereit
   2059-2081   _dc_client
    342-356    _dc_fehlerart
   2084-2093   _dc_offen
   2111-2123   _dc_warten
-  3087-3122   _disc_automod_check
+  3092-3127   _disc_automod_check
    475-480    _disc_sprache_setzen
   2186-2234   _discord_ai_automod
    893-935    _discord_automod
   2237-2257   _discord_azrael_reply
-  2547-2940   _discord_run_once
+  2552-2945   _discord_run_once
    249-326    _discord_start
    371-425    _ensure_discord_invite
-  2946-2980   _ensure_error_channel
+  2951-2985   _ensure_error_channel
    504-517    _ensure_rank_roles
   1113-1127   _ensure_team_roles
-  3050-3080   _error_channel_loop
+  3055-3085   _error_channel_loop
    952-966    _follow_erlaubt
    611-615    _getrackte_nutzer
    945-949    _guard
@@ -559,8 +559,8 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   1141-1225   _reg_tracking
   1076-1110   _run_tg_handler
    812-823    _shim_chat_id
-  2510-2534   _stern_an_telegram
-  2537-2544   _stern_anspruch_zurueck
+  2510-2539   _stern_an_telegram
+  2542-2549   _stern_anspruch_zurueck
   2415-2507   _stern_highlight
    166-228    _uebernehmen
    571-580    _umzugsmarken

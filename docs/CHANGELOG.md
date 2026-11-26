@@ -46,7 +46,8 @@ starten, wenn man sich an die Limitierungen hält."
   verworfen. Discord: der Hauptserver wie bisher, dazu jeder weitere Server,
   auf dem der Nutzer getrackt wird — nie einer, der ihn nicht trackt. Eine
   Abfrage für alle Wege (`nc.trackingdb.empfaenger`), auch für den
-  Meme-Zusammenschnitt.
+  Meme-Zusammenschnitt und den im Discord gevoteten Highlight-Clip (⭐), der
+  bisher ebenfalls groß/klein-genau und auch an pausierte Gruppen ging.
 
 ---
 
