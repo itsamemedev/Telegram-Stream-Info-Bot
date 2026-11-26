@@ -1528,9 +1528,13 @@ def _fanout_ziele(fan_rows, tid, chat_id, username):
     Tracking. Ein Discord-Tracking behaelt sein Paar (der Live-Uebergang wird
     weiter beansprucht, sonst meldet der Live-Check-Worker ihn ein zweites
     Mal), bekommt aber keinen Telegram-Chat."""
-    zeilen = [(r["id"], r["group_id"]) for r in fan_rows] or [(tid, chat_id)]
-    paare = [(t, g if _nc_tgfehler.ist_telegram_chat(g) else None) for t, g in zeilen]
-    return paare, _telegram_ziele([g for _t, g in zeilen], username)
+    zeilen = ([(r["id"], r["group_id"], bool(r.get("paused"))) for r in fan_rows]
+              or [(tid, chat_id, False)])
+    paare = [(t, g if _nc_tgfehler.ist_telegram_chat(g) else None) for t, g, _p in zeilen]
+    # v5.12: hochgeladen wird nur in Gruppen, die den Nutzer AKTIV tracken —
+    # eine pausierte Gruppe bekommt weiter ihren Zustand (Paar oben), aber
+    # kein Video, das eine andere Gruppe ausgeloest hat.
+    return paare, _telegram_ziele([g for _t, g, p in zeilen if not p], username)
 
 
 def _dashboard_trackings_umziehen():
@@ -1658,6 +1662,23 @@ async def _upload_queue_eintrag(bot_app, entry):
                       "(Retention?) — Eintrag verworfen, der Upload entfaellt.",
                       username, fpath)
         return
+    if chat_id != "discord":
+        # v5.12: zwischen Einreihen und Senden koennen Stunden liegen (Upload-
+        # Fenster). Trackt die Gruppe den Nutzer nicht mehr — entfernt oder
+        # pausiert —, bekommt sie auch die aufgeschobene Aufnahme nicht.
+        try:
+            zeilen = await db_async(lambda c: _nc_trackingdb.empfaenger(c, username))
+        except Exception as e:
+            # Nicht raten: ohne Trackings ist nicht zu entscheiden — der
+            # Eintrag bleibt fuer den naechsten Lauf.
+            log.error("Upload-Warteschlange @%s → %s: Trackings nicht lesbar (%s) — "
+                      "Eintrag bleibt, naechster Lauf.", username, chat_id, e)
+            return
+        if chat_id not in {z["group_id"] for z in zeilen if not z["paused"]}:
+            _upload_queue_remove(entry)
+            log.info("Upload-Warteschlange @%s: Gruppe %s trackt den Nutzer nicht mehr "
+                     "(entfernt oder pausiert) — Eintrag verworfen.", username, chat_id)
+            return
     beginn, ende = _parse_iso(entry.get("started_at")), _parse_iso(entry.get("ended_at"))
     if chat_id == "discord":
         await _aufnahme_nach_discord(username, fpath, beginn, ergebnis=ergebnis,
@@ -10491,9 +10512,8 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # chat_id (die Tracking-ID die zuerst den Lock kriegte) — die anderen
             # User waren ausgeschlossen.
             # v4.1-W29: NEBEN dem Loop. Laeuft nach JEDER Aufnahme.
-            fan_rows = await db_async(lambda c: c.execute(
-                "SELECT id, group_id FROM trackings WHERE username=?",
-                (username,)).fetchall())
+            # v5.12: gross/klein-unabhaengig, mit Pausenstand (nc.trackingdb.empfaenger).
+            fan_rows = await db_async(lambda c: _nc_trackingdb.empfaenger(c, username))
             target_paare, target_chats = _fanout_ziele(fan_rows, tid, chat_id, username)  # W168
             log.info(f"@{username} fan-out: {len(target_chats)} chat(s) bekommen Upload")
 
@@ -19685,15 +19705,16 @@ async def _meme_zusammenschnitt(username, output_file):
     # geht, hat niemand verlangt, und der Betreiber wollte es nicht.
     if (os.getenv("MEME_REEL_TELEGRAM", "0") or "0").strip().lower() in ("1", "true", "yes", "on"):
         app = globals().get("bot_app")
-        rows = await db_async(lambda c: c.execute(
-            "SELECT DISTINCT group_id FROM trackings WHERE username=?", (username,)).fetchall())
+        # v5.12: dieselbe Empfaengerregel wie die Aufnahme (aktiv, gross/klein egal).
+        rows = await db_async(lambda c: _nc_trackingdb.empfaenger(c, username))
         # v4.2-W162: das Upload-Fenster gilt auch hier. Die Aufnahme derselben
         # Sitzung wird ausserhalb des Fensters aufgeschoben (UPLOAD_WINDOW_*,
         # „ohne dass grosse Videos den Chat fluten") — der Zusammenschnitt ging
         # sofort hinaus, oft mitten in der Nacht und vor der Aufnahme selbst.
         _spaeter = _should_defer_upload()
         # v4.2-W168: Discord-/track-Ziele sind nur Discord (oben _clip_to_discord).
-        for gid in _telegram_ziele([r["group_id"] for r in rows if r["group_id"]], username):
+        for gid in _telegram_ziele(list(dict.fromkeys(
+                r["group_id"] for r in rows if r["group_id"] and not r["paused"])), username):
             if app is None:
                 continue
             if _spaeter:
@@ -22964,12 +22985,13 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None,
     "aus" wenn Schalter oder Discord fehlen) — die Warteschlange entscheidet
     daran, ob sie es noch einmal versucht.
 
-    v5.12: an JEDEN Server, in dem der Bot ist, gleichzeitig — bisher nur an
-    DISCORD_GUILD_ID (sonst den ersten). Jeder Server bekommt Teile nach
-    SEINER Grenze (Boost-Stufe). `gilden` beschraenkt auf bestimmte Server:
-    die Warteschlange wiederholt nur, wo es scheiterte, sonst stuende die
-    Aufnahme auf den anderen Servern doppelt. Im Ergebnis stehen die Summen
-    und `fehl_gilden`."""
+    v5.12: an den Hauptserver (DISCORD_GUILD_ID, sonst der erste — wie bisher
+    fuer jede Aufnahme) UND an jeden weiteren Server, auf dem der Nutzer
+    getrackt wird, gleichzeitig; nie an einen Server, der ihn nicht trackt.
+    Jeder Server bekommt Teile nach SEINER Grenze (Boost-Stufe). `gilden`
+    beschraenkt auf bestimmte Server: die Warteschlange wiederholt nur, wo es
+    scheiterte, sonst stuende die Aufnahme auf den anderen doppelt. Im
+    Ergebnis stehen die Summen und `fehl_gilden`."""
     ergebnis = {} if ergebnis is None else ergebnis
     if not _nc_dcaufnahme.an():
         ergebnis.update(aus=True, grund="%s=0" % _nc_dcaufnahme.SCHALTER)
@@ -22981,8 +23003,10 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None,
         return ergebnis
     try:
         client = _nc_discordstate.CLIENT["obj"]
-        server = [g for g in (client.guilds if client else ())
-                  if gilden is None or getattr(g, "id", None) in gilden]
+        alle = list(client.guilds if client else ())
+        if gilden is None:
+            gilden = await _discord_aufnahme_gilden(alle, username)
+        server = [g for g in alle if getattr(g, "id", None) in gilden]
         if not server:
             ergebnis.update(fehler=ergebnis.get("fehler", 0) + 1,
                             grund="Discord nicht verbunden oder in keiner Guild" if client
@@ -23011,6 +23035,20 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None,
                       ergebnis.get("kanal") or _nc_discordziele.clip_kanal(), path,
                       _nc_meldetakt.zusatz(weg))
     return ergebnis
+
+
+async def _discord_aufnahme_gilden(alle, username):
+    """v5.12: welche Server eine Aufnahme bekommen. -> [Guild-ID]
+
+    Der Hauptserver immer (seit W175 geht jede fertige Aufnahme dorthin, auch
+    fuer Nutzer, die nur in Telegram getrackt werden), dazu jeder weitere
+    Server, auf dem der Nutzer aktiv getrackt wird (Discord-/track schreibt
+    die Guild als group_id). Ein Server, der ihn nicht trackt, bekommt nichts —
+    sonst legte jede Aufnahme dort einen Bereich fuer einen fremden Nutzer an."""
+    haupt = _nc_discordziele.gilde_waehlen(alle, DISCORD_GUILD_ID)
+    zeilen = await db_async(lambda c: _nc_trackingdb.empfaenger(c, username))
+    getrackt = {z["group_id"] for z in zeilen if not z["paused"]}
+    return [g.id for g in alle if g is haupt or g.id in getrackt]
 
 
 async def _aufnahme_an_server(server, username, path, started_at, ergebnis):

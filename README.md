@@ -120,7 +120,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 28.076 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 28.114 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
     BOT -->|configure| NC["nc/ — 217 Fachmodule<br/>41 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
@@ -557,8 +557,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 28.076 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 391 Routen und 673 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 28.114 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 391 Routen und 674 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -579,8 +579,9 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 
 **„Gleichstart“ (5.12.0)** — eine fertige Aufnahme startet auf allen
 Telegram-Gruppen und allen Discord-Servern gleichzeitig, statt Ziel für Ziel.
-Discord bekommt sie auf jedem Server, in dem der Bot ist, in Teilen nach der
-Grenze der jeweiligen Boost-Stufe; Telegram teilt sie einmal (bis 45 MB je
+Hochgeladen wird nur dort, wo der Nutzer getrackt wird: in Telegram-Gruppen
+mit aktivem Tracking, auf Discord dem Hauptserver und jedem Server, der ihn
+trackt — dort in Teilen nach der Grenze der jeweiligen Boost-Stufe; Telegram teilt sie einmal (bis 45 MB je
 Teil, Bot-Limit 50 MB) für alle Gruppen. Zwischen zwei Teilen an dieselbe
 Gruppe liegen 3 statt 5 Sekunden (`UPLOAD_TEIL_PAUSE_S`).
 

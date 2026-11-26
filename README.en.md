@@ -121,7 +121,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolith · 28,076 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT["bot.py<br/>monolith · 28,114 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
     BOT -->|configure| NC["nc/ — 185 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>16 watchdog agents"]:::brain
@@ -554,8 +554,8 @@ python3 -m pytest -k w145          # one wave on its own
 python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
 ```
 
-`bot.py` has 28,076 lines and is never read in full — the navigation map
-`.claude/INDEX.md` knows 391 routes and 673 functions with line numbers. Before
+`bot.py` has 28,114 lines and is never read in full — the navigation map
+`.claude/INDEX.md` knows 391 routes and 674 functions with line numbers. Before
 every pull request the full verification chain from
 **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
 documentation figures, locks against silent failure paths and giant functions,
@@ -577,8 +577,9 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
 
 **“Simultaneous Start” (5.12.0)** — a finished recording starts uploading to
 all Telegram groups and all Discord servers at the same time instead of one
-target after the other. Discord gets it on every server the bot is in, split
-by that server's boost-level limit; Telegram splits it once (parts up to
+target after the other. Uploads only go where the user is tracked: Telegram groups
+with an active tracking, and on Discord the main server plus every server
+tracking them, split by that server's boost-level limit; Telegram splits it once (parts up to
 45 MB, bot limit 50 MB) for all groups. Two parts to the same group are now
 3 instead of 5 seconds apart (`UPLOAD_TEIL_PAUSE_S`).
 

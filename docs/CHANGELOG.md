@@ -38,6 +38,15 @@ starten, wenn man sich an die Limitierungen hält."
 - **Warteschlange.** Aufgeschobene Uploads einer Aufnahme gehen ebenfalls
   gleichzeitig raus; ein Discord-Eintrag wiederholt nur die Server, auf denen
   es scheiterte — die anderen hätten die Aufnahme sonst doppelt.
+- **Nur wer trackt, bekommt hochgeladen.** Telegram: eine Gruppe bekommt die
+  Aufnahme nur, wenn sie den Nutzer aktiv trackt — unabhängig von der
+  Schreibweise („Anna“ = „anna“; bisher fiel eine solche Gruppe unter SQLite
+  heraus), eine pausierte Gruppe bekommt kein Video, und ein aufgeschobener
+  Upload an eine Gruppe, die den Nutzer inzwischen nicht mehr trackt, wird
+  verworfen. Discord: der Hauptserver wie bisher, dazu jeder weitere Server,
+  auf dem der Nutzer getrackt wird — nie einer, der ihn nicht trackt. Eine
+  Abfrage für alle Wege (`nc.trackingdb.empfaenger`), auch für den
+  Meme-Zusammenschnitt.
 
 ---
 

@@ -29828,7 +29828,10 @@ def _test_v42_w162_zweiter_durchgang():
     gesendet, vorgemerkt = [], []
 
     async def _db(f):
-        return [{"group_id": -100}, {"group_id": 0}, {"group_id": -200}]
+        # ANKER GEWANDERT v5.12: die Zeilen kommen aus trackingdb.empfaenger()
+        # und tragen immer "paused" — eine pausierte Gruppe bekommt nichts.
+        return [{"group_id": -100, "paused": False}, {"group_id": 0, "paused": False},
+                {"group_id": -200, "paused": False}, {"group_id": -300, "paused": True}]
 
     async def _senden(chat, ziel, app, user):
         gesendet.append(chat)
@@ -33584,13 +33587,19 @@ def _test_v42_w175_discord_ganze_aufnahme():
     _sys.modules["discord"] = fake_dc
     M.zuruecksetzen()
     try:
-        ns = _exec(baum, ["_aufnahme_nach_discord", "_aufnahme_an_server"], {
+        async def _keine_trackings(fn):
+            return []
+        ns = _exec(baum, ["_aufnahme_nach_discord", "_aufnahme_an_server",
+                          "_discord_aufnahme_gilden"], {   # v5.12: Hauptserver + getrackte
+            "db_async": _keine_trackings,
+            "_nc_trackingdb": _ty.SimpleNamespace(empfaenger=lambda c, u: []),
             "_nc_dcaufnahme": _ty.SimpleNamespace(an=lambda: True, SCHALTER=DA.SCHALTER,
                                                   an_alle=_hoch),
             "os": _ty.SimpleNamespace(getenv=lambda k, v="": "tok", path=_os.path),
             "_nc_discordstate": _ty.SimpleNamespace(CLIENT={"obj": client}),
             "_nc_discordziele": _ty.SimpleNamespace(clip_kanal_holen=_holen, ziel_kanal=_ziel,
-                                                    clip_kanal=Z.clip_kanal),
+                                                    clip_kanal=Z.clip_kanal,
+                                                    gilde_waehlen=Z.gilde_waehlen),
             "DISCORD_GUILD_ID": 0, "_nc_dclimits": DL, "_DISCORD_UPLOAD_OVERRIDE": None,
             "_nc_uschlange": U, "_nc_meldetakt": M, "_time_mod": __import__("time"),
             "log": lg, "asyncio": _aio})
@@ -33706,6 +33715,9 @@ def _test_v42_w175_upload_schlange():
 
         async def _schlaf(_s):
             return None
+
+        async def _db_trackt(fn):
+            return [{"id": 1, "group_id": g, "paused": False} for g in (-100, -2, -3)]
         M.zuruecksetzen()
         ns = {"_UPLOAD_QUEUE_LOCK": _th.Lock(), "_upload_queue_path": lambda: qpfad,
               "json": _json, "os": _os, "log": lg, "_nc_uschlange": U, "datetime": _dt,
@@ -33715,7 +33727,10 @@ def _test_v42_w175_upload_schlange():
               "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread,
                                        gather=_aio.gather),   # v5.12: gleichzeitig
               "_nc_tgfehler": T, "_nc_meldetakt": M, "_nc_discordziele": Z,
-              "_nc_dcaufnahme": DA}
+              "_nc_dcaufnahme": DA,
+              # v5.12: die Schlange prueft beim Senden, ob die Gruppe noch trackt.
+              "db_async": _db_trackt,
+              "_nc_trackingdb": _ty.SimpleNamespace(empfaenger=lambda c, u: [])}
         _exec(baum, ["_upload_queue_load", "_upload_queue_save", "_upload_queue_remove",
                      "_upload_queue_schreibbar",   # ARC-5: neuer Helfer, Anker gewandert
                      "_upload_queue_update", "_upload_queue_abarbeiten", "_upload_queue_nachher",
@@ -47099,7 +47114,8 @@ def _test_v512_upload_ueberall_gleichzeitig():
     finally:
         V.kopier_teilen, V.platz_reicht = alt_k, alt_platz
 
-    # ── (4) Jeder Server, in dem der Bot ist; die Warteschlange wiederholt
+    # ── (4) Discord: der Hauptserver und jeder Server, der den Nutzer AKTIV
+    # trackt — nie einer, der ihn nicht trackt; die Warteschlange wiederholt
     # nur die gescheiterten (sonst stuende die Aufnahme dort doppelt).
     class _Kanal:
         def __init__(self, gid, mb, kaputt=False):
@@ -47111,10 +47127,18 @@ def _test_v512_upload_ueberall_gleichzeitig():
             if self.kaputt:
                 raise RuntimeError("Missing Access")
             posts.append((self.guild.id, file))
-    kanaele = {1: _Kanal(1, 10), 2: _Kanal(2, 50, kaputt=True), 3: _Kanal(3, 100)}
+    # 1 = Hauptserver, 2 trackt @anna pausiert, 3 trackt @anna, 4 trackt sie nicht.
+    kanaele = {1: _Kanal(1, 10), 2: _Kanal(2, 50), 3: _Kanal(3, 100, kaputt=True),
+               4: _Kanal(4, 25)}
+    trackings = [{"id": 7, "group_id": 2, "paused": True},
+                 {"id": 8, "group_id": 3, "paused": False},
+                 {"id": 9, "group_id": -100, "paused": False}]
 
     async def _ziel(gilden, bevorzugt, nutzer, art):
         return kanaele[gilden[0].id], ""
+
+    async def _db(fn):
+        return fn(None)
     import sys as _sys
     fake_dc = _ty.ModuleType("discord")
     fake_dc.File = lambda p: p
@@ -47130,13 +47154,16 @@ def _test_v512_upload_ueberall_gleichzeitig():
         await DA.an_alle(pfad, ziele, nutzer, beginn, pause_s=0)
     try:
         ns = _exec(baum, ["_aufnahme_nach_discord", "_aufnahme_an_server",
-                          "_upload_queue_nachher"], {
+                          "_discord_aufnahme_gilden", "_upload_queue_nachher"], {
             "_nc_dcaufnahme": _ty.SimpleNamespace(an=lambda: True, SCHALTER=DA.SCHALTER,
                                                   an_alle=_alle),
             "os": _ty.SimpleNamespace(getenv=lambda k, v="": "tok", path=_os.path),
             "_nc_discordstate": _ty.SimpleNamespace(CLIENT={"obj": _ty.SimpleNamespace(
-                guilds=[_ty.SimpleNamespace(id=i, name="g%d" % i) for i in (1, 2, 3)])}),
-            "_nc_discordziele": _ty.SimpleNamespace(ziel_kanal=_ziel, clip_kanal=Z.clip_kanal),
+                guilds=[_ty.SimpleNamespace(id=i, name="g%d" % i) for i in (1, 2, 3, 4)])}),
+            "_nc_discordziele": _ty.SimpleNamespace(ziel_kanal=_ziel, clip_kanal=Z.clip_kanal,
+                                                    gilde_waehlen=Z.gilde_waehlen),
+            "DISCORD_GUILD_ID": 1, "db_async": _db,
+            "_nc_trackingdb": _ty.SimpleNamespace(empfaenger=lambda c, u: list(trackings)),
             "_nc_dclimits": DL, "_DISCORD_UPLOAD_OVERRIDE": None, "_nc_uschlange": U,
             "_nc_meldetakt": M, "_time_mod": __import__("time"), "log": lg, "asyncio": _aio,
             "_upload_queue_remove": lambda e: None})
@@ -47145,29 +47172,81 @@ def _test_v512_upload_ueberall_gleichzeitig():
         del posts[:]
         M.zuruecksetzen()
         e = _aio.run(ns["_aufnahme_nach_discord"]("anna", klein))
-        assert grenzen == [DL.gate_mb(10), DL.gate_mb(50), DL.gate_mb(100)], \
-            ("nicht jeder Server mit seiner eigenen Grenze", grenzen)
-        assert sorted(g for g, _f in posts) == [1, 3] and e["fehl_gilden"] == [2], (posts, e)
-        assert not U.angekommen(e) and "g2" in e["grund"], e
+        assert grenzen == [DL.gate_mb(10), DL.gate_mb(100)], \
+            ("nicht Hauptserver + getrackter Server, jeder mit seiner Grenze", grenzen)
+        assert [g for g, _f in posts] == [1], ("ein Server, der @anna nicht (aktiv) trackt, "
+                                               "bekam die Aufnahme", posts)
+        assert e["fehl_gilden"] == [3] and not U.angekommen(e) and "g3" in e["grund"], e
         geschrieben = []
         ns["_upload_queue_update"] = lambda alt, neu: geschrieben.append(neu)
         ns["_upload_queue_nachher"]({"file": klein, "ziel": "discord", "queued_at": "q"},
                                     e, "anna", "discord")
-        assert geschrieben and geschrieben[0]["gilden"] == [2], geschrieben
+        assert geschrieben and geschrieben[0]["gilden"] == [3], geschrieben
         del posts[:], grenzen[:]
-        kanaele[2].kaputt = False
-        e = _aio.run(ns["_aufnahme_nach_discord"]("anna", klein, gilden=[2]))
-        assert [g for g, _f in posts] == [2] and U.angekommen(e) and e["fehl_gilden"] == [], \
+        kanaele[3].kaputt = False
+        e = _aio.run(ns["_aufnahme_nach_discord"]("anna", klein, gilden=[3]))
+        assert [g for g, _f in posts] == [3] and U.angekommen(e) and e["fehl_gilden"] == [], \
             ("die Wiederholung trifft wieder alle Server", posts, e)
     finally:
         if alt_dc is None:
             _sys.modules.pop("discord", None)
         else:
             _sys.modules["discord"] = alt_dc
+
+    # ── (5) Telegram: nur Gruppen, die den Nutzer AKTIV tracken — gross/klein
+    # egal; pausiert bekommt ihr Offline-Paar, aber kein Video.
+    import sqlite3 as _sq
+    from nc import trackingdb as TD
+    con = _sq.connect(":memory:")
+    con.row_factory = _sq.Row
+    con.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, username TEXT, group_id INTEGER,"
+                " paused INT DEFAULT 0)")
+    con.executemany("INSERT INTO trackings (id, username, group_id, paused) VALUES (?,?,?,?)",
+                    [(1, "Anna", -100, 0), (2, "anna", -200, 1), (3, "ben", -300, 0),
+                     (4, "ANNA", 1100000000000000555, 0)])     # Discord-Guild (Snowflake)
+    zeilen = TD.empfaenger(con, "anna")
+    assert sorted(z["id"] for z in zeilen) == [1, 2, 4], \
+        ("Gross/klein: eine Gruppe, die „Anna“ trackt, fehlt", zeilen)
+    nsf = _exec(baum, ["_fanout_ziele", "_telegram_ziele"], {
+        "_nc_tgfehler": __import__("nc.telegramfehler", fromlist=["x"]), "log": lg,
+        "_nc_meldetakt": M, "_time_mod": __import__("time"), "_nc_discordziele": Z,
+        "_nc_dcaufnahme": DA})
+    paare, chats = nsf["_fanout_ziele"](zeilen, 9, -5, "anna")
+    assert chats == [-100], ("hochgeladen wird in eine Gruppe, die @anna nicht aktiv trackt",
+                             chats)
+    assert (2, -200) in paare, "die pausierte Gruppe verliert ihren Offline-Uebergang"
+    hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
+    assert "_nc_trackingdb.empfaenger(c, username)" in hrf
+    assert 'FROM trackings WHERE username=?' not in hrf, "die gross/klein-genaue Abfrage ist zurueck"
+    mr = rumpf_ab(src, src.index("async def _meme_zusammenschnitt("))
+    assert "_nc_trackingdb.empfaenger(c, username)" in mr and 'not r["paused"]' in mr
+
+    # ── (6) Die Warteschlange verwirft einen Upload an eine Gruppe, die den
+    # Nutzer inzwischen nicht mehr (aktiv) trackt.
+    entfernt, gesendet_q = [], []
+
+    async def _split_q(chat, f, app, nutzer, started_at=None, ended_at=None, ergebnis=None):
+        gesendet_q.append(chat)
+        ergebnis.update(gesendet=1, fehler=0)
+    nsq = _exec(baum, ["_upload_queue_eintrag", "_telegram_ziele"], {
+        "os": _os, "log": lg, "db_async": _db,
+        "_nc_trackingdb": _ty.SimpleNamespace(empfaenger=lambda c, u: TD.empfaenger(con, u)),
+        "_upload_queue_remove": entfernt.append,
+        "_upload_queue_nachher": lambda *a: None, "_parse_iso": lambda s: None,
+        "split_and_send_video": _split_q, "_nc_tgfehler": __import__(
+            "nc.telegramfehler", fromlist=["x"]), "_nc_meldetakt": M,
+        "_time_mod": __import__("time"), "_nc_discordziele": Z, "_nc_dcaufnahme": DA})
+    for gruppe, darf in ((-100, True), (-200, False), (-300, False)):
+        del entfernt[:], gesendet_q[:]
+        _aio.run(nsq["_upload_queue_eintrag"](None, {"chat_id": gruppe, "file": klein,
+                                                     "username": "anna", "queued_at": "q"}))
+        assert (gesendet_q == [gruppe]) == darf and bool(entfernt) != darf, \
+            (gruppe, gesendet_q, entfernt)
     q = rumpf_ab(src, src.index("async def _upload_queue_eintrag("))
     assert 'gilden=entry.get("gilden")' in q, "die Warteschlange beschraenkt die Server nicht"
-    ok("v5.12: Uploads starten ueberall gleichzeitig — Telegram ein Split fuer alle Gruppen "
-       "(<= 45 MB, 3 s je Teil), Discord jeder Server mit seiner Grenze")
+    ok("v5.12: Uploads starten ueberall gleichzeitig, aber nur dort, wo der Nutzer aktiv "
+       "getrackt wird — Telegram ein Split fuer alle Gruppen (<= 45 MB, 3 s je Teil), "
+       "Discord Hauptserver + getrackte Server, jeder mit seiner Grenze")
 
 
 def main():
