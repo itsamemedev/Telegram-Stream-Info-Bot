@@ -67,3 +67,36 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+          output: codeql-sarif
+
+      # v5.11.4: die Befunde auch im Job-Log, nicht nur im Security-Tab. Die
+      # PR-Pruefung nennt einen neuen Befund nur dann mit Datei und Zeile, wenn
+      # er in einer geaenderten Zeile liegt; bei einem grossen Diff steht dort
+      # nur „1 high" — und wer den Security-Tab nicht oeffnen kann, sucht blind
+      # (PR #232: drei Runden Raten fuer einen einzigen Befund). Eine Zeile je
+      # Befund: Schwere, Regel, Ort, Meldung — kein Quelltext.
+      - name: Befunde ins Log
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import glob, json
+          zeilen = []
+          for pfad in glob.glob("codeql-sarif/*.sarif"):
+              with open(pfad, encoding="utf-8") as f:
+                  daten = json.load(f)
+              for lauf in daten.get("runs", []):
+                  werkzeug = lauf.get("tool", {})
+                  regeln = {}
+                  for teil in [werkzeug.get("driver", {})] + werkzeug.get("extensions", []):
+                      for r in teil.get("rules", []):
+                          regeln[r.get("id")] = r.get("properties", {}).get("security-severity", "")
+                  for erg in lauf.get("results", []):
+                      ort = erg["locations"][0]["physicalLocation"]
+                      zeilen.append("%-4s %-45s %s:%s  %s" % (
+                          regeln.get(erg.get("ruleId"), ""), erg.get("ruleId"),
+                          ort["artifactLocation"]["uri"], ort.get("region", {}).get("startLine"),
+                          erg["message"]["text"].replace("\n", " ")[:160]))
+          for z in sorted(zeilen, reverse=True):
+              print(z)
+          print("%d Befunde" % len(zeilen))
+          PYEOF
