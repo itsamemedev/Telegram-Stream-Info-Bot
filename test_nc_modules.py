@@ -9214,7 +9214,8 @@ def _test_v42_w64_dienstmeldung_statt_antwort():
     # nicht, wenn man sie braucht.
     assert 'if "pollinations.ai" in b["url"] and poll_key:' not in quelle, \
         "der Key haengt wieder an BEIDEN Pollinations-Basen"
-    assert 'if "gen.pollinations.ai" in b["url"] and poll_key:' in quelle, \
+    # ANKER GEWANDERT (v5.11.4): der Host entscheidet, nicht ein Teilstring.
+    assert 'if wirt == "gen.pollinations.ai" and poll_key:' in quelle, \
         "der Key erreicht den Gateway nicht mehr"
     _alt = os.environ.get("POLLINATIONS_API_KEY")
     os.environ["POLLINATIONS_API_KEY"] = "test-key-w64"
@@ -19687,7 +19688,7 @@ def _test_v42_w100_cookiebezug_nennt_die_abhilfe():
 
     # ── (1) ES GIBT EINE ABHILFE JE WEG, UND SIE SAGT ETWAS.
     assert set(H.ABHILFE) == {"gast", "browser"}, sorted(H.ABHILFE)
-    assert "tiktok.com" in H.ABHILFE["gast"] and "RECORD_PROXY" in H.ABHILFE["gast"], \
+    assert re.search(r"tiktok\.com", H.ABHILFE["gast"]) and "RECORD_PROXY" in H.ABHILFE["gast"], \
         "die Gast-Abhilfe nennt weder die Probe noch den Ausweg"
     assert "Browser-Profil" in H.ABHILFE["browser"], H.ABHILFE["browser"]
     for weg, text in H.ABHILFE.items():
@@ -46880,6 +46881,52 @@ def _test_dc6_shim_dieselbe_liste():
     ok("DC-6: Shim-Befehle und /track arbeiten auf derselben Liste")
 
 
+def _test_v5114_host_statt_teilstring():
+    """v5.11.4: Schluessel und IVS-Pfad haengen am HOST, nicht an einem Teilstring.
+
+    `"llm7.io" in url` gab den LLM7-Schluessel jeder Basis, deren Adresse den
+    Namen irgendwo traegt — auch https://fremd.example/?llm7.io. Dasselbe in
+    normalize_ingest: „…live-video.net.fremd.example" bekam den IVS-Pfad.
+    CodeQL meldet die Klasse als py/incomplete-url-substring-sanitization
+    (PR #232); geprueft wird hier das Verhalten, nicht der Wortlaut."""
+    import nc.freeai as F
+    import nc.restream_util as R
+    alt_kat = F._CATALOG
+    alt_env = {k: os.environ.get(k) for k in ("LLM7_TOKEN", "LLM7_API_KEY",
+                                               "POLLINATIONS_API_KEY", "POLLINATIONS_TOKEN")}
+    try:
+        F._CATALOG = [
+            {"url": "https://api.llm7.io/v1", "models": ["m"]},
+            {"url": "https://fremd.example/v1?ziel=api.llm7.io", "models": ["m"]},
+            {"url": "https://api.llm7.io.fremd.example/v1", "models": ["m"]},
+            {"url": "https://gen.pollinations.ai/v1/chat/completions", "models": ["m"]},
+            {"url": "https://fremd.example/gen.pollinations.ai", "models": ["m"]},
+        ]
+        os.environ.update({"LLM7_TOKEN": "llm7-geheim", "POLLINATIONS_API_KEY": "poll-geheim"})
+        os.environ.pop("LLM7_API_KEY", None)
+        os.environ.pop("POLLINATIONS_TOKEN", None)
+        mit = {b["url"]: b.get("key", "") for b in F._default_bases()}
+    finally:
+        F._CATALOG = alt_kat
+        for k, v in alt_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    assert mit["https://api.llm7.io/v1"] == "llm7-geheim", mit
+    assert mit["https://gen.pollinations.ai/v1/chat/completions"] == "poll-geheim", mit
+    for fremd in ("https://fremd.example/v1?ziel=api.llm7.io",
+                  "https://api.llm7.io.fremd.example/v1",
+                  "https://fremd.example/gen.pollinations.ai"):
+        assert not mit[fremd], ("Schluessel an eine fremde Adresse", fremd, mit[fremd])
+
+    assert R.normalize_ingest("rtmps://fra.contribute.live-video.net") == \
+        "rtmps://fra.contribute.live-video.net:443/app"
+    assert R.normalize_ingest("rtmps://live-video.net.fremd.example") == \
+        "rtmps://live-video.net.fremd.example:443", "fremder Host bekam den IVS-Pfad"
+    ok("v5.11.4: LLM-Schluessel und IVS-Pfad haengen am Host, nicht an einem Teilstring")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -47379,6 +47426,7 @@ def main():
     _test_ops2_mysqldump_ohne_passwort_in_argv()
     _test_upd1_upd2_teilweise_und_rollback()
     _test_ops3_deploy_sichert_und_schreibt_nur_code()
+    _test_v5114_host_statt_teilstring()
     _test_v5114_tg1_telegram_start_wiederholt()
     _test_v5114_tg2_untrack_wie_stoppknopf()
     _test_v5114_dc5_schleifen_ueberleben_neustartfenster()

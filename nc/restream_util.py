@@ -39,7 +39,10 @@ def normalize_ingest(ingest_url: str) -> str:
         else:
             netloc = host
         path = p.path or ""
-        if "live-video.net" in host and not path.strip("/"):
+        # Host-Vergleich statt Teilstring: „x.live-video.net.fremd.example" ist
+        # kein IVS-Ingest (CodeQL py/incomplete-url-substring-sanitization).
+        ivs = host.lower() == "live-video.net" or host.lower().endswith(".live-video.net")
+        if ivs and not path.strip("/"):
             path = "/app"                   # IVS/Kick-Applikationspfad
         return urlunsplit((scheme, netloc, path, "", ""))
     except Exception:

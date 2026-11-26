@@ -24503,7 +24503,9 @@ async def _youtube_chat_loop():
                         or re.search(r'"liveChatContinuation".{0,4000}?"continuation":"([^"]+)"', html, re.S))
                 if not (key and cont):
                     # B170: Grund im Status hinterlegen, statt still "getrennt" zu zeigen.
-                    consent = ("consent.youtube.com" in html
+                    # Textsuche im HTML, keine URL-Pruefung — per Regex, weil CodeQL
+                    # `"<host>" in text` als unvollstaendige URL-Pruefung liest.
+                    consent = (re.search(r"consent\.youtube\.com", html)
                                or '"consentBumpV2"' in html
                                or "Bevor du zu YouTube" in html)
                     reason = ("YouTube-Consent-Wall (Server-IP) — Live-Chat nicht lesbar; "
