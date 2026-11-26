@@ -81,30 +81,62 @@ def _andere_art(url, protokoll="", ext=""):
     return art
 
 
+def _nur_ton(f):
+    """LIVE-1: ein Format ohne Bild. TikTok fuehrt in `stream_data` eine
+    Qualitaet „ao" (audio only); yt-dlp kennt sie nicht und gibt ihr
+    quality=-1 — sie steht damit in `formats` GANZ VORN, und wer das erste
+    Format nimmt, nimmt eine Aufnahme ohne Bild.
+
+    Bewusst NICHT „fehlende Hoehe/Breite": die Pull-Formate
+    (`hls-pull`, `rtmp-pull`, `flv-<qualitaet>` aus `flv_pull_url`) tragen
+    gar keine Aufloesung — der Riegel haette genau die Formate verworfen,
+    die im 71-%-Fall (W51) als einzige da sind."""
+    vc = str(f.get("vcodec") or "").lower()
+    fid = str(f.get("format_id") or "").lower()
+    return (vc == "none" or fid == "ao" or fid.endswith("-ao")
+            or str(f.get("resolution") or "").lower() == "audio only")
+
+
 def _kandidaten(data):
-    """Alle (url, protokoll, ext) aus der yt-dlp-Auskunft — Formate zuerst.
+    """Alle (url, protokoll, ext) aus der yt-dlp-Auskunft — BESTES zuerst.
 
     `formats` ist die vollstaendige Liste; `url` und `manifest_url` auf der
     obersten Ebene sind das von yt-dlp selbst gewaehlte Format. Beide Quellen
     werden gelesen, weil `--dump-single-json` je nach Extractor-Version nur
     eine von beiden fuellt — wer sich auf eine verlaesst, bekommt bei der
     anderen Fassung wortlos nichts.
+
+    LIVE-1: yt-dlp sortiert `formats` AUFSTEIGEND (YoutubeDL.process_video_
+    result → formats.sort(key=FormatSorter), TikTokLiveIE mit
+    `_format_sort_fields ('quality', 'ext')`) — das Beste steht HINTEN. Bis
+    hierher nahm urls_aus_json das erste FLV und das erste HLS, also
+    Aufnahme in hls-SD1 und Restream in flv-SD1, die schlechteste Stufe, die
+    TikTok anbietet. Deshalb rueckwaerts; Ton-Formate fallen raus, und HEVC
+    steht hinter jedem H.264 — derselbe Vorrang wie nc.streamsel (B64: ffmpeg
+    demuxt bytevc1 im FLV-Container nicht, die Datei bleibt 0 Byte). HEVC
+    ganz zu verwerfen waere die schlechtere Haelfte: liefert TikTok NUR HEVC,
+    ist eine Adresse besser als „keine spielbare Quell-URL".
     """
-    aus = []
-    for f in (data.get("formats") or []):
-        if not isinstance(f, dict):
-            continue
+    from nc.streamsel import is_hevc
+    h264, hevc = [], []
+
+    def _rein(f):
+        ziel = hevc if is_hevc(str(f.get("vcodec") or "")) else h264
         for schluessel in ("url", "manifest_url"):
             u = f.get(schluessel)
             if u:
-                aus.append((str(u), str(f.get("protocol") or ""),
-                            str(f.get("ext") or "")))
-    for schluessel in ("url", "manifest_url"):
-        u = data.get(schluessel)
-        if u:
-            aus.append((str(u), str(data.get("protocol") or ""),
-                        str(data.get("ext") or "")))
-    return aus
+                ziel.append((str(u), str(f.get("protocol") or ""),
+                             str(f.get("ext") or "")))
+
+    for f in reversed(list(data.get("formats") or [])):
+        if isinstance(f, dict) and not _nur_ton(f):
+            _rein(f)
+    # yt-dlps eigene Wahl als Rueckfall HINTER den Formaten: sie ist bei
+    # Fassungen ohne `formats` das Einzige, und wo es `formats` gibt, steht
+    # dieselbe Adresse dort schon an ihrem Platz.
+    if not _nur_ton(data):
+        _rein(data)
+    return h264 + hevc
 
 
 def urls_aus_json(data):

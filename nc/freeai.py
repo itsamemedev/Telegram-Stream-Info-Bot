@@ -33,6 +33,7 @@ import threading
 import time as _time_mod
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from typing import AsyncIterator, List, Optional, Tuple
 
 # ---- Basen-Katalog ----------------------------------------------------------
@@ -134,9 +135,13 @@ def _default_bases() -> List[dict]:
         # trotzdem, teilten sich beide Pollinations-Basen EIN Budget, und war
         # das erschoepft, fielen beide gleichzeitig aus. Damit gab es genau
         # dann keine kostenlose Alternative mehr, wenn man sie braucht.
-        if "gen.pollinations.ai" in b["url"] and poll_key:
+        # v5.11.4: der Host entscheidet, nicht ein Teilstring der Adresse —
+        # `"llm7.io" in url` gab den Schluessel auch an https://fremd.example/?llm7.io
+        # (CodeQL py/incomplete-url-substring-sanitization, PR #232).
+        wirt = (urlsplit(b["url"]).hostname or "").lower()
+        if wirt == "gen.pollinations.ai" and poll_key:
             b["key"] = poll_key
-        if "llm7.io" in b["url"] and llm7_key:
+        if wirt == "api.llm7.io" and llm7_key:
             b["key"] = llm7_key
         out.append(b)
     return out

@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.11.3"
-CODENAME = "Kehrwoche"
+VERSION = "5.11.4"
+CODENAME = "Rangordnung"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,23 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.11.4",
+        "date": "2026-11",
+        "title": "Rangordnung",
+        # Patch-Fassung: der eigene Bughunt (Welle 4) — Discord-Rechte und
+        # -Lebenszyklus, Live-Erkennung, Archiv, Betrieb, Deck.
+        "highlights": [
+            "Discord: /assign_role, /kick, /ban, /timeout, /warn und /set_channel_perms pruefen die Rangfolge des Aufrufers — vorher reichten die Rechte des Bots, und eine selbst angelegte Rolle mit dem Admin-Namen genuegte; der Bot pingt per Vorgabe niemanden mehr",
+            "Discord: /track prueft den Namen wie Telegram und deckelt je Mitglied (DISCORD_TRACK_MAX_JE_MITGLIED, Vorgabe 5); Shim-Befehle und /track arbeiten auf derselben Liste; Sprachnachrichten mit Abklingzeit, Laengengrenze und Live-Vorrang",
+            "Telegram- und Discord-Start ueberstehen einen Netzausfall: Wiederanlauf mit Pause statt Aufgeben; ein abgelehntes BOT_TOKEN beendet den Dienst laut (Exitcode 4); das Stern-Highlight geht genau einmal nach Telegram",
+            "Proxy-Zugangsdaten stehen nicht mehr im Klartext im Log (jeder Aufnahmestart); yt-dlp-Nachschlag nimmt das beste statt des schlechtesten Formats; Combo-Gifts zaehlen einmal statt je Zwischenschritt",
+            "Pausieren beendet den Live-Zustand; „MaxMuster“ und „maxmuster“ sind ein Nutzer (keine Doppelaufnahme, kein doppelter LIVE-Post)",
+            "Archiv: Kopie atomar und einmal je Aufnahme, manuelle Aufnahmen sind keine Waisen mehr, ein Join hinterlaesst keine halbe Datei, Zaehler ohne Papierkorb und eine Erfolgsquote fuer alle Ansichten",
+            "Betrieb: die MOTD laedt nichts mehr aus dem Bot-Ordner (Weg vom Bot zu root), mysqldump ohne Passwort in der Prozessliste, ein teilweise eingespieltes Update meldet sich laut, deploy.sh sichert und schreibt nur Code",
+            "Deck: Login-Ziel ohne Steuerzeichen, OBS-Stimme und Uebersetzer ohne Token, Service Worker cacht nur die Shell, Moderations- und Agentenzahlen stimmen",
+        ],
+    },
     {
         "version": "5.11.3",
         "date": "2026-11",

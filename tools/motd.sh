@@ -77,7 +77,10 @@
 LC_ALL=C
 export LC_ALL
 
-NC_MOTD_VERSION="3.0"
+# 3.1 (v5.11.4): die installierte Kopie laedt i18n.sh nicht mehr aus BOT_DIR.
+# Der Sprung ist Absicht — eine 3.0 unter /etc/update-motd.d meldet sich damit
+# als "veraltet" und nennt den Befehl, der sie ersetzt.
+NC_MOTD_VERSION="3.1"
 
 # v4.2-W100: Momentaufnahme der WIRKLICH von aussen gesetzten Variablen —
 # noch VOR dem Vorgabenblock. Das ist der Kern: `WIDTH="${WIDTH:-54}"` setzt
@@ -140,6 +143,12 @@ if [ -z "${CONF:-}" ]; then
   fi
 fi
 
+# v5.11.4 (OPS-1): die Ablage der installierten Kopie haengt am Verzeichnis
+# von CONF, und zwar VOR dem Laden der Datei — CONF kommt nur aus Umgebung oder
+# Vorgabe (/etc/nightcrawler), nie aus einer Datei. Was motd.conf danach
+# setzt, verschiebt diese Ablage nicht.
+NC_MOTD_ABLAGE="$(dirname "$CONF")/motd"
+
 # shellcheck source=/dev/null
 [ -r "$CONF" ] && . "$CONF"
 
@@ -151,14 +160,31 @@ unset _MOTD_ENV_GESETZT _v
 # v4.1-W17: Mehrsprachigkeit. Der Katalog liegt neben dem Werkzeug; ist er nicht
 # erreichbar (die installierte Kopie unter /etc/update-motd.d/ hat kein
 # locales/ daneben), bleibt alles deutsch statt zu scheitern.
+#
+# v5.11.4 (OPS-1): WOHER i18n.sh kommt, entscheidet der eigene Pfad. Neben
+# sich (tools/lib/) hat es nur der Lauf aus dem Bestand; die installierte Kopie
+# unter /etc/update-motd.d/ laeuft bei JEDEM Login als root und laedt NUR aus
+# der root-eigenen Ablage, die --install anlegt. Bis 3.0 stand hier ein
+# Rueckweg auf ${BOT_DIR}/tools/lib/i18n.sh — eine Datei, die der Bot-Nutzer
+# schreiben darf und die nc/updater.py aus GitHub ueberschreibt. Gemessen mit
+# einer praeparierten i18n.sh: "AUSGEFUEHRT als uid=0". Genau den Weg Bot →
+# root schliesst W210 fuer motd.sh selbst aus; ueber den Katalog stand er offen.
+# Fehlt die Ablage, bleibt die Ausgabe deutsch — das ist der kleinere Schaden.
+_motd_root_eigen(){ # $1 = Datei; als root nur, wenn sie und ihr Ordner root
+  # gehoeren und fuer niemanden sonst schreibbar sind. Eine falsch angelegte
+  # Ablage waere sonst derselbe Weg zu root, nur einen Ordner weiter.
+  [ "$(id -u)" -ne 0 ] && return 0
+  [ -O "$1" ] && [ -O "$(dirname "$1")" ] || return 1
+  [ -z "$(find "$1" "$(dirname "$1")" -maxdepth 0 -perm /022 2>/dev/null)" ]
+}
 # shellcheck source=lib/i18n.sh
 if [ -r "$(dirname "$0")/lib/i18n.sh" ]; then
   . "$(dirname "$0")/lib/i18n.sh"
-elif [ -n "${BOT_DIR:-}" ] && [ -r "${BOT_DIR}/tools/lib/i18n.sh" ]; then
-  # Die INSTALLIERTE Kopie unter /etc/update-motd.d/ hat kein locales/ neben
-  # sich. i18n.sh findet den Katalog trotzdem: es sucht ueber BASH_SOURCE
-  # relativ zu SICH SELBST, also unter ${BOT_DIR}/locales/.
-  . "${BOT_DIR}/tools/lib/i18n.sh"
+elif [ -r "$NC_MOTD_ABLAGE/tools/lib/i18n.sh" ] && _motd_root_eigen "$NC_MOTD_ABLAGE/tools/lib/i18n.sh"; then
+  # i18n.sh sucht den Katalog relativ zu SICH SELBST (../../locales/), also
+  # unter $NC_MOTD_ABLAGE/locales/ — dieselbe Form wie im Bestand.
+  # shellcheck source=/dev/null
+  . "$NC_MOTD_ABLAGE/tools/lib/i18n.sh"
 else
   t(){ printf '%s' "$*"; }
   # v4.2-W123: tf muss es auch ohne Katalog geben, sonst stirbt --install
@@ -534,11 +560,31 @@ qq(){ printf "'%s'" "$(printf '%s' "${1:-}" | sed "s/'/'\\\\''/g")"; }
 
 need_root(){ [ "$(id -u)" -eq 0 ] || { printf "${WRN}%s${R} sudo %s %s\n" "$(t "Bitte mit sudo:")" "$0" "$1"; exit 1; }; }
 
+# v5.11.4 (OPS-1): Uebersetzung fuer die installierte Kopie. KOPIERT, nicht
+# verwiesen: die Kopie liest bei jedem Login als root, und alles, was sie dabei
+# laedt, muss root gehoeren (root:root 0644). Wie motd.sh selbst ist das ein
+# Schnappschuss — die Update-Funktion erreicht ihn nie, --install erneuert ihn.
+i18n_ablegen(){ # $1 = Ordner von motd.sh im Bestand, $2 = Ablage
+  local quelle="$1" ziel="$2" k
+  [ -r "$quelle/lib/i18n.sh" ] || return 0     # Lauf aus einer Kopie: nichts mitzunehmen
+  ( umask 022
+    mkdir -p "$ziel/tools/lib" "$ziel/locales" &&
+    cp "$quelle/lib/i18n.sh" "$ziel/tools/lib/i18n.sh" &&
+    for k in "$quelle"/../locales/tools.*.tsv; do
+      [ -f "$k" ] && cp "$k" "$ziel/locales/"
+    done ) || { printf "${WRN}%s${R} %s\n" "$(t "Uebersetzung nicht abgelegt — Ausgabe bleibt deutsch:")" "$ziel"; return 0; }
+  [ "$(id -u)" -eq 0 ] && chown -R root:root "$ziel" 2>/dev/null
+  chmod 755 "$ziel" "$ziel/tools" "$ziel/tools/lib" "$ziel/locales" 2>/dev/null
+  find "$ziel" -type f -exec chmod 644 {} + 2>/dev/null
+  printf "${OK}✔ %s${R} → %s\n" "$(t "Uebersetzung abgelegt")" "$ziel"
+}
+
 install_linux(){
   local src; src="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   [ -d /etc/update-motd.d ] || mkdir -p /etc/update-motd.d
   cp "$src" "$DEST" && chmod +x "$DEST" || { printf "${ERR}✘ %s${R}\n" "$(t "Installation fehlgeschlagen")"; exit 1; }
   printf "${OK}✔ %s${R} → %s\n" "$(t "installiert")" "$DEST"
+  i18n_ablegen "$(dirname "$src")" "$NC_MOTD_ABLAGE"
   write_conf
   silence_defaults
   doppelt_beheben
@@ -810,6 +856,7 @@ case "${1:-}" in
     if [ -f "$DEST" ]; then rm -f "$DEST" && printf "${OK}✔ %s${R} → %s\n" "$(t "entfernt")" "$DEST"
     else printf "${FNT}%s${R}\n" "$(t "nicht installiert")"; fi
     restore_defaults
+    case "$NC_MOTD_ABLAGE" in */motd) [ -d "$NC_MOTD_ABLAGE" ] && rm -rf "$NC_MOTD_ABLAGE";; esac
     printf "  ${FNT}%s %s${R}\n" "$CONF" "$(t "bleibt liegen (harmlos, enthaelt nur Pfade)")"
     exit 0;;
   --doctor)  doctor;;
@@ -1259,7 +1306,7 @@ if [ -z "$DASH_JSON" ]; then LS_GRUND=deck
 elif ! have python3; then LS_GRUND=python
 else
   LS=$(tmo 4 curl -s -k --max-time 3 "${_sch}://127.0.0.1:${DASH_PORT}/api/leitstand" 2>/dev/null \
-       | tmo 3 python3 -c "$LS_PY" "$WIDTH" 2>/dev/null)
+       | tmo 3 python3 -I -c "$LS_PY" "$WIDTH" 2>/dev/null)
   [ -z "$LS" ] && LS_GRUND=leer
 fi
 KETTE=""; TAFELN=""; EREIGNISSE=""; ZAHLEN=""
@@ -1278,7 +1325,7 @@ EOF
 # MariaDB gibt es diesen Rueckweg nicht: die MOTD liest keine Zugangsdaten.
 dbq(){ # $1 = SQL, liefert eine Zeile mit |-getrennten Spalten
   if have sqlite3; then tmo 3 sqlite3 -readonly -separator '|' "$DB" "$1" 2>/dev/null
-  elif have python3; then tmo 5 python3 -c '
+  elif have python3; then tmo 5 python3 -I -c '
 import sqlite3, sys
 try:
     c = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)

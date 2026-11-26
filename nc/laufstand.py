@@ -52,6 +52,14 @@ ohne Netz und ohne Neustart pruefbar.
 AKTUELL = "aktuell"            # Prozess und Platte tragen denselben Stand
 VERALTET = "veraltet"          # auf der Platte liegt ein NEUERER Stand
 UNBEKANNT = "unbekannt"        # einer der beiden Staende ist nicht ermittelbar
+# v5.11.4 (UPD-1): das letzte Update scheiterte mitten im Lauf (ENOSPC,
+# EACCES). Auf der Platte liegt ein Gemisch aus altem und neuem Stand — kein
+# Neustart macht daraus etwas Lauffaehiges, nur ein erneutes Update.
+# nc/updater.local_head() haengt dafuer TEILWEISE_MARKE an den Stand: so kommt
+# die Lage ohne neuen Parameter durch jeden Aufrufer, der nur die Zeichenkette
+# weiterreicht (bot._laufstand, /healthz, /api/version).
+UNVOLLSTAENDIG = "unvollstaendig"
+TEILWEISE_MARKE = "+teilweise"
 
 # Der Dienstname steht im Bestand schon zweimal so (nc/dbrestore.py,
 # nc/telegramfehler.py) und ebenso im `hint` von /api/update/restart. Er
@@ -74,7 +82,12 @@ def vergleich(start_sha, platte_sha, dienst=None) -> dict:
     """
     start = (start_sha or "").strip()
     platte = (platte_sha or "").strip()
-    if not start or not platte:
+    if platte.endswith(TEILWEISE_MARKE):
+        # Vor allem anderen: auch ein Prozess, der NACH dem gescheiterten
+        # Update gestartet ist, traegt dieselbe Marke — Gleichstand hiesse
+        # sonst „aktuell" fuer einen gemischten Bestand.
+        lage = UNVOLLSTAENDIG
+    elif not start or not platte:
         lage = UNBEKANNT
     elif start == platte:
         lage = AKTUELL
@@ -82,7 +95,14 @@ def vergleich(start_sha, platte_sha, dienst=None) -> dict:
         lage = VERALTET
     aus = {"lage": lage, "start": start[:12], "platte": platte[:12],
            "text": "", "abhilfe": ""}
-    if lage == VERALTET:
+    if lage == UNVOLLSTAENDIG:
+        aus["platte"] = platte[:-len(TEILWEISE_MARKE)][:12]
+        aus["text"] = ("Das letzte Update ist nur TEILWEISE eingespielt — auf "
+                       "der Platte liegt ein Gemisch aus altem und neuem Stand. "
+                       "Ein Neustart allein laedt genau dieses Gemisch.")
+        aus["abhilfe"] = ("Update erneut ausfuehren (Deck › Update oder /update), "
+                          "danach %s" % befehl(dienst))
+    elif lage == VERALTET:
         aus["text"] = ("Auf der Platte liegt ein NEUERER Stand (%s) als der, "
                        "mit dem dieser Prozess gestartet ist (%s). Ein "
                        "laufender Python-Prozess behaelt seinen Bytecode — das "

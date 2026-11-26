@@ -278,6 +278,46 @@ def zieldatei(verzeichnis: str, sid: str) -> str:
 _ZIEL = re.compile(r"^sitzung_[A-Za-z0-9_.@-]+\.mp4$")
 
 
+def teildatei(ziel: str) -> str:
+    """ARC-4: wohin ffmpeg den Join schreibt, bis er fertig ist.
+
+    Bis v5.11.3 schrieb concat direkt nach `ziel`. Scheiterte der Lauf
+    (Platte voll, ffmpeg-Abbruch, Neustart), lag eine halbe Sitzungsdatei
+    da — von ist_zieldatei() (AUF-3) dauerhaft vor dem Waisen-Aufraeumer
+    geschuetzt, und jeder weitere Join endete auf 409 „existiert bereits".
+    Der Punkt vorn haelt die Form AUSSERHALB von _ZIEL (das Muster erlaubt
+    Punkte im Namen, ein `sitzung_x.teil.mp4` waere geschuetzt), die Endung
+    .mp4 laesst ffmpeg das Format weiter selbst erkennen."""
+    kopf, name = os.path.split(ziel)
+    return os.path.join(kopf, "." + name + ".teil.mp4")
+
+
+def join_reste(verzeichnis: str, laufende_ziele) -> list:
+    """ARC-4: Reste abgebrochener Joins in `verzeichnis` (Pfade). Bot-frei.
+
+    `_join_lauf` raeumt Listendatei, Angleich-Ordner und Teildatei im
+    `finally` weg — ein Neustart mitten im Lauf erreicht das nie. Dann lagen
+    `sitzung_*.mp4.angleich/` und `sitzung_*.mp4.txt` fuer immer da: der
+    Waisen-Aufraeumer sieht nur Videodateien, keine Ordner. Ausgenommen ist,
+    was zu einem LAUFENDEN Join gehoert."""
+    schutz = set()
+    for z in laufende_ziele:
+        if z:
+            schutz |= {os.path.basename(z) + ".angleich", os.path.basename(z) + ".txt",
+                       os.path.basename(teildatei(z))}
+    namen = os.listdir(verzeichnis) if os.path.isdir(verzeichnis) else []
+    reste = []
+    for n in namen:
+        if n in schutz:
+            continue
+        if ((n.endswith(".mp4.angleich") or n.endswith(".mp4.txt"))
+                and ist_zieldatei(n.rsplit(".", 1)[0])) \
+                or (n.startswith(".") and n.endswith(".mp4.teil.mp4")
+                    and ist_zieldatei(n[1:-len(".teil.mp4")])):
+            reste.append(os.path.join(verzeichnis, n))
+    return reste
+
+
 def ist_zieldatei(name) -> bool:
     """AUF-3: Ist `name` eine von zieldatei() gebaute Sitzungsdatei?
 

@@ -12,6 +12,7 @@ import re
 from flask import Blueprint, jsonify, request
 
 from nc import prueflage as _nc_prueflage  # v4.2-W138
+from nc import livecache as _nc_livecache  # LIVE-6: Cache-Schluessel
 from nc import fehlertext as _nc_fehlertext
 from nc import telegramfehler as _tgf  # v4.2-W168: Standardgruppe nur Telegram
 
@@ -91,7 +92,8 @@ def quick_restart_tracking(tracking_id: int) -> dict:
         info["actions"].append("cleared rate_limit_backoff")
     if _c().cfg["_RATE_LIMIT_PENALTY"].pop(username, None):
         info["actions"].append("cleared rate_limit_penalty")
-    _c().cfg["_LIVE_STATUS_CACHE"].pop(username, None)
+    # LIVE-6: der Cache fuehrt kleingeschriebene Schluessel (nc.livecache.schluessel)
+    _c().cfg["_LIVE_STATUS_CACHE"].pop(_nc_livecache.schluessel(username), None)
     info["actions"].append("flushed live_status_cache")
     _c().cfg["_NEXT_CHECK_AT"][tracking_id] = 0
     info["actions"].append("queued immediate recheck")
@@ -347,7 +349,7 @@ def api_tracking_recheck(tracking_id):
 
     # 2. Live-Status-Cache flushen damit der Recheck wirklich frisch ist
     try:
-        _c().cfg["_LIVE_STATUS_CACHE"].pop(username, None)
+        _c().cfg["_LIVE_STATUS_CACHE"].pop(_nc_livecache.schluessel(username), None)
     except Exception:
         pass
 

@@ -42,19 +42,29 @@ AUS = "aus"
 STAND: Dict[str, str] = {}
 
 
+def _schluessel(username: str) -> str:
+    """LIVE-6: TikTok-Handles sind gross/klein-unabhaengig, gespeichert wird
+    der Name aber so, wie er eingegeben wurde. „MaxMuster" in einem Chat und
+    „maxmuster" im zweiten waren hier zwei Nutzer — zwei Discord-LIVE-Embeds
+    und zwei Live-Threads fuer EINEN Stream, genau der Befund aus W176."""
+    return (username or "").lower()
+
+
 def live_an(username: str) -> bool:
     """Ein Tracking hat den Wechsel auf LIVE beansprucht.
     -> True, wenn die globalen Live-Aktionen jetzt laufen sollen."""
-    if STAND.get(username) == LIVE:
+    k = _schluessel(username)
+    if STAND.get(k) == LIVE:
         return False
-    STAND[username] = LIVE
+    STAND[k] = LIVE
     return True
 
 
 def live_aus(username: str) -> bool:
     """Ein Tracking hat den Wechsel auf OFFLINE beansprucht.
     -> True, wenn die globalen Offline-Aktionen jetzt laufen sollen."""
-    if STAND.get(username) == AUS:
+    k = _schluessel(username)
+    if STAND.get(k) == AUS:
         return False
-    STAND[username] = AUS
+    STAND[k] = AUS
     return True

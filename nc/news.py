@@ -54,6 +54,7 @@ from nc import creatoragg as _nc_creatoragg
 from nc import freeai as _nc_freeai
 from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc.dbwrap import db_conn
+from nc import modstats as _nc_modstats
 from nc.envnum import env_int as _env_int
 
 PROJECT = "project"
@@ -591,6 +592,16 @@ def write_items(items) -> tuple:
         return False, str(e)[:200]
 
 
+def aktive_agenten(status) -> int:
+    """Wie viele Brain-Agenten EINGESCHALTET sind (`enabled`).
+
+    v5.11.3-WEB-5: hier stand `len(status())` — alle Agenten. Die Website
+    zeigte damit "12 von 12 aktiv" bei null eingeschalteten, und die News
+    sprachen von zwoelf Waechtern, die gar nicht liefen."""
+    liste = status.get("agents", []) if isinstance(status, dict) else (status or [])
+    return sum(1 for a in liste if isinstance(a, dict) and a.get("enabled"))
+
+
 def collect_facts() -> dict:
     """Sammelt ECHTE, AGGREGIERTE Fakten (keine Einzelpersonen) fuer die News."""
     facts = {"version": _conf["bot_version"]}
@@ -646,11 +657,12 @@ def collect_facts() -> dict:
             except Exception as _e:
                 log.debug("_news_facts restream_targets: %s", _e)
 
-            # Was die Moderation in der Woche tatsaechlich getan hat.
+            # Was die Moderation tatsaechlich getan hat — nur Durchgreifen (WEB-4).
             try:
+                _bed, _arten = _nc_modstats.sql_bedingung()
                 facts["mod_actions_7d"] = c.execute(
-                    "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ?",
-                    (_cut7,)).fetchone()["n"]
+                    "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ? AND " + _bed,
+                    (_cut7,) + _arten).fetchone()["n"]
             except Exception as _e:
                 log.debug("_news_facts mod_actions_7d: %s", _e)
             try:
@@ -682,8 +694,7 @@ def collect_facts() -> dict:
             st = b.knowledge.stats() or {}
             facts["kg_facts"] = int(st.get("triples", 0) or 0)
             try:
-                ag = b.agents.status()
-                facts["agents_active"] = len(ag.get("agents", ag)) if isinstance(ag, dict) else len(ag)
+                facts["agents_active"] = aktive_agenten(b.agents.status())
             except Exception:
                 facts["agents_active"] = 0
     except Exception:
