@@ -1682,7 +1682,8 @@ async def _upload_queue_eintrag(bot_app, entry):
     beginn, ende = _parse_iso(entry.get("started_at")), _parse_iso(entry.get("ended_at"))
     if chat_id == "discord":
         await _aufnahme_nach_discord(username, fpath, beginn, ergebnis=ergebnis,
-                                     gilden=entry.get("gilden"))
+                                     gilden=entry.get("gilden"),
+                                     fortschritt=entry.get("fortschritt"))
     else:
         await split_and_send_video(chat_id, fpath, bot_app, username, started_at=beginn,
                                    ended_at=ende, ergebnis=ergebnis)
@@ -1706,6 +1707,13 @@ def _upload_queue_nachher(entry, ergebnis, username, chat_id):
             # v5.12: nur die Server wiederholen, auf denen es scheiterte — die
             # anderen haben die Aufnahme schon (sonst stuende sie dort doppelt).
             neu["gilden"] = list(ergebnis["fehl_gilden"])
+            # v5.12.1: und dort nur die Teile, die fehlen. Der alte Stand bleibt
+            # fuer einen Server stehen, auf dem diesmal gar nicht gesendet wurde
+            # (Teilung gescheitert) — sonst ginge sein Wissen verloren.
+            stand = dict(entry.get("fortschritt") or {})
+            stand.update(ergebnis.get("fortschritt") or {})
+            neu["fortschritt"] = {k: v for k, v in stand.items()
+                                  if str(k) in {str(g) for g in neu["gilden"]}}
         _upload_queue_update(entry, neu)
         log.error("Aufgeschobener Upload @%s → %s gescheitert (Versuch %d von %d: %s) — "
                   "naechster Versuch in %.0f min.", username, chat_id, neu["versuche"],
@@ -23022,7 +23030,8 @@ async def _shrink_for_discord(path, limit_mb):
     return None
 
 
-async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None, gilden=None):
+async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None, gilden=None,
+                                 fortschritt=None):
     """v4.2-W175: die GANZE Aufnahme nach Discord, in Teilen <= Guild-Limit.
     v5.11-W209: in `<nutzer>-aufnahmen` im Bereich des Nutzers, #clips nur als
     Rueckfall (und dann laut, warum).
@@ -23039,7 +23048,12 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None,
     Jeder Server bekommt Teile nach SEINER Grenze (Boost-Stufe). `gilden`
     beschraenkt auf bestimmte Server: die Warteschlange wiederholt nur, wo es
     scheiterte, sonst stuende die Aufnahme auf den anderen doppelt. Im
-    Ergebnis stehen die Summen und `fehl_gilden`."""
+    Ergebnis stehen die Summen und `fehl_gilden`.
+
+    v5.12.1: `fortschritt` ({Guild-ID: {teile, grenze, fehlend}}) aus der
+    Warteschlange — je Server gehen nur die Teile raus, die beim letzten
+    Versuch fehlten (nc.discordaufnahme.nur_fehlende); im Ergebnis steht der
+    neue Stand unter demselben Namen."""
     ergebnis = {} if ergebnis is None else ergebnis
     if not _nc_dcaufnahme.an():
         ergebnis.update(aus=True, grund="%s=0" % _nc_dcaufnahme.SCHALTER)
@@ -23060,7 +23074,8 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None,
                             grund="Discord nicht verbunden oder in keiner Guild" if client
                             else "Discord-Client nicht verbunden")
         else:
-            await _aufnahme_an_server(server, username, path, started_at, ergebnis)
+            await _aufnahme_an_server(server, username, path, started_at, ergebnis,
+                                      fortschritt)
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -23101,7 +23116,7 @@ async def _discord_aufnahme_gilden(alle, username):
     return [g.id for g in alle if g is haupt or g.id in getrackt]
 
 
-async def _aufnahme_an_server(server, username, path, started_at, ergebnis):
+async def _aufnahme_an_server(server, username, path, started_at, ergebnis, fortschritt=None):
     """v5.12: je Server Kanal und Grenze, dann alle gleichzeitig hochladen.
 
     Ein Server ohne Kanal (keine Rechte, kein Platz) zaehlt als Fehler und
@@ -23111,6 +23126,9 @@ async def _aufnahme_an_server(server, username, path, started_at, ergebnis):
     ziele, kanaele, je_server = [], [], []
     for g in server:
         erg = {"gesendet": 0, "fehler": 0}
+        # v5.12.1: JSON kennt nur Text-Schluessel — die Guild-ID als Text.
+        if (fortschritt or {}).get(str(g.id)):
+            erg["vorher"] = fortschritt[str(g.id)]
         # Ein Rueckfall nach #clips meldet nc.discordziele.ziel_kanal selbst.
         ch, _rueckfall = await _nc_discordziele.ziel_kanal([g], g.id, username, "aufnahmen")
         je_server.append((g, erg))
@@ -23141,6 +23159,13 @@ async def _aufnahme_an_server(server, username, path, started_at, ergebnis):
         # _aufnahme_nach_discord (nc.discordaufnahme.abhilfe).
         ergebnis["art"] = next((e.get("art") for _g, e in je_server
                                 if not _nc_uschlange.angekommen(e) and e.get("art")), None)
+    # v5.12.1: was je Server noch fehlt — nur, wo gesendet wurde (ohne Teilung
+    # gibt es keine Teilnummern, und dann geht beim naechsten Mal ohnehin alles).
+    ergebnis["fortschritt"] = {
+        str(g.id): {"teile": e["teile"], "grenze": e["grenze"], "fehlend": e["fehlend"],
+                    "bytes": e.get("bytes")}
+        for g, e in je_server
+        if not _nc_uschlange.angekommen(e) and e.get("teile") and "fehlend" in e}
 
 
 async def _clip_to_discord(username, path, caption=""):

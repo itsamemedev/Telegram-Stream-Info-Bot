@@ -47,6 +47,23 @@ Bugs."
   yt-dlps Schreiben. Eine leere oder eben geänderte Datei bleibt jetzt in Ruhe.
 - **Event-Loop-Stillstand** bis 6,1 s beim Löschen der Upload-Teile und 1,0 s
   beim Speichern des Twitch-Tokens: beides läuft jetzt im Thread.
+- **Doppelte Teile nach einer Wiederholung.** Die Upload-Warteschlange schickte
+  bei jedem Versuch alle Teile — 71 von 86 kamen an, und Versuch 2, 3 und 4
+  schickten sie jedesmal noch einmal in denselben Kanal. Der Eintrag merkt
+  sich jetzt je Server, welche Teile fehlen (`fortschritt`), und nur die gehen
+  raus — wenn Teilezahl, Grenze und Dateigröße gleich sind, sonst alle.
+- **Abgeschaltetes KI-Modell.** `gpt-4.1-nano` bei llm7.io ist seit August
+  „currently unavailable"; die Sperre aus W14 lief alle 15 Minuten ab (63
+  Warnungen im Log). Bei einer ausdrücklichen Abschaltung verdoppelt sie sich
+  jetzt bis zu einem Tag, eine Antwort setzt sie zurück.
+
+### Bewusst nicht geändert
+
+- **Chat-Kasten „Page.navigate: keine Antwort".** Ein Lastsymptom (Load 10,7
+  auf 8 Kernen); der Rückfall auf Text-Chat greift. Den Chromium-Kasten auf
+  der höchsten Drosselstufe abzuschalten wäre eine ungemessene Ersparnis.
+- **Eigene Cookie-Kopie für yt-dlp.** yt-dlp ist im Log nie an einer halben
+  Datei gescheitert; die Kopie änderte, wer seine Cookie-Erneuerungen sieht.
 
 ---
 

@@ -36,6 +36,8 @@ CHANGELOG = [
             "Chat-Einarbeiten ueberspringt reine Tonaufnahmen statt zweimal mit „Stream map '0:v:0' matches no streams“ zu scheitern; bei kaputtem Ton stimmt die Laufzeit (vorher 0 und damit ein Zeitlimit von 15 min)",
             "Die Cookie-Pruefung laesst eine Datei in Ruhe, die yt-dlp gerade zurueckschreibt — vorher ERROR „ungueltig UND keine Cookies“, und ein halber Stand waere „repariert“ worden",
             "Event-Loop: Loeschen der Upload-Teile und das Speichern der Twitch-/YouTube-Tokens laufen im Thread (bis 6,1 s Stillstand im Log)",
+            "Discord-Warteschlange: ein wiederholter Upload sendet nur die Teile, die beim letzten Versuch fehlten — vorher kamen 71 von 86 Teilen bei jedem Versuch noch einmal in den Kanal",
+            "KI: ein beim Anbieter abgeschaltetes Modell (llm7 gpt-4.1-nano, seit August) bleibt wachsend laenger gesperrt statt alle 15 Minuten einen Versuch zu kosten",
         ],
     },
     {

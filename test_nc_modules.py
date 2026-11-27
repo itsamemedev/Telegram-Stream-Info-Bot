@@ -33538,8 +33538,11 @@ def _test_v42_w175_discord_ganze_aufnahme():
         # ANKER GEWANDERT (v5.12.1, nicht der Vertrag): das Ergebnis traegt jetzt
         # auch die Art — und die Art „teilen" heisst: KEIN Rechte-Rat (Log 27.11.:
         # „0 von 0 Teilen gesendet. Fehlt dem Bot das Recht …?").
-        assert e == {"gesendet": 0, "fehler": 1, "grund": "Teilen gescheitert: kaputt",
-                     "art": "teilen"}, e
+        # v5.12.1 dazu „bytes" (Dateigroesse fuer die Wiederaufnahme) — verglichen
+        # wird, was der Vertrag sagt: gezaehlt, Grund, Art.
+        assert {k: e.get(k) for k in ("gesendet", "fehler", "grund", "art")} == {
+            "gesendet": 0, "fehler": 1, "grund": "Teilen gescheitert: kaputt",
+            "art": "teilen"}, e
         assert "Recht" not in DA.abhilfe(e, "anna-aufnahmen"), DA.abhilfe(e, "anna-aufnahmen")
         # …und ein neu kodierter Teil, der trotzdem zu gross ist, zaehlt als Fehler.
         teilgroessen[:] = [[30], [30]]
@@ -33720,7 +33723,8 @@ def _test_v42_w175_upload_schlange():
             gesendet.append(("tg", chat))
             ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
 
-        async def _nach_dc(nutzer, f, beginn=None, ergebnis=None, gilden=None):
+        # ANKER GEWANDERT (v5.12.1): die Warteschlange reicht den Fortschritt durch.
+        async def _nach_dc(nutzer, f, beginn=None, ergebnis=None, gilden=None, fortschritt=None):
             gesendet.append(("dc", f))
             ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
 
@@ -47598,6 +47602,134 @@ def _test_v5121_chat_ohne_bild_cookie_schreibfenster():
        "laesst eine eben geschriebene Datei in Ruhe, OAuth-Speicher schreiben im Thread")
 
 
+def _test_v5121_wiederholung_nur_fehlende_teile():
+    """v5.12.1: „Teil 76/86 bleibt 10.9 MB > 9 MB (71 von 86 Teilen gesendet)"
+    — und die Warteschlange schickte bei Versuch 2, 3 und 4 diese 71 Teile
+    jedesmal noch einmal in denselben Kanal. Jetzt merkt sich der Eintrag je
+    Server, welche Teile fehlen, und nur die gehen noch raus — wenn die
+    Teilung gleich ausfaellt (Teilezahl, Grenze, Dateigroesse)."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    from nc import discordaufnahme as DA
+    from nc import uploadschlange as U
+    import pruefhilfen as P
+
+    heim = P.verzeichnis()
+    try:
+        teile = []
+        for i in range(5):
+            t = _os.path.join(heim, "a.mp4_dcpart9_%03d.mp4" % i)
+            P.attrappe(t, 1024 * 1024)
+            teile.append(t)
+        gesendet, kaputt = [], set()
+
+        async def _senden(teil, text):
+            if teil in kaputt:
+                raise RuntimeError("Netz weg")
+            gesendet.append(text)
+
+        # (1) Erster Versuch: Teil 2 und 4 scheitern.
+        kaputt.update({teile[1], teile[3]})
+        e = {"gesendet": 0, "fehler": 0, "bytes": 4711}
+        _aio.run(DA._senden_alle(teile, 9, _senden, e, "anna", None, 0))
+        assert e["fehlend"] == [2, 4] and e["gesendet"] == 3 and e["fehler"] == 2, e
+        assert e["teile"] == 5 and e["grenze"] == 9 and not U.angekommen(e), e
+
+        # (2) Zweiter Versuch mit dem Fortschritt: NUR 2 und 4, mit ihrer Nummer.
+        stand = {"teile": 5, "grenze": 9, "fehlend": e["fehlend"], "bytes": 4711}
+        kaputt.clear()
+        del gesendet[:]
+        e2 = {"gesendet": 0, "fehler": 0, "bytes": 4711, "vorher": stand}
+        _aio.run(DA._senden_alle(teile, 9, _senden, e2, "anna", None, 0))
+        assert [t.split("Teil ")[1].split(" ")[0] for t in gesendet] == ["2/5", "4/5"], \
+            ("die schon angekommenen Teile gehen noch einmal raus", gesendet)
+        assert U.angekommen(e2) and e2["fehlend"] == [], e2
+
+        # (3) Andere Teilung, andere Datei oder andere Grenze: alle Teile, wie bisher.
+        for anders in ({"teile": 6}, {"bytes": 999}, {"grenze": 25}):
+            del gesendet[:]
+            e3 = {"gesendet": 0, "fehler": 0, "bytes": 4711, "vorher": dict(stand, **anders)}
+            _aio.run(DA._senden_alle(teile, 9, _senden, e3, "anna", None, 0))
+            assert len(gesendet) == 5, (anders, gesendet)
+        assert DA.nur_fehlende({"teile": 5, "grenze": 9, "fehlend": ["x"], "bytes": 1},
+                               5, 9, 1) is None, "ein kaputter Eintrag bricht den Upload"
+        assert DA.nur_fehlende(None, 5, 9, 1) is None
+        assert DA.nur_fehlende(dict(stand, fehlend=[]), 5, 9, 4711) is None
+
+        # (4) Drei Fehlschlaege in Folge: der nicht versuchte Rest zaehlt als fehlend
+        # — aber nur, soweit er beim letzten Versuch noch fehlte.
+        kaputt.update(teile)
+        e4 = {"gesendet": 0, "fehler": 0, "bytes": 4711,
+              "vorher": dict(stand, fehlend=[1, 2, 3, 5])}
+        _aio.run(DA._senden_alle(teile, 9, _senden, e4, "anna", None, 0))
+        assert e4["fehlend"] == [1, 2, 3, 5] and e4["fehler"] == 4, e4
+    finally:
+        _sh.rmtree(heim, ignore_errors=True)
+
+    # (5) Die Warteschlange fuehrt den Stand fort: neu gemeldete Server ueber-
+    # schreiben, ein Server ohne Teilung diesmal behaelt seinen alten Stand,
+    # ein inzwischen fertiger Server faellt heraus.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_upload_queue_nachher")
+    neu_eintraege = []
+    ns = {"_nc_uschlange": U, "_time_mod": __import__("time"), "log": _lg.getLogger("v5121w2"),
+          "_upload_queue_remove": lambda e: None,
+          "_upload_queue_update": lambda alt, neu: neu_eintraege.append(neu)}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    alt7, alt8, alt9 = ({"teile": 5, "fehlend": [1]}, {"teile": 9, "fehlend": [3]},
+                        {"teile": 2, "fehlend": [2]})
+    eintrag = {"file": "/x.mp4", "ziel": "discord", "versuche": 1,
+               "fortschritt": {"7": alt7, "8": alt8, "9": alt9}}
+    neu7 = {"teile": 5, "fehlend": [4]}
+    ns["_upload_queue_nachher"](eintrag, {"gesendet": 1, "fehler": 2, "fehl_gilden": [7, 8],
+                                         "fortschritt": {"7": neu7}}, "anna", "discord")
+    assert neu_eintraege and neu_eintraege[-1]["fortschritt"] == {"7": neu7, "8": alt8}, \
+        neu_eintraege[-1].get("fortschritt")
+    q = next(n for n in baum.body if getattr(n, "name", "") == "_upload_queue_eintrag")
+    assert any(isinstance(k, _ast.keyword) and k.arg == "fortschritt"
+               for k in _ast.walk(q)), "die Warteschlange reicht den Fortschritt nicht durch"
+    ok("v5.12.1: eine wiederholte Discord-Aufnahme sendet nur die fehlenden Teile — "
+       "bei gleicher Teilung, sonst alle")
+
+
+def _test_v5121_totes_modell_bleibt_laenger_weg():
+    """v5.12.1: „Model 'gpt-4.1-nano-2025-04-14' is currently unavailable" stand
+    im Log vom 26./27.11. 63-mal — die Sperre aus W14 lief alle 15 Minuten ab,
+    und das seit dem 30.08. tote Modell kostete wieder einen Versuch."""
+    import nc.freeai as F
+    url, m = "https://api.llm7.io/v1", "gpt-4.1-nano-2025-04-14"
+    F._model_block.clear()
+    F._model_absagen.clear()
+    weg = '{"error":{"code":"model_unavailable"}}'
+    t0 = F._time_mod.monotonic()
+    dauern = []
+    for _ in range(4):
+        F._block_model(url, m, weg)
+        dauern.append(round(F._model_block[(url, m)] - t0))
+    assert dauern[0] >= 899 and dauern[1] >= 1799 and dauern[3] >= 7199, dauern
+    for _ in range(20):
+        F._block_model(url, m, weg)
+    assert F._model_block[(url, m)] - t0 <= F._MODEL_COOLDOWN_MAX_S + 5, "ohne Obergrenze"
+    # Eine Antwort setzt zurueck: ein zurueckgekehrtes Modell kommt wieder dran.
+    F._modell_antwortet(url, m)
+    F._block_model(url, m, weg)
+    assert F._model_block[(url, m)] - F._time_mod.monotonic() <= 901
+    # Ein anderer 400 (Prompt zu lang o.ae.) waechst NICHT — sonst fiele ein
+    # gesundes Modell fuer einen Tag aus.
+    F._model_absagen.clear()
+    for _ in range(5):
+        F._block_model(url, "zweit", '{"error":"context length exceeded"}')
+    assert F._model_block[(url, "zweit")] - F._time_mod.monotonic() <= 901
+    F._model_block.clear()
+    F._model_absagen.clear()
+    ok("v5.12.1: ein abgeschaltetes Modell bleibt wachsend laenger gesperrt, eine Antwort "
+       "setzt zurueck, andere 400er bleiben bei 15 Minuten")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -48102,6 +48234,8 @@ def main():
     _test_v5121_split_ueberlebt_kaputten_ton()
     _test_v5121_discord_rat_nach_art()
     _test_v5121_chat_ohne_bild_cookie_schreibfenster()
+    _test_v5121_wiederholung_nur_fehlende_teile()
+    _test_v5121_totes_modell_bleibt_laenger_weg()
     _test_v5114_tg1_telegram_start_wiederholt()
     _test_v5114_tg2_untrack_wie_stoppknopf()
     _test_v5114_dc5_schleifen_ueberleben_neustartfenster()

@@ -190,6 +190,8 @@ async def _gruppe(pfad, grenze_mb, empfaenger, nutzer, beginn, pause_s):
         log.error("Discord-Aufnahme: %s nicht lesbar: %s", pfad, e)
         _alle_fehler(empfaenger, "Datei nicht lesbar: %s" % e, "datei")
         return
+    for _senden, ergebnis in empfaenger:
+        ergebnis["bytes"] = groesse      # v5.12.1: fuer nur_fehlende beim naechsten Versuch
     eigene = False
     if groesse <= grenze_mb * _MB:
         teile = [pfad]
@@ -213,12 +215,60 @@ async def _gruppe(pfad, grenze_mb, empfaenger, nutzer, beginn, pause_s):
             await asyncio.to_thread(_videoteil.wegwerfen, teile)
 
 
+def nur_fehlende(vorher, n, grenze_mb, groesse=None):
+    """Welche Teile ein Wiederholungsversuch noch senden muss. -> set oder None
+
+    v5.12.1: die Warteschlange schickte bei jedem Versuch ALLE Teile — am
+    26./27.11. kamen 71 von 86 an, und Versuch 2, 3 und 4 schickten diese 71
+    jedesmal noch einmal in denselben Kanal. Jetzt merkt sich der Eintrag je
+    Server, welche Teile fehlen (`fortschritt`), und nur die gehen noch raus.
+
+    Nur wenn die Teilung GLEICH ausfaellt: dieselbe Teilezahl bei derselben
+    Grenze. Die Zerlegung ist bei gleicher Datei und Grenze dieselbe (die
+    Segmentlaenge folgt aus Groesse und Laufzeit, x264 ist deterministisch);
+    hat der Server seine Boost-Stufe gewechselt oder faellt die Zahl anders
+    aus, waeren „Teil 5" vorher und jetzt verschiedene Stuecke — dann None,
+    also alle Teile, wie bisher. Lieber doppelt als eine Luecke. Dazu die
+    Dateigroesse: das Chat-Einarbeiten ersetzt eine Aufnahme nachtraeglich,
+    und dieselbe Teilezahl hiesse dann nicht dieselben Teile."""
+    # Kein Stand (erster Versuch) ist ein leerer Stand: Teilezahl 0 passt nie.
+    vorher = vorher if isinstance(vorher, dict) else {}
+    try:
+        gleich = int(vorher.get("teile") or 0) == int(n) and \
+            int(vorher.get("grenze") or 0) == int(grenze_mb) and \
+            int(vorher.get("bytes") or -1) == int(groesse if groesse is not None else -2)
+        fehlend = {int(i) for i in vorher.get("fehlend") or () if 1 <= int(i) <= int(n)}
+    except (TypeError, ValueError) as e:
+        log.warning("Discord-Aufnahme: Fortschritt unlesbar (%s: %s) — alle Teile neu.",
+                    type(e).__name__, e)
+        return None
+    return fehlend if gleich and fehlend else None
+
+
 async def _senden_alle(teile, grenze_mb, senden, ergebnis, nutzer, beginn, pause_s):
-    """Die Teile nacheinander an EINEN Server (Pause gegen die Kanal-Drossel)."""
+    """Die Teile nacheinander an EINEN Server (Pause gegen die Kanal-Drossel).
+
+    v5.12.1: `ergebnis["vorher"]` (aus der Warteschlange) beschraenkt auf die
+    Teile, die beim letzten Versuch fehlten; `ergebnis["fehlend"]` nennt die,
+    die diesmal fehlen — die Warteschlange merkt sie sich fuer den naechsten."""
     n = len(teile)
     ergebnis["teile"] = n
+    ergebnis["grenze"] = int(grenze_mb)
+    fehlend = ergebnis["fehlend"] = []
+    nur = nur_fehlende(ergebnis.get("vorher"), n, grenze_mb, ergebnis.get("bytes"))
+    if nur is not None:
+        log.info("Discord-Aufnahme @%s: Wiederholung — %d von %d Teilen kamen beim letzten "
+                 "Versuch an, es gehen nur die %d fehlenden raus.", nutzer, n - len(nur), n,
+                 len(nur))
+    elif ergebnis.get("vorher"):
+        log.info("Discord-Aufnahme @%s: Teilung anders als beim letzten Versuch (%s statt %s "
+                 "Teile bei %s MB) — alle Teile gehen neu raus.", nutzer, n,
+                 ergebnis["vorher"].get("teile"), grenze_mb)
     in_folge = 0
+    letzter = max(nur) if nur else n
     for i, teil in enumerate(teile, 1):
+        if nur is not None and i not in nur:
+            continue            # kam beim letzten Versuch schon an
         mb = os.path.getsize(teil) / _MB
         if mb > grenze_mb:
             # Auch nach dem Neukodieren zu gross: Discord antwortete mit
@@ -226,6 +276,7 @@ async def _senden_alle(teile, grenze_mb, senden, ergebnis, nutzer, beginn, pause
             ergebnis["fehler"] += 1
             ergebnis["grund"] = "Teil %d/%d bleibt %.1f MB > %d MB" % (i, n, mb, grenze_mb)
             ergebnis["art"] = "groesse"
+            fehlend.append(i)
             continue
         try:
             await senden(teil, beschriftung(nutzer, i, n, mb, beginn))
@@ -241,12 +292,15 @@ async def _senden_alle(teile, grenze_mb, senden, ergebnis, nutzer, beginn, pause
             ergebnis["grund"] = "Teil %d/%d: %s: %s" % (i, n, type(e).__name__, e)
             text = ("%s %s" % (type(e).__name__, e)).lower()
             ergebnis["art"] = "rechte" if any(w in text for w in _RECHTE) else "senden"
+            fehlend.append(i)
             in_folge += 1
             if in_folge >= ABBRUCH_IN_FOLGE:
                 # Fehlendes Recht oder geloeschter Kanal: jeder weitere Teil
                 # scheitert genauso, und bei 100 Teilen waeren das 100 Fehler.
-                ergebnis["fehler"] += n - i
-                ergebnis["grund"] += " — Rest (%d Teile) nicht versucht" % (n - i)
+                rest = [j for j in range(i + 1, n + 1) if nur is None or j in nur]
+                ergebnis["fehler"] += len(rest)
+                ergebnis["grund"] += " — Rest (%d Teile) nicht versucht" % len(rest)
+                fehlend.extend(rest)
                 break
-        if i < n:
+        if i < letzter:
             await asyncio.sleep(pause_s)
