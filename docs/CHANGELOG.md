@@ -9,6 +9,44 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [Unveröffentlicht] — 24/7-Sendung (Welle A von B)
+
+Gewünscht vom Betreiber am 27.11.: „für die Zeit, wo kein getrackter User live
+ist, ein Pausenbild, das in der Abwesenheit live gestreamt wird, bis der
+nächste getrackte User live kommt — im Standard- und Text-Mode. Wir gehen
+24/7 live."
+
+### Neu
+
+- **`RESTREAM_DAUERSENDUNG=1`** (Vorgabe aus — eine Sendung rund um die Uhr
+  kostet einen Sender-Encode, das entscheidet der Betreiber): der Restream
+  endet nicht mehr an einer offline Quelle, die Sendebrücke sendet das
+  Pausenbild. Ist niemand live und der Platz frei, startet der Scheduler eine
+  Pausen-Sendung über das erste Auto-Restream-Ziel.
+- **Übergabe:** derselbe Nutzer kommt nahtlos zurück (die Brücke schaltet
+  selbst); ein ANDERER getrackter Nutzer bekommt den Platz mit kurzem
+  Neuaufbau der Verbindung (entschieden am 27.11.).
+- **Pausenbild:** eigenes Bild (`recordings/pausenbild/pausenbild.png|.jpg`),
+  sonst AZRAEL (`RESTREAM_AVATAR`), sonst die dunkle Fläche wie bisher. Es
+  läuft durch denselben Sender wie die Quelle, also mit jedem Overlay
+  (html, text, Studio, Burn-in). Gemessen: 3,1 s CPU je 30 s Ausgabe gegen
+  2,8 s für die Fläche.
+- **Kanaltitel in der Pause:** `RESTREAM_PAUSE_TITEL` (Kick, über die
+  Living-Title-Schleife); kein Community-Ping für eine Pause, dafür einer,
+  wenn die Quelle wirklich auf Sendung geht.
+
+### Behoben
+
+- **Ein gestorbener Füller kam nie wieder.** Bisher hielt das Pausenbild
+  höchstens zwei Minuten, ein Absturz fiel nicht auf. Jetzt startet ihn eine
+  eigene Wache neu — mit neuem Zeitstempel-Abschnitt, sonst verwürfe der
+  Umschreiber jedes Paket als „rückwärts".
+- **Ein Reparatur-Neustart beendete die Pause.** Wächter und Wiederanlauf
+  lösen die Quelle neu auf; „offline" hieß dann „kein Start". Eine Pause
+  läuft nach einem internen Neustart wieder als Pause an.
+
+---
+
 ## [5.12.1] — 2026-11-27 · „Tonprobe" (Fehler aus dem Log vom 26./27.11.)
 
 Gemeldet vom Betreiber mit Fehler- und Debug-Log: „Behebe Fehler, Probleme und

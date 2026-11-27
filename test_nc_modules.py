@@ -26207,7 +26207,9 @@ def _test_v42_w141_dritte_form():
     aufrufe = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
                and _ast.unparse(n.func).endswith("_reflect_source_status")]
     assert not aufrufe, "_reflect_source_status direkt auf dem Loop gerufen"
-    assert src.count("asyncio.to_thread(self._reflect_source_status") == 3
+    # ANKER GEWANDERT (v5.13, nicht der Vertrag): die Pausen-Uebergabe der
+    # 24/7-Sendung prueft die anderen Ziele ebenfalls — auch sie neben dem Loop.
+    assert src.count("asyncio.to_thread(self._reflect_source_status") == 4
     zaehl = {n.args[0].value for n in _ast.walk(baum) if isinstance(n, _ast.Call)
              and _ast.unparse(n.func) == "_nc_quellstat.zaehlen"
              and n.args and isinstance(n.args[0], _ast.Constant)}
@@ -32870,9 +32872,17 @@ def _w179_manager(baum, namen, extra):
     koerper = [n for n in rm.body if getattr(n, "name", None) in namen]
     klasse = _ast.ClassDef(name="RM", bases=[], keywords=[], body=koerper, decorator_list=[],
                            type_params=[])
+    from nc import restreamstate as _rs
+    # ANKER GEWANDERT (v5.13, nicht der Vertrag): stop() beendet eine Pause
+    # (nc.restreamstate), start() fragt die 24/7-Sendung ab und baut den
+    # Fueller ueber _restream_fueller_cmd. In diesen Attrappen ist sie aus.
     ns = {"asyncio": _aio, "log": _lg.getLogger("w179"), "_time_mod": _t,
-          "log_event": lambda *a, **k: None, "_COMMUNITY_PINGED": {}}
+          "log_event": lambda *a, **k: None, "_COMMUNITY_PINGED": {},
+          "_nc_rsstate": _rs, "_restream_fueller_cmd": lambda: []}
     ns.update(extra)
+    _cfg = ns.get("_nc_rscfg")
+    if _cfg is not None and not hasattr(_cfg, "dauersendung"):
+        _cfg.dauersendung = lambda: False
     mod = _ast.fix_missing_locations(_ast.Module(body=[klasse], type_ignores=[]))
     exec(compile(mod, "bot.py", "exec"), ns)
     return ns["RM"]
@@ -42472,11 +42482,17 @@ def _test_bh8_bh9_bh11_restream_start():
         "BH-8: erst den Sender, dann die Bruecke (W179)"
 
     # BH-11: _plats aus den Zielen dieses Restreams.
-    zuw = next(a for a in _ast.walk(start) if isinstance(a, _ast.Assign)
+    # ANKER GEWANDERT (v5.13, nicht der Vertrag): der Ping steht in _live_ping,
+    # weil auch das Ende einer Pause pingt. start() reicht SEINE Ziele hinein.
+    _lp = next(n for n in klasse.body if isinstance(n, _ast.FunctionDef)
+               and n.name == "_live_ping")
+    zuw = next(a for a in _ast.walk(_lp) if isinstance(a, _ast.Assign)
                and any(isinstance(t, _ast.Name) and t.id == "_plats" for t in a.targets))
     quelle = _ast.unparse(zuw.value)
-    assert "active_targets" not in quelle and "_targets" in quelle, \
+    assert "active_targets" not in quelle and "targets" in quelle, \
         ("BH-11: der Ping nennt die globale Zielliste", quelle)
+    assert "self._live_ping(rid, _targets)" in _ast.unparse(start), \
+        "BH-11: start() reicht nicht die Ziele DIESES Restreams in den Ping"
 
     # BH-9: im Avatar-Writer kein stiller except mehr, Fehler ueber _loop_fehler.
     feeder = next(f for f in baum.body if isinstance(f, _ast.FunctionDef)
@@ -43449,7 +43465,7 @@ def _rst_start_manager(baum, ueber=None):
           "_reap_proc": _ernte}
     ns.update(ueber or {})
     RM = _w179_manager(baum, {"__init__", "start", "stop", "_anlauf_verwerfen",
-                              "_anlauf_abraeumen",
+                              "_anlauf_abraeumen", "_live_ping",
                               "_nebenlaeufer_abraeumen", "_relays_abraeumen",
                               "_bruecke_abraeumen", "_monitor_eintragen", "_deckel_grund",
                               "_belegt"}, ns)
@@ -47730,6 +47746,330 @@ def _test_v5121_totes_modell_bleibt_laenger_weg():
        "setzt zurueck, andere 400er bleiben bei 15 Minuten")
 
 
+def _test_v513_dauersendung_pausenbild():
+    """v5.13: 24/7-Sendung. Gewünscht am 27.11.: „für die Zeit, wo kein
+    getrackter User live ist, ein Pausenbild, das live gestreamt wird, bis der
+    nächste getrackte User live kommt" — im Standard- und Text-Modus.
+    Entschieden: gleicher Nutzer nahtlos (Sendebrücke), anderer Nutzer mit
+    kurzem Neuaufbau; Pausenbild AZRAEL, eigenes Bild hat Vorrang."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import shutil as _sh
+    import signal as _sig
+    import subprocess as _sp
+    import threading as _th
+    import time as _t
+    import types as _ty
+    from nc import meldetakt as MT
+    from nc import pausenbild as PB
+    from nc import restream_util as RU
+    from nc import restreamcfg as RC
+    from nc import restreamcmd as RCMD
+    from nc import restreamstate as RS
+    from nc import sendebruecke as SB
+    from nc import tonspur as T
+    import pruefhilfen as P
+
+    # (1) Schalter: Vorgabe aus; an heisst, die Bruecke endet nie an „offline".
+    alt = {k: _os.environ.pop(k, None) for k in ("RESTREAM_DAUERSENDUNG",
+                                                 "RESTREAM_PAUSE_TITEL")}
+    try:
+        assert RC.dauersendung() is False and RC.bruecke_offline() == 120.0
+        _os.environ["RESTREAM_DAUERSENDUNG"] = "1"
+        assert RC.dauersendung() is True and RC.bruecke_offline() == float("inf")
+        assert "Pause" in RC.pause_titel()
+        _os.environ["RESTREAM_PAUSE_TITEL"] = ""
+        assert RC.pause_titel() == "", "ein leerer Pausentitel schaltet ihn ab"
+    finally:
+        for k, v in alt.items():
+            _os.environ.pop(k, None)
+            if v is not None:
+                _os.environ[k] = v
+
+    # (2) Bildwahl: eigenes vor AZRAEL vor Flaeche; der Kopf entscheidet.
+    heim = P.verzeichnis()
+    try:
+        PB.configure(_os.path.join(heim, "pb"))
+        avatar = _os.path.join(heim, "azrael.png")
+        with open(avatar, "wb") as f:
+            f.write(PB.ARTEN[".png"] + b"rest")
+        assert PB.waehlen(None) == (None, "flaeche")
+        assert PB.waehlen(avatar) == (_os.path.abspath(avatar), "vorgabe")
+        _os.makedirs(PB.ordner())
+        falsch = _os.path.join(PB.ordner(), "pausenbild.png")
+        with open(falsch, "wb") as f:
+            f.write(PB.ARTEN[".jpg"] + b"jpeg unter falschem Namen")
+        assert PB.waehlen(avatar)[1] == "vorgabe", "falscher Kopf zaehlt als eigenes Bild"
+        _os.remove(falsch)
+        eigen = _os.path.join(PB.ordner(), "pausenbild.jpg")
+        with open(eigen, "wb") as f:
+            f.write(PB.ARTEN[".jpg"] + b"jpeg")
+        assert PB.waehlen(avatar) == (eigen, "eigen")
+        assert PB.art(b"GIF89a") == "" and PB.art(None) == ""
+    finally:
+        PB.configure(None)
+        _sh.rmtree(heim, ignore_errors=True)
+
+    # (3) Der Fueller mit Bild: einmal skalieren, dann aus dem Speicher
+    # wiederholen, Takt aus `realtime`; Ton bleibt garantiert (W106).
+    alt_fps = RCMD.RESTREAM_FPS
+    RCMD.RESTREAM_FPS = 30
+    try:
+        mit = RCMD.fueller(bild="/x/pause.png")
+        kette = mit[mit.index("-vf") + 1]
+        assert "-loop" not in mit, "-loop 1 dekodiert das Bild je Einzelbild neu (10,2 s statt 3,1 s CPU)"
+        assert kette.index("scale=") < kette.index("loop=loop=-1") < kette.index("realtime"), kette
+        assert "force_original_aspect_ratio=decrease" in kette and "pad=720:1280" in kette
+        ohne = RCMD.fueller()
+        assert "color=c=" in " ".join(ohne) and "-re" in ohne and "-vf" not in ohne
+        assert T.hat_tonspur(mit) and T.hat_tonspur(ohne)
+    finally:
+        RCMD.RESTREAM_FPS = alt_fps
+
+    # (4) bot.py: der Fueller nimmt das gewaehlte Bild, mit AZRAEL als Vorgabe.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fc = next(n for n in baum.body if getattr(n, "name", "") == "_restream_fueller_cmd")
+    assert "_nc_pausenbild.waehlen(RESTREAM_AVATAR)" in _ast.unparse(fc)
+    klasse = next(n for n in baum.body if getattr(n, "name", "") == "RestreamManager")
+    st = next(f for f in klasse.body if getattr(f, "name", "") == "start")
+    assert "_restream_fueller_cmd()" in _ast.unparse(st), "der Sendestart nimmt das Pausenbild nicht"
+
+    # (5) start(_pause=True): keine Aufloesung, Bruecke ohne erste Adresse und
+    # mit sofort freiem Fueller, Status live, Pause vermerkt, KEIN Live-Ping.
+    gebaut = []
+
+    class _Br:
+        ende = ""
+
+        def __init__(self, fd, fueller, zub, quelle, **k):
+            self.fd = fd
+            gebaut.append(dict(k, fueller=fueller))
+
+        def start(self):
+            return None
+
+        def stop(self):
+            if self.fd is not None:
+                _os.close(self.fd)
+                self.fd = None
+
+    an = {"v": True}
+    cfg = _ty.SimpleNamespace(bruecke=lambda tc, unabhaengig=False: (an["v"], True),
+                              bruecke_luecke=lambda: 1.0,
+                              bruecke_offline=lambda: float("inf"),
+                              dauersendung=lambda: True)
+
+    async def _ewig(*a, **k):
+        await _aio.sleep(3600)
+
+    async def _faellt(u, force_fresh=False):
+        raise AssertionError("die Pausen-Sendung loest eine Quelle auf")
+
+    async def _offline(u, force_fresh=False):
+        return None, "offline"
+
+    async def _ablauf():
+        m, spur, warten = _rst_start_manager(baum, {"_nc_bruecke": _ty.SimpleNamespace(Bruecke=_Br),
+                                                    "_nc_rscfg": cfg,
+                                                    "_restream_fueller_cmd": lambda: ["FUELLER"]})
+        pings = []
+        m._live_ping = lambda rid, ziele: pings.append(rid)
+        m._source_watch = _ewig
+        m._resolve_source = _faellt
+        RS.PAUSE.clear()
+        erg = await m.start(7, _pause=True)
+        assert erg.get("ok"), erg
+        assert gebaut[-1]["erste_url"] is None and gebaut[-1]["fueller_sofort"] is True, gebaut
+        assert gebaut[-1]["fueller"] == ["FUELLER"]
+        assert spur["status"][-1] == "live" and RS.pausiert(7) and pings == [], (spur, pings)
+        assert 7 in m._srcwatch, "ohne Quellen-Waechter keine Uebergabe an den naechsten Nutzer"
+        # Interner Neustart (Waechter/Wiederanlauf): die Pause lebt weiter.
+        await m.stop(7, _keep_desired=True)
+        assert not RS.pausiert(7) and 7 in m._pause_wieder
+        m._resolve_source = _offline
+        erg = await m.start(7)
+        assert erg.get("ok") and RS.pausiert(7) and gebaut[-1]["fueller_sofort"] is True, erg
+        assert 7 not in m._pause_wieder
+        # Der Stop des Betreibers beendet sie endgueltig.
+        await m.stop(7)
+        assert not RS.pausiert(7) and 7 not in m._pause_wieder
+        erg = await m.start(7)
+        assert not erg.get("ok"), "offline ohne vorherige Pause startet als Pause"
+        # Ohne Sendebruecke gibt es kein Pausenbild — laut abgelehnt.
+        an["v"] = False
+        n = len(spur["spawn"])
+        erg = await m.start(8, _pause=True)
+        assert not erg.get("ok") and "Sendebruecke" in erg.get("error", ""), erg
+        assert len(spur["spawn"]) == n
+        for t in [t for t in _aio.all_tasks() if t is not _aio.current_task()]:
+            t.cancel()
+    _aio.run(_ablauf())
+
+    # (6) Die Uebergabe: niemand anders live -> Pause bleibt (False), der
+    # eigene Nutzer ist nie Kandidat; ein anderer live -> kurzer Neuaufbau.
+    def _uebergabe(dauer, live):
+        aufgeloest, gestoppt, gestartet, soll = [], [], [], []
+
+        async def _zeilen(fn):
+            # #4 traegt DENSELBEN Nutzer wie #3 (andere Ziele) — kommt Anna
+            # zurueck, schaltet die Bruecke von #3 nahtlos; ein Wechsel auf #4
+            # waere ein unnoetiger Neuaufbau (Mutationsprobe P10).
+            return [{"id": 3, "source_username": "anna"}, {"id": 4, "source_username": "Anna"},
+                    {"id": 5, "source_username": "ben"}, {"id": 6, "source_username": "cleo"}]
+
+        RM = _w179_manager(baum, {"__init__", "_switch_to_next_live", "_pause_oder_uebergabe",
+                                  "_pause_ende", "_live_ping"},
+                           {"_nc_rscfg": _ty.SimpleNamespace(dauersendung=lambda: dauer),
+                            "db_async": _zeilen, "clean_username": lambda u: u.lower(),
+                            "_nc_resolvergrund": _ty.SimpleNamespace(quelle_lage=lambda e: e),
+                            "COMMUNITY_LIVE_PING_ENABLED": False, "DISCORD_WEBHOOK_URL": ""})
+        m = RM()
+        m._procs[3] = {"tee_targets": [("kick", "rtmp://x")]}
+
+        async def _quelle(u, force_fresh=False):
+            aufgeloest.append(u)
+            # Wie der Bot: Gross-/Kleinschreibung zaehlt nicht (LIVE-6).
+            return (("https://pull.test/%s.flv" % u, None) if u.lower() in live
+                    else (None, "offline"))
+
+        async def _stop(rid, _keep_desired=False):
+            gestoppt.append((rid, _keep_desired, list(aufgeloest)))
+            m._procs.pop(rid, None)
+            return {"ok": True}
+
+        async def _start(rid, **kw):
+            gestartet.append((rid, kw))
+            return {"ok": True}
+        m._resolve_source, m.stop, m.start = _quelle, _stop, _start
+        m._reflect_source_status = lambda *a: None
+        m._quelle_melden = lambda *a: None
+        m._set_desired = lambda rid, on: soll.append((rid, on))
+        erg = _aio.run(m._switch_to_next_live(3, "anna"))
+        return m, erg, aufgeloest, gestoppt, gestartet, soll
+
+    RS.PAUSE.clear()
+    m, erg, aufg, stop_, start_, soll = _uebergabe(True, {"anna"})
+    assert erg is False and RS.pausiert(3) and stop_ == [] and start_ == [], (erg, stop_)
+    assert not any(u.lower() == "anna" for u in aufg), \
+        "der eigene Nutzer ist Kandidat — die Bruecke schaltet ihn selbst"
+    m, erg, aufg, stop_, start_, soll = _uebergabe(True, {"cleo"})
+    assert erg is True and stop_ and stop_[0][:2] == (3, True) and start_ == [(6, {"_src_watch": True})], \
+        (stop_, start_)
+    assert "cleo" in stop_[0][2], "erst gestoppt, dann gesucht — die Pause bricht ohne Nachfolger ab"
+    assert (3, False) in soll and 3 not in m._pause_wieder
+    # Ohne Dauersendung bleibt der bisherige Ablauf: erst stoppen, dann suchen.
+    RS.PAUSE.clear()
+    m, erg, aufg, stop_, start_, soll = _uebergabe(False, set())
+    assert stop_ and stop_[0][2] == [] and erg is not False, (stop_, erg)
+
+    # (7) Ende der Pause: einmal pingen, dann still.
+    m, *_ = _uebergabe(True, set())
+    pings = []
+    m._live_ping = lambda rid, ziele: pings.append((rid, ziele))
+    m._pause_ende(3, "anna")
+    m._pause_ende(3, "anna")
+    assert pings == [(3, [("kick", "rtmp://x")])] and not RS.pausiert(3), pings
+
+    # (8) Scheduler: niemand live, Platz frei -> Pausen-Sendung ueber das
+    # erste Ziel; ohne Dauersendung nichts.
+    def _plan(dauer):
+        gestartet = []
+
+        async def _zeilen(fn):
+            return [{"id": 4, "source_username": "a"}, {"id": 9, "source_username": "b"}]
+
+        RA = _w179_manager(baum, {"__init__", "auto_start_due", "_belegt", "_pause_starten"},
+                           {"_nc_rutil": RU, "db_async": _zeilen, "RESTREAM_SINGLE": True,
+                            "RESTREAM_MAX_CONCURRENT": 2, "_restream_enabled": lambda: (True, ""),
+                            "_nc_rscfg": _ty.SimpleNamespace(dauersendung=lambda: dauer),
+                            "_nc_meldetakt": MT})
+        a = RA()
+
+        async def _quelle(u, force_fresh=False):
+            return None, "offline"
+
+        async def _start(rid, **kw):
+            gestartet.append((rid, kw))
+            return {"ok": True}
+        a._resolve_source, a.start = _quelle, _start
+        a._reflect_source_status = lambda *x: None
+        a._quelle_melden = lambda *x: None
+        _aio.run(a.auto_start_due())
+        return gestartet
+    assert _plan(True) == [(4, {"_src_watch": True, "_pause": True})], _plan(True)
+    assert _plan(False) == []
+
+    # (9) Waechter und Titel, im Syntaxbaum: der Waechter endet nur, wenn
+    # wirklich uebergeben wurde, und beendet die Pause, wenn der Nutzer
+    # zurueck ist; der Living-Title setzt in der Pause den Pausentitel.
+    sw = next(f for f in klasse.body if getattr(f, "name", "") == "_source_watch")
+    sw_t = _ast.unparse(sw)
+    assert "is not False" in sw_t and "self._pause_ende(rid, username)" in sw_t
+    lt = next(n for n in baum.body if getattr(n, "name", "") == "_living_title_loop")
+    lt_t = _ast.unparse(lt)
+    assert "_nc_rsstate.pausiert(" in lt_t and "_nc_rscfg.pause_titel()" in lt_t
+    sto = next(f for f in klasse.body if getattr(f, "name", "") == "stop")
+    assert "_nc_rsstate.pause_aus(rid)" in _ast.unparse(sto)
+
+    if not _sh.which("ffmpeg"):
+        ok("v5.13: 24/7-Sendung (rein); ffmpeg fehlt — echter Brueckenlauf uebersprungen")
+        return
+
+    # (10) Echt: Pausen-Sendung ohne Quelle sendet sofort; ein Fueller, der
+    # stirbt, kommt wieder; ein Bildtausch reisst nichts ab; die Zeitstempel
+    # laufen nie rueckwaerts.
+    RCMD.RESTREAM_FPS = 30
+    r, w = _os.pipe()
+    daten = bytearray()
+    halt = _th.Event()
+
+    def _lesen():
+        while not halt.is_set():
+            try:
+                b = _os.read(r, 65536)
+            except OSError:
+                return
+            if not b:
+                return
+            daten.extend(b)
+    _th.Thread(target=_lesen, daemon=True).start()
+    br = SB.Bruecke(w, RCMD.fueller(bild="azrael_avatar.png"), RCMD.zubringer,
+                    lambda: (None, "offline"), erste_url=None, luecke_s=4,
+                    offline_s=float("inf"), name="#v513", fueller_sofort=True)
+    try:
+        br.start()
+        _t.sleep(2.5)
+        assert len(daten) > 20000, ("die Pausen-Sendung wartet auf eine Quelle, die es nicht gibt",
+                                    len(daten))
+        _os.kill(br._fue.pid, _sig.SIGKILL)
+        n = len(daten)
+        _t.sleep(3.5)
+        assert br.fueller_neustarts == 1 and len(daten) > n + 20000, \
+            ("ein gestorbener Fueller kam nicht wieder", br.fueller_neustarts)
+        assert br.fueller_tauschen(RCMD.fueller()) is True
+        n = len(daten)
+        _t.sleep(3)
+        assert br.fueller_neustarts == 2 and len(daten) > n + 10000
+        assert br.ende is None, br.ende
+    finally:
+        br.stop()
+        halt.set()
+        RCMD.RESTREAM_FPS = alt_fps
+    assert br.fueller_tauschen(["egal"]) is False, "Tausch an einer gestoppten Bruecke"
+    probe = _sp.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                     "packet=pts_time", "-of", "csv=p=0", "-"], input=bytes(daten),
+                    capture_output=True, timeout=60)
+    zeiten = [float(x.strip(",")) for x in probe.stdout.decode().split()
+              if x.strip(",") not in ("", "N/A")]
+    assert len(zeiten) > 150, len(zeiten)
+    assert all(b > a for a, b in zip(zeiten, zeiten[1:])), "Zeitstempel laufen rueckwaerts"
+    ok("v5.13: 24/7-Sendung — Pausenbild (eigenes > AZRAEL > Flaeche) ohne Quelle, Pause "
+       "ueberlebt Reparatur-Neustarts, Uebergabe nur an einen ANDEREN live Nutzer, Scheduler "
+       "startet die Pause, Fueller kommt nach Absturz und Tausch wieder")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -48236,6 +48576,7 @@ def main():
     _test_v5121_chat_ohne_bild_cookie_schreibfenster()
     _test_v5121_wiederholung_nur_fehlende_teile()
     _test_v5121_totes_modell_bleibt_laenger_weg()
+    _test_v513_dauersendung_pausenbild()
     _test_v5114_tg1_telegram_start_wiederholt()
     _test_v5114_tg2_untrack_wie_stoppknopf()
     _test_v5114_dc5_schleifen_ueberleben_neustartfenster()

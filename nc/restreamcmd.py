@@ -456,7 +456,10 @@ def _cookie_datei():
     return p if os.path.isfile(p) else None
 
 
-def fueller(breite=720, hoehe=1280):
+FUELLER_GRUND = "0x0b0f17"
+
+
+def fueller(breite=720, hoehe=1280, bild=None):
     """v4.2-W130: das Pausenbild der Sendebruecke — laeuft durchgehend.
 
     Hochformat 720x1280 wie eine TikTok-Quelle: der Sender skaliert ohnehin
@@ -464,12 +467,32 @@ def fueller(breite=720, hoehe=1280):
     meist den Neuaufbau des Filtergraphen. Eine Flaeche ohne Text, weil
     jeder Text im Sendebild Benutzertext ist und durch die Uebersetzung
     muesste; was die Pause bedeutet, steht im Deck. Kostet gemessen kaum
-    Rechenzeit: eine einfarbige Flaeche kodiert x264 zu fast nichts."""
+    Rechenzeit: eine einfarbige Flaeche kodiert x264 zu fast nichts.
+
+    v5.13: `bild` (PNG/JPG, nc/pausenbild) statt der Flaeche — fuer die
+    24/7-Sendung, in der das Pausenbild Stunden steht. Eingepasst ohne
+    Verzerrung, Rand in der Farbe der Flaeche. Gemessen je 30 s Ausgabe
+    (ffmpeg 6.1): Flaeche 2,8 s CPU, `-loop 1` 10,2 s (dekodiert das Bild je
+    Einzelbild neu), `loop`-Filter mit Skalieren DAVOR 3,1 s — skaliert wird
+    einmal, danach wiederholt der Filter das fertige Bild aus dem Speicher.
+    Der Takt kommt aus `realtime`: `-re` bremst nur das Einlesen, und ein
+    Einzelbild ist nach einem Lesevorgang fertig — ohne Bremse liefe die
+    Schleife so schnell, wie die CPU kann."""
     fps = max(15, min(60, RESTREAM_FPS))
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats", "-re",
-           "-f", "lavfi", "-i", "color=c=0x0b0f17:s=%dx%d:r=%d" % (breite, hoehe, fps),
+    if bild:
+        eingang = ["-i", bild]
+        bildkette = ["-vf", ("scale=%d:%d:force_original_aspect_ratio=decrease,"
+                             "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=%s,format=yuv420p,"
+                             "loop=loop=-1:size=1:start=0,fps=%d,realtime"
+                             % (breite, hoehe, breite, hoehe, FUELLER_GRUND, fps))]
+    else:
+        eingang = ["-re", "-f", "lavfi", "-i",
+                   "color=c=%s:s=%dx%d:r=%d" % (FUELLER_GRUND, breite, hoehe, fps)]
+        bildkette = []
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats",
+           *eingang,
            *_nc_tonspur.stille_eingabe(),
-           "-map", "0:v:0", "-map", "1:a:0",
+           "-map", "0:v:0", "-map", "1:a:0", *bildkette,
            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
            "-pix_fmt", "yuv420p", "-g", str(max(1, int(fps * BRUECKE_GOP_S))),
            "-b:v", "300k"]

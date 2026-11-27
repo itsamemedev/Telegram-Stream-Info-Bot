@@ -188,8 +188,38 @@ def bruecke_offline() -> float:
 
     Danach endet der Restream wie bisher bei „Quelle offline", und im
     Einzel-Modus übernimmt die nächste live Quelle. Zwei Minuten decken einen
-    Streamer, der sein Live neu startet."""
+    Streamer, der sein Live neu startet.
+
+    v5.13: in der Dauersendung (`dauersendung()`) endet die Brücke an einer
+    offline Quelle NIE — das Pausenbild bleibt auf Sendung, bis ein getrackter
+    Nutzer live kommt. Die Übergabe an einen ANDEREN Nutzer macht der
+    Quellen-Wächter (bot._switch_to_next_live), nicht die Brücke."""
+    if dauersendung():
+        return float("inf")
     return float(max(0, _zahl(os.getenv("RESTREAM_BRUECKE_OFFLINE_S", "120"), 120)))
+
+
+def dauersendung() -> bool:
+    """v5.13: 24/7-Sendung — RESTREAM_DAUERSENDUNG, Vorgabe aus.
+
+    Gewünscht vom Betreiber am 27.11.: „für die Zeit, wo kein getrackter User
+    live ist, ein Pausenbild, das live gestreamt wird, bis der nächste
+    getrackte User live kommt". An heisst: der Einzel-Restream endet nicht mehr
+    an einer offline Quelle, und ist gar keiner live, startet der Scheduler
+    eine Pausen-Sendung. Aus ist die Vorgabe, weil eine Dauersendung rund um
+    die Uhr einen Sender-Encode kostet — auf einer Box, die schon unter Last
+    steht, ist das eine Entscheidung des Betreibers, keine des Updates.
+
+    Verlangt die Sendebrücke (RESTREAM_BRUECKE=auto): nur sie kann ein
+    Pausenbild ohne Quelle senden."""
+    return _flag(os.getenv("RESTREAM_DAUERSENDUNG", "0"))
+
+
+def pause_titel() -> str:
+    """v5.13: Kanaltitel während der Pause (Kick, wie die Living Titles).
+    Leer schaltet das Setzen ab."""
+    return (os.getenv("RESTREAM_PAUSE_TITEL",
+                      "⏸ Pause · gleich geht es weiter · 24/7 Azrael Sentinel") or "").strip()
 
 
 # ---- Öffentliche Links (kein Geheimnis) -------------------------------------

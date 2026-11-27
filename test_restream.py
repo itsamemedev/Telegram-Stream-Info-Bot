@@ -8194,7 +8194,7 @@ def test_v40_w113_restream_stability():
     assert "self._marke_setzen(info, h, p)" in src, "_update_health setzt die Marke nicht"
     assert "async def _stall_watch(self, rid, proc, pname=None):" in src, "Waechter fehlt"
     _sw = src[src.index("    async def _stall_watch(self, rid, proc, pname=None):"):
-              src.index("    async def start(self, rid, _attempts=0, _src_watch=False):")]
+              src.index("    async def start(self, rid, _attempts=0, _src_watch=False,")]
     assert 'info.get("proc") is not proc' in _sw, \
         "alter Waechter kann den frischen Prozess killen"
     assert "reader_alive=" in _sw, "blinder Waechter schiesst trotzdem"

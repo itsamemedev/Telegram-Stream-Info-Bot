@@ -30,6 +30,27 @@ Steuerroute meldete "kein Manager", während er läuft.
 ACTIVE_ALL = {}
 
 
+# v5.13: Pausen-Sendungen der 24/7-Sendung — rid -> monotonic seit wann. Ein
+# Restream steht hier, solange er nur das Pausenbild sendet, weil keiner der
+# getrackten Nutzer live ist. Gelesen von der Living-Title-Schleife (sie setzt
+# dann den Pausentitel statt eines Themas) und vom Deck.
+PAUSE = {}
+
+
+def pause_an(rid, jetzt):
+    """Die Pause beginnt (oder laeuft schon — dann bleibt ihr Anfang)."""
+    PAUSE.setdefault(rid, jetzt)
+
+
+def pause_aus(rid):
+    """Die Pause endet. -> ihr Anfang, oder None, wenn keine lief."""
+    return PAUSE.pop(rid, None)
+
+
+def pausiert(rid) -> bool:
+    return rid in PAUSE
+
+
 # Sendebild-Layout zur Laufzeit ("studio" | "burnin"). Ein Dict statt einer
 # Zeichenkette, damit es teilbar ist — ein nackter String wäre eine Kopie.
 LAYOUT = {"mode": "studio"}
