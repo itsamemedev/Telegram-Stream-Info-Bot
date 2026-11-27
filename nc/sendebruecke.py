@@ -363,13 +363,18 @@ class Bruecke:
                    wird frei. Ein Streamer, der nur kurz neu verbindet, kommt
                    damit ohne Abbruch zurück.
     redigieren     f(text) -> text: stderr der Zubringer kann Adressen tragen.
+    fueller_sofort v5.13: das Pausenbild darf den Sender sofort einrichten —
+                   für eine Pausen-Sendung ohne Quelle (24/7). Dort gibt es
+                   keine Quelle, auf deren Bildgröße zu warten wäre, und
+                   Warten hiesse 20 s ohne ein Byte zur Plattform.
     """
 
     def __init__(self, schreib_fd, fueller_cmd, zubringer_cmd, quelle,
                  erste_url=None, luecke_s=3.0, offline_s=120.0, redigieren=None,
                  name="", uhr=time.monotonic, popen=subprocess.Popen,
                  neustart_min_s=1.0, neustart_max_s=30.0, unklar_s=600.0,
-                 start_warten_s=20.0, anlauf_s=20.0, start_warten_max_s=45.0):
+                 start_warten_s=20.0, anlauf_s=20.0, start_warten_max_s=45.0,
+                 fueller_sofort=False):
         self._fd = schreib_fd
         self._fueller_cmd = fueller_cmd
         self._zubringer_cmd = zubringer_cmd
@@ -387,7 +392,15 @@ class Bruecke:
         self.start_warten_s = float(start_warten_s)
         self.start_warten_max_s = max(self.start_warten_s, float(start_warten_max_s))
         self.anlauf_s = float(anlauf_s)
-        self._fueller_frei = False
+        self._fueller_frei = bool(fueller_sofort)
+        # v5.13: Füller-Wache. Bis v5.12 hielt das Pausenbild hoechstens
+        # offline_s (120 s) — ein Absturz dort fiel nicht auf. In der
+        # 24/7-Sendung steht es Stunden, und ohne Füller verhungert der Sender.
+        self._fueller_start = None
+        self._fueller_wieder = 0.0
+        self._fueller_pause = float(neustart_min_s)
+        self._fueller_tausch = False
+        self.fueller_neustarts = 0
 
         self._sperre = threading.Lock()
         self._startsperre = threading.Lock()
@@ -439,6 +452,7 @@ class Bruecke:
                                   if self.aktiv == FUELLER else 0.0)
             return {"aktiv": self.aktiv, "wechsel": self.wechsel,
                     "fueller_s": round(f, 1), "grund": self.grund,
+                    "fueller_neustarts": self.fueller_neustarts,
                     "tonlos": self._tonlos, "neukodieren": self._neukodieren,
                     "ende": self.ende}
 
@@ -487,8 +501,9 @@ class Bruecke:
                 # zuerst, lief eine 1080x1920-Quelle die ganze Sitzung als
                 # 720x1280 hinaus. Also bekommt die Quelle den Vortritt — das
                 # Pausenbild erst, wenn sie einmal lief oder zu lange ausbleibt.
-                # Verzerrt wird dabei nichts Sichtbares: das Pausenbild ist eine
-                # einfarbige Flaeche.
+                # Verzerrt wird dabei nichts: seit v5.13 kann das Pausenbild ein
+                # Bild sein (nc/pausenbild), aber es ist wie die Quelle 9:16
+                # (720x1280), und skaliert wird proportional.
                 if self._quelle_hat_vortritt():
                     return False
                 self._fueller_frei = True
@@ -753,10 +768,95 @@ class Bruecke:
 
     def start(self):
         self._fue = self._starte(FUELLER, self._fueller_cmd)
-        t = threading.Thread(target=self._wache, daemon=True,
-                             name="bruecke-%s-wache" % self.name)
-        t.start()
-        self._threads.append(t)
+        self._fueller_start = self._uhr()
+        for ziel, rolle in ((self._wache, "wache"), (self._fueller_wache, "fueller")):
+            t = threading.Thread(target=ziel, daemon=True,
+                                 name="bruecke-%s-%s" % (self.name, rolle))
+            t.start()
+            self._threads.append(t)
+
+    # ---- v5.13: das Pausenbild bleibt da ------------------------------------
+    FUELLER_TAKT_S = 1.0
+
+    def _fueller_wache(self):
+        """Eigener Faden statt eines Schritts in _wache: die haengt bis zu 90 s
+        in der Aufloesung der Quelle und danach im Backoff (bis 30 s). So
+        lange ohne Pausenbild bekaeme der Sender nichts, und der
+        Stillstands-Waechter (75 s) beendete die Sendung."""
+        while not self._halt.wait(self.FUELLER_TAKT_S):
+            try:
+                self._fueller_pruefen()
+            except Exception as e:
+                laut, weg = _meldetakt.melden("sendebruecke-fueller", "wache", self._uhr())
+                if laut:
+                    log.error("Sendebrücke %s: Füller-Wache gestört (%s: %s)%s", self.name,
+                              type(e).__name__, e, _meldetakt.zusatz(weg))
+
+    def _fueller_pruefen(self) -> bool:
+        """Ist das Pausenbild gestorben (oder getauscht), neu starten. -> gestartet?
+
+        Ein neuer Prozess beginnt seine Zeitstempel wieder bei null. Laeuft
+        das Pausenbild gerade auf Sendung, beginnt deshalb ein neuer
+        Abschnitt — ohne ihn verwuerfe der Umschreiber jedes Paket als
+        „rueckwaerts", und zwar so lange, wie der alte Prozess gelaufen war.
+
+        Die Datensperre wird OHNE die Startsperre genommen: daten() haelt sie
+        waehrend os.write, und stop() wartet auf die Startsperre — beide
+        zugleich zu halten liesse stop() hinter einem Sender haengen, der
+        nicht liest (dieselbe Regel wie in stop())."""
+        fue = self._fue
+        if fue is None or fue.poll() is None or self._halt.is_set():
+            return False
+        jetzt = self._uhr()
+        if jetzt < self._fueller_wieder:
+            return False
+        if self._fueller_tausch:
+            self._fueller_tausch = False
+            log.info("Sendebrücke %s: neues Pausenbild — Füller neu gestartet.", self.name)
+        else:
+            lebte = jetzt - (self._fueller_start or jetzt)
+            # Ein Absturz nach langem Lauf ist ein Einzelfall, eine Folge
+            # schneller Abstuerze ein kaputtes Bild oder Kommando: dann warten.
+            self._fueller_pause = (self._neustart_min if lebte >= 60.0
+                                   else min(self._neustart_max, self._fueller_pause * 2))
+            laut, weg = _meldetakt.melden("sendebruecke-fueller", "ende", jetzt)
+            if laut:
+                log.error("Sendebrücke %s: das Pausenbild endete nach %.0f s (rc=%s) — "
+                          "wird neu gestartet; bis dahin bekommt der Sender in der Pause "
+                          "kein Bild. ffmpeg: %s%s", self.name, lebte, fue.returncode,
+                          " | ".join(self.stderr[FUELLER][-3:]) or "kein stderr",
+                          _meldetakt.zusatz(weg))
+        self._leitungen_zu(fue)
+        with self._sperre:
+            if self.aktiv == FUELLER:
+                self._um.abschnitt(self._wand())
+        with self._startsperre:
+            if self._halt.is_set():
+                return False
+            self._fue = self._starte(FUELLER, self._fueller_cmd)
+            self.fueller_neustarts += 1
+        self._fueller_start = jetzt
+        self._fueller_wieder = jetzt + self._fueller_pause
+        return True
+
+    def fueller_tauschen(self, cmd) -> bool:
+        """Ein neues Pausenbild, ohne die Sendung zu beenden (Deck-Upload).
+
+        Der laufende Füller endet, die Füller-Wache startet den neuen sofort
+        — ohne Backoff und ohne Fehlermeldung. -> False, wenn die Brücke
+        schon steht."""
+        with self._startsperre:
+            if self._halt.is_set():
+                return False
+            self._fueller_cmd = cmd
+            fue = self._fue
+            # Vor start() gibt es keinen Füller: der erste nimmt das neue
+            # Kommando ohnehin, und ein stehen gebliebenes Tausch-Zeichen
+            # meldete dessen ersten Absturz später als „neues Pausenbild".
+            self._fueller_tausch = fue is not None
+            self._fueller_wieder = 0.0
+        self._beende(fue)
+        return True
 
     def stop(self):
         with self._startsperre:

@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.12.1"
-CODENAME = "Tonprobe"
+VERSION = "5.13.0"
+CODENAME = "Nachtwache"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,21 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.13.0",
+        "date": "2026-11",
+        "title": "Nachtwache",
+        # Minor-Fassung: 24/7-Sendung mit Pausenbild (gewuenscht am 27.11.) und
+        # die Reparatur der unlesbaren Tonkoepfe vom 21.-23.11.
+        "highlights": [
+            "24/7-Sendung (RESTREAM_DAUERSENDUNG=1): ist kein getrackter Nutzer live, sendet der Restream ein Pausenbild statt zu enden — im Standard- und im Text-Modus, mit allen Overlays; kommt derselbe Nutzer zurueck, schaltet die Sendebruecke nahtlos, ein anderer uebernimmt nach kurzem Neuaufbau",
+            "Pausenbild: AZRAEL als Vorgabe, ein eigenes PNG/JPEG im Deck hochladbar — vor dem Ablegen geprueft und sofort in jeder laufenden Sendung, ohne sie zu beenden; „Zurueck zu AZRAEL“ stellt die Vorgabe wieder her",
+            "Deck: Kasten „24/7-Sendung — Pausenbild“ im Restream-Reiter mit Schalter (wirkt ohne Neustart), Vorschau im Sendeformat 9:16 und den laufenden Pausen",
+            "Waehrend der Pause: Kanaltitel aus RESTREAM_PAUSE_TITEL und kein Live-Ping an die Community — der kommt erst, wenn wirklich jemand sendet",
+            "Die Sendebruecke startet einen abgestuerzten Fueller selbst neu; bisher hielt das Pausenbild hoechstens zwei Minuten, und ein Absturz fiel nie auf",
+            "Tonspuren zurueck: Aufnahmen mit unlesbarem AAC-Kopf (21.–23.11.) werden am Ende jeder Aufnahme und vor jedem Upload repariert — nur die Bytes des Tonkopfs, gepruefte Wahl per Dekodierprobe; tools/tonspur_reparieren.py repariert den Bestand ohne Bot, Stille nur noch, wenn nichts hilft",
+        ],
+    },
     {
         "version": "5.12.1",
         "date": "2026-11",

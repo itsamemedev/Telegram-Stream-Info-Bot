@@ -29,6 +29,7 @@ import shutil
 import threading
 import time
 
+from nc import aacreparatur as _aacrep  # v5.13: Tonkopf reparieren statt Stille
 from nc import encodeschlange as _encodeschlange  # v4.2-W174
 from nc import kindprozess as _kind  # v4.2-W120
 from nc import meldetakt as _takt
@@ -245,6 +246,14 @@ async def messen(pfad):
     kopf = await _kopf_lesen(pfad)
     laenge = dauer_aus_kopf(kopf)
     ersetzen = await _ton_kaputt(pfad, kopf)
+    if ersetzen:
+        # v5.13: erst den Tonkopf reparieren — die Tondaten sind meist heil,
+        # nur ihr Kopf ist unlesbar (nc/aacreparatur). Gelingt das, geht die
+        # Aufnahme MIT Ton hinaus; die Stille unten ist der Rueckfall.
+        erg = await _aacrep.reparieren(pfad, wer="Upload")
+        if erg.get("lage") in ("repariert", "gesund"):
+            laenge = await _dauer_ffprobe(pfad) or laenge
+            return laenge, False
     if ersetzen:
         laut, weg = _takt.melden("videoteil-ton", "decoder", time.monotonic())
         if laut:

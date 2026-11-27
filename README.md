@@ -62,7 +62,7 @@
 | | | |
 |---|---|---|
 | **🔍 Erkennen** — adaptives Polling mit Anti-Flap-Hysterese; jede Zeile im Deck sagt, wann sie zuletzt geprüft wurde | **⏺️ Aufnehmen** — dreistufiger Recorder (ffmpeg → streamlink → yt-dlp) mit Preflight, Tonspur-Prüfung und Hänger-Erkennung | **📡 Weitersenden** — Kick, Twitch und YouTube gleichzeitig, Ziel-Verifikation gegen die Plattform-APIs |
-| **🛡️ Moderieren** — SENTINEL-SHIELD gegen Doxxing und Hass, deterministisch und **vor** jeder KI | **🤖 Mitreden** — AZRAEL antwortet in drei Chats, reagiert aufs Sendebild und steht als Figur im Bild | **📊 Auswerten** — Deck mit 391 API-Routen, Wissensgraph, Einnahmen-Journal mit Hash-Kette, PWA |
+| **🛡️ Moderieren** — SENTINEL-SHIELD gegen Doxxing und Hass, deterministisch und **vor** jeder KI | **🤖 Mitreden** — AZRAEL antwortet in drei Chats, reagiert aufs Sendebild und steht als Figur im Bild | **📊 Auswerten** — Deck mit 395 API-Routen, Wissensgraph, Einnahmen-Journal mit Hash-Kette, PWA |
 
 <details>
 <summary><b>🔎 Vollständige Funktionsliste</b></summary>
@@ -80,10 +80,10 @@
 | **Sentinel-Flotte** | 16 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank, prometheus, grafana) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
 | **Geld** | Spenden-Telemetrie (Schätzwerte) · getrenntes Einnahmen-Journal (`nc/ledger.py`) mit Hash-Kette und CSV-Export fürs Finanzamt |
-| **Dashboard** | 391 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
+| **Dashboard** | 395 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · Umzug per `update.sh --mariadb` mit Nachzählen · zentrales Schema-Modul · Export-Werkzeug · Datenbank-Wächter |
-| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~627 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
+| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~629 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
 | **Beobachtung** | `/metrics` für Prometheus · Grafana-Dashboard mit jedem Messwert · 16 Alarmregeln mit Tests · Einrichtung per `tools/observability.sh` |
 
 </details>
@@ -120,8 +120,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 28.193 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
-    BOT -->|configure| NC["nc/ — 217 Fachmodule<br/>41 Blueprints"]:::lib
+    BOT["bot.py<br/>Monolith · 28.367 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT -->|configure| NC["nc/ — 219 Fachmodule<br/>41 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
     BOT --> DB[("SQLite oder MariaDB<br/>+ Einstellungen")]:::db
@@ -204,7 +204,7 @@ löst nichts aus; ein Zeitplan zieht nie still eine Datenbank um.
 
 ## ⚙️ Einstellungen
 
-**Im Deck, Reiter „Einstellungen“.** Alle rund 627 Variablen aus `.env.example`
+**Im Deck, Reiter „Einstellungen“.** Alle rund 629 Variablen aus `.env.example`
 mit Gruppe, Vorgabe und Beschreibung, durchsuchbar. Je Zeile steht, woher der
 Wert kommt — *vom Deck gesetzt*, *aus der .env* oder *Vorgabe*. Gespeichert wird
 in der Datenbank (SQLite oder MariaDB); die Werte gelten beim nächsten Start
@@ -557,8 +557,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 28.193 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 391 Routen und 674 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 28.367 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 395 Routen und 675 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -572,6 +572,21 @@ templates/   Deck, Brain-Seite, Overlay, PWA      website/   öffentliche Seite
 locales/     de · en · es                          tools/     Installer, update.sh, Prüfwerkzeuge
 deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Changelog
 ```
+
+---
+
+## 🆕 Neu in v5.13
+
+**„Nachtwache“ (5.13.0)** — der Restream geht auf Wunsch rund um die Uhr live
+(`RESTREAM_DAUERSENDUNG=1`): ist keiner der getrackten Nutzer live, sendet er
+ein Pausenbild, bis der nächste live kommt — im Standard- und im Text-Modus,
+mit allen Overlays. Kommt derselbe Nutzer zurück, schaltet die Sendebrücke
+nahtlos; ein anderer übernimmt nach kurzem Neuaufbau. Pausenbild ist AZRAEL,
+ein eigenes Bild lädt man im Deck hoch (Restream › „24/7-Sendung —
+Pausenbild“), und es geht sofort in jede laufende Sendung. Dazu kommen die
+Tonspuren zurück: Aufnahmen mit unlesbarem AAC-Kopf werden repariert statt
+mit Stille hochgeladen, der Bestand per `python3 tools/tonspur_reparieren.py
+recordings/`.
 
 ---
 
@@ -885,12 +900,12 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **5.12.1** — „Tonprobe“ (2026.11) |
-| Flask-Routen | 391 (34 in `bot.py` · 357 in `nc/routes/`) |
+| Aktuelle Version | **5.13.0** — „Nachtwache“ (2026.11) |
+| Flask-Routen | 395 (34 in `bot.py` · 361 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
-| Fachmodule | 217 in `nc/` (+41 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 219 in `nc/` (+41 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 16 |
-| Konfigurationsvariablen | ~627 |
+| Konfigurationsvariablen | ~629 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |
 
 Nächster großer Schritt: `bot.py` weiter zerlegen — **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.

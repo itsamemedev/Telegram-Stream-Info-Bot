@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **28.193 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
+`bot.py` hat **28.367 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -41,8 +41,8 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 391 Routen (34 in `bot.py`, 357 in
-`nc/routes/`), 67 Slash-Commands, 674 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`find` antwortet aus `.claude/INDEX.md` — 395 Routen (34 in `bot.py`, 361 in
+`nc/routes/`), 67 Slash-Commands, 675 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -71,9 +71,9 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  217 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  219 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           41 Flask-Blueprints mit 357 weiteren API-Routen
+    nc/routes/           41 Flask-Blueprints mit 361 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -348,6 +348,17 @@ Dieselbe Welle fand zwei Gründe für „Teil bleibt 10.9 MB > 9 MB": maxrate
 Segment-Muxer, der den ersten erzwungenen Keyframe durch Rundung verpasste —
 erster Teil 23 s statt 15 s. Dafür nennt die ffmpeg-Doku `-segment_time_delta`.
 Gemessen, nicht vermutet: alter Stand 9,91 MB bei 9 MB Ziel, neuer 7,5 MB.
+
+**Was zwei Minuten hält, ist noch nicht dauerhaft.** Das Pausenbild der
+Sendebrücke stand bis v5.12 höchstens `RESTREAM_BRUECKE_OFFLINE_S` (120 s), und
+ein abgestürzter Füller wurde nie neu gestartet — aufgefallen ist das nie. Mit
+der 24/7-Sendung (v5.13) steht es Stunden: ohne Füller verhungert der Sender,
+und der Stillstands-Wächter beendet die Sendung. Seither eine eigene
+Füller-Wache. Ein neuer Prozess beginnt seine Zeitstempel bei null; läuft das
+Pausenbild gerade, muss deshalb ein **neuer Abschnitt** beginnen, sonst
+verwirft `TsUmschreiber` jedes Paket als „rückwärts" — so lange, wie der alte
+Prozess lief. Die Mutationsprobe hat genau das gezeigt. **Wer eine Haltezeit
+auf unendlich setzt, prüft jeden Teil, der bis dahin nur kurz leben musste.**
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
 pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —
@@ -1351,6 +1362,22 @@ geschrieben. Wer `app_config` ändert, geht darüber. **Ist eine Klasse an
 einer Stelle behoben, steht sie meistens daneben — suchen, bevor die Welle
 schließt.**
 
+**Ein Upload aus dem Deck geht nicht über `apiPost()`.** Der Helfer verpackt
+jeden Körper als JSON — ein `FormData` käme als `{}` an, und der Server lehnte
+jedes Bild als „keine Datei" ab, ohne dass im Deck etwas falsch aussähe. Uploads
+laufen über `fetch(…, {body: fd})` (Pausenbild, DB-Import). Und `send_file()`
+löst einen **relativen** Pfad gegen den Ordner der App auf, nicht gegen das
+Arbeitsverzeichnis: `RECORDINGS_DIR` ist relativ, die Vorschau wäre 404,
+während der Füller dasselbe Bild sendet. Beides hält der v5.13-Vertrag fest
+(`_test_v513_pausenbild_deck`); die erste Fassung der abspath-Prüfung ist dabei
+entwischt, weil sie nur einen schon absoluten Ablageort sah.
+
+**Der Übersetzungs-Extraktor liest Template-Literale nur einzeilig.** Die
+Ansichten des Decks entstehen als mehrzeiliges `` root.innerHTML=`…` `` — ihr
+statischer Text (Knöpfe, Kopfzeilen, Hinweise) landet damit nie im Katalog und
+bleibt in der englischen Oberfläche deutsch. Bis das behoben ist: neuer Text in
+solchen Ansichten als `${T('…')}`, das findet der Extraktor.
+
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.
 
@@ -1377,7 +1404,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 627 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 629 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

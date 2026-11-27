@@ -9,6 +9,63 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.13.0] — 2026-11-27 · „Nachtwache" (24/7-Sendung, Tonspuren zurück)
+
+Gewünscht vom Betreiber am 27.11.: „für die Zeit, wo kein getrackter User live
+ist, ein Pausenbild, das in der Abwesenheit live gestreamt wird, bis der
+nächste getrackte User live kommt — im Standard- und Text-Mode. Wir gehen
+24/7 live."
+
+### Neu
+
+- **`RESTREAM_DAUERSENDUNG=1`** (Vorgabe aus — eine Sendung rund um die Uhr
+  kostet einen Sender-Encode, das entscheidet der Betreiber): der Restream
+  endet nicht mehr an einer offline Quelle, die Sendebrücke sendet das
+  Pausenbild. Ist niemand live und der Platz frei, startet der Scheduler eine
+  Pausen-Sendung über das erste Auto-Restream-Ziel.
+- **Übergabe:** derselbe Nutzer kommt nahtlos zurück (die Brücke schaltet
+  selbst); ein ANDERER getrackter Nutzer bekommt den Platz mit kurzem
+  Neuaufbau der Verbindung (entschieden am 27.11.).
+- **Pausenbild:** eigenes Bild (`recordings/pausenbild/pausenbild.png|.jpg`),
+  sonst AZRAEL (`RESTREAM_AVATAR`), sonst die dunkle Fläche wie bisher. Es
+  läuft durch denselben Sender wie die Quelle, also mit jedem Overlay
+  (html, text, Studio, Burn-in). Gemessen: 3,1 s CPU je 30 s Ausgabe gegen
+  2,8 s für die Fläche.
+- **Kanaltitel in der Pause:** `RESTREAM_PAUSE_TITEL` (Kick, über die
+  Living-Title-Schleife); kein Community-Ping für eine Pause, dafür einer,
+  wenn die Quelle wirklich auf Sendung geht.
+- **Im Deck** (Restream, Kasten „24/7-Sendung — Pausenbild"): Schalter für
+  `RESTREAM_DAUERSENDUNG` (wirkt ohne Neustart), Vorschau im Sendeformat 9:16
+  mit den Rändern wie auf Sendung, eigenes Bild hochladen (PNG/JPEG, bis 8 MB
+  und 8192 px je Kante) und „Zurück zu AZRAEL", dazu die laufenden Pausen.
+  Ein neues Bild geht **sofort** in jede laufende Sendung, ohne sie zu
+  beenden — der Füller wird getauscht, nicht der Sender. Geprüft wird vor dem
+  Ablegen, an den Bytes (PNG-IHDR, JPEG-SOF): ein Bild, das ffmpeg nicht
+  öffnen kann, beendete den Füller bei jedem Neustart wieder. Abgelegt wird
+  atomar; ein halbes Bild bleibt nie liegen.
+
+### Behoben
+
+- **Ein gestorbener Füller kam nie wieder.** Bisher hielt das Pausenbild
+  höchstens zwei Minuten, ein Absturz fiel nicht auf. Jetzt startet ihn eine
+  eigene Wache neu — mit neuem Zeitstempel-Abschnitt, sonst verwürfe der
+  Umschreiber jedes Paket als „rückwärts".
+- **Ein Reparatur-Neustart beendete die Pause.** Wächter und Wiederanlauf
+  lösen die Quelle neu auf; „offline" hieß dann „kein Start". Eine Pause
+  läuft nach einem internen Neustart wieder als Pause an.
+- **Tonspuren kommen zurück.** Aufnahmen vom 21. bis 23.11. tragen einen
+  unlesbaren AAC-Kopf („aac (HE-AAC), 192000 Hz" — „Error while opening
+  decoder"); die Upload-Warteschlange scheiterte daran alle 20 bis 80 Minuten,
+  und v5.12.1 rettete die Uploads nur mit Stille. Die Tondaten sind heil.
+  `nc/aacreparatur.py` schreibt den Kopf neu — gewählt mit dem ffmpeg des
+  Servers an einer 20-s-Probe: fehlerfrei dekodieren UND die Dauer muss
+  stimmen (44,1 und 48 kHz dekodieren beide fehlerfrei, der falsche läuft
+  8,8 % zu langsam). Geändert werden nur die Bytes des Kopfs, gleiche Länge,
+  Änderungszeit bleibt. Greift am Ende jeder Aufnahme und vor jedem Upload;
+  für den Bestand: `python3 tools/tonspur_reparieren.py recordings/`.
+
+---
+
 ## [5.12.1] — 2026-11-27 · „Tonprobe" (Fehler aus dem Log vom 26./27.11.)
 
 Gemeldet vom Betreiber mit Fehler- und Debug-Log: „Behebe Fehler, Probleme und

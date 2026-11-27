@@ -635,6 +635,7 @@ from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Po
 from nc import discordziele as _nc_discordziele  # v4.2-W168: ein Clip-Kanal
 from nc import discordaufnahme as _nc_dcaufnahme  # v4.2-W175: ganze Aufnahme nach Discord
 from nc import uploadschlange as _nc_uschlange  # v4.2-W175: Warteschlange wiederholt Fehlschlaege
+from nc import pausenbild as _nc_pausenbild  # v5.13: Pausenbild der 24/7-Sendung
 from nc import linkvideo as _nc_linkvideo  # v4.2-W169: Link gepostet -> Video als Antwort
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat neu darf
@@ -1802,6 +1803,9 @@ _twoauth.configure(
 _ytoauth.configure(
     os.path.join(RECORDINGS_DIR, "youtube_oauth.json"),
     os.getenv("YOUTUBE_REDIRECT_URI", ""))
+# v5.13: das eigene Pausenbild liegt neben den OAuth-Speichern — der taegliche
+# Aufraeumer loescht unter RECORDINGS_DIR nur Videodateien (v5.11.3).
+_nc_pausenbild.configure(os.path.join(RECORDINGS_DIR, "pausenbild"), vorgabe=RESTREAM_AVATAR)
 
 LOG_DIR = "logs"
 LOG_MAX_BYTES   = _env_int("LOG_MAX_BYTES", 10*1024*1024)   # 10 MB
@@ -14771,6 +14775,16 @@ _nc_rscmd.configure(
     TTS_VOICE_GAIN=_TTS_VOICE_GAIN)
 
 
+def _restream_fueller_cmd():
+    """v5.13: der Fueller der Sendebruecke mit dem gewaehlten Pausenbild —
+    eigenes Bild, sonst AZRAEL (RESTREAM_AVATAR), sonst die Flaeche."""
+    bild, _herkunft = _nc_pausenbild.waehlen(RESTREAM_AVATAR)
+    return _nc_rscmd.fueller(bild=bild)
+
+
+_nc_rsstate.FUELLER_CMD["fn"] = _restream_fueller_cmd   # v5.13: Bildtausch aus dem Deck
+
+
 def _build_restream_cmd(*a, **kw):
     # v4.2-W16: verbatim nach nc/restreamcmd.py extrahiert (bitgenau geprueft).
     # Der gebaute Befehl traegt in -headers einen vollstaendigen Cookie-Header —
@@ -14810,6 +14824,10 @@ class RestreamManager:
         # senden mit Stille statt am harten Ton-Map zu sterben. Geleert bei
         # jedem anderen Prozessende (siehe dort) und beim Stop.
         self._tonlos = set()
+        # v5.13: Pausen-Sendungen, die intern neu gestartet werden (Waechter,
+        # Wiederanlauf). Sie laufen wieder als Pause an, solange die Quelle
+        # offline ist — sonst endete die 24/7-Sendung an jedem Reparaturversuch.
+        self._pause_wieder = set()
         self._failover = set()      # v37 W3b: rids, die gerade aufs Backup-Ingest umgeschaltet sind
         self._chatguards = {}       # F92b: rid -> Chat-Guardian-Task (Studio-Panel-Feed)
         self._srcwatch = {}         # V37-SRCFAIL: rid -> Quellen-Online-Watcher-Task
@@ -15400,7 +15418,11 @@ class RestreamManager:
             _loop_fehler(f"restream-stall-watch{_wer}", e)
 
     @_nc_rutil.ein_start_je_ziel       # v4.2-W132: kein Doppelstart desselben Ziels
-    async def start(self, rid, _attempts=0, _src_watch=False):
+    async def start(self, rid, _attempts=0, _src_watch=False, _pause=False):
+        """_pause (v5.13): Pausen-Sendung der 24/7-Sendung — ohne Quelle, nur
+        das Pausenbild der Sendebruecke. Die Bruecke loest die Quelle danach
+        selbst weiter auf und schaltet nahtlos um, sobald dieser Nutzer live
+        kommt; einen ANDEREN Nutzer uebergibt der Quellen-Waechter."""
         ok_en, why = _restream_enabled()
         if not ok_en:
             self._set_status(rid, "idle", err=f"Restream deaktiviert: {why}")
@@ -15494,8 +15516,24 @@ class RestreamManager:
         # Quell-URL ist verbrannt. Den 15s-Cache hier zu befragen hiesse, exakt
         # die URL erneut zu bekommen, an der ffmpeg gerade gestorben ist. Beim
         # ERSTEN Start bleibt der Cache aktiv: dort schuetzt er vor 429.
-        src, err = await self._resolve_source(row["source_username"],
-                                              force_fresh=bool(_attempts))
+        if _pause:
+            # v5.13: keine Quelle aufloesen — gerade darum geht es. Ohne
+            # Sendebruecke gibt es kein Pausenbild, also auch keine Pause.
+            if not _nc_rscfg.bruecke(True)[0]:
+                _grund = ("Pausen-Sendung braucht die Sendebruecke "
+                          "(RESTREAM_BRUECKE=auto)")
+                self._set_status(rid, "idle", err=_grund)
+                return {"ok": False, "error": _grund}
+            src, err = None, None
+        else:
+            src, err = await self._resolve_source(row["source_username"],
+                                                  force_fresh=bool(_attempts))
+            if (err == "offline" and rid in self._pause_wieder
+                    and _nc_rscfg.dauersendung() and _nc_rscfg.bruecke(True)[0]):
+                log.info("Restream #%d: Neustart einer Pausen-Sendung — @%s ist weiter "
+                         "offline, das Pausenbild bleibt.", rid, row["source_username"])
+                _pause, src, err = True, None, None
+        self._pause_wieder.discard(rid)
         if err:
             # 'offline' = Quelle nachweislich nicht live → Status 'offline' (KEIN Fehler,
             # nur idle). 'unknown' = Resolve gescheitert (Proxy/Rate-Limit) → 'unknown',
@@ -15511,12 +15549,13 @@ class RestreamManager:
         # V37-B91b: die aufgelöste Quell-URL kann trotzdem die tote _hd-
         # Variante sein (CDN-Quirk aus dem Log 11.07.). Vor dem ffmpeg-
         # Restream prüfen — spart die 27-60s Reconnect-Schleife auch hier.
-        _src2 = await _preflight_url(src, who=f"restream:{rid}")
-        if not _src2:
+        # v5.13: die Pausen-Sendung hat keine Adresse zu pruefen.
+        _src2 = "" if _pause else await _preflight_url(src, who=f"restream:{rid}")
+        if not _pause and not _src2:
             self._set_status(rid, "unknown",
                              err="Quell-URL antwortet 404 (tot/Battle-Stage)")
             return {"ok": False, "error": "source_url_404"}
-        src = _src2
+        src = _src2 or None
         try: _lbl = row["label"] or ""
         except (IndexError, KeyError): _lbl = ""
         _nc_channels.RESTREAM_ACTIVE["obj"] = {"user": row["source_username"],
@@ -15600,6 +15639,14 @@ class RestreamManager:
         # Sie verlangt Neukodieren im Sender — deshalb VOR Drossel und Feeder.
         _bruecke_an, transcode = _nc_rscfg.bruecke(
             transcode, unabhaengig=(RESTREAM_MULTI_MODE == "independent" and _multi))
+        if _pause and not _bruecke_an:
+            # v5.13: im unabhaengigen Modus zieht jedes Ziel seine Quelle selbst
+            # — dort gibt es keine Bruecke und damit kein Pausenbild.
+            _grund = ("Pausen-Sendung braucht die Sendebruecke — im unabhaengigen "
+                      "Modus (RESTREAM_MULTI_MODE=independent) gibt es keine")
+            log.warning("Restream #%d: %s", rid, _grund)
+            self._set_status(rid, "idle", err=_grund)
+            return {"ok": False, "error": _grund}
         if _nc_durch.ist(src) and not _bruecke_an:
             # v4.2-W148 (Codex #194): ohne Bruecke ginge die Pseudo-Adresse an
             # ein gewoehnliches ffmpeg, und KEINES der Ziele liefe an — ohne
@@ -15737,11 +15784,12 @@ class RestreamManager:
         _nc_rutil.freigeben(self, rid)   # ab hier greift `rid in self._procs`
         if _bruecke_an:
             _br = _nc_bruecke.Bruecke(
-                _br_fds[1], _nc_rscmd.fueller(), _nc_rscmd.zubringer,
+                _br_fds[1], _restream_fueller_cmd(), _nc_rscmd.zubringer,
                 self._bruecke_quelle(row["source_username"], rid),
                 erste_url=src, luecke_s=_nc_rscfg.bruecke_luecke(),
                 offline_s=_nc_rscfg.bruecke_offline(),
-                redigieren=_redact_stream_urls, name="#%d" % rid)
+                redigieren=_redact_stream_urls, name="#%d" % rid,
+                fueller_sofort=_pause)
             self._procs[rid]["bruecke"] = _br
             try:
                 await asyncio.to_thread(_br.start)     # Popen — neben dem Loop
@@ -15814,22 +15862,14 @@ class RestreamManager:
         #
         # Deshalb jetzt eine ZEITSPERRE neben dem Mengen-Schutz: sie haelt auch
         # dann, wenn ein kuenftiger Pfad das Vergessen wieder einbaut.
-        _jetzt_ping = _time_mod.monotonic()
-        if (COMMUNITY_LIVE_PING_ENABLED and _attempts == 0 and DISCORD_WEBHOOK_URL
-                and _community.darf_pingen(_COMMUNITY_PINGED.get(rid), _jetzt_ping,
-                                           COMMUNITY_LIVE_PING_MIN_GAP_S)):
-            _COMMUNITY_PINGED[rid] = _jetzt_ping
-            try:
-                # BH-11: die Ziele DIESES Restreams (mit seinen Overrides),
-                # nicht die globale Liste — sonst nannte der Ping Plattformen,
-                # auf die dieser Restream gar nicht sendet.
-                _plats = [n.capitalize() for n, _ in _targets] or ["Kick"]   # v4.0-W77
-                _msg = _community.live_ping(
-                    _community.anzeigename(os.getenv("STREAMER_NAME"), "Der Stream"),
-                    platforms=_plats)
-                _spawn(_discord_notify(_msg), name="comm-liveping")
-            except Exception as _e:
-                log.debug("community live-ping: %s", _e)
+        # v5.13: eine Pausen-Sendung ist kein Live — der Ping kommt, wenn die
+        # Quelle wirklich auf Sendung geht (_pause_ende im Quellen-Waechter).
+        if _pause:
+            _nc_rsstate.pause_an(rid, _time_mod.monotonic())
+            log.info("Restream #%d: Pausen-Sendung auf %s — Pausenbild bis ein "
+                     "getrackter Nutzer live kommt.", rid, "+".join(n for n, _ in _targets))
+        elif _attempts == 0:
+            self._live_ping(rid, _targets)
         self._monitor_eintragen(rid)
         # v4.0-W113: Stillstands-Waechter. _monitor haengt an proc.wait() und
         # sieht deshalb nur den TOTEN ffmpeg — nicht den, der lebt und nichts
@@ -15854,7 +15894,9 @@ class RestreamManager:
             _restream_chat_guardian(rid, row["source_username"]))
         # V37-SRCFAIL: Quellen-Online-Watcher (nur nach Autostart). Prüft nur den
         # Live-Status der aktuellen Quelle und schaltet bei Offline aktiv um.
-        if _src_watch and RESTREAM_SRC_FAILOVER:
+        # v5.13: in der 24/7-Sendung immer — er haelt die Pause und uebergibt
+        # an den naechsten live Nutzer; ohne ihn stuende das Pausenbild ewig.
+        if (_src_watch and RESTREAM_SRC_FAILOVER) or _nc_rscfg.dauersendung():
             _old_sw = self._srcwatch.pop(rid, None)
             if _old_sw and not _old_sw.done():
                 _old_sw.cancel()
@@ -15866,6 +15908,91 @@ class RestreamManager:
         self._set_desired(rid, True)
         _RESTREAM_GUARD.note_started(rid, _time_mod.monotonic())
         return {"ok": True, "pid": proc.pid, "transcode": transcode}
+
+    async def _pause_oder_uebergabe(self, rid, current_user, rows):
+        """v5.13: die Quelle von #rid ist dauerhaft offline (24/7-Sendung).
+
+        Ist ein ANDERER getrackter Nutzer live, bekommt er den Platz: diese
+        Sendung endet, seine startet — der kurze Neuaufbau ist so entschieden
+        (27.11.), ein nahtloser Wechsel hiesse Chat, Titel und Overlay
+        waehrend der Sendung umzuhaengen. Ist keiner live, bleibt das
+        Pausenbild: -> False. Der eigene Nutzer ist hier nie Kandidat — kommt
+        er zurueck, schaltet die Bruecke nahtlos auf ihn."""
+        _cur = clean_username(current_user)
+        _neu = _nc_rsstate.PAUSE.get(rid) is None
+        _nc_rsstate.pause_an(rid, _time_mod.monotonic())
+        if _neu:
+            log.info("Restream #%d: @%s offline — Pausenbild auf Sendung (24/7), "
+                     "bis ein getrackter Nutzer live kommt.", rid, current_user)
+        for r in rows:
+            if clean_username(r["source_username"]) == _cur or r["id"] == rid:
+                continue
+            _src, _err = await self._resolve_source(r["source_username"])
+            if _err:
+                await asyncio.to_thread(self._reflect_source_status, r["id"], _err)
+                continue
+            log.info("Restream-Pause: @%s live → Übergabe von #%d an #%d (kurzer "
+                     "Neuaufbau der Verbindung).", r["source_username"], rid, r["id"])
+            self._srcwatch.pop(rid, None)      # sonst cancelte stop() uns selbst
+            await self.stop(rid, _keep_desired=True)
+            self._pause_wieder.discard(rid)    # nicht als Pause wiederbeleben
+            self._set_desired(rid, False)
+            await self.start(r["id"], _src_watch=True)
+            return True
+        return False
+
+    async def _pause_starten(self, r):
+        """v5.13: niemand live, Platz frei, 24/7-Sendung an — die Pausen-Sendung
+        laeuft ueber das erste Auto-Restream-Ziel (nach ID, wie die Auswahl
+        oben). Seine Bruecke schaltet nahtlos, sobald SEIN Nutzer live kommt;
+        jeden anderen uebergibt der Quellen-Waechter.
+
+        Scheitert der Start (kein Ingest, Bruecke aus), laut, aber gedrosselt:
+        der Scheduler fragt jede Runde, und eine Zeile je Runde waere Flut."""
+        res = await self.start(r["id"], _src_watch=True, _pause=True)
+        if res.get("ok") or res.get("already"):
+            _nc_meldetakt.zuruecksetzen("restream-pause")
+            return
+        laut, weg = _nc_meldetakt.melden("restream-pause", str(res.get("error"))[:60],
+                                         _time_mod.monotonic())
+        if laut:
+            log.error("24/7-Sendung: Pausen-Sendung über #%d startet nicht (%s) — "
+                      "ohne live Nutzer ist der Kanal offline. Abhilfe: Ziel #%d "
+                      "pruefen (Ingest/Key) oder RESTREAM_DAUERSENDUNG=0.%s", r["id"],
+                      res.get("error") or "?", r["id"], _nc_meldetakt.zusatz(weg))
+
+    def _pause_ende(self, rid, username):
+        """v5.13: der eigene Nutzer ist zurueck — die Pause endet, und die
+        Community erfaehrt, dass wirklich gesendet wird (beim Pausenstart kam
+        bewusst kein Ping)."""
+        if _nc_rsstate.pause_aus(rid) is None:
+            return
+        log.info("Restream #%d: @%s wieder live — Pause beendet, die Sendebrücke "
+                 "schaltet auf die Quelle.", rid, username)
+        info = self._procs.get(rid) or {}
+        self._live_ping(rid, info.get("tee_targets") or [])
+
+    def _live_ping(self, rid, targets):
+        """V37-COMMUNITY: Live-Ping nach Discord. v5.13 herausgeloest — der
+        Quellen-Waechter ruft ihn auch, wenn eine Pausen-Sendung in ein echtes
+        Live uebergeht; die Zeitsperre (W45) gilt fuer beide Wege."""
+        _jetzt_ping = _time_mod.monotonic()
+        if not (COMMUNITY_LIVE_PING_ENABLED and DISCORD_WEBHOOK_URL
+                and _community.darf_pingen(_COMMUNITY_PINGED.get(rid), _jetzt_ping,
+                                           COMMUNITY_LIVE_PING_MIN_GAP_S)):
+            return
+        _COMMUNITY_PINGED[rid] = _jetzt_ping
+        try:
+            # BH-11: die Ziele DIESES Restreams (mit seinen Overrides),
+            # nicht die globale Liste — sonst nannte der Ping Plattformen,
+            # auf die dieser Restream gar nicht sendet.
+            _plats = [n.capitalize() for n, _ in targets] or ["Kick"]   # v4.0-W77
+            _msg = _community.live_ping(
+                _community.anzeigename(os.getenv("STREAMER_NAME"), "Der Stream"),
+                platforms=_plats)
+            _spawn(_discord_notify(_msg), name="comm-liveping")
+        except Exception as _e:
+            log.debug("community live-ping: %s", _e)
 
     async def _bruecke_abraeumen(self, rid, info):
         """v4.2-W130: Sender weg -> seine Zubringer und das Pausenbild auch.
@@ -15941,13 +16068,20 @@ class RestreamManager:
                     if _err == "offline":
                         offline_hits += 1
                         _poll = _base                  # mögliche Trennung → schnell prüfen
-                        log.info("Restream #%d: Quelle @%s offline (%d/%d)",
-                                 rid, username, offline_hits, RESTREAM_SRC_OFFLINE_HITS)
+                        # v5.13: in der Pause der 24/7-Sendung laeuft der
+                        # Zaehler weiter — eine Zeile je Runde waeren Stunden
+                        # voller Wiederholungen.
+                        if offline_hits <= RESTREAM_SRC_OFFLINE_HITS:
+                            log.info("Restream #%d: Quelle @%s offline (%d/%d)",
+                                     rid, username, offline_hits, RESTREAM_SRC_OFFLINE_HITS)
                         if offline_hits >= RESTREAM_SRC_OFFLINE_HITS:
-                            log.info("Restream #%d: @%s dauerhaft offline → wechsle "
-                                     "zur nächsten Live-Quelle.", rid, username)
-                            await self._switch_to_next_live(rid, username)
-                            return    # dieser Watcher endet; der neue Start bekommt einen eigenen
+                            if offline_hits == RESTREAM_SRC_OFFLINE_HITS:
+                                log.info("Restream #%d: @%s dauerhaft offline → wechsle "
+                                         "zur nächsten Live-Quelle.", rid, username)
+                            if await self._switch_to_next_live(rid, username) is not False:
+                                return    # dieser Watcher endet; der neue Start bekommt einen eigenen
+                            # v5.13: Dauersendung, niemand sonst live — die Pause
+                            # bleibt, und die naechste Runde sieht wieder nach.
                     elif _err:
                         # unknown/Fehler: NICHT als offline werten, Zähler halten,
                         # aber schnell weiterprüfen (kein Hochfahren bei Unsicherheit).
@@ -15955,6 +16089,10 @@ class RestreamManager:
                     else:
                         offline_hits = 0               # wieder live gesehen → Zähler zurück
                         _poll = min(_cap, _poll + _base // 2)   # stabil live → sanft langsamer
+                        # v5.13: derselbe Nutzer ist zurueck — die Bruecke
+                        # schaltet selbst auf seine Quelle; hier endet nur der
+                        # Pausenzustand, und die Community erfaehrt es.
+                        self._pause_ende(rid, username)
                         if await self._ohne_bild_ausweichen(rid, username):
                             return    # v4.2-W159: der neue Start bekommt einen eigenen Waechter
                 except asyncio.CancelledError:
@@ -16016,7 +16154,12 @@ class RestreamManager:
 
     async def _switch_to_next_live(self, rid, current_user):
         """V37-SRCFAIL: aktuellen Restream stoppen und den NÄCHSTEN live Ziel
-           aus der auto_restream-Liste starten (Round-Robin ab dem aktuellen)."""
+           aus der auto_restream-Liste starten (Round-Robin ab dem aktuellen).
+
+           v5.13: in der 24/7-Sendung (RESTREAM_DAUERSENDUNG) erst suchen,
+           dann stoppen. -> False, wenn kein anderer Nutzer live ist: dann
+           bleibt dieser Restream mit dem Pausenbild auf Sendung, und der
+           Waechter sieht in der naechsten Runde wieder nach."""
         try:
             # v4.2-W117: neben dem Loop (Begruendung bei start()).
             rows = await db_async(lambda c: c.execute(
@@ -16024,6 +16167,8 @@ class RestreamManager:
                 "WHERE enabled=1 AND auto_restream=1 ORDER BY id").fetchall())
         except Exception:
             rows = []
+        if _nc_rscfg.dauersendung() and rid in self._procs:
+            return await self._pause_oder_uebergabe(rid, current_user, rows)
         # V37-SRCFAIL: diesen Watcher-Task aus der Registry lösen BEVOR stop()
         # läuft — sonst würde stop() den laufenden Task (uns selbst) canceln und
         # der Switch bräche mit CancelledError ab.
@@ -16036,8 +16181,10 @@ class RestreamManager:
         # soll. Wird unten wirklich auf ein ANDERES Ziel umgeschaltet, wandert
         # der Soll-Zustand dorthin.
         await self.stop(rid, _keep_desired=True)
+        # v5.13: True heisst fuer den Waechter „gestoppt, ich ende" — auch
+        # ohne Nachfolger. Nur die Pause der 24/7-Sendung antwortet False.
         if not rows:
-            return
+            return True
         # Reihenfolge ab dem aktuellen Ziel (Round-Robin), damit wir nicht immer
         # wieder beim selben oben anfangen.
         _cur = clean_username(current_user)
@@ -16062,13 +16209,14 @@ class RestreamManager:
             if r["id"] != rid:
                 self._set_desired(rid, False)
             await self.start(r["id"], _src_watch=True)
-            return
+            return True
         # v4.2-W102: hier stand "aktuell keine weitere Live-Quelle verfügbar" —
         # eine Aussage ueber TikTok, obwohl die Wahrheit "ich habe von keinem
         # eine Adresse bekommen" ist. Bei lauter `ohne_url` sendet moeglicherweise
         # jeder Einzelne von ihnen.
         log.info("Restream-Failover: kein Ziel startbereit (%s).",
                  ", ".join(_gruende) if _gruende else "keine Ziele konfiguriert")
+        return True
 
     async def _spawn_independent(self, rid, pname, purl, source_url, transcode,
                                  source_username=None):
@@ -16638,6 +16786,10 @@ class RestreamManager:
         self._tonlos.discard(rid)     # v4.2-W106: naechste Sitzung prueft neu
         self._failover.discard(rid)   # v37 W3b: Failover zurücksetzen
         self._srcspin.pop(rid, None)      # v4.0-W113: Serien enden mit dem Stop
+        # v5.13: die Pause endet mit dem Stop; ein interner Neustart (Waechter,
+        # Wiederanlauf) darf sie wieder aufnehmen, der Stop des Betreibers nicht.
+        if _nc_rsstate.pause_aus(rid) is not None and _keep_desired:
+            self._pause_wieder.add(rid)
         if not _keep_desired:
             self._stallkills.pop(rid, None)
         if not _keep_desired:
@@ -16789,6 +16941,8 @@ class RestreamManager:
                 log.info(f"Auto-Restream (single): @{r['source_username']} live → starte #{r['id']}")
                 await self.start(r["id"], _src_watch=True)   # V37-SRCFAIL: Quellen-Watcher an
                 return                         # genau EINEN starten
+            if rows and _nc_rscfg.dauersendung():
+                await self._pause_starten(rows[0])
             return
         # Multi-Modus (Legacy): jedes Live-Ziel starten (nur mit eigenem Ingest/Key sinnvoll).
         # V37-MAXLIVE: gedeckelt auf RESTREAM_MAX_CONCURRENT gleichzeitige Restreams
@@ -18643,6 +18797,7 @@ async def _living_title_loop():
         return
     last_title = ""
     last_set = 0.0
+    war_pause = False
     while True:
         try:
             if not _auto_on("living_title", LIVING_TITLE):
@@ -18650,6 +18805,25 @@ async def _living_title_loop():
             ra = _restream_active()
             user = (ra.get("user") or "").lstrip("@").lower()
             now = _time_mod.monotonic()
+            # v5.13: Pausen-Sendung der 24/7-Sendung. Ein Thema aus dem
+            # Transkript waere das der LETZTEN Sendung, und „@nutzer LIVE"
+            # stimmte nicht — also der Pausentitel, einmal je Pause.
+            if ra.get("rid") is not None and _nc_rsstate.pausiert(ra.get("rid")):
+                war_pause = True
+                _pt = _nc_rscfg.pause_titel()[:130]
+                if _pt and _pt != last_title:
+                    res = await _KICK_MOD.update_channel(title=_pt)
+                    if bool(res[0]) if isinstance(res, tuple) else bool(res):
+                        last_title = _pt
+                        log.info("📺 Pausentitel gesetzt: %s", _pt)
+                    else:
+                        log.warning("Pausentitel nicht gesetzt (%s) — neuer Versuch in "
+                                    "einer Minute.", (res[1] if isinstance(res, tuple)
+                                                       and len(res) > 1 else "?"))
+                await asyncio.sleep(60); continue
+            if war_pause:
+                war_pause = False
+                last_set = 0.0          # sofort wieder ein Thema, sobald Transkript da ist
             if not user:
                 last_title = ""          # nächster Stream startet frisch
             elif now - last_set >= max(60, LIVING_TITLE_INTERVAL_S):
