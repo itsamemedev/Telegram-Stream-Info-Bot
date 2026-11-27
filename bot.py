@@ -1682,7 +1682,8 @@ async def _upload_queue_eintrag(bot_app, entry):
     beginn, ende = _parse_iso(entry.get("started_at")), _parse_iso(entry.get("ended_at"))
     if chat_id == "discord":
         await _aufnahme_nach_discord(username, fpath, beginn, ergebnis=ergebnis,
-                                     gilden=entry.get("gilden"))
+                                     gilden=entry.get("gilden"),
+                                     fortschritt=entry.get("fortschritt"))
     else:
         await split_and_send_video(chat_id, fpath, bot_app, username, started_at=beginn,
                                    ended_at=ende, ergebnis=ergebnis)
@@ -1706,6 +1707,13 @@ def _upload_queue_nachher(entry, ergebnis, username, chat_id):
             # v5.12: nur die Server wiederholen, auf denen es scheiterte — die
             # anderen haben die Aufnahme schon (sonst stuende sie dort doppelt).
             neu["gilden"] = list(ergebnis["fehl_gilden"])
+            # v5.12.1: und dort nur die Teile, die fehlen. Der alte Stand bleibt
+            # fuer einen Server stehen, auf dem diesmal gar nicht gesendet wurde
+            # (Teilung gescheitert) — sonst ginge sein Wissen verloren.
+            stand = dict(entry.get("fortschritt") or {})
+            stand.update(ergebnis.get("fortschritt") or {})
+            neu["fortschritt"] = {k: v for k, v in stand.items()
+                                  if str(k) in {str(g) for g in neu["gilden"]}}
         _upload_queue_update(entry, neu)
         log.error("Aufgeschobener Upload @%s → %s gescheitert (Versuch %d von %d: %s) — "
                   "naechster Versuch in %.0f min.", username, chat_id, neu["versuche"],
@@ -2379,6 +2387,13 @@ def get_cookie_health() -> dict:
     return _nc_cookies_datei.gesundheit()
 
 
+# v5.12.1: so lange nach der letzten Aenderung gilt die Cookie-Datei als „wird
+# geschrieben" (_ensure_cookie_file_netscape). yt-dlp braucht fuer ein Dutzend
+# Cookies Millisekunden; drei Sekunden sind reichlich und verzoegern eine echte
+# Reparatur kaum.
+_COOKIE_SCHREIB_RUHE_S = 3.0
+
+
 def _ensure_cookie_file_netscape() -> bool:
     """Stellt sicher, dass COOKIE_FILE gültiges Netscape-Format ist — das, was
        sowohl yt-dlp (--cookies) als auch MozillaCookieJar (_load_cookies_dict)
@@ -2397,6 +2412,26 @@ def _ensure_cookie_file_netscape() -> bool:
         return True                       # bereits gültig — nichts tun (Schnellpfad)
     except Exception:
         pass                              # ungültiges Format → reparieren
+    # v5.12.1: yt-dlp schreibt seine --cookies-Datei beim Beenden zurueck, nicht
+    # atomar (kuerzen, dann schreiben — W132). Wer in dieser Spanne liest, sieht
+    # eine leere oder halbe Datei. Am 26.11. hiess das ERROR „ungültig UND
+    # enthält keine erkennbaren Cookies", und ein halber Stand MIT Cookies waere
+    # sogar „repariert" worden: os.replace mitten in yt-dlps Schreiben — dessen
+    # Rest landet im alten Inode, und die Datei behielte nur den halben Satz.
+    # Eine leere oder eben geaenderte Datei ist deshalb „wird geschrieben":
+    # keine Reparatur, kein Alarm; geantwortet wird mit dem letzten Stand.
+    try:
+        _st = os.stat(COOKIE_FILE)
+        _frisch = _st.st_size == 0 or (_time_mod.time() - _st.st_mtime) < _COOKIE_SCHREIB_RUHE_S
+    except OSError:
+        _frisch = False
+    if _frisch:
+        _vorher = _COOKIES_CACHE.get("v")
+        log.info("Cookie-Datei %s wird gerade geschrieben (leer oder vor < %.0f s "
+                 "geaendert) — keine Reparatur; %s.", COOKIE_FILE, _COOKIE_SCHREIB_RUHE_S,
+                 "der zuletzt gelesene Stand gilt" if _vorher and _vorher[2]
+                 else "dieser Aufruf laeuft ohne --cookies")
+        return bool(_vorher and _vorher[2])
     try:
         with open(COOKIE_FILE, "r", encoding="utf-8", errors="replace") as f:
             raw = f.read()
@@ -19738,19 +19773,29 @@ def _text_schreiben(pfad, text):
 
 
 def _ffprobe_masse(pfad):
-    """(breite, hoehe, dauer_s) einer Videodatei, (0, 0, 0.0) wenn unlesbar."""
+    """(breite, hoehe, dauer_s, bild) einer Videodatei; (0, 0, 0.0, None) wenn
+    unlesbar. bild: hat die Datei eine Videospur?
+
+    v5.12.1: scheitert ffprobe (rc=1 ohne Ausgabe — es oeffnet jeden Decoder,
+    und eine kaputte Tonspur genuegt), gilt die Eingangsbeschreibung von
+    `ffmpeg -i` (nc.aufnahmechat.kopf_masse). Vorher hiess das Dauer 0."""
     try:
         r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                             "-show_entries", "stream=width,height:format=duration",
                             "-of", "json", pfad], capture_output=True, text=True, timeout=60)
-        d = json.loads(r.stdout or "{}")
-        st = (d.get("streams") or [{}])[0]
-        return (int(st.get("width") or 0), int(st.get("height") or 0),
-                float((d.get("format") or {}).get("duration") or 0.0))
+        if r.returncode == 0:
+            d = json.loads(r.stdout or "{}")
+            streams = d.get("streams") or []
+            st = streams[0] if streams else {}
+            return (int(st.get("width") or 0), int(st.get("height") or 0),
+                    float((d.get("format") or {}).get("duration") or 0.0), bool(streams))
+        k = subprocess.run(_nc_aufnahmechat.kopf_cmd(pfad),
+                           capture_output=True, text=True, timeout=60)
+        return _nc_aufnahmechat.kopf_masse(k.stderr)
     except (OSError, ValueError, subprocess.SubprocessError) as e:
         log.warning("Aufnahme-Chat: ffprobe auf %s scheiterte (%s) — Masse unbekannt.",
                     os.path.basename(pfad), e)
-        return 0, 0, 0.0
+        return 0, 0, 0.0, None
 
 
 def _aufnahme_chat_einarbeiten(video, chat, modus, username):
@@ -19763,7 +19808,18 @@ def _aufnahme_chat_einarbeiten(video, chat, modus, username):
         log.info("Aufnahme-Chat @%s: %s ist kein MP4 — Chat bleibt draussen.",
                  username, os.path.basename(video))
         return None
-    breite, hoehe, dauer = _ffprobe_masse(video)
+    breite, hoehe, dauer, bild = _ffprobe_masse(video)
+    if not bild:
+        # v5.12.1: ohne Bild gibt es nichts einzubrennen, und beide Befehle
+        # mappen 0:v:0 — am 27.11. zweimal ERROR „Stream map '0:v:0' matches
+        # no streams" fuer eine reine Tonaufnahme, Einbrennen UND Untertitel.
+        if bild is False:
+            log.info("Aufnahme-Chat @%s: %s hat keine Videospur (nur Ton) — Chat bleibt "
+                     "draussen.", username, os.path.basename(video))
+        else:
+            log.warning("Aufnahme-Chat @%s: %s ist nicht lesbar (ffmpeg nennt keinen Stream) "
+                        "— Chat bleibt draussen.", username, os.path.basename(video))
+        return None
     max_min = _env_int("AUFNAHME_CHAT_MAX_MIN", 240)
     if modus == "einbrennen" and dauer > max_min * 60:
         log.info("Aufnahme-Chat @%s: %.0f min laenger als AUFNAHME_CHAT_MAX_MIN=%d — "
@@ -22974,7 +23030,8 @@ async def _shrink_for_discord(path, limit_mb):
     return None
 
 
-async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None, gilden=None):
+async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None, gilden=None,
+                                 fortschritt=None):
     """v4.2-W175: die GANZE Aufnahme nach Discord, in Teilen <= Guild-Limit.
     v5.11-W209: in `<nutzer>-aufnahmen` im Bereich des Nutzers, #clips nur als
     Rueckfall (und dann laut, warum).
@@ -22991,7 +23048,12 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None,
     Jeder Server bekommt Teile nach SEINER Grenze (Boost-Stufe). `gilden`
     beschraenkt auf bestimmte Server: die Warteschlange wiederholt nur, wo es
     scheiterte, sonst stuende die Aufnahme auf den anderen doppelt. Im
-    Ergebnis stehen die Summen und `fehl_gilden`."""
+    Ergebnis stehen die Summen und `fehl_gilden`.
+
+    v5.12.1: `fortschritt` ({Guild-ID: {teile, grenze, fehlend}}) aus der
+    Warteschlange — je Server gehen nur die Teile raus, die beim letzten
+    Versuch fehlten (nc.discordaufnahme.nur_fehlende); im Ergebnis steht der
+    neue Stand unter demselben Namen."""
     ergebnis = {} if ergebnis is None else ergebnis
     if not _nc_dcaufnahme.an():
         ergebnis.update(aus=True, grund="%s=0" % _nc_dcaufnahme.SCHALTER)
@@ -23012,7 +23074,8 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None,
                             grund="Discord nicht verbunden oder in keiner Guild" if client
                             else "Discord-Client nicht verbunden")
         else:
-            await _aufnahme_an_server(server, username, path, started_at, ergebnis)
+            await _aufnahme_an_server(server, username, path, started_at, ergebnis,
+                                      fortschritt)
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -23027,13 +23090,15 @@ async def _aufnahme_nach_discord(username, path, started_at=None, ergebnis=None,
         laut, weg = _nc_meldetakt.melden("discord-aufnahme", str(ergebnis.get("grund"))[:60],
                                          _time_mod.monotonic())
         if laut:
+            # v5.12.1: der Rat nach der Art des Fehlers — vorher stand hier
+            # immer „Fehlt dem Bot das Recht …?", auch bei „0 von 0 Teilen".
             log.error("Aufnahme @%s NICHT (vollstaendig) nach Discord: %s (%s von %s Teilen "
-                      "gesendet). Fehlt dem Bot das Recht, in #%s Dateien zu posten? Die "
-                      "Aufnahme bleibt auf dem Server: %s%s", username,
+                      "gesendet). %s Die Aufnahme bleibt auf dem Server: %s%s", username,
                       ergebnis.get("grund") or "?", ergebnis.get("gesendet", 0),
                       ergebnis.get("teile", "?"),
-                      ergebnis.get("kanal") or _nc_discordziele.clip_kanal(), path,
-                      _nc_meldetakt.zusatz(weg))
+                      _nc_dcaufnahme.abhilfe(ergebnis, ergebnis.get("kanal")
+                                             or _nc_discordziele.clip_kanal()),
+                      path, _nc_meldetakt.zusatz(weg))
     return ergebnis
 
 
@@ -23051,7 +23116,7 @@ async def _discord_aufnahme_gilden(alle, username):
     return [g.id for g in alle if g is haupt or g.id in getrackt]
 
 
-async def _aufnahme_an_server(server, username, path, started_at, ergebnis):
+async def _aufnahme_an_server(server, username, path, started_at, ergebnis, fortschritt=None):
     """v5.12: je Server Kanal und Grenze, dann alle gleichzeitig hochladen.
 
     Ein Server ohne Kanal (keine Rechte, kein Platz) zaehlt als Fehler und
@@ -23061,11 +23126,14 @@ async def _aufnahme_an_server(server, username, path, started_at, ergebnis):
     ziele, kanaele, je_server = [], [], []
     for g in server:
         erg = {"gesendet": 0, "fehler": 0}
+        # v5.12.1: JSON kennt nur Text-Schluessel — die Guild-ID als Text.
+        if (fortschritt or {}).get(str(g.id)):
+            erg["vorher"] = fortschritt[str(g.id)]
         # Ein Rueckfall nach #clips meldet nc.discordziele.ziel_kanal selbst.
         ch, _rueckfall = await _nc_discordziele.ziel_kanal([g], g.id, username, "aufnahmen")
         je_server.append((g, erg))
         if ch is None:
-            erg.update(fehler=1, grund="kein Kanal in %s" % getattr(g, "name", g.id))
+            erg.update(fehler=1, grund="kein Kanal in %s" % getattr(g, "name", g.id), art="kanal")
             continue
         _lim = _nc_dclimits.effective_upload_mb(getattr(ch.guild, "filesize_limit", 0),
                                                 _DISCORD_UPLOAD_OVERRIDE)
@@ -23087,6 +23155,17 @@ async def _aufnahme_an_server(server, username, path, started_at, ergebnis):
                for g, e in je_server if not _nc_uschlange.angekommen(e)]
     if gruende:
         ergebnis["grund"] = "; ".join(gruende)
+        # v5.12.1: die Art des ersten Fehlschlags — daran haengt der Rat in
+        # _aufnahme_nach_discord (nc.discordaufnahme.abhilfe).
+        ergebnis["art"] = next((e.get("art") for _g, e in je_server
+                                if not _nc_uschlange.angekommen(e) and e.get("art")), None)
+    # v5.12.1: was je Server noch fehlt — nur, wo gesendet wurde (ohne Teilung
+    # gibt es keine Teilnummern, und dann geht beim naechsten Mal ohnehin alles).
+    ergebnis["fortschritt"] = {
+        str(g.id): {"teile": e["teile"], "grenze": e["grenze"], "fehlend": e["fehlend"],
+                    "bytes": e.get("bytes")}
+        for g, e in je_server
+        if not _nc_uschlange.angekommen(e) and e.get("teile") and "fehlend" in e}
 
 
 async def _clip_to_discord(username, path, caption=""):

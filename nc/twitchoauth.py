@@ -23,10 +23,12 @@ Der Refresh-Token wird in einer Datei unter RECORDINGS_DIR persistiert (die .env
 kann zur Laufzeit nicht geschrieben werden). Nur der Refresh-Token, keine
 Access-Token — die sind kurzlebig und werden nie gespeichert.
 """
+import asyncio
 import json
 import logging
 import hmac as _hmac
 import os
+import threading
 import time
 import urllib.parse
 
@@ -110,7 +112,9 @@ def _save():
         return
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        tmp = p + ".tmp"
+        # v5.12.1: eigener Name je Thread — _save laeuft jetzt im Thread, und
+        # zwei gleichzeitige Laeufe haetten sich eine .tmp-Datei geteilt.
+        tmp = "%s.%d.tmp" % (p, threading.get_ident())
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"refresh_token": _state["refresh"]}, f)
         os.replace(tmp, p)
@@ -226,7 +230,8 @@ async def exchange_code(code, state, aiohttp):
     _state["refresh"] = rt
     _state["access"] = at or ""
     _state["access_exp"] = time.time() + int(j.get("expires_in", 3600)) - 120
-    _save()
+    # v5.12.1: Dateizugriff im Thread — stand im Log 1,0 s auf dem Event-Loop.
+    await asyncio.to_thread(_save)
     return True, "Twitch verbunden — Refresh-Token gespeichert, Follower-Zaehler aktiv"
 
 
@@ -355,7 +360,8 @@ async def access_token(aiohttp):
     # Twitch rotiert den Refresh-Token bei jedem Refresh mit
     if j.get("refresh_token"):
         _state["refresh"] = j["refresh_token"]
-        _save()
+        # v5.12.1: Dateizugriff im Thread — stand im Log 1,0 s auf dem Event-Loop.
+        await asyncio.to_thread(_save)
     return at
 
 

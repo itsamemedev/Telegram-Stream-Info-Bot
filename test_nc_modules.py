@@ -4840,7 +4840,10 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
         _asyncio.run(_vt.kopier_teilen(quelle, os.path.join(tmp, "t"), 45))
     finally:
         _asyncio.create_subprocess_exec = echt
-    argv = [g for g in gerufen if "ffmpeg" in g][0]
+    # ANKER GEWANDERT (v5.12.1, nicht der Vertrag): scheitert ffprobe, liest
+    # dauer() zuerst die Kopfzeile von `ffmpeg -i` — der erste ffmpeg-Aufruf
+    # ist dann diese Probe, der Split ist der mit -segment_time.
+    argv = [g for g in gerufen if "ffmpeg" in g and "-segment_time" in g][0]
     seg = int(argv[argv.index("-segment_time") + 1])
     assert seg == 180, "Rueckfall segment_time=%d statt 180 (45*4)" % seg
 
@@ -33526,11 +33529,21 @@ def _test_v42_w175_discord_ganze_aufnahme():
         scheitern[0] = 0
         assert e["fehler"] == 6 and e["gesendet"] == 0 and not U.angekommen(e), e
         assert "Missing Permissions" in e["grund"] and "nicht versucht" in e["grund"]
+        # v5.12.1: NUR hier ist der Rechte-Rat richtig — und er steht da.
+        assert e.get("art") == "rechte" and "Recht" in DA.abhilfe(e, "anna-aufnahmen"), e
         # (5) Ein Teil bleibt zu gross: gezaehlt, nicht still gesendet.
         teilgroessen[:] = [[9, 30], [9, 30]]
         V.neu_kodieren = lambda *a: _aio.sleep(0, result=(None, "kaputt"))
         e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
-        assert e == {"gesendet": 0, "fehler": 1, "grund": "Teilen gescheitert: kaputt"}, e
+        # ANKER GEWANDERT (v5.12.1, nicht der Vertrag): das Ergebnis traegt jetzt
+        # auch die Art — und die Art „teilen" heisst: KEIN Rechte-Rat (Log 27.11.:
+        # „0 von 0 Teilen gesendet. Fehlt dem Bot das Recht …?").
+        # v5.12.1 dazu „bytes" (Dateigroesse fuer die Wiederaufnahme) — verglichen
+        # wird, was der Vertrag sagt: gezaehlt, Grund, Art.
+        assert {k: e.get(k) for k in ("gesendet", "fehler", "grund", "art")} == {
+            "gesendet": 0, "fehler": 1, "grund": "Teilen gescheitert: kaputt",
+            "art": "teilen"}, e
+        assert "Recht" not in DA.abhilfe(e, "anna-aufnahmen"), DA.abhilfe(e, "anna-aufnahmen")
         # …und ein neu kodierter Teil, der trotzdem zu gross ist, zaehlt als Fehler.
         teilgroessen[:] = [[30], [30]]
 
@@ -33593,8 +33606,9 @@ def _test_v42_w175_discord_ganze_aufnahme():
                           "_discord_aufnahme_gilden"], {   # v5.12: Hauptserver + getrackte
             "db_async": _keine_trackings,
             "_nc_trackingdb": _ty.SimpleNamespace(empfaenger=lambda c, u: []),
+            # ANKER GEWANDERT (v5.12.1): der Rat kommt aus nc.discordaufnahme.
             "_nc_dcaufnahme": _ty.SimpleNamespace(an=lambda: True, SCHALTER=DA.SCHALTER,
-                                                  an_alle=_hoch),
+                                                  an_alle=_hoch, abhilfe=DA.abhilfe),
             "os": _ty.SimpleNamespace(getenv=lambda k, v="": "tok", path=_os.path),
             "_nc_discordstate": _ty.SimpleNamespace(CLIENT={"obj": client}),
             "_nc_discordziele": _ty.SimpleNamespace(clip_kanal_holen=_holen, ziel_kanal=_ziel,
@@ -33709,7 +33723,8 @@ def _test_v42_w175_upload_schlange():
             gesendet.append(("tg", chat))
             ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
 
-        async def _nach_dc(nutzer, f, beginn=None, ergebnis=None, gilden=None):
+        # ANKER GEWANDERT (v5.12.1): die Warteschlange reicht den Fortschritt durch.
+        async def _nach_dc(nutzer, f, beginn=None, ergebnis=None, gilden=None, fortschritt=None):
             gesendet.append(("dc", f))
             ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
 
@@ -47160,8 +47175,9 @@ def _test_v512_upload_ueberall_gleichzeitig():
     try:
         ns = _exec(baum, ["_aufnahme_nach_discord", "_aufnahme_an_server",
                           "_discord_aufnahme_gilden", "_upload_queue_nachher"], {
+            # ANKER GEWANDERT (v5.12.1): der Rat kommt aus nc.discordaufnahme.
             "_nc_dcaufnahme": _ty.SimpleNamespace(an=lambda: True, SCHALTER=DA.SCHALTER,
-                                                  an_alle=_alle),
+                                                  an_alle=_alle, abhilfe=DA.abhilfe),
             "os": _ty.SimpleNamespace(getenv=lambda k, v="": "tok", path=_os.path),
             "_nc_discordstate": _ty.SimpleNamespace(CLIENT={"obj": _ty.SimpleNamespace(
                 guilds=[_ty.SimpleNamespace(id=i, name="g%d" % i) for i in (1, 2, 3, 4)])}),
@@ -47252,6 +47268,466 @@ def _test_v512_upload_ueberall_gleichzeitig():
     ok("v5.12: Uploads starten ueberall gleichzeitig, aber nur dort, wo der Nutzer aktiv "
        "getrackt wird — Telegram ein Split fuer alle Gruppen (<= 45 MB, 3 s je Teil), "
        "Discord Hauptserver + getrackte Server, jeder mit seiner Grenze")
+
+
+def _v5121_kaputter_ton(ziel, quelle):
+    """Eine MP4 nachbauen, deren Tonspur-Decoder nicht aufgeht (Log 26./27.11.):
+    im esds-Kasten die AudioSpecificConfig auf einen reservierten Frequenzindex
+    (13) setzen. ffprobe bricht daran mit rc=1 OHNE Ausgabe ab, `ffmpeg -i`
+    zeigt Laufzeit und Streams, Kodieren scheitert vor dem ersten Bild."""
+    daten = open(quelle, "rb").read()
+    i = daten.find(b"esds")
+    assert i > 0, "keine esds-Box in der Probe"
+    # Die ASC steht im DecoderSpecificInfo (Tag 0x05), die ersten zwei Bytes
+    # tragen Objekttyp (5 Bit) und Frequenzindex (4 Bit).
+    j = daten.find(b"\x05", i + 20)
+    while j > 0 and daten[j + 1] & 0x80:      # Laengenbytes mit Fortsetzungsbit
+        j += 1
+    k = j + 2                                  # erstes Byte der ASC
+    asc = bytes([0x16, 0x90])                  # AOT 2 (LC), Index 13 (reserviert), stereo
+    with open(ziel, "wb") as f:
+        f.write(daten[:k] + asc + daten[k + 2:])
+
+
+def _test_v5121_split_ueberlebt_kaputten_ton():
+    """v5.12.1: Am 26./27.11. scheiterten Discord- und Telegram-Uploads in
+    Serie mit „Alle Teile vom Split waren ungueltig (ffprobe-failed)" und
+    danach „Error while opening decoder: Invalid data found" — nachdem das
+    Neukodieren bis zu 40 min in der Encode-Warteschlange stand. Die
+    Aufnahmen trugen eine Tonspur, deren Decoder nicht aufgeht; ffprobe
+    oeffnet JEDEN Decoder und gibt dann rc=1 ohne Ausgabe. Das Bild war in
+    Ordnung. Dazu „Teil 76/86 bleibt 10.9 MB > 9 MB": maxrate 1,2x mit 2 s
+    Puffer und ein Segment-Muxer, der den ersten erzwungenen Keyframe durch
+    Rundung verpasste (erster Teil 23 s statt 15 s)."""
+    import asyncio as _aio
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    from nc import videoteil as V
+    from nc import tonspur as T
+    import pruefhilfen as P
+
+    # (1) Laufzeit aus der Kopfzeile — der Rueckfall, wenn ffprobe aufgibt.
+    assert V.dauer_aus_kopf("  Duration: 01:02:03.50, start: 0.0") == 3723.5
+    assert V.dauer_aus_kopf("Duration: N/A, bitrate: N/A") is None
+    assert V.dauer_aus_kopf("") is None and V.dauer_aus_kopf(None) is None
+
+    # (2) Die neuen Zwischendateien sind als Rest erkennbar (Waisen-Suche),
+    # und teile_entfernen() raeumt auch die Unterteile des Nachteilens.
+    for name in ("x_20261126_1.mp4_dcpart9.remux.mp4",
+                 "x_20261126_1.mp4_dcpart9_re_007.mp4_part_re_000.mp4"):
+        assert V.ist_rest(name), name
+    assert not V.ist_rest("tiktok_live_1_dcpart9_20261126_1.mp4"), "eine Aufnahme gilt als Rest"
+
+    # (3) Der Befehl: Deckel = Zielrate, Puffer 1 s, segment_time_delta.
+    gerufen = []
+    echt = V._kind.ausfuehren
+
+    async def _falle(cmd, deckel, **kw):
+        gerufen.append(list(cmd))
+        if cmd[0] == "ffprobe" or "ffprobe" in cmd:
+            return 0, b"600\n", b""
+        return 1, b"", b"abgebrochen"
+    heim = P.verzeichnis()
+    try:
+        quelle = _os.path.join(heim, "a.mp4")
+        P.attrappe(quelle, 300 * 1024 * 1024)
+        V._kind.ausfuehren = _falle
+        try:
+            _aio.run(V.neu_kodieren(quelle, quelle + "_dcpart9", 9))
+        finally:
+            V._kind.ausfuehren = echt
+        cmd = [c for c in gerufen if "-segment_time" in c][0]
+        wert = lambda o: cmd[cmd.index(o) + 1]          # noqa: E731
+        assert wert("-maxrate") == wert("-b:v") == wert("-bufsize"), \
+            ("Deckel/Puffer weichen von der Zielrate ab — Teile wachsen ueber das Ziel",
+             wert("-b:v"), wert("-maxrate"), wert("-bufsize"))
+        assert "-segment_time_delta" in cmd, "der erste Teil wird wieder 23 s statt 15 s lang"
+        assert "error" == wert("-loglevel"), "stderr bringt wieder den Stream-Dump statt des Fehlers"
+
+        if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
+            ok("v5.12.1: Split (rein); ffmpeg fehlt — echter Lauf uebersprungen")
+            return
+
+        # (4) Echt: eine Aufnahme mit kaputtem Ton.
+        gut = _os.path.join(heim, "gut.mp4")
+        _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                 "testsrc=size=160x120:rate=15", "-f", "lavfi", "-i",
+                 "sine=frequency=440:sample_rate=48000", "-t", "20", "-c:v", "libx264",
+                 "-preset", "ultrafast", "-g", "15", "-c:a", "aac", "-ac", "2", gut],
+                check=True, timeout=120)
+        kaputt = _os.path.join(heim, "kaputt.mp4")
+        _v5121_kaputter_ton(kaputt, gut)
+        probe = _sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                         "-of", "csv=p=0", kaputt], capture_output=True, text=True)
+        assert probe.returncode != 0 and not probe.stdout.strip(), \
+            "die Probe bildet den Fehler nicht nach — ffprobe liest sie"
+        assert _aio.run(V.dauer(kaputt)) == 20.0, "dauer() gibt auf, wo ffmpeg -i sie kennt"
+        assert _aio.run(V.messen(kaputt)) == (20.0, True)
+        assert _aio.run(V.messen(gut)) == (20.0, False), "ein gesunder Ton wird ersetzt"
+
+        def _spielbar(teil):
+            # Bild UND Ton dekodierbar, und ffprobe kennt die Laufzeit.
+            r = _sp.run(["ffmpeg", "-v", "error", "-i", teil, "-map", "0:v:0", "-map",
+                         "0:a:0", "-c:a", "pcm_s16le", "-c:v", "rawvideo", "-f", "nut",
+                         "-y", _os.devnull], capture_output=True, text=True)
+            return r.returncode == 0 and (_aio.run(V._dauer_ffprobe(teil)) or 0) > 0
+
+        teile, fehler = _aio.run(V.kopier_teilen(kaputt, kaputt + "_dcpart9", 0.05))
+        assert teile and not fehler, ("Kopier-Split verwirft die Teile wieder", fehler)
+        assert all(_spielbar(t) for t in teile), "Kopier-Teile sind nicht abspielbar"
+        _aio.run(_aio.to_thread(V.teile_entfernen, kaputt + "_dcpart9"))
+        teile, fehler = _aio.run(V.neu_kodieren(kaputt, kaputt + "_dcpart9", 0.05, _tiefe=1))
+        assert teile and not fehler, ("Neukodieren scheitert am Ton-Decoder", fehler)
+        assert all(_spielbar(t) for t in teile), "neu kodierte Teile sind nicht abspielbar"
+        _aio.run(_aio.to_thread(V.teile_entfernen, kaputt + "_dcpart9"))
+
+        # (5) Echt: die Grenze haelt — ohne Nachteilen gemessen (_tiefe=1), sonst
+        # verdeckt die Rettung den Fehler. Rauschen ist schwer zu kodieren; die
+        # Quelle liegt weit ueber der Zielrate.
+        laut = _os.path.join(heim, "laut.mp4")
+        _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                 "testsrc2=size=320x240:rate=25,noise=alls=40:allf=t+u",
+                 "-f", "lavfi", "-i", "sine=frequency=300:sample_rate=44100", "-t", "46",
+                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-c:a", "aac",
+                 laut], check=True, timeout=300)
+        teile, fehler = _aio.run(V.neu_kodieren(laut, laut + "_dcpart2", 2, _tiefe=1))
+        assert teile and not fehler, fehler
+        mb = [round(_os.path.getsize(t) / 1048576, 2) for t in teile]
+        assert len(teile) >= 3 and max(mb) <= 2, ("Teile ueber dem Ziel von 2 MB", mb)
+        # Der Ersatzweg traegt eine Tonspur (W106).
+        T_cmd = [c for c in gerufen if "1:a:0" in c]
+        assert not T_cmd or all(T.hat_tonspur(c) for c in T_cmd)
+
+        # (6) Nachteilen: ein zu grosser Teil (hier 46 s, weit ueber 2 MB) wird
+        # einzeln geteilt und steht an SEINER Stelle; die passenden bleiben.
+        gross = laut + "_dcpart2_re_099.mp4"
+        _sh.copyfile(laut, gross)
+        nach = _aio.run(V._uebergroesse_nachteilen(teile + [gross], 2))
+        assert nach[:len(teile)] == teile and len(nach) >= len(teile) + 3, nach
+        assert not _os.path.exists(gross), "der zu grosse Teil bleibt neben seinen Unterteilen"
+        assert all(_os.path.getsize(t) <= 2 * 1048576 and V.ist_rest(t) for t in nach), \
+            [(_os.path.basename(t), _os.path.getsize(t)) for t in nach]
+        _aio.run(_aio.to_thread(V.teile_entfernen, laut + "_dcpart2"))
+        assert sorted(_os.listdir(heim)) == ["a.mp4", "gut.mp4", "kaputt.mp4", "laut.mp4"], \
+            ("Teile bleiben liegen", sorted(_os.listdir(heim)))
+    finally:
+        V._kind.ausfuehren = echt
+        _sh.rmtree(heim, ignore_errors=True)
+    ok("v5.12.1: Split mit undekodierbarem Ton — Laufzeit aus ffmpeg -i, Stille statt "
+       "Ton in den Teilen; neu kodierte Teile halten die Grenze (Deckel = Zielrate, "
+       "segment_time_delta), zu grosse Teile werden einzeln nachgeteilt")
+
+
+def _test_v5121_discord_rat_nach_art():
+    """v5.12.1: „0 von 0 Teilen gesendet. Fehlt dem Bot das Recht, in #… Dateien
+    zu posten?" — bei jedem Fehlschlag derselbe Rat, auch wenn Discord nie
+    gefragt wurde. Und der Discord-Weg kodierte ohne den Zeitstempel-Re-Mux,
+    den Telegram seit B70+ macht („Conversion failed!" nach drei Minuten)."""
+    import asyncio as _aio
+    import os as _os
+    from nc import discordaufnahme as DA
+    from nc import videoteil as V
+    import pruefhilfen as P
+
+    for art, muss, darf_nicht in (("teilen", "ffmpeg", "Recht"), ("groesse", "Grenze", "Recht"),
+                                  ("platz", "Platz", "Recht"), ("rechte", "Recht", "ffmpeg"),
+                                  ("senden", "abgelehnt", "Recht"), ("kanal", "Kanal", "ffmpeg")):
+        rat = DA.abhilfe({"art": art}, "anna-aufnahmen")
+        assert muss in rat and darf_nicht not in rat, (art, rat)
+    assert "#anna-aufnahmen" in DA.abhilfe({"art": "rechte"}, "anna-aufnahmen")
+    assert DA.abhilfe({}) == DA.abhilfe(None) == "Grund siehe oben."
+
+    # Der Re-Mux kommt vor dem Neukodieren, unter einem Namen MIT Praefix
+    # (Telegram legt gleichzeitig <aufnahme>.remux.mp4 an), und er geht weg.
+    heim = P.verzeichnis()
+    alt = (V.zeitstempel_richten, V.neu_kodieren)
+    reihe = []
+    try:
+        quelle = _os.path.join(heim, "a.mp4")
+        P.attrappe(quelle, 1024)
+
+        async def _richten(pfad, ziel):
+            reihe.append(("richten", pfad, ziel))
+            P.attrappe(ziel, 1024)
+            return True, None
+
+        async def _neu(pfad, praefix, ziel):
+            reihe.append(("neu", pfad, praefix))
+            return None, "kaputt"
+        V.zeitstempel_richten, V.neu_kodieren = _richten, _neu
+        _aio.run(DA._neu_kodiert(quelle, quelle + "_dcpart9", 9))
+        assert reihe == [("richten", quelle, quelle + "_dcpart9.remux.mp4"),
+                         ("neu", quelle + "_dcpart9.remux.mp4", quelle + "_dcpart9")], reihe
+        assert _os.listdir(heim) == ["a.mp4"], "die Re-Mux-Datei bleibt liegen"
+        assert V.ist_rest(quelle + "_dcpart9.remux.mp4")
+    finally:
+        V.zeitstempel_richten, V.neu_kodieren = alt
+        import shutil as _sh
+        _sh.rmtree(heim, ignore_errors=True)
+
+    import ast as _ast
+    src = open("bot.py", encoding="utf-8").read()
+    nd = next(n for n in _ast.parse(src).body if getattr(n, "name", "") == "_aufnahme_nach_discord")
+    # Im Syntaxbaum gemessen, nicht im Text: der Kommentar daneben zitiert den
+    # alten Satz (CLAUDE.md: ein Vertrag liest seine Begruendung nicht als Befund).
+    texte = [c.value for c in _ast.walk(nd) if isinstance(c, _ast.Constant)
+             and isinstance(c.value, str)]
+    rufe = {_ast.unparse(c.func) for c in _ast.walk(nd) if isinstance(c, _ast.Call)}
+    assert "_nc_dcaufnahme.abhilfe" in rufe and not any("Recht" in t for t in texte), \
+        "der Rechte-Rat steht wieder fest in der Meldung"
+    ok("v5.12.1: Discord-Upload nennt den Rat nach der Ursache (Rechte nur bei 403/50013), "
+       "und kodiert erst nach dem Zeitstempel-Re-Mux neu")
+
+
+def _test_v5121_chat_ohne_bild_cookie_schreibfenster():
+    """v5.12.1: drei Befunde aus dem Log vom 26./27.11.
+
+    (a) „Aufnahme-Chat: einbrennen scheiterte (rc=234): Stream map '0:v:0'
+        matches no streams" — eine reine Tonaufnahme, und danach dasselbe noch
+        einmal fuer die Untertitelspur.
+    (b) „Cookie-Datei tiktok_cookies.txt ist ungültig UND enthält keine
+        erkennbaren Cookies" — gelesen, waehrend yt-dlp sie zurueckschrieb. Ein
+        halber Stand MIT Cookies waere sogar „repariert" worden.
+    (c) Event-Loop 1032 ms an twitchoauth._save — Dateizugriff im Loop."""
+    import ast as _ast
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import threading as _th
+    import time as _t
+    from http.cookiejar import MozillaCookieJar
+    from nc import aufnahmechat as A
+    from nc import cookies as C
+    import pruefhilfen as P
+
+    # (a) Kopf auswerten — ohne ffprobe, das an einem kaputten Ton aufgibt.
+    kopf = ("Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'x.mp4':\n"
+            "  Duration: 00:10:00.50, start: 0.000000, bitrate: 2000 kb/s\n"
+            "  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv), "
+            "720x1280 [SAR 1:1 DAR 9:16], 1900 kb/s, 30 fps (default)\n"
+            "  Stream #0:1[0x2](und): Audio: aac (HE-AAC) (mp4a / 0x6134706D), 192000 Hz, "
+            "stereo, fltp, 50 kb/s (default)\n")
+    assert A.kopf_masse(kopf) == (720, 1280, 600.5, True), A.kopf_masse(kopf)
+    nur_ton = kopf.replace("Video: h264", "Data: none")
+    assert A.kopf_masse(nur_ton)[3] is False
+    titelbild = kopf.replace("(default)\n  Stream #0:1", "(attached pic)\n  Stream #0:1")
+    assert A.kopf_masse(titelbild)[3] is False, "ein Titelbild gilt als Bild"
+    assert A.kopf_masse("x.mp4: No such file or directory") == (0, 0, 0.0, None)
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name):
+        return next(n for n in baum.body if getattr(n, "name", "") == name)
+
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+    lg = _lg.getLogger("v5121")
+    lg.handlers[:] = [_H()]
+    lg.setLevel(_lg.DEBUG)
+    lg.propagate = False
+
+    heim = P.verzeichnis()
+    try:
+        if _sh.which("ffmpeg") and _sh.which("ffprobe"):
+            ns = {"log": lg, "os": _os, "subprocess": _sp, "shutil": _sh,
+                  "json": __import__("json"), "_time_mod": _t, "_nc_aufnahmechat": A,
+                  "_env_int": lambda n, d: d}
+            exec(compile(_ast.Module(body=[_fn("_ffprobe_masse"),
+                                           _fn("_aufnahme_chat_einarbeiten")],
+                                     type_ignores=[]), "bot.py", "exec"), ns)
+            ton = _os.path.join(heim, "ton.mp4")
+            _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=r=44100",
+                     "-t", "2", "-c:a", "aac", ton], check=True, timeout=60)
+            vorher = open(ton, "rb").read()
+            assert ns["_aufnahme_chat_einarbeiten"](ton, [(0.5, "a", "b")], "einbrennen",
+                                                     "w") is None
+            assert open(ton, "rb").read() == vorher
+            assert not [z for lv, z in zeilen if lv >= _lg.ERROR], zeilen
+            assert any("keine Videospur" in z for _lv, z in zeilen), zeilen
+            assert sorted(_os.listdir(heim)) == ["ton.mp4"], _os.listdir(heim)
+            _os.remove(ton)
+
+        # (b) Das Schreibfenster der Cookie-Datei.
+        datei = _os.path.join(heim, "tiktok_cookies.txt")
+        cache = {}
+        ns = {"log": lg, "os": _os, "_time_mod": _t, "MozillaCookieJar": MozillaCookieJar,
+              "COOKIE_FILE": datei, "_COOKIES_CACHE": cache, "_COOKIE_FILE_LOCK": _th.Lock(),
+              "_cookies_input_to_netscape": C._cookies_input_to_netscape}
+        exec(compile(_ast.Module(body=[n for n in baum.body if getattr(
+            getattr(n, "targets", [None])[0], "id", "") == "_COOKIE_SCHREIB_RUHE_S"]
+            + [_fn("_ensure_cookie_file_netscape")], type_ignores=[]), "bot.py", "exec"), ns)
+        pruef = ns["_ensure_cookie_file_netscape"]
+        gueltig = ("# Netscape HTTP Cookie File\n"
+                   ".tiktok.com\tTRUE\t/\tTRUE\t2000000000\tttwid\tabc\n")
+        halb_json = '[{"domain": ".tiktok.com", "name": "ttwid", "value": "abc", "path": "/"'
+        del zeilen[:]
+        # Gerade gekuerzt (leer): kein Alarm, keine Reparatur.
+        open(datei, "w").close()
+        assert pruef() is False and not [z for lv, z in zeilen if lv >= _lg.ERROR], zeilen
+        cache["v"] = (0, 0, {"ttwid": "abc"})
+        assert pruef() is True, "mit gueltigem Vorstand gilt der letzte Stand"
+        # Eben geschrieben, halb: nicht anfassen.
+        with open(datei, "w") as f:
+            f.write(halb_json)
+        assert pruef() is True and open(datei).read() == halb_json, \
+            "ein halb geschriebener Stand wurde ersetzt"
+        assert not _os.path.exists(datei + ".bak")
+        # Seit Sekunden ruhig und kaputt, aber reparierbar: reparieren wie bisher.
+        with open(datei, "w") as f:
+            f.write('[{"domain": ".tiktok.com", "name": "ttwid", "value": "abc", '
+                    '"path": "/", "secure": true, "expirationDate": 2000000000}]')
+        _os.utime(datei, (_t.time() - 60, _t.time() - 60))
+        assert pruef() is True and "ttwid" in open(datei).read() and \
+            open(datei).read().startswith("# Netscape"), "die echte Reparatur ist weg"
+        with open(datei, "w") as f:
+            f.write(gueltig)
+        assert pruef() is True
+    finally:
+        _sh.rmtree(heim, ignore_errors=True)
+
+    # (c) Kein Dateizugriff der OAuth-Speicher auf dem Event-Loop.
+    for pfad in ("nc/twitchoauth.py", "nc/ytoauth.py"):
+        b = _ast.parse(open(pfad, encoding="utf-8").read())
+        for f in (n for n in _ast.walk(b) if isinstance(n, _ast.AsyncFunctionDef)):
+            nackt = [c for c in _ast.walk(f) if isinstance(c, _ast.Call)
+                     and getattr(c.func, "id", "") == "_save"]
+            assert not nackt, "%s: %s ruft _save() auf dem Loop" % (pfad, f.name)
+    ok("v5.12.1: Chat-Einarbeiten ueberspringt reine Tonaufnahmen, die Cookie-Pruefung "
+       "laesst eine eben geschriebene Datei in Ruhe, OAuth-Speicher schreiben im Thread")
+
+
+def _test_v5121_wiederholung_nur_fehlende_teile():
+    """v5.12.1: „Teil 76/86 bleibt 10.9 MB > 9 MB (71 von 86 Teilen gesendet)"
+    — und die Warteschlange schickte bei Versuch 2, 3 und 4 diese 71 Teile
+    jedesmal noch einmal in denselben Kanal. Jetzt merkt sich der Eintrag je
+    Server, welche Teile fehlen, und nur die gehen noch raus — wenn die
+    Teilung gleich ausfaellt (Teilezahl, Grenze, Dateigroesse)."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    from nc import discordaufnahme as DA
+    from nc import uploadschlange as U
+    import pruefhilfen as P
+
+    heim = P.verzeichnis()
+    try:
+        teile = []
+        for i in range(5):
+            t = _os.path.join(heim, "a.mp4_dcpart9_%03d.mp4" % i)
+            P.attrappe(t, 1024 * 1024)
+            teile.append(t)
+        gesendet, kaputt = [], set()
+
+        async def _senden(teil, text):
+            if teil in kaputt:
+                raise RuntimeError("Netz weg")
+            gesendet.append(text)
+
+        # (1) Erster Versuch: Teil 2 und 4 scheitern.
+        kaputt.update({teile[1], teile[3]})
+        e = {"gesendet": 0, "fehler": 0, "bytes": 4711}
+        _aio.run(DA._senden_alle(teile, 9, _senden, e, "anna", None, 0))
+        assert e["fehlend"] == [2, 4] and e["gesendet"] == 3 and e["fehler"] == 2, e
+        assert e["teile"] == 5 and e["grenze"] == 9 and not U.angekommen(e), e
+
+        # (2) Zweiter Versuch mit dem Fortschritt: NUR 2 und 4, mit ihrer Nummer.
+        stand = {"teile": 5, "grenze": 9, "fehlend": e["fehlend"], "bytes": 4711}
+        kaputt.clear()
+        del gesendet[:]
+        e2 = {"gesendet": 0, "fehler": 0, "bytes": 4711, "vorher": stand}
+        _aio.run(DA._senden_alle(teile, 9, _senden, e2, "anna", None, 0))
+        assert [t.split("Teil ")[1].split(" ")[0] for t in gesendet] == ["2/5", "4/5"], \
+            ("die schon angekommenen Teile gehen noch einmal raus", gesendet)
+        assert U.angekommen(e2) and e2["fehlend"] == [], e2
+
+        # (3) Andere Teilung, andere Datei oder andere Grenze: alle Teile, wie bisher.
+        for anders in ({"teile": 6}, {"bytes": 999}, {"grenze": 25}):
+            del gesendet[:]
+            e3 = {"gesendet": 0, "fehler": 0, "bytes": 4711, "vorher": dict(stand, **anders)}
+            _aio.run(DA._senden_alle(teile, 9, _senden, e3, "anna", None, 0))
+            assert len(gesendet) == 5, (anders, gesendet)
+        assert DA.nur_fehlende({"teile": 5, "grenze": 9, "fehlend": ["x"], "bytes": 1},
+                               5, 9, 1) is None, "ein kaputter Eintrag bricht den Upload"
+        assert DA.nur_fehlende(None, 5, 9, 1) is None
+        assert DA.nur_fehlende(dict(stand, fehlend=[]), 5, 9, 4711) is None
+
+        # (4) Drei Fehlschlaege in Folge: der nicht versuchte Rest zaehlt als fehlend
+        # — aber nur, soweit er beim letzten Versuch noch fehlte.
+        kaputt.update(teile)
+        e4 = {"gesendet": 0, "fehler": 0, "bytes": 4711,
+              "vorher": dict(stand, fehlend=[1, 2, 3, 5])}
+        _aio.run(DA._senden_alle(teile, 9, _senden, e4, "anna", None, 0))
+        assert e4["fehlend"] == [1, 2, 3, 5] and e4["fehler"] == 4, e4
+    finally:
+        _sh.rmtree(heim, ignore_errors=True)
+
+    # (5) Die Warteschlange fuehrt den Stand fort: neu gemeldete Server ueber-
+    # schreiben, ein Server ohne Teilung diesmal behaelt seinen alten Stand,
+    # ein inzwischen fertiger Server faellt heraus.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_upload_queue_nachher")
+    neu_eintraege = []
+    ns = {"_nc_uschlange": U, "_time_mod": __import__("time"), "log": _lg.getLogger("v5121w2"),
+          "_upload_queue_remove": lambda e: None,
+          "_upload_queue_update": lambda alt, neu: neu_eintraege.append(neu)}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    alt7, alt8, alt9 = ({"teile": 5, "fehlend": [1]}, {"teile": 9, "fehlend": [3]},
+                        {"teile": 2, "fehlend": [2]})
+    eintrag = {"file": "/x.mp4", "ziel": "discord", "versuche": 1,
+               "fortschritt": {"7": alt7, "8": alt8, "9": alt9}}
+    neu7 = {"teile": 5, "fehlend": [4]}
+    ns["_upload_queue_nachher"](eintrag, {"gesendet": 1, "fehler": 2, "fehl_gilden": [7, 8],
+                                         "fortschritt": {"7": neu7}}, "anna", "discord")
+    assert neu_eintraege and neu_eintraege[-1]["fortschritt"] == {"7": neu7, "8": alt8}, \
+        neu_eintraege[-1].get("fortschritt")
+    q = next(n for n in baum.body if getattr(n, "name", "") == "_upload_queue_eintrag")
+    assert any(isinstance(k, _ast.keyword) and k.arg == "fortschritt"
+               for k in _ast.walk(q)), "die Warteschlange reicht den Fortschritt nicht durch"
+    ok("v5.12.1: eine wiederholte Discord-Aufnahme sendet nur die fehlenden Teile — "
+       "bei gleicher Teilung, sonst alle")
+
+
+def _test_v5121_totes_modell_bleibt_laenger_weg():
+    """v5.12.1: „Model 'gpt-4.1-nano-2025-04-14' is currently unavailable" stand
+    im Log vom 26./27.11. 63-mal — die Sperre aus W14 lief alle 15 Minuten ab,
+    und das seit dem 30.08. tote Modell kostete wieder einen Versuch."""
+    import nc.freeai as F
+    url, m = "https://api.llm7.io/v1", "gpt-4.1-nano-2025-04-14"
+    F._model_block.clear()
+    F._model_absagen.clear()
+    weg = '{"error":{"code":"model_unavailable"}}'
+    t0 = F._time_mod.monotonic()
+    dauern = []
+    for _ in range(4):
+        F._block_model(url, m, weg)
+        dauern.append(round(F._model_block[(url, m)] - t0))
+    assert dauern[0] >= 899 and dauern[1] >= 1799 and dauern[3] >= 7199, dauern
+    for _ in range(20):
+        F._block_model(url, m, weg)
+    assert F._model_block[(url, m)] - t0 <= F._MODEL_COOLDOWN_MAX_S + 5, "ohne Obergrenze"
+    # Eine Antwort setzt zurueck: ein zurueckgekehrtes Modell kommt wieder dran.
+    F._modell_antwortet(url, m)
+    F._block_model(url, m, weg)
+    assert F._model_block[(url, m)] - F._time_mod.monotonic() <= 901
+    # Ein anderer 400 (Prompt zu lang o.ae.) waechst NICHT — sonst fiele ein
+    # gesundes Modell fuer einen Tag aus.
+    F._model_absagen.clear()
+    for _ in range(5):
+        F._block_model(url, "zweit", '{"error":"context length exceeded"}')
+    assert F._model_block[(url, "zweit")] - F._time_mod.monotonic() <= 901
+    F._model_block.clear()
+    F._model_absagen.clear()
+    ok("v5.12.1: ein abgeschaltetes Modell bleibt wachsend laenger gesperrt, eine Antwort "
+       "setzt zurueck, andere 400er bleiben bei 15 Minuten")
 
 
 def main():
@@ -47755,6 +48231,11 @@ def main():
     _test_ops3_deploy_sichert_und_schreibt_nur_code()
     _test_v5114_host_statt_teilstring()
     _test_v512_upload_ueberall_gleichzeitig()
+    _test_v5121_split_ueberlebt_kaputten_ton()
+    _test_v5121_discord_rat_nach_art()
+    _test_v5121_chat_ohne_bild_cookie_schreibfenster()
+    _test_v5121_wiederholung_nur_fehlende_teile()
+    _test_v5121_totes_modell_bleibt_laenger_weg()
     _test_v5114_tg1_telegram_start_wiederholt()
     _test_v5114_tg2_untrack_wie_stoppknopf()
     _test_v5114_dc5_schleifen_ueberleben_neustartfenster()

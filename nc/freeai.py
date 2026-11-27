@@ -109,6 +109,17 @@ _COOLDOWN_S = 90.0           # 429-Sperre pro Base
 # dass es nicht mehr weh tut, und kurz genug, dass ein zurueckgekehrtes Modell
 # von selbst wieder drankommt.
 _MODEL_COOLDOWN_S = 900.0
+# v5.12.1: ... und bei einer AUSDRUECKLICHEN Abschaltung waechst die Sperre.
+# gpt-4.1-nano bei llm7.io ist laut debug.log seit dem 30.08. „currently
+# unavailable" — drei Monate lang kostete das alle 15 Minuten einen
+# Fehlversuch auf dem Live-React-Pfad und eine Warnung (63 im Log vom
+# 26./27.11.). Jede weitere Absage verdoppelt die Sperre bis zu einem Tag; eine
+# Antwort setzt sie zurueck, ein zurueckgekehrtes Modell kommt also von selbst
+# wieder dran. Andere 400er (Prompt zu lang o.ae.) bleiben bei 15 Minuten.
+_MODEL_COOLDOWN_MAX_S = 24 * 3600.0
+_MODELL_WEG = ("model_unavailable", "currently unavailable", "unknown model",
+               "model not found", "does not exist", "no such model", "not supported")
+_model_absagen = {}          # (url, modell) -> Zahl der Absagen in Folge
 _state_lock = threading.Lock()
 _base_block = {}             # url -> monotonic-ts, bis wann gesperrt
 _base_lat = {}               # url -> EMA-Latenz in ms
@@ -278,7 +289,7 @@ def _block_base(url: str):
         _base_block[url] = _time_mod.monotonic() + _COOLDOWN_S
 
 
-def _block_model(url: str, modell):
+def _block_model(url: str, modell, body: str = ""):
     """v4.1-W14: dieses EINE Modell dieser Base fuer eine Weile ueberspringen.
 
     Im debug.log vom 30.08. steht 26 Mal derselbe Satz:
@@ -291,8 +302,20 @@ def _block_model(url: str, modell):
     """
     if not modell:
         return
+    weg = any(w in (body or "").lower() for w in _MODELL_WEG)
     with _state_lock:
-        _model_block[(url, modell)] = _time_mod.monotonic() + _MODEL_COOLDOWN_S
+        n = _model_absagen.get((url, modell), 0) + 1 if weg else 1
+        if weg:
+            _model_absagen[(url, modell)] = n
+        dauer = min(_MODEL_COOLDOWN_MAX_S, _MODEL_COOLDOWN_S * (2 ** min(n - 1, 16)))
+        _model_block[(url, modell)] = _time_mod.monotonic() + dauer
+
+
+def _modell_antwortet(url: str, modell):
+    """v5.12.1: eine Antwort setzt die wachsende Sperre zurueck."""
+    if modell:
+        with _state_lock:
+            _model_absagen.pop((url, modell), None)
 
 
 def _model_gesperrt(url: str, modell) -> bool:
@@ -603,7 +626,7 @@ async def chat(messages: List[dict], model=None, timeout=None
                               f"(model={_m}) {_body}")
                         # v4.1-W14: merken, dass DIESES Modell hier tot ist —
                         # sonst beginnt jeder naechste Aufruf wieder damit.
-                        _block_model(base["url"], _m)
+                        _block_model(base["url"], _m, _body)
                         last_err = kind
                         continue                    # naechstes Modell derselben Base
                     data = await resp.json(content_type=None)
@@ -627,6 +650,7 @@ async def chat(messages: List[dict], model=None, timeout=None
                         break                       # Base-Ebene → naechste Base
                     if txt:
                         _record_latency(base["url"], ms)
+                        _modell_antwortet(base["url"], _m)
                         _TELEMETRY(purpose="freeai", ok=True, ms=ms,
                                    prompt_len=sum(len(str(mm.get("content") or "")) for mm in messages),
                                    answer_len=len(txt))

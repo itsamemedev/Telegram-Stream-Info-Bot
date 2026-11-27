@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **28.114 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
+`bot.py` hat **28.193 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -276,10 +276,10 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **501** (v5.6-W197: drei
+`tools/blindstellen.py` misst diese Klasse, Bestand **503** (v5.6-W197: drei
 verschwanden mit totem Code; v5.8-W200: sechs begründet dazu; v5.9-W202: vier;
 v5.11-W209: eine, s. u.; v5.11.4: eine weniger — die Upload-Schlange liest
-streng statt still `[]` zu liefern), und wie bei
+streng statt still `[]` zu liefern; v5.12.1: zwei, s. u.), und wie bei
 W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
 Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
 „dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
@@ -325,6 +325,29 @@ Zahl, es gilt 1" (jede gescheiterte Abfrage steht schon als INFO im Log) und
 Und die eine aus v5.11-W209: `nc.discordziele.einsortieren()` → `(None, None)`
 heisst „diese Nachricht in #clips traegt keinen @Namen" — sie bleibt, wo sie
 ist, und `/setup_targets` zaehlt sie als „ohne Nutzer" im Bericht.
+Und die zwei aus v5.12.1: `nc.videoteil._ton_kaputt()` → `False` heisst „keine
+Tonspur, also nichts zu ersetzen", und `nc.aufnahmechat.kopf_masse()` →
+`(0, 0, 0.0, None)` heisst „ffmpeg nennt keinen Stream" — der Aufrufer sagt
+das laut (`_aufnahme_chat_einarbeiten`: „ist nicht lesbar", warning).
+
+**ffprobe öffnet jeden Decoder — und gibt auf, wenn einer nicht aufgeht.**
+Am 26./27.11. scheiterten Discord- und Telegram-Uploads in Serie: „Alle Teile
+vom Split waren ungueltig (ffprobe-failed)", danach „Error while opening
+decoder: Invalid data found", nachdem das Neukodieren bis zu 40 min in der
+Encode-Warteschlange gewartet hatte. Die Aufnahmen trugen eine Tonspur
+(„aac (HE-AAC), 192000 Hz"), deren Decoder nicht aufgeht; ffprobe endet dann
+mit rc=1 **ohne jede Ausgabe**, auch mit `-select_streams v:0`. Das Bild war
+in Ordnung. `ffmpeg -i` öffnet keinen Decoder und nennt Laufzeit und Streams
+trotzdem — seit v5.12.1 der Rückfall in `nc/videoteil.dauer()` und in
+`_ffprobe_masse`, und die Upload-Teile bekommen Stille statt des Tons
+(`messen()`), das Original bleibt unangetastet. **Wer „ffprobe sagt nichts"
+als „Datei kaputt" liest, wirft gesunde Teile weg.**
+
+Dieselbe Welle fand zwei Gründe für „Teil bleibt 10.9 MB > 9 MB": maxrate
+1,2× mit 2 s Puffer (die Rechnung ging nur im Mittel auf), und ein
+Segment-Muxer, der den ersten erzwungenen Keyframe durch Rundung verpasste —
+erster Teil 23 s statt 15 s. Dafür nennt die ffmpeg-Doku `-segment_time_delta`.
+Gemessen, nicht vermutet: alter Stand 9,91 MB bei 9 MB Ziel, neuer 7,5 MB.
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
 pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —

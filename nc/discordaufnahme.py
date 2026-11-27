@@ -73,18 +73,41 @@ async def teilen(pfad, grenze_mb):
     if teile and _videoteil.zu_gross(teile, grenze_mb):
         # Lange GOPs: der Segment-Muxer schneidet nur an Keyframes. Einmal mit
         # halbem Ziel — haeufig reicht das, und es kostet kein Neukodieren.
-        _videoteil.wegwerfen(teile)
+        # v5.12.1: Loeschen im Thread — 86 Teile auf voller Platte hielten
+        # den Event-Loop bis 6,1 s an (Log 27.11., loop_bremser).
+        await asyncio.to_thread(_videoteil.wegwerfen, teile)
         teile, fehler = await _videoteil.kopier_teilen(pfad, praefix, max(1, grenze_mb // 2))
     if teile and _videoteil.zu_gross(teile, grenze_mb):
-        _videoteil.wegwerfen(teile)
+        await asyncio.to_thread(_videoteil.wegwerfen, teile)
         teile, fehler = None, "Teile ohne Neukodieren zu gross"
     if not teile:
         log.warning("Discord-Aufnahme %s: Teilen ohne Neukodieren gescheitert (%s) — "
                     "kodiere neu.", os.path.basename(pfad), fehler)
-        teile, fehler = await _videoteil.neu_kodieren(pfad, praefix, grenze_mb)
+        teile, fehler = await _neu_kodiert(pfad, praefix, grenze_mb)
     if not teile:
         return None, "Teilen gescheitert: %s" % (fehler or "?")
     return teile, None
+
+
+async def _neu_kodiert(pfad, praefix, grenze_mb):
+    """Neu kodieren wie der Telegram-Weg (B70+): erst die Zeitstempel
+    geradeziehen, dann auf der geradegezogenen Kopie kodieren.
+
+    v5.12.1: der Discord-Weg kodierte das Original direkt. Streams mit „pts
+    has no value" / „Non-monotonic DTS" bringen den Segment-Muxer zum Absturz
+    — am 27.11. nach drei Minuten Kodieren „Conversion failed!", und die
+    Warteschlange wiederholte es zweimal. Der Name traegt den Praefix (und
+    damit die Grenze): Telegram legt fuer dieselbe Aufnahme gleichzeitig
+    `<aufnahme>.remux.mp4` an, ein gemeinsamer Name haette sich ueberschrieben."""
+    remux = praefix + ".remux.mp4"
+    try:
+        ok, fehler = await _videoteil.zeitstempel_richten(pfad, remux)
+        if not ok:
+            log.warning("Discord-Aufnahme %s: Re-Mux (genpts) scheiterte (%s) — kodiere "
+                        "das Original.", os.path.basename(pfad), fehler or "?")
+        return await _videoteil.neu_kodieren(remux if ok else pfad, praefix, grenze_mb)
+    finally:
+        await asyncio.to_thread(_videoteil.wegwerfen, [remux])
 
 
 async def hochladen(pfad, grenze_mb, senden, nutzer, beginn=None, ergebnis=None,
@@ -117,10 +140,46 @@ async def an_alle(pfad, ziele, nutzer, beginn=None, pause_s=PAUSE_S):
                            for grenze, empfaenger in nach_grenze.items()))
 
 
-def _alle_fehler(empfaenger, grund):
+def _alle_fehler(empfaenger, grund, art):
     for _senden, ergebnis in empfaenger:
         ergebnis["fehler"] += 1
         ergebnis["grund"] = grund
+        ergebnis["art"] = art
+
+
+# v5.12.1: woran es lag — bis hierher sagte JEDE gescheiterte Aufnahme
+# „Fehlt dem Bot das Recht, in #… Dateien zu posten?", auch wenn ffmpeg
+# schon beim Teilen gescheitert war und Discord nie gefragt wurde (Log
+# 26./27.11.: „0 von 0 Teilen gesendet. Fehlt dem Bot das Recht …"). Ein
+# falscher Rat schickt den Betreiber in die Server-Einstellungen, waehrend
+# der Fehler in der Datei liegt.
+_ABHILFE = {
+    "datei": "Die Aufnahme ist nicht lesbar — liegt sie noch dort, und darf der Bot sie lesen?",
+    "platz": "Zu wenig Platz zum Teilen neben der Aufnahme — Platte aufraeumen "
+             "(Deck › Aufnahmen › Reste) oder RECORDINGS_DIR auf eine groessere Platte.",
+    "teilen": "ffmpeg konnte die Aufnahme nicht in hochladbare Teile zerlegen (Grund oben); "
+              "Discord wurde nicht gefragt.",
+    "groesse": "Ein Teil blieb auch nach dem Neukodieren ueber der Grenze des Servers; "
+               "Discord wurde fuer diesen Teil nicht gefragt.",
+    "rechte": "Fehlt dem Bot das Recht, in #{kanal} Dateien zu posten (Dateien anhaengen, "
+              "Nachrichten senden)?",
+    "senden": "Discord hat den Upload abgelehnt (Grund oben) — Netz oder Discord-Stoerung; "
+              "die Warteschlange versucht es erneut.",
+    "kanal": "Fuer den Nutzer gibt es keinen Aufnahme-Kanal, und der Bot konnte keinen "
+             "anlegen — Recht „Kanaele verwalten\" pruefen.",
+}
+
+# Woran ein Sendefehler als fehlendes Recht zu erkennen ist: discord.Forbidden
+# (HTTP 403), Discord-Code 50013 „Missing Permissions" oder 50001 „Missing Access".
+_RECHTE = ("forbidden", "missing permissions", "missing access", "50013", "50001", "403")
+
+
+def abhilfe(ergebnis, kanal="?") -> str:
+    """Der Rat zu einem gescheiterten Upload, nach der Art des Fehlers."""
+    vorlage = _ABHILFE.get((ergebnis or {}).get("art") or "")
+    if vorlage is None:
+        return "Grund siehe oben."
+    return vorlage.replace("{kanal}", str(kanal))
 
 
 async def _gruppe(pfad, grenze_mb, empfaenger, nutzer, beginn, pause_s):
@@ -129,19 +188,21 @@ async def _gruppe(pfad, grenze_mb, empfaenger, nutzer, beginn, pause_s):
         groesse = os.path.getsize(pfad)
     except OSError as e:
         log.error("Discord-Aufnahme: %s nicht lesbar: %s", pfad, e)
-        _alle_fehler(empfaenger, "Datei nicht lesbar: %s" % e)
+        _alle_fehler(empfaenger, "Datei nicht lesbar: %s" % e, "datei")
         return
+    for _senden, ergebnis in empfaenger:
+        ergebnis["bytes"] = groesse      # v5.12.1: fuer nur_fehlende beim naechsten Versuch
     eigene = False
     if groesse <= grenze_mb * _MB:
         teile = [pfad]
     else:
         ok, info = _videoteil.platz_reicht(pfad)
         if not ok:
-            _alle_fehler(empfaenger, "zu wenig Platz zum Teilen: %s" % info)
+            _alle_fehler(empfaenger, "zu wenig Platz zum Teilen: %s" % info, "platz")
             return
         teile, grund = await teilen(pfad, grenze_mb)
         if not teile:
-            _alle_fehler(empfaenger, grund)
+            _alle_fehler(empfaenger, grund, "teilen")
             return
         eigene = True
     try:
@@ -151,21 +212,71 @@ async def _gruppe(pfad, grenze_mb, empfaenger, nutzer, beginn, pause_s):
     finally:
         # Erst wenn ALLE Server dieser Grenze fertig sind (oder abgebrochen).
         if eigene:
-            _videoteil.wegwerfen(teile)
+            await asyncio.to_thread(_videoteil.wegwerfen, teile)
+
+
+def nur_fehlende(vorher, n, grenze_mb, groesse=None):
+    """Welche Teile ein Wiederholungsversuch noch senden muss. -> set oder None
+
+    v5.12.1: die Warteschlange schickte bei jedem Versuch ALLE Teile — am
+    26./27.11. kamen 71 von 86 an, und Versuch 2, 3 und 4 schickten diese 71
+    jedesmal noch einmal in denselben Kanal. Jetzt merkt sich der Eintrag je
+    Server, welche Teile fehlen (`fortschritt`), und nur die gehen noch raus.
+
+    Nur wenn die Teilung GLEICH ausfaellt: dieselbe Teilezahl bei derselben
+    Grenze. Die Zerlegung ist bei gleicher Datei und Grenze dieselbe (die
+    Segmentlaenge folgt aus Groesse und Laufzeit, x264 ist deterministisch);
+    hat der Server seine Boost-Stufe gewechselt oder faellt die Zahl anders
+    aus, waeren „Teil 5" vorher und jetzt verschiedene Stuecke — dann None,
+    also alle Teile, wie bisher. Lieber doppelt als eine Luecke. Dazu die
+    Dateigroesse: das Chat-Einarbeiten ersetzt eine Aufnahme nachtraeglich,
+    und dieselbe Teilezahl hiesse dann nicht dieselben Teile."""
+    # Kein Stand (erster Versuch) ist ein leerer Stand: Teilezahl 0 passt nie.
+    vorher = vorher if isinstance(vorher, dict) else {}
+    try:
+        gleich = int(vorher.get("teile") or 0) == int(n) and \
+            int(vorher.get("grenze") or 0) == int(grenze_mb) and \
+            int(vorher.get("bytes") or -1) == int(groesse if groesse is not None else -2)
+        fehlend = {int(i) for i in vorher.get("fehlend") or () if 1 <= int(i) <= int(n)}
+    except (TypeError, ValueError) as e:
+        log.warning("Discord-Aufnahme: Fortschritt unlesbar (%s: %s) — alle Teile neu.",
+                    type(e).__name__, e)
+        return None
+    return fehlend if gleich and fehlend else None
 
 
 async def _senden_alle(teile, grenze_mb, senden, ergebnis, nutzer, beginn, pause_s):
-    """Die Teile nacheinander an EINEN Server (Pause gegen die Kanal-Drossel)."""
+    """Die Teile nacheinander an EINEN Server (Pause gegen die Kanal-Drossel).
+
+    v5.12.1: `ergebnis["vorher"]` (aus der Warteschlange) beschraenkt auf die
+    Teile, die beim letzten Versuch fehlten; `ergebnis["fehlend"]` nennt die,
+    die diesmal fehlen — die Warteschlange merkt sie sich fuer den naechsten."""
     n = len(teile)
     ergebnis["teile"] = n
+    ergebnis["grenze"] = int(grenze_mb)
+    fehlend = ergebnis["fehlend"] = []
+    nur = nur_fehlende(ergebnis.get("vorher"), n, grenze_mb, ergebnis.get("bytes"))
+    if nur is not None:
+        log.info("Discord-Aufnahme @%s: Wiederholung — %d von %d Teilen kamen beim letzten "
+                 "Versuch an, es gehen nur die %d fehlenden raus.", nutzer, n - len(nur), n,
+                 len(nur))
+    elif ergebnis.get("vorher"):
+        log.info("Discord-Aufnahme @%s: Teilung anders als beim letzten Versuch (%s statt %s "
+                 "Teile bei %s MB) — alle Teile gehen neu raus.", nutzer, n,
+                 ergebnis["vorher"].get("teile"), grenze_mb)
     in_folge = 0
+    letzter = max(nur) if nur else n
     for i, teil in enumerate(teile, 1):
+        if nur is not None and i not in nur:
+            continue            # kam beim letzten Versuch schon an
         mb = os.path.getsize(teil) / _MB
         if mb > grenze_mb:
             # Auch nach dem Neukodieren zu gross: Discord antwortete mit
             # 413. Gezaehlt, damit die Aufnahme nicht als angekommen gilt.
             ergebnis["fehler"] += 1
             ergebnis["grund"] = "Teil %d/%d bleibt %.1f MB > %d MB" % (i, n, mb, grenze_mb)
+            ergebnis["art"] = "groesse"
+            fehlend.append(i)
             continue
         try:
             await senden(teil, beschriftung(nutzer, i, n, mb, beginn))
@@ -179,12 +290,17 @@ async def _senden_alle(teile, grenze_mb, senden, ergebnis, nutzer, beginn, pause
             log.warning("Discord-Aufnahme @%s Teil %d/%d gescheitert: %s", nutzer, i, n, e)
             ergebnis["fehler"] += 1
             ergebnis["grund"] = "Teil %d/%d: %s: %s" % (i, n, type(e).__name__, e)
+            text = ("%s %s" % (type(e).__name__, e)).lower()
+            ergebnis["art"] = "rechte" if any(w in text for w in _RECHTE) else "senden"
+            fehlend.append(i)
             in_folge += 1
             if in_folge >= ABBRUCH_IN_FOLGE:
                 # Fehlendes Recht oder geloeschter Kanal: jeder weitere Teil
                 # scheitert genauso, und bei 100 Teilen waeren das 100 Fehler.
-                ergebnis["fehler"] += n - i
-                ergebnis["grund"] += " — Rest (%d Teile) nicht versucht" % (n - i)
+                rest = [j for j in range(i + 1, n + 1) if nur is None or j in nur]
+                ergebnis["fehler"] += len(rest)
+                ergebnis["grund"] += " — Rest (%d Teile) nicht versucht" % len(rest)
+                fehlend.extend(rest)
                 break
-        if i < n:
+        if i < letzter:
             await asyncio.sleep(pause_s)

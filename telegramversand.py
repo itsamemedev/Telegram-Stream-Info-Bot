@@ -519,11 +519,11 @@ async def _teile_bereiten(filepath, username):
         # Vorbereitung nicht gelang — sonst gehoeren sie den wartenden Chats,
         # bis _teile_freigeben sie raeumt. Seit v5.12 geht auch die B47-
         # Reparatur direkt nach dem Teilen weg: die Teile tragen den Inhalt.
-        for _tmp in zwischen:
-            try: os.remove(_tmp)
-            except OSError: pass
+        # v5.12.1: im Thread — .remux/.repaired sind so gross wie die
+        # Aufnahme, und Loeschen auf voller Platte haelt sonst den Loop an.
+        await asyncio.to_thread(_nc_videoteil.wegwerfen, zwischen)
         if not gelungen:
-            _nc_videoteil.teile_entfernen(prefix)
+            await asyncio.to_thread(_nc_videoteil.teile_entfernen, prefix)
 
 
 async def _teilen_oder_reparieren(filepath, prefix, username, size_mb):
@@ -575,8 +575,8 @@ async def _nachteilen(filepath, prefix, part_files):
         log.warning(f"split: {len(oversized)} part(s) > "
                     f"{_nc_videoteil.TELEGRAM_HARD_MB} MB "
                     f"— re-split #{attempt} mit target={cur_target} MB")
-        # Reste löschen + neuer Versuch
-        _nc_videoteil.wegwerfen(part_files)
+        # Reste löschen + neuer Versuch (v5.12.1: im Thread, s. nc/videoteil)
+        await asyncio.to_thread(_nc_videoteil.wegwerfen, part_files)
         part_files, split_err = await _nc_videoteil.kopier_teilen(
             filepath, prefix, cur_target)
         if part_files is None:
@@ -593,7 +593,7 @@ async def _neu_kodiert(filepath, prefix, part_files, zwischen):
     log.warning(f"split: {len(_nc_videoteil.zu_gross(part_files))} part(s) weiterhin > "
                 f"{_nc_videoteil.TELEGRAM_HARD_MB} MB nach Copy-Re-Splits — "
                 f"Re-Encode-Fallback (erzwungene Keyframes)")
-    _nc_videoteil.wegwerfen(part_files)
+    await asyncio.to_thread(_nc_videoteil.wegwerfen, part_files)
     # BUG-FIX (B70+): Vor dem Re-Encode erst einen sauberen Re-Mux-Schritt
     # durchführen. Streams mit "pts has no value" / "Non-monotonic DTS"
     # (wie bei @xxxderspender88xxx im Log) bringen den Segment-Muxer in
