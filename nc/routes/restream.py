@@ -30,12 +30,13 @@ import os
 import time
 from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 
 from nc import channels as _nc_channels
 from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc import kickapi as _nc_kickapi
+from nc import pausenbild as _nc_pausenbild
 from nc import restream_targets as _nc_rst
 from nc import restream_util as _nc_rutil
 from nc import restreamcfg as _nc_rscfg
@@ -654,3 +655,92 @@ def api_restream_layout():
     return jsonify(ok=True, mode=mode,
                    note=("greift beim nächsten Relay-Start — laufenden Restream neu starten"
                          if running else "aktiv beim nächsten Relay-Start"))
+
+
+# ---- v5.13: 24/7-Sendung — das Pausenbild im Deck ---------------------------
+# Der Pfad des Bilds stammt in keiner dieser Routen aus der Anfrage: hochgeladen
+# wird an EINEN festen Ort (nc.pausenbild.ordner()), gezeigt wird, was
+# nc.pausenbild.waehlen() auch dem Füller gibt. Damit gibt es nichts, was ein
+# Pfad-Riegel prüfen müsste (Begründung wie beim Archiv-Scan, W98).
+
+def _pausenbild_antwort(**zusatz):
+    jetzt = time.monotonic()
+    pausen = [{"rid": rid, "seit_s": int(jetzt - seit)}
+              for rid, seit in sorted(dict(_nc_rsstate.PAUSE).items())]
+    return jsonify(ok=True, bild=_nc_pausenbild.lage(),
+                   dauersendung=_nc_rscfg.dauersendung(),
+                   # Ohne Sendebrücke gibt es keine Pause (bot.py verweigert
+                   # den Pausenstart) — das Deck sagt es, statt still zu bleiben.
+                   bruecke=_nc_rscfg.bruecke(True)[0],
+                   pausen=pausen, **zusatz)
+
+
+def _pausenbild_tauschen():
+    """Das neue Bild in jede laufende Sendung. Ein Fehler hier macht den Upload
+    nicht ungeschehen — gespeichert ist gespeichert, es greift dann eben beim
+    nächsten Sendestart. Deshalb gemeldet, nicht geworfen."""
+    try:
+        return _nc_rsstate.fueller_neu()
+    except Exception as e:
+        _c().log.error("Pausenbild: Tausch in laufenden Sendungen gescheitert (%s) — "
+                       "das neue Bild greift beim nächsten Sendestart.", e, exc_info=True)
+        return 0
+
+
+@bp.route("/api/restream/pausenbild")
+def api_restream_pausenbild():
+    """Welches Pausenbild gilt, ob die 24/7-Sendung an ist, welche Ziele gerade
+    Pause senden."""
+    return _pausenbild_antwort()
+
+
+@bp.route("/api/restream/pausenbild/bild")
+def api_restream_pausenbild_bild():
+    """Die Vorschau: das Bild, das der Füller gerade nimmt. 404 bei der Fläche."""
+    pfad, _herkunft = _nc_pausenbild.waehlen()
+    if pfad:
+        pfad, typ = _nc_pausenbild.datei(pfad)
+    if not pfad:
+        return jsonify(ok=False, error=_t("Kein Pausenbild — gesendet wird die einfarbige Fläche.")), 404
+    antwort = send_file(pfad, mimetype=typ, max_age=0)
+    antwort.headers["Cache-Control"] = "no-store"
+    return antwort
+
+
+@bp.route("/api/restream/pausenbild", methods=["POST"])
+def api_restream_pausenbild_hochladen():
+    """Ein eigenes Pausenbild (PNG/JPEG, Feld „file" oder roher Body)."""
+    # Vor dem Lesen begrenzen: der Deckel der App gilt dem Archiv-Upload und
+    # liegt bei Gigabytes — ein Pausenbild darüber im Speicher zu halten, um
+    # es danach abzulehnen, wäre der teure Weg.
+    if (request.content_length or 0) > _nc_pausenbild.MAX_BYTES + 64 * 1024:
+        return jsonify(ok=False, error=_nc_i18n.t("Das Bild ist größer als {max} MB.",
+                                                  max=_nc_pausenbild.MAX_BYTES // 1048576)), 413
+    f = request.files.get("file")
+    daten = f.read(_nc_pausenbild.MAX_BYTES + 1) if f is not None else request.get_data()
+    try:
+        _pfad, breite, hoehe = _nc_pausenbild.speichern(daten)
+    except _nc_pausenbild.BildUngueltig as e:
+        _c().log.warning("Pausenbild abgelehnt — %s", e)
+        return jsonify(ok=False, error=_nc_i18n.t(e.grund, **e.werte)), 400
+    except OSError as e:
+        # ERROR, nicht nur _fehler_text (warning): eine volle oder schreib-
+        # geschützte Platte trifft auch die Aufnahmen daneben.
+        _c().log.error("Pausenbild nicht abgelegt (%s) — es gilt weiter das bisherige Bild.", e)
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_pausenbild_hochladen")), 500
+    _c().log_event("restream.pausenbild", "info", f"Eigenes Pausenbild ({breite}×{hoehe})",
+                   {"breite": breite, "hoehe": hoehe})
+    return _pausenbild_antwort(getauscht=_pausenbild_tauschen())
+
+
+@bp.route("/api/restream/pausenbild", methods=["DELETE"])
+def api_restream_pausenbild_zuruecksetzen():
+    """Das eigene Bild löschen — danach gilt wieder AZRAEL."""
+    try:
+        weg = _nc_pausenbild.entfernen()
+    except OSError as e:
+        _c().log.error("Pausenbild nicht zurückgesetzt (%s) — gesendet wird weiter das eigene Bild.", e)
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_pausenbild_zuruecksetzen")), 500
+    if weg:
+        _c().log_event("restream.pausenbild", "info", "Pausenbild zurückgesetzt", {})
+    return _pausenbild_antwort(getauscht=_pausenbild_tauschen() if weg else 0)

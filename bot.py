@@ -1805,7 +1805,7 @@ _ytoauth.configure(
     os.getenv("YOUTUBE_REDIRECT_URI", ""))
 # v5.13: das eigene Pausenbild liegt neben den OAuth-Speichern — der taegliche
 # Aufraeumer loescht unter RECORDINGS_DIR nur Videodateien (v5.11.3).
-_nc_pausenbild.configure(os.path.join(RECORDINGS_DIR, "pausenbild"))
+_nc_pausenbild.configure(os.path.join(RECORDINGS_DIR, "pausenbild"), vorgabe=RESTREAM_AVATAR)
 
 LOG_DIR = "logs"
 LOG_MAX_BYTES   = _env_int("LOG_MAX_BYTES", 10*1024*1024)   # 10 MB
@@ -14780,6 +14780,9 @@ def _restream_fueller_cmd():
     eigenes Bild, sonst AZRAEL (RESTREAM_AVATAR), sonst die Flaeche."""
     bild, _herkunft = _nc_pausenbild.waehlen(RESTREAM_AVATAR)
     return _nc_rscmd.fueller(bild=bild)
+
+
+_nc_rsstate.FUELLER_CMD["fn"] = _restream_fueller_cmd   # v5.13: Bildtausch aus dem Deck
 
 
 def _build_restream_cmd(*a, **kw):

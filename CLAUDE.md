@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **28.364 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
+`bot.py` hat **28.367 Zeilen / 1,4 MB ≈ 290.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -41,7 +41,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 391 Routen (34 in `bot.py`, 357 in
+`find` antwortet aus `.claude/INDEX.md` — 395 Routen (34 in `bot.py`, 361 in
 `nc/routes/`), 67 Slash-Commands, 675 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
@@ -73,7 +73,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          semantic, knowledge, scheduler, llm, report
     nc/                  219 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           41 Flask-Blueprints mit 357 weiteren API-Routen
+    nc/routes/           41 Flask-Blueprints mit 361 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -1361,6 +1361,22 @@ News, Co-Host, Highlight-Radar, Signalton). Seither gibt es **eine** Stelle:
 geschrieben. Wer `app_config` ändert, geht darüber. **Ist eine Klasse an
 einer Stelle behoben, steht sie meistens daneben — suchen, bevor die Welle
 schließt.**
+
+**Ein Upload aus dem Deck geht nicht über `apiPost()`.** Der Helfer verpackt
+jeden Körper als JSON — ein `FormData` käme als `{}` an, und der Server lehnte
+jedes Bild als „keine Datei" ab, ohne dass im Deck etwas falsch aussähe. Uploads
+laufen über `fetch(…, {body: fd})` (Pausenbild, DB-Import). Und `send_file()`
+löst einen **relativen** Pfad gegen den Ordner der App auf, nicht gegen das
+Arbeitsverzeichnis: `RECORDINGS_DIR` ist relativ, die Vorschau wäre 404,
+während der Füller dasselbe Bild sendet. Beides hält der v5.13-Vertrag fest
+(`_test_v513_pausenbild_deck`); die erste Fassung der abspath-Prüfung ist dabei
+entwischt, weil sie nur einen schon absoluten Ablageort sah.
+
+**Der Übersetzungs-Extraktor liest Template-Literale nur einzeilig.** Die
+Ansichten des Decks entstehen als mehrzeiliges `` root.innerHTML=`…` `` — ihr
+statischer Text (Knöpfe, Kopfzeilen, Hinweise) landet damit nie im Katalog und
+bleibt in der englischen Oberfläche deutsch. Bis das behoben ist: neuer Text in
+solchen Ansichten als `${T('…')}`, das findet der Extraktor.
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

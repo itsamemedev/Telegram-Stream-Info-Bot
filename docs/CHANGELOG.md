@@ -9,7 +9,7 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
-## [Unveröffentlicht] — 24/7-Sendung (Welle A von B)
+## [5.13.0] — 2026-11-27 · „Nachtwache" (24/7-Sendung, Tonspuren zurück)
 
 Gewünscht vom Betreiber am 27.11.: „für die Zeit, wo kein getrackter User live
 ist, ein Pausenbild, das in der Abwesenheit live gestreamt wird, bis der
@@ -34,6 +34,15 @@ nächste getrackte User live kommt — im Standard- und Text-Mode. Wir gehen
 - **Kanaltitel in der Pause:** `RESTREAM_PAUSE_TITEL` (Kick, über die
   Living-Title-Schleife); kein Community-Ping für eine Pause, dafür einer,
   wenn die Quelle wirklich auf Sendung geht.
+- **Im Deck** (Restream, Kasten „24/7-Sendung — Pausenbild"): Schalter für
+  `RESTREAM_DAUERSENDUNG` (wirkt ohne Neustart), Vorschau im Sendeformat 9:16
+  mit den Rändern wie auf Sendung, eigenes Bild hochladen (PNG/JPEG, bis 8 MB
+  und 8192 px je Kante) und „Zurück zu AZRAEL", dazu die laufenden Pausen.
+  Ein neues Bild geht **sofort** in jede laufende Sendung, ohne sie zu
+  beenden — der Füller wird getauscht, nicht der Sender. Geprüft wird vor dem
+  Ablegen, an den Bytes (PNG-IHDR, JPEG-SOF): ein Bild, das ffmpeg nicht
+  öffnen kann, beendete den Füller bei jedem Neustart wieder. Abgelegt wird
+  atomar; ein halbes Bild bleibt nie liegen.
 
 ### Behoben
 

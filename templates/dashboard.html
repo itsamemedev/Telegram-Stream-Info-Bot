@@ -1382,6 +1382,16 @@ body{padding-top:46px}   /* Platz für die fixe Sendeleiste */
 /* ============ F92: STUDIO — Sendebild-Monitor ============ */
 .studio-wrap{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px}
 @media(max-width:900px){.studio-wrap{grid-template-columns:1fr}}
+/* v5.13: 24/7-Sendung — Vorschau im Sendeformat (9:16). Der Grund ist die
+   Fuellfarbe des Servers (nc/restreamcmd.FUELLER_GRUND), nicht ein Token:
+   die Raender in der Vorschau sollen so aussehen wie auf Sendung. */
+.pb-wrap{display:grid;grid-template-columns:150px minmax(0,1fr);gap:16px;align-items:start}
+@media(max-width:600px){.pb-wrap{grid-template-columns:1fr}.pb-vorschau{max-width:180px}}
+.pb-vorschau{aspect-ratio:9/16;background:#0b0f17;border:1px solid var(--border);display:flex;
+  align-items:center;justify-content:center;overflow:hidden;font-size:var(--fs-xs);color:var(--text-faint);text-align:center;padding:4px}
+.pb-vorschau img{width:100%;height:100%;object-fit:contain;display:block}
+.pb-lage{font-size:var(--fs-xs);line-height:1.6;margin-top:10px}
+.pb-lage .warn{color:var(--amber)}
 .studio-monitor{
   position:relative;aspect-ratio:16/9;background:#05070d;border:1px solid var(--border);
   border-radius:var(--r-md);overflow:hidden;display:grid;grid-template-columns:46% 54%;
@@ -8762,6 +8772,29 @@ VIEW_LOADERS.restream = async function(){
         </div>
       </div>
       <div class="grid g2 mt">
+        <div class="panel span2" id="pb_panel">
+          <div class="head"><h3>▚ ${T('24/7-Sendung — Pausenbild')}</h3><span class="tag" id="pb_tag">…</span>
+            <div class="spacer"></div>
+            <button class="btn sm" onclick="pbLoad()" aria-label="${T('Pausenbild neu laden')}" title="${T('Pausenbild neu laden')}">↺</button></div>
+          <div class="body">
+            <div class="pb-wrap">
+              <div class="pb-vorschau" id="pb_vorschau"><div class="skel" aria-busy="true"><i></i></div></div>
+              <div>
+                <div class="faint" style="font-size:10px;line-height:1.5">${T('Ist keiner der getrackten Nutzer live, sendet der Restream dieses Bild, bis der nächste live kommt — im Standard- und im Text-Modus, mit allen Overlays. Ein eigenes Bild hat Vorrang vor AZRAEL; am besten hochkant (9:16), andere Formate bekommen Ränder.')}</div>
+                <div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-top:10px">
+                  <button class="btn cyan" id="pb_dauer" onclick="pbDauer()" disabled>${T('24/7 einschalten')}</button>
+                  <input type="file" id="pb_datei" accept="image/png,image/jpeg" hidden onchange="pbHochladen(this)">
+                  <button class="btn" onclick="pbWaehlen()">${T('Eigenes Bild hochladen')}</button>
+                  <button class="btn" id="pb_zurueck" onclick="pbZurueck()" disabled>${T('Zurück zu AZRAEL')}</button>
+                </div>
+                <div class="faint mono" id="pb_info" style="font-size:10px;margin-top:10px"></div>
+                <div class="pb-lage" id="pb_lage" aria-live="polite"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="grid g2 mt">
         <div class="panel span2">
           <div class="head"><h3>▚ STUDIO — Sendebild-Monitor</h3><span class="tag" id="sl_tag">layout</span>
             <div class="spacer"></div>
@@ -9051,10 +9084,10 @@ VIEW_LOADERS.restream = async function(){
     if(!window._rsAutoRefresh){
       // F99: SSE treibt Chat + Events live → Polling nur noch als Fallback für
       // Werte ohne Push (Systemlast, Timeline). 8s → 20s spart ~60% Requests.
-      window._rsAutoRefresh=setInterval(()=>{ if(ncSicht('restream')){ rsLoad(); kmLoad(); slLoad(); loadResilience(); rsDeck(); loadTunnel(); loadLiveNow(); loadTimeline(); loadTranscript(); chLoad(); } }, 20000);   /* V37-MP: Kanal-Status mit auffrischen (Server cached 20s) */
+      window._rsAutoRefresh=setInterval(()=>{ if(ncSicht('restream')){ rsLoad(); kmLoad(); slLoad(); pbLoad(); loadResilience(); rsDeck(); loadTunnel(); loadLiveNow(); loadTimeline(); loadTranscript(); chLoad(); } }, 20000);   /* V37-MP: Kanal-Status mit auffrischen (Server cached 20s) */
     }
   }
-  rsLoad(); kmLoad(); slLoad(); loadResilience(); kcLoad(); kcCatsLoad(); voiceLoad(); ctxLoad(); rsDeck(); loadTunnel(); loadLiveNow(); loadTimeline(); loadTranscript();
+  rsLoad(); kmLoad(); slLoad(); pbLoad(); loadResilience(); kcLoad(); kcCatsLoad(); voiceLoad(); ctxLoad(); rsDeck(); loadTunnel(); loadLiveNow(); loadTimeline(); loadTranscript();
   nachAufbau('loadClips');   /* steht in einem spaeteren Script-Block */
 };
 /* v37: Live-Transkript-Viewer */
@@ -9970,6 +10003,87 @@ async function slSetMode(m){
   if(d&&d.ok) toast(T('Sendebild: ')+m.toUpperCase()+' — '+(d.note||''));
   else toast((d&&d.error)||'Layout-Fehler','err');
   slLoad();
+}
+/* ═══ v5.13: 24/7-Sendung — Pausenbild ═══
+   Was gilt (eigenes Bild > AZRAEL > Flaeche), entscheidet der Server
+   (nc/pausenbild.waehlen) — hier wird nur angezeigt. Der Schalter geht ueber
+   die Einstellungen (RESTREAM_DAUERSENDUNG) und wirkt ohne Neustart: der Bot
+   liest ihn bei jeder Scheduler-Runde frisch. */
+let _pbLage=null;
+function pbMin(s){ return s<60 ? T('unter 1 min') : Math.round(s/60)+' min'; }
+async function pbLoad(){
+  const d=await apiGet('/api/restream/pausenbild');
+  const tag=$('#pb_tag'), vor=$('#pb_vorschau'), info=$('#pb_info'), lage=$('#pb_lage');
+  if(!tag||!vor) return;
+  if(!d||!d.ok){
+    /* Ausfall ist nicht „nichts konfiguriert" (W99): ein Satz statt einer leeren Flaeche. */
+    tag.textContent=T('unbekannt');
+    if(lage) lage.textContent=T('Der Stand der 24/7-Sendung ist nicht abrufbar: ')+((d&&d.error)||'?');
+    return;
+  }
+  _pbLage=d;
+  const b=d.bild||{};
+  tag.textContent=d.pausen.length ? T('PAUSE AUF SENDUNG') : (d.dauersendung ? T('24/7 AN') : T('24/7 AUS'));
+  if(b.herkunft==='flaeche'){
+    vor.textContent=T('Einfarbige Fläche');
+  }else{
+    const img=document.createElement('img');
+    img.src='/api/restream/pausenbild/bild?v='+(b.geaendert||0)+'-'+(b.bytes||0);
+    img.alt=b.herkunft==='eigen' ? T('Eigenes Pausenbild') : T('Pausenbild AZRAEL');
+    img.onerror=()=>{ vor.textContent=T('Vorschau nicht ladbar'); };
+    vor.replaceChildren(img);
+  }
+  if(info){
+    const quelle={eigen:T('Eigenes Bild'), vorgabe:T('AZRAEL (Vorgabe)'),
+                  flaeche:T('Einfarbige Fläche — weder eigenes Bild noch AZRAEL-Datei vorhanden')}[b.herkunft]||b.herkunft;
+    info.textContent=quelle+(b.format ? ' · '+b.format : '')+(b.breite ? ' · '+b.breite+'×'+b.hoehe : '')
+      +(b.bytes ? ' · '+Math.max(1,Math.round(b.bytes/1024))+' KB' : '');
+  }
+  const knopf=$('#pb_dauer');
+  if(knopf){ knopf.disabled=false; knopf.textContent=d.dauersendung ? T('24/7 ausschalten') : T('24/7 einschalten'); }
+  const zur=$('#pb_zurueck'); if(zur) zur.disabled=(b.herkunft!=='eigen');
+  if(lage){
+    const z=[];
+    if(!d.bruecke) z.push('<span class="warn">'+esc(T('Die Sendebrücke ist aus (RESTREAM_BRUECKE=0) — ohne sie gibt es keine Pause. In der .env RESTREAM_BRUECKE=auto setzen.'))+'</span>');
+    if(d.pausen.length) z.push(esc(T('Pause auf Sendung: '))+d.pausen.map(p=>'#'+p.rid+' '+esc(T('seit'))+' '+esc(pbMin(p.seit_s))).join(', '));
+    else if(d.dauersendung) z.push(esc(T('Gerade keine Pause — ist niemand live, startet sie bei der nächsten Scheduler-Runde.')));
+    else z.push(esc(T('24/7 aus: ohne live Nutzer endet die Sendung.')));
+    lage.innerHTML=z.join('<br>');
+  }
+}
+async function pbDauer(){
+  if(!_pbLage) return;
+  const an=!_pbLage.dauersendung;
+  if(an && !confirm(T('Die 24/7-Sendung kodiert rund um die Uhr ein Sendebild (x264) — auch nachts ohne Zuschauer. Einschalten?'))) return;
+  const d=await apiPost('/api/einstellungen',{name:'RESTREAM_DAUERSENDUNG', wert:an?'1':'0'});
+  if(d&&d.ok) toast(an ? T('24/7-Sendung an — ist niemand live, startet die Pause bei der nächsten Scheduler-Runde.')
+                       : T('24/7-Sendung aus — eine laufende Pause endet bei der nächsten Quellenprüfung.'));
+  else toast(T('24/7 nicht umgeschaltet: ')+((d&&d.error)||'?'),'err');
+  pbLoad();
+}
+function pbWaehlen(){ const i=$('#pb_datei'); if(i) i.click(); }
+async function pbHochladen(inp){
+  const f=inp&&inp.files&&inp.files[0];
+  if(!f) return;
+  inp.value='';   /* sonst loest dieselbe Datei ein zweites Mal kein change aus */
+  const max=(_pbLage&&_pbLage.bild&&_pbLage.bild.max_bytes)||0;
+  if(max && f.size>max){ toast(T('Das Bild ist zu groß — erlaubt sind ')+Math.round(max/1048576)+' MB.','err'); return; }
+  const fd=new FormData(); fd.append('file', f);
+  let d;
+  try{
+    const r=await fetch('/api/restream/pausenbild',{method:'POST', body:fd});
+    d=await r.json();
+  }catch(e){ d={ok:false, error:String(e)}; }
+  if(d&&d.ok) toast(T('Pausenbild gespeichert.')+(d.getauscht ? ' '+T('Laufende Sendungen zeigen es ab sofort.') : ''));
+  else toast(T('Pausenbild abgelehnt: ')+((d&&d.error)||'?'),'err');
+  pbLoad();
+}
+async function pbZurueck(){
+  if(!confirm(T('Eigenes Pausenbild löschen? Danach gilt wieder AZRAEL.'))) return;
+  const d=await apiDel('/api/restream/pausenbild');
+  if(d&&d.ok) toast(T('Pausenbild zurückgesetzt — es gilt wieder AZRAEL.'));
+  else toast(T('Pausenbild nicht zurückgesetzt: ')+((d&&d.error)||'?'),'err');
+  pbLoad();
 }
 async function shieldLoad(){
   try{

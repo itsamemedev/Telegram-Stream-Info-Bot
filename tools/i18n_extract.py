@@ -71,7 +71,9 @@ MARKIERT = ["nc/befehle.py",
             "nc/herkunft.py",
             # v5.6-W198: Ablehnungen, Testgruende und Abhilfe der MCP-Verwaltung.
             # Die Route uebersetzt die Vorlage und fuellt sie erst danach.
-            "nc/mcpdienste.py"]
+            "nc/mcpdienste.py",
+            # v5.13: warum ein hochgeladenes Pausenbild abgelehnt wird.
+            "nc/pausenbild.py"]
 
 # Ein Text ist uebersetzbar, wenn er ueberhaupt Sprache enthaelt. Reine Zahlen,
 # Symbole, CSS-Werte und Platzhalter fliegen raus.

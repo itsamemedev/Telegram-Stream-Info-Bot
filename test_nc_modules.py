@@ -1775,7 +1775,10 @@ def _test_w22_restream_blueprint():
     # registriert (GET fuer den Status, POST fuer den Lauf) und waere als
     # Menge nur ein Eintrag.
     regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
-    assert len(regeln) == 16, sorted(str(r.rule) for r in regeln)
+    # ANKER GEWANDERT (v5.13, nicht der Vertrag): 16 -> 20. Dazu kamen die vier
+    # Pausenbild-Regeln (GET, POST, DELETE /api/restream/pausenbild und die
+    # Vorschau) — ohne neuen Kontext-Platz, das prueft die Zeile darunter.
+    assert len(regeln) == 20, sorted(str(r.rule) for r in regeln)
     genutzt = {n.attr for n in _ast.walk(baum)
                if isinstance(n, _ast.Attribute) and isinstance(n.value, _ast.Call)
                and getattr(n.value.func, "id", "") == "_c"}
@@ -48207,6 +48210,237 @@ def _test_v513_tonkopf_reparatur():
        "und als Werkzeug fuer den Bestand")
 
 
+
+def _test_v513_pausenbild_deck():
+    """v5.13 Welle B: das Pausenbild im Deck — hochladen, ansehen, zurücksetzen,
+    und ein neues Bild geht sofort in jede laufende Sendung, ohne sie zu
+    beenden. Geprüft wird VOR dem Ablegen: ein Bild, das ffmpeg nicht öffnen
+    kann, beendet den Füller bei jedem Neustart wieder, und die Pause zeigte
+    dann gar nichts statt AZRAEL."""
+    import ast as _ast
+    import os as _os
+    import struct as _st
+    import subprocess as _sp
+    import sys as _sys
+    from unittest import mock as _mock
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc import pausenbild as PB
+    from nc import restreamstate as RS
+    from nc import sendebruecke as SB
+    import nc.routes.restream as RR
+    import pruefhilfen as P
+
+    def _png(b, h, rest=b"\x08\x06\x00\x00\x00" + b"\0" * 4):
+        return b"\x89PNG\r\n\x1a\n" + _st.pack(">I", 13) + b"IHDR" + _st.pack(">II", b, h) + rest
+
+    def _jpeg(b, h):
+        # DHT (C4) vor dem SOF: C4 liegt im SOF-Nummernbereich und traegt
+        # KEINE Masse — wer es als SOF liest, bekommt Unsinn.
+        dht = b"\xff\xc4" + _st.pack(">H", 6) + b"\x10\x20\x30\x40"
+        app0 = b"\xff\xe0" + _st.pack(">H", 16) + b"JFIF\x00" + b"\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+        sof = b"\xff\xc0" + _st.pack(">HBHHB", 17, 8, h, b, 3) + b"\x01\x22\x00\x02\x11\x01\x03\x11\x01"
+        return b"\xff\xd8" + app0 + b"\xff\xff" + dht + sof + b"\xff\xda" + b"\0" * 32
+
+    # (1) Bildmasse aus den Bytes, und jeder Grund, warum nicht.
+    assert PB.masse(_png(1080, 1920)) == (".png", 1080, 1920)
+    assert PB.masse(_jpeg(720, 1280)) == (".jpg", 720, 1280), PB.masse(_jpeg(720, 1280))
+    avatar = open("azrael_avatar.png", "rb").read()
+    assert PB.masse(avatar)[0] == ".png"
+    for daten, wort in ((b"", "Keine Datei"),
+                        (b"GIF89a" + b"\0" * 40, "PNG oder JPEG"),
+                        (b"\x89PNG\r\n\x1a\n" + b"\0" * 8 + b"XXXX" + b"\0" * 8, "IHDR"),
+                        (_png(1080, 1920)[:20], "abgeschnitten"),
+                        (b"\xff\xd8" + b"\xff\xe0" + _st.pack(">H", 4) + b"\0\0" + b"\xff\xda", "keine Bildmaße"),
+                        (b"\xff\xd8\xff\xe0\x00\x10" + b"\x00" * 30, "Kennung"),
+                        (_png(0, 1920), "keine Fläche"),
+                        (_png(9000, 1000), "höchstens"),
+                        (_png(10, 10) + b"\0" * PB.MAX_BYTES, "erlaubt sind")):
+        try:
+            PB.masse(daten)
+        except PB.BildUngueltig as e:
+            assert wort in str(e), (wort, str(e))
+            assert e.grund and "{" not in str(e), "Platzhalter nicht eingesetzt"
+        else:
+            raise AssertionError("angenommen, obwohl " + wort)
+    assert PB.masse(_png(PB.MAX_KANTE, 10))[1] == PB.MAX_KANTE, "die Grenze selbst ist erlaubt"
+
+    # (2) Ablegen: atomar, die andere Endung geht mit, nichts Halbes bleibt.
+    heim = P.verzeichnis()
+    alt_konf = dict(PB._KONF)
+    alt_ctx = _ncctx._CTX
+    alt_fn = RS.FUELLER_CMD["fn"]
+    alt_mgr = RS.MGR["obj"]
+    try:
+        PB.configure(_os.path.join(heim, "pb"), vorgabe="azrael_avatar.png")
+        assert PB.lage()["herkunft"] == "vorgabe" and PB.lage()["breite"] > 0
+        pfad, b, h = PB.speichern(avatar)
+        assert pfad.endswith("pausenbild.png") and PB.eigenes() == pfad and (b, h) == PB.masse(avatar)[1:]
+        jpg = _jpeg(720, 1280)
+        pfad, _b, _h = PB.speichern(jpg)
+        assert PB.eigenes() == pfad and pfad.endswith(".jpg"), \
+            "ein altes PNG neben dem neuen JPEG gewinnt still"
+        assert sorted(_os.listdir(PB.ordner())) == ["pausenbild.jpg"], _os.listdir(PB.ordner())
+        with _mock.patch.object(PB.os, "replace", side_effect=OSError("Platte voll")):
+            try:
+                PB.speichern(avatar)
+            except OSError:
+                pass
+            else:
+                raise AssertionError("ein gescheitertes Ablegen meldet Erfolg")
+        assert not [n for n in _os.listdir(PB.ordner()) if n.endswith(".neu")], \
+            "die Nebendatei bleibt nach einem Fehlschlag liegen"
+        assert PB.entfernen() == 0 or PB.eigenes() is None
+        PB.speichern(jpg)
+        assert PB.entfernen() == 1 and PB.eigenes() is None and PB.lage()["herkunft"] == "vorgabe"
+        PB.configure(_os.path.join(heim, "pb"), vorgabe=_os.path.join(heim, "gibtsnicht.png"))
+        assert PB.lage()["herkunft"] == "flaeche" and PB.waehlen() == (None, "flaeche")
+        # Relativer Ablageort wie im Betrieb (RECORDINGS_DIR ist relativ). Die
+        # Vorgabe macht waehlen() schon absolut — mit ihr allein liefe die
+        # Pruefung ins Leere (die Mutationsprobe ist daran entwischt).
+        PB.configure(_os.path.relpath(_os.path.join(heim, "pb")), vorgabe="azrael_avatar.png")
+        PB.speichern(jpg)
+        pf, typ = PB.datei(PB.waehlen()[0])
+        assert _os.path.isabs(pf) and typ == "image/jpeg", \
+            "relativer Pfad: Flask loest ihn gegen den App-Ordner auf, die Vorschau waere 404"
+        PB.entfernen()
+        PB.configure(_os.path.join(heim, "pb"), vorgabe="azrael_avatar.png")
+
+        # (3) Der Tausch in laufende Sendungen: nur Bruecken, die noch stehen.
+        class _Br:
+            def __init__(self, steht):
+                self.steht, self.cmds = steht, []
+
+            def fueller_tauschen(self, cmd):
+                self.cmds.append(cmd)
+                return self.steht
+        b1, b2 = _Br(True), _Br(False)
+        mgr = type("M", (), {})()
+        mgr._procs = {1: {"bruecke": b1}, 2: {"bruecke": b2}, 3: {"bruecke": None}, 4: {}}
+        RS.FUELLER_CMD["fn"] = None
+        RS.MGR["obj"] = mgr
+        import logging as _lg
+        with _mock.patch.object(_lg.getLogger("TikTokBot"), "error") as _err:
+            assert RS.fueller_neu() == 0 and not b1.cmds, "ohne Bauer wird nichts getauscht"
+        assert _err.called, "laufende Sendungen ohne Bauer: der Upload meldete still Erfolg"
+        RS.FUELLER_CMD["fn"] = lambda: ["ffmpeg", "neu"]
+        assert RS.fueller_neu() == 1 and b1.cmds == [["ffmpeg", "neu"]] and b2.cmds, \
+            (b1.cmds, b2.cmds)
+        RS.MGR["obj"] = None
+        assert RS.fueller_neu() == 0
+
+        # (4) Die Routen. Der Pfad kommt nie aus der Anfrage.
+        events = []
+        zeilen = []
+
+        class _Log:
+            def _z(self, *a, **k):
+                zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+            info = warning = error = _z
+        _ncctx.configure(log=_Log(), log_event=lambda *a, **k: events.append(a))
+        RS.MGR["obj"] = mgr
+        b1.cmds.clear()
+        app = Flask(__name__)
+        app.register_blueprint(RR.bp)
+        cl = app.test_client()
+        j = cl.get("/api/restream/pausenbild").get_json()
+        assert j["ok"] and j["bild"]["herkunft"] == "vorgabe" and "dauersendung" in j \
+            and "bruecke" in j and j["pausen"] == [], j
+        r = cl.get("/api/restream/pausenbild/bild")
+        assert r.status_code == 200 and r.data == avatar and r.mimetype == "image/png"
+        assert "no-store" in r.headers.get("Cache-Control", "")
+        r.close()
+        r = cl.post("/api/restream/pausenbild", data=b"GIF89a" + b"\0" * 40,
+                    content_type="application/octet-stream")
+        assert r.status_code == 400 and "PNG oder JPEG" in r.get_json()["error"], r.get_json()
+        assert PB.eigenes() is None and not b1.cmds, "ein abgelehntes Bild tauschte trotzdem"
+        r = cl.post("/api/restream/pausenbild", data=b"\0" * (PB.MAX_BYTES + 70 * 1024),
+                    content_type="application/octet-stream")
+        assert r.status_code == 413, r.status_code
+        import io as _io
+        r = cl.post("/api/restream/pausenbild", data={"file": (_io.BytesIO(jpg), "x.jpg")},
+                    content_type="multipart/form-data")
+        j = r.get_json()
+        assert r.status_code == 200 and j["bild"]["herkunft"] == "eigen" \
+            and j["bild"]["format"] == "JPG" and j["getauscht"] == 1, j
+        assert b1.cmds == [["ffmpeg", "neu"]], "das neue Bild ging nicht in die laufende Sendung"
+        assert events and events[-1][0] == "restream.pausenbild"
+        r = cl.get("/api/restream/pausenbild/bild")
+        assert r.data == jpg and r.mimetype == "image/jpeg"
+        r.close()
+        RS.PAUSE[7] = 0.0
+        try:
+            j = cl.delete("/api/restream/pausenbild").get_json()
+        finally:
+            RS.PAUSE.pop(7, None)
+        assert j["bild"]["herkunft"] == "vorgabe" and j["getauscht"] == 1 and \
+            [p["rid"] for p in j["pausen"]] == [7], j
+        assert len(b1.cmds) == 2
+        j = cl.delete("/api/restream/pausenbild").get_json()
+        assert j["getauscht"] == 0, "nichts geloescht, trotzdem jede Sendung neu gestartet"
+        # Ein Tausch, der scheitert, macht den Upload nicht ungeschehen — laut.
+        RS.FUELLER_CMD["fn"] = lambda: (_ for _ in ()).throw(RuntimeError("kaputt"))
+        j = cl.post("/api/restream/pausenbild", data=jpg,
+                    content_type="application/octet-stream").get_json()
+        assert j["ok"] and j["getauscht"] == 0 and PB.eigenes(), j
+        assert any("Tausch in laufenden Sendungen gescheitert" in z for z in zeilen), zeilen
+        PB.entfernen()
+        PB.configure(_os.path.join(heim, "pb"), vorgabe=_os.path.join(heim, "gibtsnicht.png"))
+        assert cl.get("/api/restream/pausenbild/bild").status_code == 404
+    finally:
+        PB._KONF.clear()
+        PB._KONF.update(alt_konf)
+        _ncctx._CTX = alt_ctx
+        RS.FUELLER_CMD["fn"] = alt_fn
+        RS.MGR["obj"] = alt_mgr
+
+    # (5) Die Bruecke: vor start() gibt es keinen Fueller — das Tausch-Zeichen
+    # bliebe sonst stehen und meldete dessen ersten Absturz als „neues Bild".
+    br = SB.Bruecke(1, ["fueller"], lambda u: ["zub"], lambda: (None, "offline"),
+                    erste_url=None, name="#v513b")
+    assert br.fueller_tauschen(["neu"]) is True and br._fueller_cmd == ["neu"] \
+        and br._fueller_tausch is False
+    br._fue = _sp.Popen([_sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert br.fueller_tauschen(["neuer"]) is True and br._fueller_tausch is True
+        assert br._fue.poll() is not None, "der alte Fueller laeuft weiter"
+    finally:
+        if br._fue.poll() is None:
+            br._fue.kill()
+        br._fue.wait()
+
+    # (6) Der Bot verdrahtet beides: Vorgabe und Bauer.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    oben = [_ast.unparse(n) for n in baum.body if isinstance(n, (_ast.Assign, _ast.Expr))]
+    assert "_nc_rsstate.FUELLER_CMD['fn'] = _restream_fueller_cmd" in oben
+    assert any(z.startswith("_nc_pausenbild.configure(") and "vorgabe=RESTREAM_AVATAR" in z
+               for z in oben), "ohne Vorgabe zeigt das Deck die Flaeche, gesendet wird AZRAEL"
+    # (7) Das Deck: ein Kasten, geladen beim Aufbau UND im 20-s-Takt, der
+    # Upload als FormData — apiPost() verpackt jeden Koerper als JSON, ein
+    # FormData kaeme als „{}" an und der Server lehnte jedes Bild ab.
+    import re as _re
+    html = open("templates/dashboard.html", encoding="utf-8").read()
+    for kennung in ('id="pb_panel"', 'id="pb_datei"', 'id="pb_dauer"',
+                    'id="pb_zurueck"', 'id="pb_vorschau"', 'id="pb_lage"'):
+        assert html.count(kennung) == 1, kennung
+    hoch = _re.search(r"async function pbHochladen\(inp\)\{(.*?)\n\}", html, _re.S).group(1)
+    assert "new FormData()" in hoch and "fetch('/api/restream/pausenbild'" in hoch \
+        and "apiPost(" not in hoch, "Upload nicht als FormData"
+    assert "max_bytes" in hoch and "1048576*8" not in hoch and "8388608" not in hoch, \
+        "die Grenze kommt vom Server, nicht aus dem JS"
+    takt = _re.search(r"window\._rsAutoRefresh=setInterval\(\(\)=>\{(.*?)\}, 20000\)", html).group(1)
+    assert "pbLoad();" in takt, "die Pausen-Lage bleibt stehen, bis jemand neu laedt"
+    assert "slLoad(); pbLoad();" in html.split("window._rsAutoRefresh=setInterval")[1].split("nachAufbau('loadClips')")[0]
+    assert "name:'RESTREAM_DAUERSENDUNG'" in html
+    # Der Schalter darf aus dem Deck kommen — eine Schutzregel ersparte ihm
+    # stumm jede Wirkung.
+    from nc import einstellungen as _E
+    assert not _E.schutzgrund("RESTREAM_DAUERSENDUNG"), _E.schutzgrund("RESTREAM_DAUERSENDUNG")
+    assert "RESTREAM_DAUERSENDUNG" in {k["name"] for k in _E.katalog(".env.example")}, \
+        "nicht in der Vorlage: das Deck lehnt unbekannte Namen ab (W178)"
+    ok("v5.13 Welle B: Pausenbild im Deck — Masse aus den Bytes (PNG/JPEG, C4 ist kein SOF), "
+       "atomar abgelegt, Zuruecksetzen, Vorschau, Tausch in jede laufende Sendung, 24/7-Schalter")
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -48715,6 +48949,7 @@ def main():
     _test_v5121_totes_modell_bleibt_laenger_weg()
     _test_v513_dauersendung_pausenbild()
     _test_v513_tonkopf_reparatur()
+    _test_v513_pausenbild_deck()
     _test_v5114_tg1_telegram_start_wiederholt()
     _test_v5114_tg2_untrack_wie_stoppknopf()
     _test_v5114_dc5_schleifen_ueberleben_neustartfenster()

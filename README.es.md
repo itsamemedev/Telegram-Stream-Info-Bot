@@ -59,14 +59,14 @@
 | | | |
 |---|---|---|
 | **🔍 Detectar** — sondeo adaptativo con histéresis anti-parpadeo; cada fila del panel dice cuándo se comprobó por última vez | **⏺️ Grabar** — grabador en tres etapas (ffmpeg → streamlink → yt-dlp) con comprobación previa, control de la pista de audio y detección de bloqueos | **📡 Retransmitir** — Kick, Twitch y YouTube a la vez, verificación de destinos contra las API de las plataformas |
-| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 391 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
+| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 395 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
 
 ```mermaid
 flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 28.364 líneas"]:::core
+    BOT["bot.py<br/>monolito · 28.367 líneas"]:::core
     BOT -->|configure| NC["nc/ — 185 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
@@ -320,6 +320,21 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
+## 🆕 Novedades en v5.13
+
+**“Guardia nocturna” (5.13.0)** — el restream puede emitir las 24 horas
+(`RESTREAM_DAUERSENDUNG=1`): si ninguno de los usuarios seguidos está en
+directo, emite una imagen de pausa hasta que el siguiente entre en directo — en
+modo estándar y de texto, con todos los overlays. Si vuelve el mismo usuario, el
+puente de emisión cambia sin corte; otro usuario toma el relevo tras una breve
+reconexión. La imagen de pausa es AZRAEL; una propia se sube en el panel
+(Restream › “Emisión 24/7 — imagen de pausa”) y entra al instante en cada
+emisión en curso. Además vuelven las pistas de audio: las grabaciones con una
+cabecera AAC ilegible se reparan en lugar de subirse con silencio; el archivo
+existente con `python3 tools/tonspur_reparieren.py recordings/`.
+
+---
+
 ## 🆕 Novedades en v5.9
 
 **“Pupitre”** — una elección de IA, varias plazas, respuestas que dicen su origen:
@@ -451,8 +466,8 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **5.12.1** — “Prueba de sonido” (2026.11) |
-| Rutas Flask | 391 (34 en `bot.py` · 357 en `nc/routes/`) |
+| Versión actual | **5.13.0** — “Guardia nocturna” (2026.11) |
+| Rutas Flask | 395 (34 en `bot.py` · 361 en `nc/routes/`) |
 | Comandos de Discord | 67 |
 | Agentes vigilantes | 14 |
 | Variables de configuración | ~577 |

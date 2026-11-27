@@ -21,6 +21,8 @@ nach dem Import dieses Moduls. Ein Alias wäre für immer None, und jede
 Steuerroute meldete "kein Manager", während er läuft.
 """
 
+import logging
+
 # ---- Geteilter Zustand (Aliase) --------------------------------------------
 
 # rid -> {"user","label",...}: ALLE laufenden Restreams. Der primäre liegt
@@ -111,6 +113,10 @@ REDIS_GET = {"fn": None}     # async (key) -> dict|None
 REDIS_SET = {"fn": None}     # async (key, wert, ttl) -> None
 LIVE_INFO = {"fn": None}     # async (username, session) -> dict
 RESOLVE_LIVE = {"fn": None}  # async (username, session, mode=...) -> dict
+# v5.13: der Füller-Befehl mit dem geltenden Pausenbild. Nur der Bot kennt
+# RESTREAM_AVATAR und die Bildmaße des Senders; das Deck ruft nach einem Upload
+# fueller_neu() auf.
+FUELLER_CMD = {"fn": None}   # () -> list
 
 
 def haken(name):
@@ -118,7 +124,39 @@ def haken(name):
     return {"notify": NOTIFY, "ai_session": AI_SESSION,
             "testpush_live": TESTPUSH_LIVE, "spawn": SPAWN,
             "redis_get": REDIS_GET, "redis_set": REDIS_SET,
-            "live_info": LIVE_INFO, "resolve_live": RESOLVE_LIVE}[name]["fn"]
+            "live_info": LIVE_INFO, "resolve_live": RESOLVE_LIVE,
+            "fueller_cmd": FUELLER_CMD}[name]["fn"]
+
+
+def fueller_neu() -> int:
+    """v5.13: jedem laufenden Restream den Füller mit dem geltenden Pausenbild
+    geben — ohne die Sendung zu beenden. -> Zahl der Brücken, die getauscht
+    haben.
+
+    Ohne das sähe der Betreiber sein neues Bild erst nach dem nächsten
+    Sendestart, und in der 24/7-Sendung ist der vielleicht Tage entfernt.
+    Getauscht wird auch dort, wo gerade die Quelle läuft: der Füller wartet
+    dort im Hintergrund, und die nächste Pause soll schon das neue Bild
+    zeigen."""
+    bauen = FUELLER_CMD["fn"]
+    # list(): der Manager legt Einträge auf dem Bot-Loop an und weg, diese
+    # Funktion läuft im Thread der Deck-Anfrage. Ohne Manager läuft keine
+    # Sendung, und es gibt nichts zu tauschen.
+    infos = list((getattr(MGR["obj"], "_procs", {}) or {}).values())
+    bruecken = [b for b in ((i or {}).get("bruecke") for i in infos) if b is not None]
+    if bruecken and bauen is None:
+        # Laufende Sendungen, aber der Bot hat seinen Bauer nicht eingetragen:
+        # der Upload meldete Erfolg, und auf Sendung bliebe das alte Bild.
+        logging.getLogger("TikTokBot").error(
+            "Pausenbild: kein Füller-Bauer registriert (FUELLER_CMD) — %d laufende "
+            "Sendung(en) zeigen das neue Bild erst nach dem nächsten Start.", len(bruecken))
+        bruecken = []
+    cmd = bauen() if bruecken else None
+    getauscht = 0
+    for br in bruecken:
+        if br.fueller_tauschen(cmd):
+            getauscht += 1
+    return getauscht
 
 
 def guard():

@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **28,364 lines / 1.4 MB ≈ 290,000 tokens**. That file is **never**
+`bot.py` has **28,367 lines / 1.4 MB ≈ 290,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -226,6 +226,18 @@ W199 found seven more next to it. Since then there is **one** place,
 `nc/cfgstore.aendern()` — strict read, shape check, write under a lock.
 **When a class is fixed in one place, it usually sits right next door — look
 before the wave closes.**
+
+**An upload from the deck does not go through `apiPost()`.** The helper wraps
+every body as JSON — a `FormData` would arrive as `{}` and the server would
+reject every image as “no file”. Uploads use `fetch(…, {body: fd})`. And
+`send_file()` resolves a **relative** path against the app folder, not the
+working directory — `RECORDINGS_DIR` is relative. Both are pinned by
+`_test_v513_pausenbild_deck`.
+
+**The translation extractor reads template literals only on one line.** Deck
+views are built as multi-line `` root.innerHTML=`…` ``; their static text never
+reaches the catalog and stays German in the English UI. Until that is fixed,
+new text in such views goes in as `${T('…')}`, which the extractor finds.
 
 **A one-shot `await` without a supervisor.** Every long-running client needs
 reconnect with backoff **and** an abort criterion for deterministic errors.

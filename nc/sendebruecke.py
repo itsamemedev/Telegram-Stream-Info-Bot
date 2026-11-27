@@ -849,9 +849,12 @@ class Bruecke:
             if self._halt.is_set():
                 return False
             self._fueller_cmd = cmd
-            self._fueller_tausch = True
-            self._fueller_wieder = 0.0
             fue = self._fue
+            # Vor start() gibt es keinen Füller: der erste nimmt das neue
+            # Kommando ohnehin, und ein stehen gebliebenes Tausch-Zeichen
+            # meldete dessen ersten Absturz später als „neues Pausenbild".
+            self._fueller_tausch = fue is not None
+            self._fueller_wieder = 0.0
         self._beende(fue)
         return True
 
