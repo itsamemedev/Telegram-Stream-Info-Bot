@@ -47322,6 +47322,7 @@ def _test_v5121_split_ueberlebt_kaputten_ton():
     from nc import videoteil as V
     from nc import tonspur as T
     import pruefhilfen as P
+    _aacrep_echt = V._aacrep.reparieren
 
     # (1) Laufzeit aus der Kopfzeile — der Rueckfall, wenn ffprobe aufgibt.
     assert V.dauer_aus_kopf("  Duration: 01:02:03.50, start: 0.0") == 3723.5
@@ -47366,6 +47367,12 @@ def _test_v5121_split_ueberlebt_kaputten_ton():
             return
 
         # (4) Echt: eine Aufnahme mit kaputtem Ton.
+        # ANKER GEWANDERT (v5.13, nicht der Vertrag): seit v5.13 repariert
+        # messen() den Tonkopf zuerst (nc/aacreparatur, eigener Vertrag). Hier
+        # geht es um den RUECKFALL, wenn das nicht gelingt — also unrettbar.
+        async def _unrettbar(pfad, wer="?"):
+            return {"lage": "unrettbar"}
+        V._aacrep.reparieren = _unrettbar
         gut = _os.path.join(heim, "gut.mp4")
         _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
                  "testsrc=size=160x120:rate=15", "-f", "lavfi", "-i",
@@ -47429,6 +47436,7 @@ def _test_v5121_split_ueberlebt_kaputten_ton():
             ("Teile bleiben liegen", sorted(_os.listdir(heim)))
     finally:
         V._kind.ausfuehren = echt
+        V._aacrep.reparieren = _aacrep_echt
         _sh.rmtree(heim, ignore_errors=True)
     ok("v5.12.1: Split mit undekodierbarem Ton — Laufzeit aus ffmpeg -i, Stille statt "
        "Ton in den Teilen; neu kodierte Teile halten die Grenze (Deckel = Zielrate, "
@@ -48070,6 +48078,135 @@ def _test_v513_dauersendung_pausenbild():
        "startet die Pause, Fueller kommt nach Absturz und Tausch wieder")
 
 
+def _test_v513_tonkopf_reparatur():
+    """v5.13: „sieh zu, dass er wieder die Tonspuren bekommt — ständig erhalte
+    ich Fehler deshalb" (Betreiber, 27.11.). Aufnahmen vom 21. bis 23.11.
+    tragen einen unlesbaren AAC-Kopf; die Tondaten sind heil. Die Reparatur
+    schreibt den Kopf neu — geprüft mit dem ffmpeg des Servers, an der
+    Abtastrate UND an der Dauer, an Ort und Stelle in gleicher Länge."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    from nc import aacreparatur as R
+    from nc import videoteil as V
+    import pruefhilfen as P
+
+    # (1) Die Koepfe: AAC-LC, Ratenindex, Kanaele, drei Nullbits.
+    assert R.asc_lc(48000, 2) == bytes.fromhex("1190")
+    assert R.asc_lc(22050, 2) == bytes.fromhex("1390")
+    assert R.asc_lc(44100, 1) == bytes.fromhex("1208")
+    # Zeitskala 48 kHz: erst HE-AAC (Kern 24 kHz, SBR implizit), dann LC.
+    assert [k.hex() for k in R.kandidaten(48000, 2)] == ["1310", "1308", "1190", "1188"]
+    assert [k.hex() for k in R.kandidaten(44100, 1)] == ["1388", "1390", "1208", "1210"]
+    # Keine AAC-Rate (der Fall „192000 Hz"): alle vier Kernraten.
+    assert len(R.kandidaten(192000, 2)) == 8
+    assert R.gepolstert(b"\x11\x90", 5) == bytes.fromhex("1190000000")
+    assert R.gepolstert(b"\x11\x90", 2) == bytes.fromhex("1190")
+
+    # (2) Eingebunden: am Aufnahmeende und vor jedem Upload, VOR der Stille.
+    for pfad, fn in (("nc/videoteil.py", "messen"), ("nc/tonspur.py", "sichern")):
+        f = next(n for n in _ast.parse(open(pfad, encoding="utf-8").read()).body
+                 if getattr(n, "name", "") == fn)
+        assert "_aacrep.reparieren(" in _ast.unparse(f), (pfad, fn)
+
+    if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
+        ok("v5.13: Tonkopf-Reparatur (rein); ffmpeg fehlt — echter Lauf uebersprungen")
+        return
+
+    heim = P.verzeichnis()
+    alt_kand = R.kandidaten
+    try:
+        gut = _os.path.join(heim, "gut.mp4")
+        _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                 "testsrc=size=160x120:rate=15", "-f", "lavfi", "-i",
+                 "sine=frequency=440:sample_rate=48000", "-t", "25", "-c:v", "libx264",
+                 "-preset", "ultrafast", "-c:a", "aac", "-ac", "2", gut],
+                check=True, timeout=120)
+        kaputt = _os.path.join(heim, "kaputt.mp4")
+
+        def _neu_kaputt():
+            _v5121_kaputter_ton(kaputt, gut)
+            _os.utime(kaputt, (1700000000, 1700000000))
+            return R.tonkopf(kaputt)
+
+        # (3) Repariert, an Ort und Stelle, Zeit unveraendert, keine Probe liegt.
+        vorher = _neu_kaputt()
+        groesse = _os.path.getsize(kaputt)
+        erg = _aio.run(R.reparieren(kaputt, wer="@t"))
+        assert erg["lage"] == "repariert" and erg["neu"] == "1190", erg
+        assert erg["alt"] == vorher.asc.hex()
+        fehler, sek = _aio.run(R.dekodiert(kaputt))
+        assert not fehler and abs(sek - 25) < 0.5, (fehler, sek)
+        assert _os.path.getsize(kaputt) == groesse, "die Datei wurde umgebaut statt geflickt"
+        assert int(_os.path.getmtime(kaputt)) == 1700000000, "die Reparatur macht die Aufnahme neu"
+        assert sorted(_os.listdir(heim)) == ["gut.mp4", "kaputt.mp4"], _os.listdir(heim)
+        assert _aio.run(R.reparieren(kaputt))["lage"] == "gesund"
+        assert _aio.run(R.reparieren(gut))["lage"] == "gesund"
+
+        # (4) Die Dauer entscheidet zwischen 44,1 und 48 kHz — fehlerfrei
+        # dekodieren beide (gleiche Bandtabellen), der falsche laeuft 8,8 % lang.
+        _neu_kaputt()
+        R.kandidaten = lambda zs, k=2: [R.asc_lc(44100, 2), R.asc_lc(48000, 2)]
+        erg = _aio.run(R.reparieren(kaputt))
+        assert erg["lage"] == "repariert" and erg["neu"] == "1190", ("falscher Nachbar", erg)
+
+        # (4b) Passende Dauer, aber Dekodierfehler: der Kandidat faellt
+        # (Mutationsprobe R10). Gemessen beim Bau: mono gegen stereo trennt der
+        # Decoder NICHT — er passt sich still an; die Kanalzahl kommt deshalb
+        # aus dem mp4a-Eintrag (Reihenfolge der Kandidaten), nicht aus Fehlern.
+        _neu_kaputt()
+        R.kandidaten = lambda zs, k=2: [R.asc_lc(48000, 1), R.asc_lc(48000, 2)]
+        echt_dek, proben = R.dekodiert, []
+
+        async def _erste_probe_fehlerhaft(pfad, zeitlimit=60.0):
+            fehler, sek = await echt_dek(pfad, zeitlimit)
+            if pfad.endswith(".tonprobe.mp4"):
+                proben.append(pfad)
+                if len(proben) == 1:
+                    return ["[aac] Fehler"] * (R.MAX_FEHLER + 1), sek
+            return fehler, sek
+        R.dekodiert = _erste_probe_fehlerhaft
+        try:
+            erg = _aio.run(R.reparieren(kaputt))
+        finally:
+            R.dekodiert = echt_dek
+        assert erg["lage"] == "repariert" and erg["neu"] == "1190", ("Fehler uebergangen", erg)
+
+        # (5) Passt keiner: unrettbar, und das Original ist unveraendert.
+        vorher = _neu_kaputt()
+        R.kandidaten = lambda zs, k=2: [R.asc_lc(44100, 2)]
+        erg = _aio.run(R.reparieren(kaputt))
+        assert erg["lage"] == "unrettbar", erg
+        assert R.tonkopf(kaputt).asc == vorher.asc, "ein verworfener Kopf steht im Original"
+        R.kandidaten = alt_kand
+
+        # (6) Vor dem Upload: messen() repariert und meldet den Ton als heil.
+        _neu_kaputt()
+        laenge, ersetzen = _aio.run(V.messen(kaputt))
+        assert ersetzen is False and abs(laenge - 25.0) < 0.2, (laenge, ersetzen)
+        assert not _aio.run(R.dekodiert(kaputt))[0], "messen() hat nicht repariert"
+
+        # (7) Das Werkzeug fuer den Bestand: prueft, repariert, laesst Reste aus.
+        _neu_kaputt()
+        rest = kaputt + "_dcpart9_000.mp4"
+        _sh.copyfile(kaputt, rest)
+        _os.utime(rest, (1700000000, 1700000000))
+        werkzeug = ["python3" if _sh.which("python3") else "python", "tools/tonspur_reparieren.py"]
+        r = _sp.run(werkzeug + ["--nur-pruefen", heim], capture_output=True, text=True, timeout=300)
+        assert r.returncode == 1 and "kaputt" in r.stdout and "_dcpart9_" not in r.stdout, r.stdout
+        r = _sp.run(werkzeug + [heim], capture_output=True, text=True, timeout=300)
+        assert r.returncode == 0 and "repariert 1" in r.stdout, (r.stdout, r.stderr[-300:])
+        assert R.tonkopf(rest).asc != R.tonkopf(kaputt).asc, "ein Teil-Rest wurde angefasst"
+    finally:
+        R.kandidaten = alt_kand
+        _sh.rmtree(heim, ignore_errors=True)
+    ok("v5.13: unlesbarer AAC-Kopf wird neu geschrieben — Rate aus mdhd, Dauer trennt "
+       "44,1 von 48 kHz, gleiche Laenge, Zeit bleibt; am Aufnahmeende, vor dem Upload "
+       "und als Werkzeug fuer den Bestand")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -48577,6 +48714,7 @@ def main():
     _test_v5121_wiederholung_nur_fehlende_teile()
     _test_v5121_totes_modell_bleibt_laenger_weg()
     _test_v513_dauersendung_pausenbild()
+    _test_v513_tonkopf_reparatur()
     _test_v5114_tg1_telegram_start_wiederholt()
     _test_v5114_tg2_untrack_wie_stoppknopf()
     _test_v5114_dc5_schleifen_ueberleben_neustartfenster()

@@ -121,7 +121,7 @@ flowchart TB
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
     BOT["bot.py<br/>Monolith · 28.364 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
-    BOT -->|configure| NC["nc/ — 218 Fachmodule<br/>41 Blueprints"]:::lib
+    BOT -->|configure| NC["nc/ — 219 Fachmodule<br/>41 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
     BOT --> DB[("SQLite oder MariaDB<br/>+ Einstellungen")]:::db
@@ -888,7 +888,7 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 | Aktuelle Version | **5.12.1** — „Tonprobe“ (2026.11) |
 | Flask-Routen | 391 (34 in `bot.py` · 357 in `nc/routes/`) |
 | Discord-Slash-Commands | 67 |
-| Fachmodule | 218 in `nc/` (+41 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 219 in `nc/` (+41 in `nc/routes/`, +2 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 16 |
 | Konfigurationsvariablen | ~629 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |

@@ -44,6 +44,16 @@ nächste getrackte User live kommt — im Standard- und Text-Mode. Wir gehen
 - **Ein Reparatur-Neustart beendete die Pause.** Wächter und Wiederanlauf
   lösen die Quelle neu auf; „offline" hieß dann „kein Start". Eine Pause
   läuft nach einem internen Neustart wieder als Pause an.
+- **Tonspuren kommen zurück.** Aufnahmen vom 21. bis 23.11. tragen einen
+  unlesbaren AAC-Kopf („aac (HE-AAC), 192000 Hz" — „Error while opening
+  decoder"); die Upload-Warteschlange scheiterte daran alle 20 bis 80 Minuten,
+  und v5.12.1 rettete die Uploads nur mit Stille. Die Tondaten sind heil.
+  `nc/aacreparatur.py` schreibt den Kopf neu — gewählt mit dem ffmpeg des
+  Servers an einer 20-s-Probe: fehlerfrei dekodieren UND die Dauer muss
+  stimmen (44,1 und 48 kHz dekodieren beide fehlerfrei, der falsche läuft
+  8,8 % zu langsam). Geändert werden nur die Bytes des Kopfs, gleiche Länge,
+  Änderungszeit bleibt. Greift am Ende jeder Aufnahme und vor jedem Upload;
+  für den Bestand: `python3 tools/tonspur_reparieren.py recordings/`.
 
 ---
 

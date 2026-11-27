@@ -1184,6 +1184,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 
 ```
 __init__.py            —
+aacreparatur.py        asc_lc, class KeinTonkopf, class Tonkopf, dekodiert, gepolstert, kandidaten, reparieren, tonkopf
 abo.py                 room_is_abo
 abwehrlage.py          auswerten, configure, crowdsec_status, crowdsec_via_lapi, cscli_bin, cscli_path, darf_journal_lesen, ssh_angriffe, sudo_hinweis
 admod.py               build_allowlist

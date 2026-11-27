@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  218 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  219 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           41 Flask-Blueprints mit 357 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog

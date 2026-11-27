@@ -45,6 +45,7 @@ import re
 import time
 from typing import List, Optional
 
+from nc import aacreparatur as _aacrep  # v5.13
 from nc import meldetakt as _takt
 from nc import kindprozess as _kind  # v4.2-W120
 from nc.videoteil import _bau, platz_reicht
@@ -243,13 +244,23 @@ async def pruefen(pfad, timeout=20) -> Optional[bool]:
 async def sichern(pfad, wer="?", timeout=600) -> dict:
     """Stellt sicher, dass die fertige Aufnahme eine Tonspur traegt.
 
-    -> {"lage": "ton"|"nachgeruestet"|"unbekannt"|"fehlgeschlagen",
+    -> {"lage": "ton"|"repariert"|"nachgeruestet"|"unbekannt"|"fehlgeschlagen",
         "groesse": Bytes der Datei danach}
 
     Scheitert das Nachruesten, bleibt das Original liegen: eine Aufnahme ohne
     Ton ist schlechter als eine mit, aber unendlich besser als keine.
     """
     lage = await pruefen(pfad)
+    if lage is None:
+        # v5.13: ffprobe gibt auf, wenn der Tonkopf unlesbar ist (rc=1 ohne
+        # Ausgabe, Log 26./27.11.). Hier, direkt nach der Aufnahme, ist die
+        # Stelle, an der eine Reparatur allen spaeteren Schritten hilft —
+        # Chat-Einarbeiten, Clips und Uploads lesen dann eine heile Spur.
+        erg = await _aacrep.reparieren(pfad, wer=wer)
+        if erg.get("lage") == "repariert":
+            lage = await pruefen(pfad)
+            if lage:
+                return {"lage": "repariert", "groesse": _groesse(pfad)}
     if lage is not False:
         return {"lage": "ton" if lage else "unbekannt", "groesse": _groesse(pfad)}
 
