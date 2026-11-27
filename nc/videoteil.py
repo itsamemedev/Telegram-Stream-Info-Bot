@@ -31,6 +31,7 @@ import time
 
 from nc import encodeschlange as _encodeschlange  # v4.2-W174
 from nc import kindprozess as _kind  # v4.2-W120
+from nc import meldetakt as _takt
 from nc.ffbuild import ff_cmd
 from nc.ffdiag import _ffmpeg_stderr_tail
 
@@ -67,11 +68,16 @@ _cfg = {"threads_bg": None, "nice_bg": None}
 #                                seit v5.12 je Server-Grenze; davor "_dcpart")
 #   <aufnahme>.repaired.mp4      reparieren      (telegramversand, B47)
 #   <aufnahme>.remux.mp4         zeitstempel_richten (telegramversand, B70+)
+#   <aufnahme>_dcpart9.remux.mp4 zeitstempel_richten (nc/discordaufnahme, v5.12.1 —
+#                                eigener Name, Telegram laeuft gleichzeitig)
+#   <aufnahme>_dcpart9_re_007.mp4_part_re_000.mp4
+#                                _uebergroesse_nachteilen (v5.12.1)
 # <aufnahme> traegt dabei SEINE Endung (praefix = f"{filepath}_part"). Eine
 # Videoendung MITTEN im Namen kommt in keinem Aufnahmenamen vor — genau daran
 # unterscheidet sich ein Teil von einer Aufnahme, deren Nutzer „part" heisst.
 _REST = re.compile(r"^.+\.(?:mp4|flv|ts|mkv|webm|m4v|mov)"
-                   r"(?:_(?:dcpart\d*|part)(?:_re)?_\d{3,}\.mp4|\.repaired\.mp4|\.remux\.mp4)$")
+                   r"(?:_(?:dcpart\d*|part)(?:_re)?_\d{3,}\.mp4|\.repaired\.mp4|\.remux\.mp4"
+                   r"|_dcpart\d*\.remux\.mp4)$")
 
 # Wie lange eine angemeldete Zerlegung als laufend gilt. Der Versand loescht
 # jeden Teil erst NACH seinem Upload; bei 45-MB-Teilen und FloodWait dauert
@@ -124,13 +130,62 @@ def _bau(cmd):
     return ff_cmd(cmd, threads=_cfg["threads_bg"], nice=_cfg["nice_bg"])
 
 
+_MB = 1024 * 1024
+
+# v5.12.1: die Laufzeit aus der Eingangsbeschreibung von `ffmpeg -i`.
+_DAUER_KOPF = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
+
+
+def dauer_aus_kopf(text):
+    """'Duration: 01:02:03.45' aus dem stderr von `ffmpeg -i` -> Sekunden.
+
+    None, wenn keine (positive) Laufzeit dasteht — dieselbe Bedeutung wie bei
+    dauer(): „weiss ich nicht", nicht „ist leer"."""
+    m = _DAUER_KOPF.search(text or "")
+    sekunden = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
+    return sekunden if sekunden > 0 else None
+
+
+async def _kopf_lesen(pfad):
+    """stderr von `ffmpeg -i pfad` ohne Ausgabe: Laufzeit und Streamliste.
+
+    ffmpeg oeffnet dafuer KEINEN Decoder — genau darin unterscheidet es sich
+    von ffprobe, und genau deshalb steht es hier. rc ist immer != 0 („At
+    least one output file must be specified"); gelesen wird nur der Text."""
+    try:
+        _rc, _, err = await _kind.ausfuehren(
+            _bau(["ffmpeg", "-hide_banner", "-nostdin", "-i", pfad]), 15,
+            art="ffprobe", stdout=_kind.DEVNULL)
+    except Exception as e:
+        log.warning("split: Kopf von %s nicht lesbar (%s: %s)",
+                    os.path.basename(pfad), type(e).__name__, e)
+        return ""
+    return (err or b"").decode(errors="ignore")
+
+
 async def dauer(pfad):
-    """Exakte Laufzeit in Sekunden via ffprobe. None bei Fehler.
+    """Exakte Laufzeit in Sekunden. None bei Fehler.
 
     None und nicht 0.0: der Aufrufer muss "weiss ich nicht" von "ist leer"
     unterscheiden koennen — an dieser Unterscheidung haengt, ob er die
     Bitrate rechnet oder auf den konservativen Rueckfall geht.
+
+    v5.12.1: scheitert ffprobe, gilt die Kopfzeile von `ffmpeg -i`. ffprobe
+    oeffnet fuer JEDEN Stream den Decoder und bricht mit rc=1 und leerer
+    Ausgabe ab, wenn einer nicht aufgeht. Gemessen am 26./27.11.: Aufnahmen
+    mit einer Tonspur „aac (HE-AAC), 192000 Hz", deren Decoder nicht oeffnet
+    — ffprobe lieferte nichts, `_pruefe_teile` hielt JEDEN Teil fuer kaputt
+    und loeschte ihn („Alle Teile vom Split waren ungueltig"), und das Bild
+    war die ganze Zeit in Ordnung.
     """
+    laenge = await _dauer_ffprobe(pfad)
+    if laenge is not None:
+        return laenge
+    return dauer_aus_kopf(await _kopf_lesen(pfad))
+
+
+async def _dauer_ffprobe(pfad):
+    """Die Laufzeit nach ffprobe — None, wenn ffprobe aufgibt."""
     # v4.2-W120: ueber nc.kindprozess — der Prozess endet auch, wenn der
     # aufrufende Task abgebrochen wird (vorher lief ffprobe dann weiter).
     try:
@@ -142,6 +197,63 @@ async def dauer(pfad):
         return float((out or b"").strip() or 0) or None
     except Exception:
         return None
+
+
+# v5.12.1: Stille statt einer Tonspur, deren Decoder nicht aufgeht. Dieselbe
+# Quelle wie nc.tonspur (dort steht die Begruendung); hier als Kopie, weil
+# nc.tonspur aus DIESEM Modul importiert — ein Import zurueck waere zirkulaer.
+_STILLE = ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+_STILLE_AAC = ["-c:a", "aac", "-b:a", "64k", "-ar", "44100", "-ac", "2"]
+
+
+async def _ton_kaputt(pfad, kopf):
+    """Traegt die Datei eine Tonspur, deren Decoder nicht aufgeht? -> bool
+
+    Nur gefragt, wenn ffprobe schon aufgegeben hat. Die Kopfzeile zeigt dann,
+    ob es eine Tonspur gibt (ohne Kopf oder ohne Ton ist es nicht der Ton —
+    dann bleibt alles beim Alten); eine Sekunde Dekodieren zeigt, ob sie
+    aufgeht. Ins WAV-Format, nicht `-f null`: der null-Muxer laesst sich
+    beim Bauen von ffmpeg abschalten (nc.tonspur.garantie_cmd)."""
+    if "Audio:" not in (kopf or ""):
+        return False
+    try:
+        rc, _, _err = await _kind.ausfuehren(
+            _bau(["ffmpeg", "-hide_banner", "-nostdin", "-v", "error", "-i", pfad,
+                  "-map", "0:a:0", "-t", "1", "-c:a", "pcm_s16le", "-f", "wav", "pipe:1"]),
+            30, art="ffprobe", stdout=_kind.DEVNULL)
+    except Exception as e:
+        # Unklar ist hier „kaputt": ffprobe hat schon aufgegeben, und Stille
+        # in einem Teil ist besser als ein Teil, der nirgends abspielt.
+        log.warning("split: Tonprobe von %s scheiterte (%s: %s) — Ton gilt als kaputt.",
+                    os.path.basename(pfad), type(e).__name__, e)
+        return True
+    return rc != 0
+
+
+async def messen(pfad):
+    """-> (laufzeit oder None, ton_ersetzen). Fuer beide Zerlegungen.
+
+    ton_ersetzen heisst: die Tonspur ist da, ihr Decoder geht aber nicht auf.
+    Dann bekommen die TEILE Stille statt des Tons — beim Kopier-Split sonst
+    Teile, die ffprobe (und mit ihm `_pruefe_teile`) als kaputt verwirft,
+    beim Neukodieren ein Abbruch vor dem ersten Bild: „Error while opening
+    decoder: Invalid data found", nachdem die Kodierung bis zu 40 min in der
+    Encode-Warteschlange stand. Das Original bleibt unangetastet."""
+    laenge = await _dauer_ffprobe(pfad)
+    if laenge is not None:
+        return laenge, False
+    kopf = await _kopf_lesen(pfad)
+    laenge = dauer_aus_kopf(kopf)
+    ersetzen = await _ton_kaputt(pfad, kopf)
+    if ersetzen:
+        laut, weg = _takt.melden("videoteil-ton", "decoder", time.monotonic())
+        if laut:
+            log.error("Tonspur von %s laesst sich nicht dekodieren (ffprobe bricht daran "
+                      "ab) — die Upload-Teile bekommen Stille statt des Tons, das Bild "
+                      "bleibt. Die Aufnahme selbst bleibt unangetastet auf dem Server; "
+                      "pruefen mit: ffmpeg -v error -i '%s' -map 0:a:0 -f wav -t 1 -%s",
+                      os.path.basename(pfad), pfad, _takt.zusatz(weg))
+    return laenge, ersetzen
 
 
 def platz_reicht(pfad, faktor=1.2):
@@ -171,6 +283,10 @@ def platz_reicht(pfad, faktor=1.2):
 # Ziffern; "re_" kennzeichnet das Neu-Kodieren.
 _TEIL_KOPIE = r"_\d{3,}\.mp4"
 _TEIL_NEU = r"_re_\d{3,}\.mp4"
+# v5.12.1: Unterteile eines nachgeteilten Teils (_uebergroesse_nachteilen):
+# <praefix>_re_007.mp4_part_re_000.mp4. Die Form erkennt _REST (Waisen-Suche),
+# und weder das Kopier- noch das Neu-Muster trifft sie.
+_TEIL_NACH = r"_re_\d{3,}\.mp4_part_re_\d{3,}\.mp4"
 
 
 def teile(praefix, art=_TEIL_KOPIE):
@@ -202,7 +318,8 @@ def teile_entfernen(praefix):
     Die Aufnahme selbst traegt keinen dieser Namen und bleibt immer.
     """
     n = 0
-    for t in teile(praefix, _TEIL_KOPIE) + teile(praefix, _TEIL_NEU):
+    for t in (teile(praefix, _TEIL_KOPIE) + teile(praefix, _TEIL_NEU)
+              + teile(praefix, _TEIL_NACH)):
         try:
             os.remove(t)
             n += 1
@@ -225,18 +342,14 @@ async def _pruefe_teile(kandidaten):
             if groesse < _MIN_TEIL_BYTES:
                 log.warning("split: Teil %s ist nur %dB — geloescht",
                             os.path.basename(teil), groesse)
-                try:
-                    os.remove(teil)
-                except OSError:
-                    pass
+                await asyncio.to_thread(wegwerfen, [teil])
                 continue
             if (await dauer(teil) or 0) <= 0:
                 log.warning("split: Teil %s hat keine erkennbare Dauer — "
                             "vermutlich kaputt, geloescht", os.path.basename(teil))
-                try:
-                    os.remove(teil)
-                except OSError:
-                    pass
+                # v5.12.1: im Thread — ein grosser Teil auf voller Platte
+                # stand im Log 1,4 s auf dem Event-Loop.
+                await asyncio.to_thread(wegwerfen, [teil])
                 continue
             gut.append(teil)
         except Exception as e:
@@ -254,9 +367,9 @@ async def kopier_teilen(pfad, praefix, ziel_mb):
     _anmelden(praefix)          # AUF-2: ab hier gehoeren <praefix>_* dem Versand
     # AUF-5: Reste eines frueheren Laufs weg, bevor ffmpeg schreibt — sonst
     # sammelt die Auswahl unten sie mit ein.
-    teile_entfernen(praefix)
+    await asyncio.to_thread(teile_entfernen, praefix)
     groesse_mb = os.path.getsize(pfad) / 1024 / 1024
-    laenge = await dauer(pfad)
+    laenge, ton_ersetzen = await messen(pfad)
     if laenge and laenge > 0:
         mb_je_s = groesse_mb / laenge
         # 10 % Sicherheitsreserve
@@ -268,7 +381,17 @@ async def kopier_teilen(pfad, praefix, ziel_mb):
         seg = max(60, ziel_mb * 4)
         log.warning("split: ffprobe-Dauer fehlgeschlagen, Rueckfall segment_time=%ds", seg)
 
-    cmd = _bau(["ffmpeg", "-y", "-i", pfad, "-c", "copy", "-map", "0",
+    if ton_ersetzen:
+        # Bild und Untertitel kopiert, Ton aus der Stille-Quelle; -shortest,
+        # weil die Stille endlos ist.
+        eingang = ["-i", pfad, *_STILLE, "-map", "0:v", "-map", "0:s?", "-map", "1:a:0",
+                   "-c", "copy", *_STILLE_AAC, "-shortest"]
+    else:
+        eingang = ["-i", pfad, "-c", "copy", "-map", "0"]
+    # v5.12.1: -loglevel error — stderr landet als Grund in der Meldung, und
+    # ohne den Pegel stand dort der Stream-Dump statt des Fehlers („…
+    # vendor_id : [0][0][0][0]", 27.11.).
+    cmd = _bau(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *eingang,
                 "-f", "segment", "-segment_time", str(seg),
                 "-segment_format", "mp4", "-reset_timestamps", "1",
                 "-movflags", "+faststart",
@@ -280,10 +403,10 @@ async def kopier_teilen(pfad, praefix, ziel_mb):
         rc, _, stderr = await _kind.ausfuehren(cmd, deckel, art="ffmpeg-split",
                                                stdout=_kind.DEVNULL)
     except asyncio.TimeoutError:
-        teile_entfernen(praefix)      # AUF-5: was ffmpeg bis dahin schrieb
+        await asyncio.to_thread(teile_entfernen, praefix)      # AUF-5: was ffmpeg bis dahin schrieb
         return None, f"ffmpeg split timeout nach {deckel}s (segment_time={seg})"
     if rc != 0:
-        teile_entfernen(praefix)      # AUF-5: halbe Teile eines Abbruchs
+        await asyncio.to_thread(teile_entfernen, praefix)      # AUF-5: halbe Teile eines Abbruchs
         # Der echte Fehler steht am ENDE von stderr; der Anfang ist Banner.
         schwanz = _ffmpeg_stderr_tail(stderr.decode(errors="ignore"), max_len=800)
         return None, (f"[rc={rc}] ffmpeg -segment_time {seg} → "
@@ -291,7 +414,7 @@ async def kopier_teilen(pfad, praefix, ziel_mb):
 
     kandidaten, gut = await _pruefe_teile(teile(praefix, _TEIL_KOPIE))
     if not gut:
-        teile_entfernen(praefix)
+        await asyncio.to_thread(teile_entfernen, praefix)
         return None, "Alle Teile vom Split waren ungueltig (ffprobe-failed)"
     if len(gut) < len(kandidaten):
         log.warning("split: %d/%d Teile verworfen wegen Validierungsfehler — "
@@ -299,7 +422,7 @@ async def kopier_teilen(pfad, praefix, ziel_mb):
     return gut, None
 
 
-async def neu_kodieren(pfad, praefix, ziel_mb):
+async def neu_kodieren(pfad, praefix, ziel_mb, _tiefe=0):
     """Letzter Ausweg: mit erzwungenen Keyframes neu kodieren.
 
     WARUM ES DAS BRAUCHT (B70): der Segment-Muxer mit -c copy kann NUR an
@@ -310,28 +433,51 @@ async def neu_kodieren(pfad, praefix, ziel_mb):
     Kopieren, dafuer zuverlaessig.
     """
     _anmelden(praefix)          # AUF-2, s. kopier_teilen
-    teile_entfernen(praefix)          # AUF-5: Reste eines frueheren Laufs
-    laenge = await dauer(pfad)
+    await asyncio.to_thread(teile_entfernen, praefix)          # AUF-5: Reste eines frueheren Laufs
+    laenge, ton_ersetzen = await messen(pfad)
     groesse_mb = os.path.getsize(pfad) / 1024 / 1024
     if not laenge or laenge <= 0:
         laenge = max(30.0, groesse_mb)          # grobe Annahme
     orig_mbps = (groesse_mb * 8) / laenge
     # Bitrate moderat deckeln: begrenzt die Teilgroesse, haelt die Qualitaet.
-    vbps = max(0.4, min(orig_mbps, 4.0))
+    # v5.12.1: dazu ein Deckel AUS DEM ZIEL. Ein Teil ist mindestens 15 s lang
+    # (unten); bei 4 Mbit/s sind das 7,5 MB — fuer ein kleineres Ziel war jeder
+    # Teil zu gross, egal wie die Segmentlaenge gerechnet wurde (gemessen:
+    # Ziel 2 MB, Teile 3,3 bis 8,9 MB). Und das Nachteilen half nicht, weil es
+    # dieselbe Rechnung noch einmal machte.
+    deckel_mbps = (ziel_mb * 8 * 0.88) / 15 - 0.128
+    vbps = max(0.4, min(orig_mbps, 4.0, deckel_mbps))
     gesamt_mbps = vbps + 0.128                  # + AAC 128k
-    # Segmentlaenge so, dass bitrate*seg/8 <= ziel_mb (8 % Reserve)
-    seg = max(15, int((ziel_mb * 8 * 0.92) / max(gesamt_mbps, 0.3)))
+    # Segmentlaenge so, dass bitrate*seg/8 <= ziel_mb (12 % Reserve).
+    # v5.12.1: Deckel = Zielrate, Puffer = 1 s. Vorher maxrate 1,2x und
+    # bufsize 2 s bei 8 % Reserve — die Rechnung ging nur im Mittel auf, und
+    # ein bewegtes Stueck hob einen Teil um bis zu 20 % ueber das Ziel
+    # (26.11.: „Teil 76/86 bleibt 10.9 MB > 9 MB", 71 Teile schon gesendet,
+    # die Warteschlange schickte beim naechsten Versuch alle noch einmal).
+    # Mit dem Puffer von einer Sekunde ist ein Teil von seg Sekunden
+    # hoechstens (seg + 1) * Rate gross; seg >= 15 haelt das unter 7 %.
+    seg = max(15, int((ziel_mb * 8 * 0.88) / max(gesamt_mbps, 0.3)))
     vbr = f"{int(vbps * 1000)}k"
-    cmd = _bau(["ffmpeg", "-y",
+    if ton_ersetzen:
+        eingang = ["-i", pfad, *_STILLE, "-map", "0:v:0", "-map", "1:a:0", "-shortest"]
+    else:
+        eingang = ["-i", pfad]
+    cmd = _bau(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 # toleriert Non-monotonic DTS ("pts has no value")
                 "-fflags", "+igndts",
-                "-i", pfad,
+                *eingang,
                 "-c:v", "libx264", "-preset", "veryfast", "-b:v", vbr,
-                "-maxrate", f"{int(vbps * 1000 * 1.2)}k",
-                "-bufsize", f"{int(vbps * 1000 * 2)}k",
+                "-maxrate", vbr,
+                "-bufsize", vbr,
                 "-force_key_frames", f"expr:gte(t,n_forced*{seg})",
                 "-c:a", "aac", "-b:a", "128k",
                 "-f", "segment", "-segment_time", str(seg),
+                # v5.12.1: der erzwungene Keyframe liegt durch Rundung knapp VOR
+                # der Schnittzeit, und der Muxer schnitt erst am naechsten
+                # natuerlichen — gemessen: erster Teil 23,3 s statt 15 s, also
+                # 55 % ueber dem Ziel. Genau dafuer nennt die ffmpeg-Doku
+                # segment_time_delta (Vorgabe 1/(2*fps); 0,05 deckt ab 10 fps).
+                "-segment_time_delta", "0.05",
                 "-segment_format", "mp4", "-reset_timestamps", "1",
                 "-movflags", "+faststart", f"{praefix}_re_%03d.mp4"])
     log.info("re-encode split: dur=%.0fs, vbr=%s, seg=%ds (orig~%.1fMbps)",
@@ -345,20 +491,49 @@ async def neu_kodieren(pfad, praefix, ziel_mb):
                                                    art="ffmpeg-reencode",
                                                    stdout=_kind.DEVNULL)
     except asyncio.TimeoutError:
-        teile_entfernen(praefix)      # AUF-5: die halben _re_NNN
+        await asyncio.to_thread(teile_entfernen, praefix)      # AUF-5: die halben _re_NNN
         return None, "re-encode timeout"
     except Exception as e:
-        teile_entfernen(praefix)
+        await asyncio.to_thread(teile_entfernen, praefix)
         return None, f"re-encode exception: {e}"
     if rc != 0:
-        teile_entfernen(praefix)
+        await asyncio.to_thread(teile_entfernen, praefix)
         return None, _ffmpeg_stderr_tail(stderr.decode(errors="ignore"), 600)
 
     _, gut = await _pruefe_teile(teile(praefix, _TEIL_NEU))
     if not gut:
-        teile_entfernen(praefix)
+        await asyncio.to_thread(teile_entfernen, praefix)
         return None, "re-encode: keine gueltigen Teile"
+    if _tiefe == 0 and zu_gross(gut, ziel_mb):
+        gut = await _uebergroesse_nachteilen(gut, ziel_mb)
     return gut, None
+
+
+
+async def _uebergroesse_nachteilen(liste, ziel_mb):
+    """Neu kodierte Teile, die trotz Deckel ueber dem Ziel liegen, einzeln
+    noch einmal teilen. -> Liste in derselben Reihenfolge.
+
+    Nur der zu grosse Teil wird noch einmal kodiert — Sekunden statt der
+    ganzen Aufnahme. Gelingt es nicht, bleibt er stehen, und der Versand
+    meldet ihn wie bisher als zu gross."""
+    aus = []
+    for teil in liste:
+        if os.path.getsize(teil) / _MB <= ziel_mb:
+            aus.append(teil)
+            continue
+        unter, fehler = await neu_kodieren(teil, teil + "_part", ziel_mb, _tiefe=1)
+        if unter and not zu_gross(unter, ziel_mb):
+            await asyncio.to_thread(wegwerfen, [teil])
+            log.info("split: %s lag ueber %s MB — in %d Teile nachgeteilt",
+                     os.path.basename(teil), ziel_mb, len(unter))
+            aus.extend(unter)
+            continue
+        await asyncio.to_thread(wegwerfen, unter)
+        log.warning("split: %s bleibt ueber %s MB — Nachteilen scheiterte (%s)",
+                    os.path.basename(teil), ziel_mb, fehler or "Unterteile weiter zu gross")
+        aus.append(teil)
+    return aus
 
 
 async def _mux(pfad, ziel, flags, deckel=300):
@@ -368,7 +543,7 @@ async def _mux(pfad, ziel, flags, deckel=300):
         # v4.2-W120: jetzt mit Thread-Deckel (_bau). Vorher stand der Befehl
         # als Einzelargumente da, und der Deckel-Vertrag sah ihn nicht.
         rc, _, stderr = await _kind.ausfuehren(
-            _bau(["ffmpeg", "-y", *flags, "-i", pfad,
+            _bau(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *flags, "-i", pfad,
                   "-c", "copy", "-movflags", "+faststart", ziel]),
             deckel, art="ffmpeg-mux", stdout=_kind.DEVNULL)
     except asyncio.TimeoutError:

@@ -28,6 +28,7 @@ Zwei Arten, den Chat in die Datei zu bringen (AUFNAHME_CHAT):
 """
 
 import collections
+import re
 import time
 
 from nc.ffbuild import ff_cmd
@@ -176,6 +177,42 @@ def _filterpfad(p):
 # Nachbearbeitung laeuft mit der niedrigsten Prioritaet: Aufnahmen und
 # Restreams gehen vor, und die Box war am 06.11. ohnehin am CPU-Limit.
 NICE = 19
+
+
+# v5.12.1: die Masse aus der Eingangsbeschreibung von `ffmpeg -i`. ffprobe
+# oeffnet jeden Decoder und gibt bei einer kaputten Tonspur rc=1 OHNE Ausgabe
+# — dann war die Dauer 0, das Zeitlimit des Einbrennens fest 900 s, und eine
+# Aufnahme von zwei Stunden wurde nach einer Viertelstunde Kodieren
+# abgeschossen. `ffmpeg -i` oeffnet keinen Decoder.
+_KOPF_STREAM = re.compile(r"^\s*Stream #\d+:\d+\S*: (Video|Audio|Subtitle|Data): (.*)$", re.M)
+_KOPF_MASS = re.compile(r"(?:^|[ ,])(\d{2,5})x(\d{2,5})(?=[ ,\[]|$)")
+_KOPF_DAUER = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
+
+
+def kopf_cmd(pfad) -> list:
+    """`ffmpeg -i pfad` ohne Ausgabe — nur die Eingangsbeschreibung (stderr)."""
+    return ff_cmd(["ffmpeg", "-hide_banner", "-nostdin", "-i", pfad], threads=1, nice=NICE)
+
+
+def kopf_masse(text):
+    """-> (breite, hoehe, dauer_s, bild) aus dem stderr von `ffmpeg -i`.
+
+    bild: True = Videospur da, False = Streams da, aber kein Bild (TikTok
+    sendet manchmal nur Ton, 26.11.: „Stream map '0:v:0' matches no
+    streams"), None = gar keine Streams, also nicht lesbar."""
+    text = text or ""
+    arten = _KOPF_STREAM.findall(text)
+    if not arten:
+        return 0, 0, 0.0, None
+    bilder = [rest for art, rest in arten if art == "Video" and "attached pic" not in rest]
+    breite = hoehe = 0
+    if bilder:
+        m = _KOPF_MASS.search(bilder[0])
+        if m:
+            breite, hoehe = int(m.group(1)), int(m.group(2))
+    d = _KOPF_DAUER.search(text)
+    dauer = (int(d.group(1)) * 3600 + int(d.group(2)) * 60 + float(d.group(3))) if d else 0.0
+    return breite, hoehe, dauer, bool(bilder)
 
 
 def einbrennen_cmd(video, ass_pfad, ziel, preset="veryfast", crf=23, threads=2) -> list:

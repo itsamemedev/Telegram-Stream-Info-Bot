@@ -9,6 +9,47 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [5.12.1] — 2026-11-27 · „Tonprobe" (Fehler aus dem Log vom 26./27.11.)
+
+Gemeldet vom Betreiber mit Fehler- und Debug-Log: „Behebe Fehler, Probleme und
+Bugs."
+
+### Behoben
+
+- **Uploads scheiterten an einer undekodierbaren Tonspur.** Mehrere Aufnahmen
+  tragen eine Tonspur („aac (HE-AAC), 192000 Hz"), deren Decoder nicht
+  aufgeht. ffprobe öffnet jeden Decoder und endet dann mit rc=1 ohne Ausgabe:
+  `_pruefe_teile` hielt jeden Teil für kaputt („Alle Teile vom Split waren
+  ungueltig"), das Neukodieren brach nach bis zu 40 min in der
+  Encode-Warteschlange mit „Error while opening decoder" ab, und die
+  Warteschlange wiederholte das fünfmal. Jetzt gilt die Laufzeit aus
+  `ffmpeg -i`, und die Upload-Teile bekommen Stille statt des Tons; das
+  Original bleibt unangetastet (`nc/videoteil.messen`).
+- **Neu kodierte Teile über der Grenze** („Teil 76/86 bleibt 10.9 MB > 9 MB",
+  nachdem 71 Teile schon gesendet waren). Zwei Ursachen, beide gemessen:
+  maxrate 1,2× mit 2 s Puffer, und der Segment-Muxer verpasste den ersten
+  erzwungenen Keyframe durch Rundung (erster Teil 23 s statt 15 s). Jetzt
+  Deckel = Zielrate mit 1 s Puffer, `-segment_time_delta`, ein Deckel aus dem
+  Ziel selbst, und ein trotzdem zu großer Teil wird einzeln nachgeteilt.
+- **Discord: „Conversion failed!" nach drei Minuten Kodieren.** Der
+  Discord-Weg kodierte ohne den Zeitstempel-Re-Mux, den Telegram seit B70+
+  macht. Jetzt gleich, unter eigenem Namen (Telegram läuft gleichzeitig).
+- **Falscher Rat in der Fehlermeldung.** Jede gescheiterte Discord-Aufnahme
+  endete mit „Fehlt dem Bot das Recht …?", auch bei „0 von 0 Teilen". Der Rat
+  folgt jetzt der Ursache (`nc/discordaufnahme.abhilfe`), und ffmpeg meldet
+  mit `-loglevel error` den Fehler statt des Stream-Dumps.
+- **Chat-Einarbeiten bei reiner Tonaufnahme:** zweimal ERROR „Stream map
+  '0:v:0' matches no streams". Jetzt übersprungen. Bei kaputtem Ton war die
+  Laufzeit 0 und das Zeitlimit damit fest 15 min.
+- **Cookie-Datei im Schreibfenster.** Las die Prüfung die Datei, während
+  yt-dlp sie zurückschrieb, kam ERROR „ungültig UND keine Cookies" — und ein
+  halber Stand mit Cookies wäre per `os.replace` „repariert" worden, mitten in
+  yt-dlps Schreiben. Eine leere oder eben geänderte Datei bleibt jetzt in Ruhe.
+- **Event-Loop-Stillstand** bis 6,1 s beim Löschen der Upload-Teile und 1,0 s
+  beim Speichern des Twitch-Tokens: beides läuft jetzt im Thread.
+
+---
+
 ## [5.12.0] — 2026-11-26 · „Gleichstart" (Uploads an alle Ziele gleichzeitig)
 
 Gemeldet vom Betreiber: „Aufnahme-Uploads starten nicht pünktlich auf allen

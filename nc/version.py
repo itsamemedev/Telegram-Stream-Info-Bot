@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.12.0"
-CODENAME = "Gleichstart"
+VERSION = "5.12.1"
+CODENAME = "Tonprobe"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,21 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.12.1",
+        "date": "2026-11",
+        "title": "Tonprobe",
+        # Patch-Fassung: die Fehler aus dem Log vom 26./27.11. — Upload-Split,
+        # Teilgroessen, Fehlermeldungen, Chat ohne Bild, Cookie-Datei, Event-Loop.
+        "highlights": [
+            "Aufnahmen mit einer Tonspur, deren Decoder nicht aufgeht, scheiterten bei jedem Upload: ffprobe gab auf, jeder Teil galt als kaputt, und das Neukodieren brach nach bis zu 40 min Wartezeit ab — jetzt Laufzeit aus ffmpeg -i und Stille statt des Tons in den Teilen; das Original bleibt unangetastet",
+            "Neu kodierte Teile hielten die Grenze nicht („Teil 76/86 bleibt 10.9 MB > 9 MB“): Deckel jetzt gleich der Zielrate mit 1 s Puffer, der erste Teil ist wieder 15 statt 23 s lang (segment_time_delta), und ein zu grosser Teil wird einzeln nachgeteilt",
+            "Discord-Upload kodiert erst nach dem Zeitstempel-Re-Mux neu wie Telegram („Conversion failed!“), und die Meldung nennt den Rat nach der Ursache — „Fehlt dem Bot das Recht …?“ nur noch bei 403/Missing Permissions",
+            "Chat-Einarbeiten ueberspringt reine Tonaufnahmen statt zweimal mit „Stream map '0:v:0' matches no streams“ zu scheitern; bei kaputtem Ton stimmt die Laufzeit (vorher 0 und damit ein Zeitlimit von 15 min)",
+            "Die Cookie-Pruefung laesst eine Datei in Ruhe, die yt-dlp gerade zurueckschreibt — vorher ERROR „ungueltig UND keine Cookies“, und ein halber Stand waere „repariert“ worden",
+            "Event-Loop: Loeschen der Upload-Teile und das Speichern der Twitch-/YouTube-Tokens laufen im Thread (bis 6,1 s Stillstand im Log)",
+        ],
+    },
     {
         "version": "5.12.0",
         "date": "2026-11",
